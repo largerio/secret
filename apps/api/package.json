@@ -1,0 +1,26 @@
+{
+	"name": "@secret/api",
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1.19.12",
+		"@secret/crypto": "workspace:*",
+		"@secret/shared": "workspace:*",
+		"better-sqlite3": "^12.8.0",
+		"drizzle-orm": "^0.45.2",
+		"hono": "^4.12.9",
+		"nanoid": "^5.1.7",
+		"zod": "^3.25.67"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.13",
+		"drizzle-kit": "^0.31.10",
+		"tsx": "^4.20.3"
+	}
+}

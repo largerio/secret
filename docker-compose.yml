@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - secret-data:/app/data
+    environment:
+      - DATABASE_PATH=/app/data/secret.db
+      - FILES_PATH=/app/data/files
+      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY}
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - APP_NAME=${APP_NAME:-Secret}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10485760}
+      - DEFAULT_EXPIRY=${DEFAULT_EXPIRY:-86400}
+      - MAX_EXPIRY=${MAX_EXPIRY:-604800}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  secret-data:
