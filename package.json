@@ -1,0 +1,28 @@
+{
+	"name": "secret",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "pnpm -r build",
+		"dev": "pnpm -r --parallel dev",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"format": "biome format --write .",
+		"typecheck": "pnpm -r typecheck"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+	},
+	"engines": {
+		"node": ">=22.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"@vitest/coverage-v8": "^4.1.2",
+		"typescript": "^6.0.2",
+		"vitest": "^4.1.2"
+	}
+}

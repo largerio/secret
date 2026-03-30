@@ -1,0 +1,14 @@
+{
+	"name": "@secret/shared",
+	"version": "1.0.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"zod": "^3.25.67"
+	}
+}

@@ -1,0 +1,33 @@
+{
+	"name": "@secret/web",
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+	},
+	"dependencies": {
+		"@secret/crypto": "workspace:*",
+		"@secret/shared": "workspace:*",
+		"@msgpack/msgpack": "^3.1.1",
+		"bits-ui": "^2.16.5",
+		"clsx": "^2.1.1",
+		"tailwind-merge": "^3.3.1",
+		"qrcode": "^1.5.4",
+		"marked": "^15.0.12"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-node": "^5.2.12",
+		"@sveltejs/kit": "^2.55.0",
+		"@sveltejs/vite-plugin-svelte": "^5.0.3",
+		"@tailwindcss/vite": "^4.2.2",
+		"@types/qrcode": "^1.5.6",
+		"svelte": "^5.55.1",
+		"svelte-check": "^4.3.2",
+		"tailwindcss": "^4.2.2",
+		"typescript": "^6.0.2",
+		"vite": "^6.0.0"
+	}
+}

@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+	--color-primary: var(--app-primary-color, #6366f1);
+	--color-primary-light: var(--app-primary-light, #818cf8);
+	--color-primary-dark: var(--app-primary-dark, #4f46e5);
+}
+
+:root {
+	color-scheme: dark;
+}
+
+body {
+	font-family:
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
