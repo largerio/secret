@@ -1,6 +1,6 @@
-import { secureHeaders } from "hono/secure-headers";
-import { cors } from "hono/cors";
 import type { MiddlewareHandler } from "hono";
+import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 
 export function createSecurityHeaders(): MiddlewareHandler {
 	return secureHeaders({

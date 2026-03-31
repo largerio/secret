@@ -1,12 +1,17 @@
-import { Hono } from "hono";
-import { eq } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { timingSafeEqual } from "node:crypto";
-import { createNoteSchema, createNoteMultipartSchema, noteIdSchema, NOTE_ID_LENGTH } from "@secret/shared";
-import { serverEncrypt, serverDecrypt } from "@secret/crypto";
+import { serverDecrypt, serverEncrypt } from "@secret/crypto";
+import {
+	createNoteMultipartSchema,
+	createNoteSchema,
+	NOTE_ID_LENGTH,
+	noteIdSchema,
+} from "@secret/shared";
+import { eq } from "drizzle-orm";
+import { Hono } from "hono";
+import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
-import type { StorageBackend } from "../storage/index.js";
 import { notes } from "../db/schema.js";
+import type { StorageBackend } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
 
@@ -34,7 +39,16 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid request" }, 400);
 		}
 
-		const { encryptedData, clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } = parsed.data;
+		const {
+			encryptedData,
+			clientNonce,
+			hasPassword,
+			burnAfterRead,
+			expiresIn,
+			maxReads,
+			fileCount,
+			salt,
+		} = parsed.data;
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
@@ -108,7 +122,8 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid request" }, 400);
 		}
 
-		const { clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } = parsed.data;
+		const { clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } =
+			parsed.data;
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
@@ -152,12 +167,16 @@ export function createNotesRoutes() {
 		}
 
 		const db = c.get("db");
-		const note = db.select({
-			hasPassword: notes.hasPassword,
-			fileCount: notes.fileCount,
-			expiresAt: notes.expiresAt,
-			burnAfterRead: notes.burnAfterRead,
-		}).from(notes).where(eq(notes.id, id.data)).get();
+		const note = db
+			.select({
+				hasPassword: notes.hasPassword,
+				fileCount: notes.fileCount,
+				expiresAt: notes.expiresAt,
+				burnAfterRead: notes.burnAfterRead,
+			})
+			.from(notes)
+			.where(eq(notes.id, id.data))
+			.get();
 
 		if (note === undefined) {
 			return c.json({ exists: false }, 404);
@@ -195,12 +214,20 @@ export function createNotesRoutes() {
 
 			if (note.expiresAt < new Date()) {
 				tx.delete(notes).where(eq(notes.id, id.data)).run();
-				return { error: "Note has expired" as const, status: 404 as const, filePath: note.filePath };
+				return {
+					error: "Note has expired" as const,
+					status: 404 as const,
+					filePath: note.filePath,
+				};
 			}
 
 			if (note.maxReads !== null && note.readCount >= note.maxReads) {
 				tx.delete(notes).where(eq(notes.id, id.data)).run();
-				return { error: "Note has reached maximum reads" as const, status: 404 as const, filePath: note.filePath };
+				return {
+					error: "Note has reached maximum reads" as const,
+					status: 404 as const,
+					filePath: note.filePath,
+				};
 			}
 
 			if (note.burnAfterRead) {
@@ -265,7 +292,8 @@ export function createNotesRoutes() {
 
 		const db = c.get("db");
 		const storage = c.get("storage");
-		const note = db.select({ filePath: notes.filePath, deleteToken: notes.deleteToken })
+		const note = db
+			.select({ filePath: notes.filePath, deleteToken: notes.deleteToken })
 			.from(notes)
 			.where(eq(notes.id, id.data))
 			.get();

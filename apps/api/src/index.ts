@@ -1,45 +1,47 @@
-import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { parseServerKey } from "@secret/crypto";
 import { CLEANUP_INTERVAL_MS, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
-import { createDatabase } from "./db/index.js";
-import { createNotesRoutes } from "./routes/notes.js";
-import { createSecurityHeaders, createCors } from "./middleware/security.js";
-import { createRateLimit } from "./middleware/rateLimit.js";
+import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { startCleanupJob } from "./cleanup.js";
-import { createStorageBackend } from "./storage/index.js";
-import type { StorageBackend, StorageType } from "./storage/index.js";
 import type { AppDatabase } from "./db/index.js";
+import { createDatabase } from "./db/index.js";
+import { createRateLimit } from "./middleware/rateLimit.js";
+import { createCors, createSecurityHeaders } from "./middleware/security.js";
+import { createNotesRoutes } from "./routes/notes.js";
+import type { StorageBackend, StorageType } from "./storage/index.js";
+import { createStorageBackend } from "./storage/index.js";
 
-const PORT = Number(process.env["PORT"] ?? "3001");
-const HOST = process.env["HOST"] ?? "0.0.0.0";
-const DATABASE_PATH = process.env["DATABASE_PATH"] ?? "./data/secret.db";
-const FILES_PATH = process.env["FILES_PATH"] ?? "./data/files";
-const SERVER_KEY_ENV = process.env["SERVER_ENCRYPTION_KEY"];
-const APP_URL = process.env["APP_URL"] ?? `http://localhost:${String(PORT)}`;
-const CLEANUP_MS = Number(process.env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
+const PORT = Number(process.env.PORT ?? "3001");
+const HOST = process.env.HOST ?? "0.0.0.0";
+const DATABASE_PATH = process.env.DATABASE_PATH ?? "./data/secret.db";
+const FILES_PATH = process.env.FILES_PATH ?? "./data/files";
+const SERVER_KEY_ENV = process.env.SERVER_ENCRYPTION_KEY;
+const APP_URL = process.env.APP_URL ?? `http://localhost:${String(PORT)}`;
+const CLEANUP_MS = Number(process.env.CLEANUP_INTERVAL_MS ?? String(CLEANUP_INTERVAL_MS));
 
-const APP_NAME = process.env["APP_NAME"] ?? "Secret";
-const APP_DESCRIPTION = process.env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing";
-const APP_PRIMARY_COLOR = process.env["APP_PRIMARY_COLOR"] ?? "#6366f1";
-const APP_FOOTER_TEXT = process.env["APP_FOOTER_TEXT"] ?? "";
-const APP_OG_IMAGE_URL = process.env["APP_OG_IMAGE_URL"] ?? "";
+const APP_NAME = process.env.APP_NAME ?? "Secret";
+const APP_DESCRIPTION = process.env.APP_DESCRIPTION ?? "Zero-knowledge encrypted sharing";
+const APP_PRIMARY_COLOR = process.env.APP_PRIMARY_COLOR ?? "#6366f1";
+const APP_FOOTER_TEXT = process.env.APP_FOOTER_TEXT ?? "";
+const APP_OG_IMAGE_URL = process.env.APP_OG_IMAGE_URL ?? "";
 
-const STORAGE_BACKEND = (process.env["STORAGE_BACKEND"] ?? "local") as StorageType;
-const S3_BUCKET = process.env["S3_BUCKET"] ?? "";
-const S3_REGION = process.env["S3_REGION"] ?? "us-east-1";
-const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? "";
-const S3_ACCESS_KEY_ID = process.env["S3_ACCESS_KEY_ID"] ?? "";
-const S3_SECRET_ACCESS_KEY = process.env["S3_SECRET_ACCESS_KEY"] ?? "";
-const S3_FORCE_PATH_STYLE = process.env["S3_FORCE_PATH_STYLE"] === "true";
+const STORAGE_BACKEND = (process.env.STORAGE_BACKEND ?? "local") as StorageType;
+const S3_BUCKET = process.env.S3_BUCKET ?? "";
+const S3_REGION = process.env.S3_REGION ?? "us-east-1";
+const S3_ENDPOINT = process.env.S3_ENDPOINT ?? "";
+const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID ?? "";
+const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY ?? "";
+const S3_FORCE_PATH_STYLE = process.env.S3_FORCE_PATH_STYLE === "true";
 
-const CONFIGURED_MAX_FILE_SIZE = Number(process.env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
-const CONFIGURED_MAX_FILES = Number(process.env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
+const CONFIGURED_MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE ?? String(MAX_FILE_SIZE));
+const CONFIGURED_MAX_FILES = Number(process.env.MAX_FILES_PER_NOTE ?? String(MAX_FILES_PER_NOTE));
 
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
-	console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
+	console.error(
+		"Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
+	);
 	process.exit(1);
 }
 
@@ -98,8 +100,14 @@ app.use("*", createSecurityHeaders());
 app.use("*", createCors([APP_URL]));
 
 const maxBodySize = CONFIGURED_MAX_FILE_SIZE * CONFIGURED_MAX_FILES + 1024 * 1024;
-app.use("/api/notes", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
-app.use("/api/notes/upload", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
+app.use(
+	"/api/notes",
+	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
+);
+app.use(
+	"/api/notes/upload",
+	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
+);
 
 const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 100 });
 const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
@@ -114,16 +122,18 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
-app.get("/api/config", (c) => c.json({
-	appName: APP_NAME,
-	appDescription: APP_DESCRIPTION,
-	primaryColor: APP_PRIMARY_COLOR,
-	footerText: APP_FOOTER_TEXT,
-	ogImageUrl: APP_OG_IMAGE_URL,
-	maxFileSize: CONFIGURED_MAX_FILE_SIZE,
-	maxFilesPerNote: CONFIGURED_MAX_FILES,
-	storageType: STORAGE_BACKEND,
-}));
+app.get("/api/config", (c) =>
+	c.json({
+		appName: APP_NAME,
+		appDescription: APP_DESCRIPTION,
+		primaryColor: APP_PRIMARY_COLOR,
+		footerText: APP_FOOTER_TEXT,
+		ogImageUrl: APP_OG_IMAGE_URL,
+		maxFileSize: CONFIGURED_MAX_FILE_SIZE,
+		maxFilesPerNote: CONFIGURED_MAX_FILES,
+		storageType: STORAGE_BACKEND,
+	}),
+);
 app.route("/api/notes", createNotesRoutes());
 
 const cleanupTimer = startCleanupJob(db, storage, CLEANUP_MS);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { S3Storage } from "../storage/s3.js";
 
 const mockSend = vi.fn();
@@ -8,7 +8,6 @@ vi.mock("@aws-sdk/client-s3", () => {
 	return {
 		S3Client: class MockS3Client {
 			send = mockSend;
-			constructor() {}
 		},
 		GetObjectCommand: class MockGetObjectCommand {
 			constructor(public params: unknown) {}
@@ -22,7 +21,6 @@ vi.mock("@aws-sdk/client-s3", () => {
 vi.mock("@aws-sdk/lib-storage", () => ({
 	Upload: class MockUpload {
 		done = mockDone;
-		constructor() {}
 	},
 }));
 

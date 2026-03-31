@@ -1,152 +1,154 @@
 <script lang="ts">
-	import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
-	import type { NotePayload, NoteFile } from "@secret/shared";
-	import { encryptNote } from "$lib/utils/crypto-client";
-	import { createNote, createNoteWithProgress } from "$lib/utils/api";
-	import { formatSize } from "$lib/utils/format";
-	import { getConfig } from "$lib/config";
-	import { t } from "$lib/i18n";
-	import { toDataURL } from "qrcode";
-	import ProgressBar from "$lib/components/ProgressBar.svelte";
+import type { CreateNoteResponse, NoteFile, NotePayload } from "@secret/shared";
+import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
+import { toDataURL } from "qrcode";
+import { getConfig } from "$lib/config.svelte";
+import { createNote, createNoteWithProgress } from "$lib/utils/api";
+import { encryptNote } from "$lib/utils/crypto-client";
 
-	let text = $state("");
-	let files = $state<File[]>([]);
-	let password = $state("");
-	let burnAfterRead = $state(false);
-	let expiresIn = $state(86400);
-	let isSubmitting = $state(false);
-	let error = $state("");
-	let shareUrl = $state("");
-	let qrCodeUrl = $state("");
-	let copied = $state(false);
-	let isDragging = $state(false);
-	let uploadProgress = $state<number | null>(null);
+let text = $state("");
+let files = $state<File[]>([]);
+let password = $state("");
+let burnAfterRead = $state(false);
+let expiresIn = $state(86400);
+let _isSubmitting = $state(false);
+let _error = $state("");
+let shareUrl = $state("");
+let _qrCodeUrl = $state("");
+let _copied = $state(false);
+let _isDragging = $state(false);
+let _uploadProgress = $state<number | null>(null);
 
-	const config = $derived(getConfig());
-	const maxFileSize = $derived(config.maxFileSize);
-	const maxFilesPerNote = $derived(config.maxFilesPerNote);
+const config = $derived(getConfig());
+const maxFileSize = $derived(config.maxFileSize);
+const maxFilesPerNote = $derived(config.maxFilesPerNote);
 
-	async function handleSubmit() {
-		if (!text && files.length === 0) {
-			error = "Please enter some text or upload files.";
-			return;
+async function _handleSubmit() {
+	if (!text && files.length === 0) {
+		_error = "Please enter some text or upload files.";
+		return;
+	}
+	if (text.length > MAX_TEXT_SIZE) {
+		_error = `Text is too long. Maximum ${String(MAX_TEXT_SIZE / 1024)}KB.`;
+		return;
+	}
+
+	_error = "";
+	_isSubmitting = true;
+	_uploadProgress = null;
+
+	try {
+		const noteFiles: NoteFile[] = [];
+		for (const file of files) {
+			const buffer = await file.arrayBuffer();
+			noteFiles.push({
+				name: file.name,
+				type: file.type,
+				size: file.size,
+				data: new Uint8Array(buffer),
+			});
 		}
-		if (text.length > MAX_TEXT_SIZE) {
-			error = `Text is too long. Maximum ${String(MAX_TEXT_SIZE / 1024)}KB.`;
-			return;
-		}
 
-		error = "";
-		isSubmitting = true;
-		uploadProgress = null;
+		const payload: NotePayload = {
+			...(text ? { text } : {}),
+			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
+		};
 
-		try {
-			const noteFiles: NoteFile[] = [];
-			for (const file of files) {
-				const buffer = await file.arrayBuffer();
-				noteFiles.push({
-					name: file.name,
-					type: file.type,
-					size: file.size,
-					data: new Uint8Array(buffer),
-				});
-			}
+		const encrypted = await encryptNote(payload, password || undefined);
 
-			const payload: NotePayload = {};
-			if (text) payload.text = text;
-			if (noteFiles.length > 0) (payload as { files: NoteFile[] }).files = noteFiles;
-
-			const encrypted = await encryptNote(payload, password || undefined);
-
-			let response;
-			if (noteFiles.length > 0) {
-				const binaryData = Uint8Array.from(atob(encrypted.encryptedData), (c) => c.charCodeAt(0));
-				const formData = new FormData();
-				formData.append("metadata", JSON.stringify({
+		let response: CreateNoteResponse;
+		if (noteFiles.length > 0) {
+			const binaryData = Uint8Array.from(atob(encrypted.encryptedData), (c) => c.charCodeAt(0));
+			const formData = new FormData();
+			formData.append(
+				"metadata",
+				JSON.stringify({
 					clientNonce: encrypted.clientNonce,
 					hasPassword: Boolean(password),
 					burnAfterRead,
 					expiresIn,
 					fileCount: noteFiles.length,
-					salt: encrypted.salt,
-				}));
-				formData.append("data", new Blob([binaryData], { type: "application/octet-stream" }));
+					...(encrypted.salt ? { salt: encrypted.salt } : {}),
+				}),
+			);
+			formData.append("data", new Blob([binaryData], { type: "application/octet-stream" }));
 
-				uploadProgress = 0;
-				response = await createNoteWithProgress(formData, (loaded, total) => {
-					uploadProgress = (loaded / total) * 100;
-				});
-			} else {
-				response = await createNote({
-					encryptedData: encrypted.encryptedData,
-					clientNonce: encrypted.clientNonce,
-					hasPassword: Boolean(password),
-					burnAfterRead,
-					expiresIn,
-					fileCount: noteFiles.length,
-					salt: encrypted.salt,
-				});
-			}
-
-			const baseUrl = window.location.origin;
-			const url = `${baseUrl}/note/${response.id}#${encrypted.keyFragment}`;
-			shareUrl = url;
-			qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
-		} catch (e) {
-			error = e instanceof Error ? e.message : "An error occurred";
-		} finally {
-			isSubmitting = false;
-			uploadProgress = null;
+			_uploadProgress = 0;
+			response = await createNoteWithProgress(formData, (loaded, total) => {
+				_uploadProgress = (loaded / total) * 100;
+			});
+		} else {
+			response = await createNote({
+				encryptedData: encrypted.encryptedData,
+				clientNonce: encrypted.clientNonce,
+				hasPassword: Boolean(password),
+				burnAfterRead,
+				expiresIn,
+				fileCount: noteFiles.length,
+				...(encrypted.salt ? { salt: encrypted.salt } : {}),
+			});
 		}
-	}
 
-	function handleDrop(event: DragEvent) {
-		event.preventDefault();
-		isDragging = false;
-		const droppedFiles = event.dataTransfer?.files;
-		if (droppedFiles) {
-			addFiles(Array.from(droppedFiles));
-		}
+		const baseUrl = window.location.origin;
+		const url = `${baseUrl}/note/${response.id}#${encrypted.keyFragment}`;
+		shareUrl = url;
+		_qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
+	} catch (e) {
+		_error = e instanceof Error ? e.message : "An error occurred";
+	} finally {
+		_isSubmitting = false;
+		_uploadProgress = null;
 	}
+}
 
-	function handleFileInput(event: Event) {
-		const input = event.target as HTMLInputElement;
-		if (input.files) {
-			addFiles(Array.from(input.files));
-		}
+function _handleDrop(event: DragEvent) {
+	event.preventDefault();
+	_isDragging = false;
+	const droppedFiles = event.dataTransfer?.files;
+	if (droppedFiles) {
+		addFiles(Array.from(droppedFiles));
 	}
+}
 
-	function addFiles(newFiles: File[]) {
-		const validFiles = newFiles.filter((f) => f.size <= maxFileSize);
-		const remaining = maxFilesPerNote - files.length;
-		files = [...files, ...validFiles.slice(0, remaining)];
+function _handleFileInput(event: Event) {
+	const input = event.target as HTMLInputElement;
+	if (input.files) {
+		addFiles(Array.from(input.files));
 	}
+}
 
-	function removeFile(index: number) {
-		files = files.filter((_, i) => i !== index);
+function addFiles(newFiles: File[]) {
+	const validFiles = newFiles.filter((f) => f.size <= maxFileSize);
+	const remaining = maxFilesPerNote - files.length;
+	files = [...files, ...validFiles.slice(0, remaining)];
+}
+
+function _removeFile(index: number) {
+	files = files.filter((_, i) => i !== index);
+}
+
+async function _copyToClipboard() {
+	try {
+		await navigator.clipboard.writeText(shareUrl);
+		_copied = true;
+		setTimeout(() => {
+			_copied = false;
+		}, 2000);
+	} catch {
+		_error = "Failed to copy to clipboard";
 	}
+}
 
-	async function copyToClipboard() {
-		try {
-			await navigator.clipboard.writeText(shareUrl);
-			copied = true;
-			setTimeout(() => { copied = false; }, 2000);
-		} catch {
-			error = "Failed to copy to clipboard";
-		}
-	}
-
-	function reset() {
-		text = "";
-		files = [];
-		password = "";
-		burnAfterRead = false;
-		expiresIn = 86400;
-		shareUrl = "";
-		qrCodeUrl = "";
-		error = "";
-	}
-
+function _reset() {
+	text = "";
+	files = [];
+	password = "";
+	burnAfterRead = false;
+	expiresIn = 86400;
+	shareUrl = "";
+	_qrCodeUrl = "";
+	_error = "";
+}
 </script>
 
 <svelte:head>
@@ -228,22 +230,21 @@
 		</div>
 
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-300">{t("files_label")}</label>
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<label for="file-upload" class="mb-1 block text-sm font-medium text-slate-300">{t("files_label")}</label>
 			<div
 				class="relative rounded-lg border-2 border-dashed p-6 text-center transition-colors {isDragging ? 'border-primary bg-primary/10' : 'border-slate-700 hover:border-slate-600'}"
 				ondragover={(e) => { e.preventDefault(); isDragging = true; }}
 				ondragleave={() => { isDragging = false; }}
 				ondrop={handleDrop}
-				role="region"
+				role="group"
 				aria-label={t("files_drop")}
 			>
 				<input
+					id="file-upload"
 					type="file"
 					multiple
 					onchange={handleFileInput}
 					class="absolute inset-0 cursor-pointer opacity-0"
-					aria-label={t("files_drop")}
 				/>
 				<p class="text-sm text-slate-400">
 					{t("files_drop")}
@@ -292,7 +293,7 @@
 				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 			>
 				{#each EXPIRATION_OPTIONS as option}
-					<option value={option.value}>{option.label}</option>
+					<option value={option.value}>{t(option.labelKey)}</option>
 				{/each}
 			</select>
 		</div>
@@ -307,7 +308,7 @@
 		</label>
 
 		{#if uploadProgress !== null}
-			<ProgressBar progress={uploadProgress} label={t("submitting")} />
+			<ProgressBar progress={uploadProgress} label={t("uploading")} />
 		{/if}
 
 		<button

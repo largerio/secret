@@ -42,7 +42,7 @@ export function createNoteWithProgress(
 				if (xhr.status >= 200 && xhr.status < 300) {
 					resolve(data as unknown as CreateNoteResponse);
 				} else {
-					reject(new Error((data["error"] as string) ?? `HTTP ${String(xhr.status)}`));
+					reject(new Error((data.error as string) ?? `HTTP ${String(xhr.status)}`));
 				}
 			} catch {
 				reject(new Error("Invalid response"));
@@ -106,8 +106,7 @@ export async function readNoteWithProgress(
 		onProgress(loaded, total);
 	}
 
-	const text = new TextDecoder().decode(
-		chunks.length === 1 ? chunks[0]! : await new Blob(chunks).arrayBuffer().then((b) => new Uint8Array(b)),
-	);
+	const combined = await new Blob(chunks as BlobPart[]).arrayBuffer();
+	const text = new TextDecoder().decode(combined);
 	return JSON.parse(text) as ReadNoteResponse;
 }

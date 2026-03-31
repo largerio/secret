@@ -1,14 +1,14 @@
 import {
-	initSodium,
-	generateKey,
-	generateSalt,
+	decryptPayload,
 	deriveKeyFromPassword,
 	encryptPayload,
-	decryptPayload,
-	keyToBase64Url,
-	keyFromBase64Url,
-	toBase64,
 	fromBase64,
+	generateKey,
+	generateSalt,
+	initSodium,
+	keyFromBase64Url,
+	keyToBase64Url,
+	toBase64,
 	zeroMemory,
 } from "@secret/crypto";
 import type { NotePayload } from "@secret/shared";
@@ -29,10 +29,7 @@ export interface EncryptResult {
 	readonly salt?: string;
 }
 
-export async function encryptNote(
-	payload: NotePayload,
-	password?: string,
-): Promise<EncryptResult> {
+export async function encryptNote(payload: NotePayload, password?: string): Promise<EncryptResult> {
 	await ensureInit();
 
 	const baseKey = generateKey();
@@ -52,7 +49,7 @@ export async function encryptNote(
 		encryptedData: toBase64(ciphertext),
 		clientNonce: toBase64(nonce),
 		keyFragment: keyToBase64Url(baseKey),
-		salt: salt ? toBase64(salt) : undefined,
+		...(salt ? { salt: toBase64(salt) } : {}),
 	};
 
 	if (password) {

@@ -1,8 +1,4 @@
-import {
-	S3Client,
-	GetObjectCommand,
-	DeleteObjectCommand,
-} from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import type { StorageBackend } from "./interface.js";
 

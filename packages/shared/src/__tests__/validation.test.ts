@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNoteSchema, createNoteMultipartSchema, noteIdSchema } from "../validation.js";
 import { MAX_EXPIRY_SECONDS, MIN_EXPIRY_SECONDS, NOTE_ID_LENGTH } from "../constants.js";
+import { createNoteMultipartSchema, createNoteSchema, noteIdSchema } from "../validation.js";
 
 describe("createNoteSchema", () => {
 	const validRequest = {
@@ -95,7 +95,11 @@ describe("createNoteSchema", () => {
 	});
 
 	it("accepts hasPassword with salt", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "somesalt" });
+		const result = createNoteSchema.safeParse({
+			...validRequest,
+			hasPassword: true,
+			salt: "somesalt",
+		});
 		expect(result.success).toBe(true);
 	});
 
@@ -105,12 +109,20 @@ describe("createNoteSchema", () => {
 	});
 
 	it("rejects salt exceeding max length", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "a".repeat(101) });
+		const result = createNoteSchema.safeParse({
+			...validRequest,
+			hasPassword: true,
+			salt: "a".repeat(101),
+		});
 		expect(result.success).toBe(false);
 	});
 
 	it("accepts salt at max length", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "a".repeat(100) });
+		const result = createNoteSchema.safeParse({
+			...validRequest,
+			hasPassword: true,
+			salt: "a".repeat(100),
+		});
 		expect(result.success).toBe(true);
 	});
 
@@ -155,7 +167,11 @@ describe("createNoteMultipartSchema", () => {
 	});
 
 	it("accepts hasPassword with salt", () => {
-		const result = createNoteMultipartSchema.safeParse({ ...validMeta, hasPassword: true, salt: "somesalt" });
+		const result = createNoteMultipartSchema.safeParse({
+			...validMeta,
+			hasPassword: true,
+			salt: "somesalt",
+		});
 		expect(result.success).toBe(true);
 	});
 
@@ -165,7 +181,10 @@ describe("createNoteMultipartSchema", () => {
 	});
 
 	it("rejects expiresIn above maximum", () => {
-		const result = createNoteMultipartSchema.safeParse({ ...validMeta, expiresIn: MAX_EXPIRY_SECONDS + 1 });
+		const result = createNoteMultipartSchema.safeParse({
+			...validMeta,
+			expiresIn: MAX_EXPIRY_SECONDS + 1,
+		});
 		expect(result.success).toBe(false);
 	});
 
@@ -175,7 +194,10 @@ describe("createNoteMultipartSchema", () => {
 	});
 
 	it("rejects clientNonce exceeding max length", () => {
-		const result = createNoteMultipartSchema.safeParse({ ...validMeta, clientNonce: "a".repeat(101) });
+		const result = createNoteMultipartSchema.safeParse({
+			...validMeta,
+			clientNonce: "a".repeat(101),
+		});
 		expect(result.success).toBe(false);
 	});
 });

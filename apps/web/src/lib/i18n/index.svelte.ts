@@ -6,7 +6,7 @@ export type MessageKey = keyof typeof en;
 
 const messages: Record<Locale, Record<string, string>> = { en, fr };
 
-let currentLocale: Locale = "en";
+let currentLocale = $state<Locale>("en");
 
 export function setLocale(locale: Locale): void {
 	currentLocale = locale;
@@ -23,7 +23,7 @@ export function detectLocale(): Locale {
 }
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
-	const msg = messages[currentLocale]?.[key] ?? messages["en"]?.[key] ?? key;
+	const msg = messages[currentLocale]?.[key] ?? messages.en?.[key] ?? key;
 	if (!params) return msg;
 	return Object.entries(params).reduce<string>(
 		(result, [k, v]) => result.replace(`{${k}}`, String(v)),

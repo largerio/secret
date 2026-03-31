@@ -1,4 +1,4 @@
-import type { MiddlewareHandler, Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 
 interface RateLimitStore {
 	readonly hits: number;

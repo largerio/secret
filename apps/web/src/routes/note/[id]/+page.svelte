@@ -1,143 +1,161 @@
 <script lang="ts">
-	import { page } from "$app/state";
-	import { onMount } from "svelte";
-	import type { NotePayload } from "@secret/shared";
-	import { checkNoteExists, readNoteWithProgress } from "$lib/utils/api";
-	import { decryptNote } from "$lib/utils/crypto-client";
-	import { formatSize } from "$lib/utils/format";
-	import { getConfig } from "$lib/config";
-	import { t } from "$lib/i18n";
-	import { marked } from "marked";
-	import DOMPurify from "isomorphic-dompurify";
-	import ProgressBar from "$lib/components/ProgressBar.svelte";
+import type { NotePayload } from "@secret/shared";
+import DOMPurify from "isomorphic-dompurify";
+import { marked } from "marked";
+import { onMount } from "svelte";
+import { page } from "$app/state";
+import { t } from "$lib/i18n/index.svelte";
+import { checkNoteExists, readNoteWithProgress } from "$lib/utils/api";
+import { decryptNote } from "$lib/utils/crypto-client";
 
-	type NoteStatus =
-		| { state: "loading" }
-		| { state: "not_found" }
-		| { state: "ready"; hasPassword: boolean; burnAfterRead: boolean; fileCount: number; expiresAt: string }
-		| { state: "downloading"; progress: number }
-		| { state: "decrypting" }
-		| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
-		| { state: "error"; message: string };
+type NoteStatus =
+	| { state: "loading" }
+	| { state: "not_found" }
+	| {
+			state: "ready";
+			hasPassword: boolean;
+			burnAfterRead: boolean;
+			fileCount: number;
+			expiresAt: string;
+	  }
+	| { state: "downloading"; progress: number }
+	| { state: "decrypting" }
+	| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
+	| { state: "error"; message: string };
 
-	let status = $state<NoteStatus>({ state: "loading" });
-	let password = $state("");
-	let keyFragment = $state("");
+let status = $state<NoteStatus>({ state: "loading" });
+let password = $state("");
+let keyFragment = $state("");
 
-	onMount(() => {
-		keyFragment = window.location.hash.slice(1);
-		checkNote();
+onMount(() => {
+	keyFragment = window.location.hash.slice(1);
+	checkNote();
 
-		return () => {
-			if (status.state === "decrypted") {
-				for (const url of status.previewUrls) {
-					URL.revokeObjectURL(url);
-				}
+	return () => {
+		if (status.state === "decrypted") {
+			for (const url of status.previewUrls) {
+				URL.revokeObjectURL(url);
 			}
-		};
-	});
+		}
+	};
+});
 
-	async function checkNote() {
-		const id = page.params["id"];
-		if (!id || !keyFragment) {
+async function checkNote() {
+	const id = page.params.id;
+	if (!id || !keyFragment) {
+		status = { state: "not_found" };
+		return;
+	}
+
+	try {
+		const result = await checkNoteExists(id);
+		if (!result.exists) {
 			status = { state: "not_found" };
-			return;
+		} else {
+			status = {
+				state: "ready",
+				hasPassword: result.hasPassword,
+				burnAfterRead: result.burnAfterRead,
+				fileCount: result.fileCount,
+				expiresAt: result.expiresAt,
+			};
 		}
-
-		try {
-			const result = await checkNoteExists(id);
-			if (!result.exists) {
-				status = { state: "not_found" };
-			} else {
-				status = {
-					state: "ready",
-					hasPassword: result.hasPassword,
-					burnAfterRead: result.burnAfterRead,
-					fileCount: result.fileCount,
-					expiresAt: result.expiresAt,
-				};
-			}
-		} catch {
-			status = { state: "error", message: "Failed to check note" };
-		}
+	} catch {
+		status = { state: "error", message: "Failed to check note" };
 	}
+}
 
-	async function handleDecrypt() {
-		const id = page.params["id"];
-		if (!id) return;
+async function _handleDecrypt() {
+	const id = page.params.id;
+	if (!id) return;
 
-		status = { state: "downloading", progress: 0 };
+	status = { state: "downloading", progress: 0 };
 
-		try {
-			const note = await readNoteWithProgress(id, (loaded, total) => {
-				if (status.state === "downloading") {
-					status = { state: "downloading", progress: (loaded / total) * 100 };
-				}
-			});
+	try {
+		const note = await readNoteWithProgress(id, (loaded, total) => {
+			if (status.state === "downloading") {
+				status = { state: "downloading", progress: (loaded / total) * 100 };
+			}
+		});
 
-			status = { state: "decrypting" };
+		status = { state: "decrypting" };
 
-			const payload = await decryptNote(
-				note.encryptedData,
-				note.clientNonce,
-				keyFragment,
-				password || undefined,
-				note.salt,
-			);
+		const payload = await decryptNote(
+			note.encryptedData,
+			note.clientNonce,
+			keyFragment,
+			password || undefined,
+			note.salt,
+		);
 
-			const previewUrls: string[] = [];
-			if (payload.files) {
-				for (const file of payload.files) {
-					if (isPreviewable(file.type)) {
-						const url = URL.createObjectURL(new Blob([new Uint8Array(file.data as ArrayLike<number>)], { type: file.type }));
-						previewUrls.push(url);
-					} else {
-						previewUrls.push("");
-					}
+		const previewUrls: string[] = [];
+		if (payload.files) {
+			for (const file of payload.files) {
+				if (isPreviewable(file.type)) {
+					const url = URL.createObjectURL(
+						new Blob([new Uint8Array(file.data as ArrayLike<number>)] as BlobPart[], {
+							type: file.type,
+						}),
+					);
+					previewUrls.push(url);
+				} else {
+					previewUrls.push("");
 				}
 			}
-
-			status = { state: "decrypted", payload, previewUrls };
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Decryption failed";
-			status = { state: "error", message: message.includes("wrong") || message.includes("ciphertext") ? t("error_wrong_password") : message };
 		}
-	}
 
-	function renderMarkdown(text: string): string {
-		const raw = marked.parse(text, { async: false }) as string;
-		return DOMPurify.sanitize(raw);
+		status = { state: "decrypted", payload, previewUrls };
+	} catch (e) {
+		const message = e instanceof Error ? e.message : "Decryption failed";
+		status = {
+			state: "error",
+			message:
+				message.includes("wrong") || message.includes("ciphertext")
+					? t("error_wrong_password")
+					: message,
+		};
 	}
+}
 
-	function downloadFile(name: string, type: string, data: Uint8Array) {
-		const blob = new Blob([data], { type });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = name;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
+function _renderMarkdown(text: string): string {
+	const raw = marked.parse(text, { async: false }) as string;
+	return DOMPurify.sanitize(raw);
+}
 
-	function isPreviewable(type: string): boolean {
-		return type.startsWith("image/") || type.startsWith("video/") || type.startsWith("audio/") || type === "application/pdf";
-	}
+function _downloadFile(name: string, type: string, data: Uint8Array) {
+	const blob = new Blob([data] as BlobPart[], { type });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = name;
+	a.click();
+	URL.revokeObjectURL(url);
+}
 
-	function isImage(type: string): boolean {
-		return type.startsWith("image/");
-	}
+function isPreviewable(type: string): boolean {
+	return (
+		type.startsWith("image/") ||
+		type.startsWith("video/") ||
+		type.startsWith("audio/") ||
+		type === "application/pdf"
+	);
+}
 
-	function isVideo(type: string): boolean {
-		return type.startsWith("video/");
-	}
+function _isImage(type: string): boolean {
+	return type.startsWith("image/");
+}
 
-	function isAudio(type: string): boolean {
-		return type.startsWith("audio/");
-	}
+function _isVideo(type: string): boolean {
+	return type.startsWith("video/");
+}
 
-	function isPdf(type: string): boolean {
-		return type === "application/pdf";
-	}
+function _isAudio(type: string): boolean {
+	return type.startsWith("audio/");
+}
+
+function _isPdf(type: string): boolean {
+	return type === "application/pdf";
+}
 </script>
 
 <svelte:head>
@@ -203,10 +221,10 @@
 		</div>
 
 	{:else if status.state === "downloading"}
-		<div class="flex flex-col items-center justify-center gap-4 py-12" role="status" aria-label={t("decrypting")}>
+		<div class="flex flex-col items-center justify-center gap-4 py-12" role="status" aria-label={t("downloading")}>
 			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
 			<div class="w-64">
-				<ProgressBar progress={status.progress} label={t("decrypting")} />
+				<ProgressBar progress={status.progress} label={t("downloading")} />
 			</div>
 		</div>
 
