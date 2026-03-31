@@ -152,6 +152,20 @@ app.get("/api/config", (c) => {
 		storageType: STORAGE_BACKEND,
 	});
 });
+app.get("/robots.txt", (c) => {
+	c.header("Content-Type", "text/plain");
+	c.header("Cache-Control", "public, max-age=86400");
+	return c.body(
+		`User-agent: *\nAllow: /\nDisallow: /note/\nDisallow: /api/\n\nSitemap: ${APP_URL}/sitemap.xml\n`,
+	);
+});
+app.get("/sitemap.xml", (c) => {
+	c.header("Content-Type", "application/xml");
+	c.header("Cache-Control", "public, max-age=86400");
+	return c.body(
+		`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n  <url>\n    <loc>${APP_URL}/</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${APP_URL}/" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${APP_URL}/" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${APP_URL}/" />\n    <changefreq>monthly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
+	);
+});
 app.route("/api/notes", createNotesRoutes());
 
 const cleanupTimer = startCleanupJob(db, storage, CLEANUP_MS);

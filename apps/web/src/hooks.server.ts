@@ -2,8 +2,10 @@ import type { Handle } from "@sveltejs/kit";
 
 const API_TARGET = `http://localhost:${String(process.env["API_PORT"] ?? "3001")}`;
 
+const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
+
 export const handle: Handle = async ({ event, resolve }) => {
-	if (event.url.pathname.startsWith("/api")) {
+	if (PROXY_PATHS.some((p) => event.url.pathname.startsWith(p))) {
 		const target = `${API_TARGET}${event.url.pathname}${event.url.search}`;
 		const res = await fetch(target, {
 			method: event.request.method,
