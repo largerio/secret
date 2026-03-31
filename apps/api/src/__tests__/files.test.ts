@@ -83,4 +83,28 @@ describe("LocalStorage", () => {
 		const read = await storage.read(key);
 		expect(read).toEqual(data);
 	});
+
+	it("rejects path traversal in save", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.save("../../etc/passwd", Buffer.from("x"))).rejects.toThrow(
+			"Path traversal detected",
+		);
+	});
+
+	it("rejects path traversal in read", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.read("/etc/passwd")).rejects.toThrow("Path traversal detected");
+	});
+
+	it("rejects path traversal in delete", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.delete("/etc/passwd")).resolves.not.toThrow();
+	});
+
+	it("rejects sibling directory with similar prefix", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.read(`${storageDir}-evil/secret`)).rejects.toThrow(
+			"Path traversal detected",
+		);
+	});
 });
