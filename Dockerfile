@@ -55,13 +55,14 @@ COPY --from=builder /build/packages/shared/dist packages/shared/dist
 COPY --from=builder /build/packages/crypto/dist packages/crypto/dist
 COPY --from=builder /build/apps/api/dist apps/api/dist
 COPY --from=builder /build/apps/web/build apps/web/build
+COPY entrypoint.sh ./
 
 RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
 
 USER appuser
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3001
 ENV HOST=0.0.0.0
 ENV DATABASE_PATH=/app/data/secret.db
 ENV FILES_PATH=/app/data/files
@@ -71,4 +72,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 	CMD curl -fsS http://localhost:3000/api/health || exit 1
 
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["sh", "entrypoint.sh"]
