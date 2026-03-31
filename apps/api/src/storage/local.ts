@@ -12,7 +12,7 @@ export class LocalStorage implements StorageBackend {
 
 	private assertSafePath(filePath: string): string {
 		const resolved = resolve(filePath);
-		if (!resolved.startsWith(this.filesPath)) {
+		if (resolved !== this.filesPath && !resolved.startsWith(`${this.filesPath}/`)) {
 			throw new Error("Path traversal detected");
 		}
 		return resolved;
