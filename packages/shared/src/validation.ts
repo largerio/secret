@@ -7,8 +7,8 @@ import {
 } from "./constants.js";
 
 export const createNoteSchema = z.object({
-	encryptedData: z.string().min(1, "Encrypted data is required"),
-	clientNonce: z.string().min(1, "Client nonce is required"),
+	encryptedData: z.string().min(1, "Encrypted data is required").max(50_000_000),
+	clientNonce: z.string().min(1, "Client nonce is required").max(100),
 	hasPassword: z.boolean(),
 	burnAfterRead: z.boolean(),
 	expiresIn: z
@@ -18,7 +18,7 @@ export const createNoteSchema = z.object({
 		.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
 	maxReads: z.number().int().positive().max(1000).optional(),
 	fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
-	salt: z.string().min(1).optional(),
+	salt: z.string().min(1).max(100).optional(),
 }).refine(
 	(data) => !data.hasPassword || data.salt !== undefined,
 	{ message: "Salt is required when password is set", path: ["salt"] },

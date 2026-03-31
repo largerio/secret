@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 export function ensureFilesDir(filesPath: string): void {
@@ -17,7 +17,9 @@ export function readFile(filePath: string): Buffer {
 }
 
 export function deleteFile(filePath: string): void {
-	if (existsSync(filePath)) {
+	try {
 		unlinkSync(filePath);
+	} catch {
+		/* file already deleted or missing — safe to ignore */
 	}
 }

@@ -9,6 +9,7 @@ import { createSecurityHeaders, createCors } from "./middleware/security.js";
 import { createRateLimit } from "./middleware/rateLimit.js";
 import { startCleanupJob } from "./cleanup.js";
 import { ensureFilesDir } from "./storage/files.js";
+import type { AppDatabase } from "./db/index.js";
 
 const PORT = Number(process.env["PORT"] ?? "3001");
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -30,19 +31,47 @@ if (!SERVER_KEY_ENV) {
 	process.exit(1);
 }
 
+if (Number.isNaN(PORT) || PORT <= 0) {
+	console.error("ERROR: PORT must be a positive number");
+	process.exit(1);
+}
+
+if (Number.isNaN(CLEANUP_MS) || CLEANUP_MS <= 0) {
+	console.error("ERROR: CLEANUP_INTERVAL_MS must be a positive number");
+	process.exit(1);
+}
+
 const serverKey = parseServerKey(SERVER_KEY_ENV);
 const { db, sqlite } = createDatabase(DATABASE_PATH);
 ensureFilesDir(FILES_PATH);
 
-const app = new Hono();
+interface AppEnv {
+	Variables: {
+		db: AppDatabase;
+		serverKey: Buffer;
+		filesPath: string;
+	};
+}
+
+const app = new Hono<AppEnv>();
+
+app.onError((err, c) => {
+	console.error("[error]", err.message);
+	return c.json({ error: "Internal server error" }, 500);
+});
+
+app.notFound((c) => c.json({ error: "Not found" }, 404));
 
 app.use("*", createSecurityHeaders());
 app.use("*", createCors([APP_URL]));
 
 const maxBodySize = MAX_FILE_SIZE * MAX_FILES_PER_NOTE + 1024 * 1024;
 app.use("/api/notes", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
-app.use("/api/notes", createRateLimit({ windowMs: 60_000, max: 100 }));
-app.use("/api/notes/*", createRateLimit({ windowMs: 60_000, max: 200 }));
+
+const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 100 });
+const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
+app.use("/api/notes", notesRateLimit.middleware);
+app.use("/api/notes/*", notesDetailRateLimit.middleware);
 
 app.use("*", async (c, next) => {
 	c.set("db", db);
@@ -63,15 +92,20 @@ app.route("/api/notes", createNotesRoutes());
 
 const cleanupTimer = startCleanupJob(db, CLEANUP_MS);
 
-function shutdown() {
+const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT });
+
+function shutdown(): void {
 	console.log("[shutdown] Graceful shutdown initiated");
 	clearInterval(cleanupTimer);
-	sqlite.close();
-	process.exit(0);
+	notesRateLimit.cleanup();
+	notesDetailRateLimit.cleanup();
+	server.close(() => {
+		sqlite.close();
+		process.exit(0);
+	});
 }
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 console.log(`Secret API listening on ${HOST}:${String(PORT)}`);
-serve({ fetch: app.fetch, hostname: HOST, port: PORT });

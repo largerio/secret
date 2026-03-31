@@ -6,7 +6,7 @@ export function createDatabase(dbPath: string) {
 	const sqlite = new Database(dbPath);
 
 	sqlite.pragma("journal_mode = WAL");
-	sqlite.pragma("synchronous = FULL");
+	sqlite.pragma("synchronous = NORMAL");
 	sqlite.pragma("foreign_keys = ON");
 	sqlite.pragma("secure_delete = ON");
 	sqlite.pragma("temp_store = MEMORY");

@@ -7,13 +7,18 @@ interface RateLimitStore {
 
 const MAX_STORE_SIZE = 10_000;
 
+export interface RateLimitResult {
+	readonly middleware: MiddlewareHandler;
+	readonly cleanup: () => void;
+}
+
 export function createRateLimit(options: {
 	readonly windowMs: number;
 	readonly max: number;
-}): MiddlewareHandler {
+}): RateLimitResult {
 	const store = new Map<string, RateLimitStore>();
 
-	setInterval(() => {
+	const timer = setInterval(() => {
 		const now = Date.now();
 		for (const [key, entry] of store) {
 			if (entry.resetAt <= now) {
@@ -22,7 +27,7 @@ export function createRateLimit(options: {
 		}
 	}, options.windowMs);
 
-	return async (c: Context, next) => {
+	const middleware: MiddlewareHandler = async (c: Context, next) => {
 		const forwarded = c.req.header("x-forwarded-for");
 		const realIp = c.req.header("x-real-ip");
 		const ip = forwarded?.split(",")[0]?.trim() ?? realIp ?? "unknown";
@@ -45,4 +50,6 @@ export function createRateLimit(options: {
 		store.set(ip, { hits: existing.hits + 1, resetAt: existing.resetAt });
 		await next();
 	};
+
+	return { middleware, cleanup: () => clearInterval(timer) };
 }
