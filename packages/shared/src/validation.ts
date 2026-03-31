@@ -17,6 +17,7 @@ export const createNoteSchema = z.object({
 		.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
 	maxReads: z.number().int().positive().optional(),
 	fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
+	salt: z.string().optional(),
 });
 
 export const noteIdSchema = z.string().min(1, "Note ID is required");

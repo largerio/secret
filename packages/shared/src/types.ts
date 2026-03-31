@@ -18,6 +18,7 @@ export interface CreateNoteRequest {
 	readonly expiresIn: number;
 	readonly maxReads?: number;
 	readonly fileCount: number;
+	readonly salt?: string;
 }
 
 export interface CreateNoteResponse {
@@ -40,6 +41,7 @@ export interface ReadNoteResponse {
 	readonly fileCount: number;
 	readonly createdAt: string;
 	readonly expiresAt: string;
+	readonly salt?: string;
 }
 
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];

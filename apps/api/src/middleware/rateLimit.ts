@@ -5,6 +5,8 @@ interface RateLimitStore {
 	readonly resetAt: number;
 }
 
+const MAX_STORE_SIZE = 10_000;
+
 export function createRateLimit(options: {
 	readonly windowMs: number;
 	readonly max: number;
@@ -26,6 +28,9 @@ export function createRateLimit(options: {
 		const existing = store.get(ip);
 
 		if (existing === undefined || existing.resetAt <= now) {
+			if (store.size >= MAX_STORE_SIZE && existing === undefined) {
+				return c.json({ error: "Too many requests" }, 429);
+			}
 			store.set(ip, { hits: 1, resetAt: now + options.windowMs });
 			await next();
 			return;

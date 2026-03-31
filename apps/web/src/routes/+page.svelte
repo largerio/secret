@@ -54,6 +54,7 @@
 				burnAfterRead,
 				expiresIn,
 				fileCount: noteFiles.length,
+				salt: encrypted.salt,
 			});
 
 			const baseUrl = window.location.origin;
@@ -247,6 +248,7 @@
 				type="password"
 				bind:value={password}
 				placeholder="Add a password for extra security"
+				autocomplete="off"
 				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 			/>
 		</div>

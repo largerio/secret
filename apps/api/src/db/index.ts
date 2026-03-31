@@ -18,6 +18,7 @@ export function createDatabase(dbPath: string) {
 			server_nonce TEXT NOT NULL,
 			client_nonce TEXT NOT NULL,
 			has_password INTEGER NOT NULL DEFAULT 0,
+			salt TEXT,
 			burn_after_read INTEGER NOT NULL DEFAULT 0,
 			file_count INTEGER NOT NULL DEFAULT 0,
 			file_path TEXT,
