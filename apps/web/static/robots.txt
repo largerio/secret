@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /note/
+Disallow: /api/
+
+Sitemap: https://secret.larger.io/sitemap.xml

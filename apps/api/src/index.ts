@@ -143,6 +143,7 @@ app.get("/api/config", (c) => {
 	return c.json({
 		appName: APP_NAME,
 		appDescription: APP_DESCRIPTION,
+		appUrl: APP_URL,
 		primaryColor: APP_PRIMARY_COLOR,
 		footerText: APP_FOOTER_TEXT,
 		ogImageUrl: APP_OG_IMAGE_URL,

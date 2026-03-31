@@ -2,13 +2,15 @@
 import "../app.css";
 import { onMount } from "svelte";
 import { getConfig, loadConfig } from "$lib/config.svelte";
-import { detectLocale, setLocale, t } from "$lib/i18n/index.svelte";
+import { detectLocale, getLocale, setLocale, t } from "$lib/i18n/index.svelte";
 
 const { children } = $props();
 
 const repoUrl = "https://github.com/largerio/secret";
 
 const config = $derived(getConfig());
+const locale = $derived(getLocale());
+const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 
 onMount(async () => {
 	setLocale(detectLocale());
@@ -17,12 +19,25 @@ onMount(async () => {
 	if (loaded.primaryColor && loaded.primaryColor !== "#6366f1") {
 		document.documentElement.style.setProperty("--app-primary-color", loaded.primaryColor);
 	}
+
+	document.documentElement.lang = getLocale();
 });
 </script>
 
 <svelte:head>
 	<meta property="og:site_name" content={config.appName} />
 	<meta property="og:type" content="website" />
+	<meta property="og:locale" content={locale === "fr" ? "fr_FR" : "en_US"} />
+	<meta property="og:locale:alternate" content={locale === "fr" ? "en_US" : "fr_FR"} />
+	{#if config.ogImageUrl}
+		<meta property="og:image" content={config.ogImageUrl} />
+		<meta name="twitter:image" content={config.ogImageUrl} />
+	{/if}
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:site" content="@largerio" />
+	<link rel="alternate" hreflang="en" href={appUrl} />
+	<link rel="alternate" hreflang="fr" href={appUrl} />
+	<link rel="alternate" hreflang="x-default" href={appUrl} />
 </svelte:head>
 
 <div class="flex min-h-screen flex-col">

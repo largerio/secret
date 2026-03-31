@@ -1,12 +1,14 @@
-# Secret
+# Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing
 
 [![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-24-green.svg)](https://nodejs.org/)
 
-Self-hosted, zero-knowledge, end-to-end encrypted note and file sharing. Encrypt in the browser, store on the server — the server never sees your content. One Docker container, no accounts, no tracking.
+**[secret.larger.io](https://secret.larger.io)** — Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
-> **GitHub Topics:** `encryption` `zero-knowledge` `secret-sharing` `self-hosted` `end-to-end-encryption` `privacy` `secure-notes` `file-sharing` `svelte` `hono`
+A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
+
+> **GitHub Topics:** `encryption` `zero-knowledge` `secret-sharing` `self-hosted` `end-to-end-encryption` `privacy` `secure-notes` `file-sharing` `svelte` `hono` `password-sharing` `burn-after-reading` `privatebin-alternative`
 
 ## Features
 

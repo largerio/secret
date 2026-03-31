@@ -4,6 +4,7 @@ import { MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 const DEFAULT_CONFIG: ServerConfig = {
 	appName: "Secret",
 	appDescription: "Zero-knowledge encrypted sharing",
+	appUrl: "",
 	primaryColor: "#6366f1",
 	footerText: "",
 	ogImageUrl: "",
