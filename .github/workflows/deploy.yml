@@ -86,22 +86,23 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_SSH_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd /opt/secret
+            cd /opt/secret/prod
             docker compose pull
             docker compose up -d --remove-orphans
             docker image prune -f
 
-            # Wait for health check
             echo "Waiting for health check..."
             for i in $(seq 1 30); do
-              if wget -q --spider http://localhost:3000/api/health 2>/dev/null; then
+              if docker compose exec -T app wget -q --spider http://localhost:3000/api/health 2>/dev/null; then
                 echo "Health check passed"
                 exit 0
               fi
               sleep 2
             done
             echo "Health check failed after 60s"
+            docker compose logs --tail 20
             exit 1
