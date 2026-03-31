@@ -43,5 +43,15 @@
 	"text_content": "Contenu texte",
 	"files_count": "{count} fichier(s)",
 	"download": "Télécharger",
-	"expires": "Expire :"
+	"expires": "Expire :",
+	"max_reads_label": "Nombre maximum de lectures (optionnel)",
+	"max_reads_placeholder": "Illimité",
+	"max_reads_help": "La note sera supprimée après ce nombre de lectures",
+	"delete_label": "Lien de suppression :",
+	"delete_warning": "Conservez ce lien pour supprimer manuellement la note plus tard.",
+	"delete_copied": "Lien de suppression copié !",
+	"note_deleted": "Note supprimée avec succès",
+	"delete_button": "Supprimer cette note",
+	"delete_confirm": "Êtes-vous sûr ? Cette action est irréversible.",
+	"deleting": "Suppression..."
 }

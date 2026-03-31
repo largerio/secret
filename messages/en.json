@@ -43,5 +43,15 @@
 	"text_content": "Text content",
 	"files_count": "{count} file(s)",
 	"download": "Download",
-	"expires": "Expires:"
+	"expires": "Expires:",
+	"max_reads_label": "Maximum reads (optional)",
+	"max_reads_placeholder": "Unlimited",
+	"max_reads_help": "Note will be deleted after this many reads",
+	"delete_label": "Delete link:",
+	"delete_warning": "Save this link to manually delete the note later.",
+	"delete_copied": "Delete link copied!",
+	"note_deleted": "Note deleted successfully",
+	"delete_button": "Delete this note",
+	"delete_confirm": "Are you sure? This cannot be undone.",
+	"deleting": "Deleting..."
 }
