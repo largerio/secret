@@ -8,6 +8,7 @@ import {
 	MAX_TEXT_SIZE,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
+	S3_MAX_FILE_SIZE,
 } from "../constants.js";
 
 describe("constants", () => {
@@ -50,5 +51,13 @@ describe("constants", () => {
 	it("DEFAULT_EXPIRY is within valid range", () => {
 		expect(DEFAULT_EXPIRY_SECONDS).toBeGreaterThanOrEqual(MIN_EXPIRY_SECONDS);
 		expect(DEFAULT_EXPIRY_SECONDS).toBeLessThanOrEqual(MAX_EXPIRY_SECONDS);
+	});
+
+	it("has correct S3_MAX_FILE_SIZE (100MB)", () => {
+		expect(S3_MAX_FILE_SIZE).toBe(104_857_600);
+	});
+
+	it("S3_MAX_FILE_SIZE is greater than MAX_FILE_SIZE", () => {
+		expect(S3_MAX_FILE_SIZE).toBeGreaterThan(MAX_FILE_SIZE);
 	});
 });

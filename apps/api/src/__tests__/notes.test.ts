@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, beforeEach, afterAll } from "vitest";
 import { Hono } from "hono";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createDatabase } from "../db/index.js";
 import { createNotesRoutes } from "../routes/notes.js";
@@ -46,6 +46,27 @@ async function createTestNote(body: Record<string, unknown> = {}) {
 		body: JSON.stringify(validBody(body)),
 	});
 	return res.json() as Promise<{ id: string; expiresAt: string; deleteToken: string }>;
+}
+
+function multipartForm(
+	metadata: Record<string, unknown>,
+	data: Buffer = Buffer.from("test-encrypted-data"),
+): FormData {
+	const form = new FormData();
+	form.append("metadata", JSON.stringify(metadata));
+	form.append("data", new Blob([data], { type: "application/octet-stream" }));
+	return form;
+}
+
+function validMultipartMeta(overrides: Record<string, unknown> = {}) {
+	return {
+		clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+		hasPassword: false,
+		burnAfterRead: false,
+		expiresIn: 3600,
+		fileCount: 1,
+		...overrides,
+	};
 }
 
 beforeAll(() => {
@@ -187,6 +208,104 @@ describe("POST /api/notes", () => {
 	});
 });
 
+describe("POST /api/notes/upload (multipart)", () => {
+	it("creates a note via multipart upload", async () => {
+		const form = multipartForm(validMultipartMeta());
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(201);
+		const json = await res.json();
+		expect(json.id).toBeDefined();
+		expect(json.id.length).toBe(12);
+		expect(json.deleteToken).toBeDefined();
+		expect(json.deleteToken.length).toBe(32);
+		expect(json.expiresAt).toBeDefined();
+	});
+
+	it("reads back a multipart-uploaded note", async () => {
+		const form = multipartForm(validMultipartMeta());
+		const createRes = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		const { id } = await createRes.json() as { id: string };
+
+		const readRes = await app.request(`/api/notes/${id}`);
+		expect(readRes.status).toBe(200);
+		const note = await readRes.json();
+		expect(note.fileCount).toBe(1);
+		expect(note.encryptedData).toBeDefined();
+	});
+
+	it("rejects missing metadata part", async () => {
+		const form = new FormData();
+		form.append("data", new Blob([Buffer.from("test")]));
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects missing data part", async () => {
+		const form = new FormData();
+		form.append("metadata", JSON.stringify(validMultipartMeta()));
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects invalid metadata JSON", async () => {
+		const form = new FormData();
+		form.append("metadata", "not-json{{{");
+		form.append("data", new Blob([Buffer.from("test")]));
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects invalid metadata schema", async () => {
+		const form = multipartForm({ fileCount: 1 });
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("supports password-protected multipart upload", async () => {
+		const testSalt = Buffer.from("test-salt").toString("base64");
+		const form = multipartForm(validMultipartMeta({ hasPassword: true, salt: testSalt }));
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(201);
+	});
+
+	it("supports burn after read via multipart", async () => {
+		const form = multipartForm(validMultipartMeta({ burnAfterRead: true }));
+		const createRes = await app.request("/api/notes/upload", {
+			method: "POST",
+			body: form,
+		});
+		expect(createRes.status).toBe(201);
+		const { id } = await createRes.json() as { id: string };
+
+		const readRes = await app.request(`/api/notes/${id}`);
+		expect(readRes.status).toBe(200);
+
+		const secondRead = await app.request(`/api/notes/${id}`);
+		expect(secondRead.status).toBe(404);
+	});
+});
+
 describe("GET /api/notes/:id/exists", () => {
 	it("returns exists true for a valid note", async () => {
 		const { id } = await createTestNote();
@@ -198,6 +317,7 @@ describe("GET /api/notes/:id/exists", () => {
 		expect(json.hasPassword).toBe(false);
 		expect(json.fileCount).toBe(0);
 		expect(json.burnAfterRead).toBe(false);
+		expect(json.expiresAt).toBeDefined();
 	});
 
 	it("returns 404 for a non-existent note", async () => {
@@ -206,10 +326,41 @@ describe("GET /api/notes/:id/exists", () => {
 		const json = await res.json();
 		expect(json.exists).toBe(false);
 	});
+
+	it("returns 404 for an expired note", async () => {
+		const { id } = await createTestNote({ expiresIn: 300 });
+
+		// Manually expire the note by updating the DB
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(notes.id, id)).run();
+
+		const res = await app.request(`/api/notes/${id}/exists`);
+		expect(res.status).toBe(404);
+		const json = await res.json();
+		expect(json.exists).toBe(false);
+	});
+
+	it("returns 400 for invalid note ID format", async () => {
+		const res = await app.request("/api/notes/bad!id@#$/exists");
+		expect(res.status).toBe(400);
+	});
+
+	it("returns correct metadata for password-protected note with files", async () => {
+		const testSalt = Buffer.from("test-salt-16bytes").toString("base64");
+		const { id } = await createTestNote({ hasPassword: true, salt: testSalt, fileCount: 3, burnAfterRead: true });
+
+		const res = await app.request(`/api/notes/${id}/exists`);
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.hasPassword).toBe(true);
+		expect(json.fileCount).toBe(3);
+		expect(json.burnAfterRead).toBe(true);
+	});
 });
 
 describe("GET /api/notes/:id", () => {
-	it("returns the encrypted note data", async () => {
+	it("returns the encrypted note data with all fields", async () => {
 		const { id } = await createTestNote();
 
 		const res = await app.request(`/api/notes/${id}`);
@@ -219,11 +370,20 @@ describe("GET /api/notes/:id", () => {
 		expect(json.clientNonce).toBeDefined();
 		expect(json.hasPassword).toBe(false);
 		expect(json.fileCount).toBe(0);
+		expect(json.createdAt).toBeDefined();
+		expect(json.expiresAt).toBeDefined();
+		expect(new Date(json.createdAt).getTime()).not.toBeNaN();
+		expect(new Date(json.expiresAt).getTime()).not.toBeNaN();
 	});
 
 	it("returns 404 for a non-existent note", async () => {
 		const res = await app.request("/api/notes/nonexistent1");
 		expect(res.status).toBe(404);
+	});
+
+	it("returns 400 for invalid note ID format", async () => {
+		const res = await app.request("/api/notes/bad!id@");
+		expect(res.status).toBe(400);
 	});
 
 	it("deletes note after read when burnAfterRead is true", async () => {
@@ -234,6 +394,18 @@ describe("GET /api/notes/:id", () => {
 
 		const secondRead = await app.request(`/api/notes/${id}`);
 		expect(secondRead.status).toBe(404);
+	});
+
+	it("deletes file from disk on burn after read with files", async () => {
+		const { id } = await createTestNote({ burnAfterRead: true, fileCount: 1 });
+
+		const filePath = `${TEST_FILES_PATH}/${id}`;
+		expect(existsSync(filePath)).toBe(true);
+
+		const readRes = await app.request(`/api/notes/${id}`);
+		expect(readRes.status).toBe(200);
+
+		expect(existsSync(filePath)).toBe(false);
 	});
 
 	it("increments readCount for non-burn notes", async () => {
@@ -256,6 +428,18 @@ describe("GET /api/notes/:id", () => {
 		expect(secondRead.status).toBe(404);
 	});
 
+	it("deletes file when maxReads is exceeded on file note", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+
+		const filePath = `${TEST_FILES_PATH}/${id}`;
+		expect(existsSync(filePath)).toBe(true);
+
+		await app.request(`/api/notes/${id}`);
+		const secondRead = await app.request(`/api/notes/${id}`);
+		expect(secondRead.status).toBe(404);
+		expect(existsSync(filePath)).toBe(false);
+	});
+
 	it("reads note with file data from disk", async () => {
 		const { id } = await createTestNote({ fileCount: 1 });
 
@@ -263,6 +447,27 @@ describe("GET /api/notes/:id", () => {
 		expect(res.status).toBe(200);
 		const json = await res.json();
 		expect(json.fileCount).toBe(1);
+	});
+
+	it("returns 404 for expired note and cleans up", async () => {
+		const { id } = await createTestNote({ expiresIn: 300 });
+
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(notes.id, id)).run();
+
+		const res = await app.request(`/api/notes/${id}`);
+		expect(res.status).toBe(404);
+		const json = await res.json();
+		expect(json.error).toBe("Note has expired");
+	});
+
+	it("does not return salt for non-password notes", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/notes/${id}`);
+		const json = await res.json();
+		expect(json.salt).toBeUndefined();
 	});
 });
 
@@ -307,13 +512,35 @@ describe("DELETE /api/notes/:id", () => {
 		expect(res.status).toBe(404);
 	});
 
+	it("returns 400 for invalid note ID format", async () => {
+		const res = await app.request("/api/notes/bad!id@#$", {
+			method: "DELETE",
+			headers: { "X-Delete-Token": "some-token" },
+		});
+		expect(res.status).toBe(400);
+	});
+
 	it("deletes file from disk when note has files", async () => {
 		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
+
+		const filePath = `${TEST_FILES_PATH}/${id}`;
+		expect(existsSync(filePath)).toBe(true);
 
 		const deleteRes = await app.request(`/api/notes/${id}`, {
 			method: "DELETE",
 			headers: { "X-Delete-Token": deleteToken },
 		});
 		expect(deleteRes.status).toBe(200);
+		expect(existsSync(filePath)).toBe(false);
+	});
+
+	it("returns 403 with token of different length", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/notes/${id}`, {
+			method: "DELETE",
+			headers: { "X-Delete-Token": "short" },
+		});
+		expect(res.status).toBe(403);
 	});
 });

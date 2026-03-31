@@ -1,6 +1,7 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { existsSync, rmSync, mkdirSync } from "node:fs";
 import { ensureFilesDir, saveFile, readFile, deleteFile } from "../storage/files.js";
+import { LocalStorage } from "../storage/local.js";
 
 const TEST_DIR = "./data/fs-test";
 
@@ -40,5 +41,46 @@ describe("saveFile / readFile / deleteFile", () => {
 
 	it("does not throw when deleting non-existent file", () => {
 		expect(() => deleteFile(`${TEST_DIR}/nonexistent`)).not.toThrow();
+	});
+});
+
+describe("LocalStorage", () => {
+	const storageDir = `${TEST_DIR}/local-storage`;
+
+	it("saves and reads data through the interface", async () => {
+		const storage = new LocalStorage(storageDir);
+		const data = Buffer.from("local-storage-test");
+		const key = await storage.save("ls-test-1", data);
+		const read = await storage.read(key);
+		expect(read).toEqual(data);
+	});
+
+	it("deletes data through the interface", async () => {
+		const storage = new LocalStorage(storageDir);
+		const data = Buffer.from("to-delete");
+		const key = await storage.save("ls-test-2", data);
+		expect(existsSync(key)).toBe(true);
+		await storage.delete(key);
+		expect(existsSync(key)).toBe(false);
+	});
+
+	it("does not throw when deleting non-existent key", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.delete(`${storageDir}/nonexistent`)).resolves.not.toThrow();
+	});
+
+	it("returns the file path as storage key", async () => {
+		const storage = new LocalStorage(storageDir);
+		const key = await storage.save("ls-test-3", Buffer.from("test"));
+		expect(key).toContain("ls-test-3");
+		expect(key).toContain("local-storage");
+	});
+
+	it("handles binary data correctly", async () => {
+		const storage = new LocalStorage(storageDir);
+		const data = Buffer.from([0, 1, 127, 128, 255]);
+		const key = await storage.save("ls-binary", data);
+		const read = await storage.read(key);
+		expect(read).toEqual(data);
 	});
 });
