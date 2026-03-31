@@ -12,14 +12,12 @@ let { value = $bindable(), maxlength, placeholder }: Props = $props();
 let activeTab = $state<"write" | "preview">("write");
 let textarea = $state<HTMLTextAreaElement | null>(null);
 let renderedHtml = $state("");
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 $effect(() => {
 	const currentValue = value;
 	if (activeTab !== "preview") return;
 
-	clearTimeout(debounceTimer);
-	debounceTimer = setTimeout(async () => {
+	const timer = setTimeout(async () => {
 		if (!currentValue.trim()) {
 			renderedHtml = "";
 			return;
@@ -32,6 +30,8 @@ $effect(() => {
 			marked.parse(currentValue, { async: false }) as string,
 		);
 	}, 200);
+
+	return () => clearTimeout(timer);
 });
 
 function wrapSelection(before: string, after: string, placeholder: string) {
