@@ -8,7 +8,7 @@ export function startCleanupJob(
 	storage: StorageBackend,
 	intervalMs: number,
 ): ReturnType<typeof setInterval> {
-	return setInterval(() => {
+	return setInterval(async () => {
 		const now = new Date();
 		const expired = db
 			.select({ id: notes.id, filePath: notes.filePath })
@@ -16,15 +16,22 @@ export function startCleanupJob(
 			.where(lt(notes.expiresAt, now))
 			.all();
 
-		for (const note of expired) {
-			if (note.filePath) {
-				void storage.delete(note.filePath);
-			}
-		}
+		if (expired.length === 0) return;
 
-		if (expired.length > 0) {
-			db.delete(notes).where(lt(notes.expiresAt, now)).run();
-			console.log(`[cleanup] ${String(expired.length)} expired notes deleted`);
-		}
+		await Promise.all(
+			expired
+				.filter((note) => note.filePath !== null)
+				.map((note) =>
+					storage.delete(note.filePath as string).catch((err: unknown) => {
+						console.error(
+							`[cleanup] Failed to delete file for note ${note.id}:`,
+							err instanceof Error ? err.message : err,
+						);
+					}),
+				),
+		);
+
+		db.delete(notes).where(lt(notes.expiresAt, now)).run();
+		console.log(`[cleanup] ${String(expired.length)} expired notes deleted`);
 	}, intervalMs);
 }

@@ -132,7 +132,7 @@ Set `client_max_body_size` to match `MAX_FILE_SIZE`.
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 169 tests, 100% backend coverage
+pnpm test         # 179 tests, 100% backend coverage
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
@@ -160,7 +160,8 @@ messages/         i18n (en.json, fr.json)
 | Privacy | No IP logging, no cookies, no tracking |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
-| HTTP | Strict CSP, per-IP rate limiting |
+| HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
+| Storage | Path traversal protection, S3 key validation |
 | Validation | Zod schemas with max length constraints |
 
 ## License

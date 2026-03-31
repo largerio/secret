@@ -22,6 +22,16 @@ const CHARSETS = {
 	symbols: "!@#$%^&*()-_=+[]{}|;:,.<>?/~`",
 };
 
+function uniformRandom(max: number): number {
+	const limit = Math.floor(0x100000000 / max) * max;
+	const array = new Uint32Array(1);
+	for (;;) {
+		crypto.getRandomValues(array);
+		const val = array[0] ?? 0;
+		if (val < limit) return val % max;
+	}
+}
+
 function generate(): void {
 	let charset = "";
 	if (uppercase) charset += CHARSETS.uppercase;
@@ -33,12 +43,9 @@ function generate(): void {
 		charset = CHARSETS.lowercase;
 	}
 
-	const array = new Uint32Array(length);
-	crypto.getRandomValues(array);
-
 	let result = "";
 	for (let i = 0; i < length; i++) {
-		result += charset[(array[i] ?? 0) % charset.length];
+		result += charset[uniformRandom(charset.length)];
 	}
 
 	value = result;

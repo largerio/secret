@@ -50,6 +50,18 @@ describe("S3Storage", () => {
 			const key = await storage.save("note123", Buffer.from("encrypted-data"));
 			expect(key).toBe("notes/note123");
 		});
+
+		it("rejects note ID with invalid characters", async () => {
+			await expect(storage.save("../etc/passwd", Buffer.from("x"))).rejects.toThrow(
+				"Invalid note ID for storage key",
+			);
+		});
+
+		it("rejects note ID with spaces", async () => {
+			await expect(storage.save("note id", Buffer.from("x"))).rejects.toThrow(
+				"Invalid note ID for storage key",
+			);
+		});
 	});
 
 	describe("read", () => {

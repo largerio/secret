@@ -1,11 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { serverEncrypt } from "@secret/crypto";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startCleanupJob } from "../cleanup.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
+import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 
 const TEST_DB_PATH = "./data/cleanup-test.db";
@@ -121,5 +123,55 @@ describe("startCleanupJob", () => {
 		const remaining = db.select().from(notes).all();
 		expect(remaining).toHaveLength(1);
 		expect(remaining[0]?.id).toBe("stillgood001");
+	});
+
+	it("logs error and still deletes DB record when file deletion fails", async () => {
+		const filePath = resolve(`${TEST_FILES_PATH}/fail-delete`);
+		writeFileSync(filePath, "encrypted-data");
+
+		const failingStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn().mockRejectedValue(new Error("disk error")),
+		};
+
+		insertNote("faildelete01", { fileCount: 1, filePath });
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, failingStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		const remaining = db.select().from(notes).all();
+		expect(remaining).toHaveLength(0);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete file for note faildelete01"),
+			"disk error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("logs non-Error rejection values in cleanup", async () => {
+		const filePath = resolve(`${TEST_FILES_PATH}/fail-str`);
+		writeFileSync(filePath, "encrypted-data");
+
+		const failingStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn().mockRejectedValue("string-error"),
+		};
+
+		insertNote("failstring01", { fileCount: 1, filePath });
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, failingStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete file for note failstring01"),
+			"string-error",
+		);
+		consoleSpy.mockRestore();
 	});
 });

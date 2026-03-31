@@ -29,6 +29,9 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {
+		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
+			throw new Error("Invalid note ID for storage key");
+		}
 		const key = `notes/${noteId}`;
 		const upload = new Upload({
 			client: this.client,

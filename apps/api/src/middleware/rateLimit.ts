@@ -18,6 +18,7 @@ export function createRateLimit(options: {
 }): RateLimitResult {
 	const store = new Map<string, RateLimitStore>();
 
+	const cleanupInterval = Math.min(30_000, options.windowMs);
 	const timer = setInterval(() => {
 		const now = Date.now();
 		for (const [key, entry] of store) {
@@ -25,7 +26,7 @@ export function createRateLimit(options: {
 				store.delete(key);
 			}
 		}
-	}, options.windowMs);
+	}, cleanupInterval);
 
 	const middleware: MiddlewareHandler = async (c: Context, next) => {
 		const forwarded = c.req.header("x-forwarded-for");
