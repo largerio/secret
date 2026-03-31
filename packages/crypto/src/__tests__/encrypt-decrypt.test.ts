@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeAll } from "vitest";
 import type { NotePayload } from "@secret/shared";
-import { initSodium, generateKey } from "../keys.js";
-import { encryptPayload, encryptRaw } from "../encrypt.js";
+import { beforeAll, describe, expect, it } from "vitest";
 import { decryptPayload, decryptRaw } from "../decrypt.js";
+import { encryptPayload, encryptRaw } from "../encrypt.js";
+import { generateKey, initSodium } from "../keys.js";
 
 beforeAll(async () => {
 	await initSodium();

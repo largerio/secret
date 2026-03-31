@@ -1,11 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import {
-	serverEncrypt,
-	serverDecrypt,
-	parseServerKey,
-	generateServerKey,
-} from "../server.js";
+import { describe, expect, it } from "vitest";
+import { generateServerKey, parseServerKey, serverDecrypt, serverEncrypt } from "../server.js";
 
 describe("serverEncrypt / serverDecrypt", () => {
 	const serverKey = randomBytes(32);

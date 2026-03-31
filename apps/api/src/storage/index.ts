@@ -1,6 +1,6 @@
+import type { StorageBackend } from "./interface.js";
 import { LocalStorage } from "./local.js";
 import { S3Storage } from "./s3.js";
-import type { StorageBackend } from "./interface.js";
 
 export type { StorageBackend } from "./interface.js";
 

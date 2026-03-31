@@ -1,6 +1,6 @@
-import sodium from "libsodium-wrappers-sumo";
 import { encode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
+import sodium from "libsodium-wrappers-sumo";
 import { generateNonce } from "./keys.js";
 
 export interface EncryptedNote {

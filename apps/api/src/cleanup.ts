@@ -1,7 +1,7 @@
 import { lt } from "drizzle-orm";
 import type { AppDatabase } from "./db/index.js";
-import type { StorageBackend } from "./storage/index.js";
 import { notes } from "./db/schema.js";
+import type { StorageBackend } from "./storage/index.js";
 
 export function startCleanupJob(
 	db: AppDatabase,

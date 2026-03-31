@@ -1,15 +1,15 @@
-import { describe, expect, it, beforeAll } from "vitest";
 import sodium from "libsodium-wrappers-sumo";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
-	initSodium,
+	deriveKeyFromPassword,
+	fromBase64,
 	generateKey,
 	generateNonce,
 	generateSalt,
-	deriveKeyFromPassword,
-	keyToBase64Url,
+	initSodium,
 	keyFromBase64Url,
+	keyToBase64Url,
 	toBase64,
-	fromBase64,
 } from "../keys.js";
 
 beforeAll(async () => {

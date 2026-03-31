@@ -59,9 +59,9 @@ export interface ServerConfig {
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];
 
 export const EXPIRATION_OPTIONS = [
-	{ label: "5 minutes", value: 300 },
-	{ label: "1 hour", value: 3600 },
-	{ label: "24 hours", value: 86400 },
-	{ label: "7 days", value: 604800 },
-	{ label: "30 days", value: 2592000 },
+	{ label: "5 minutes", labelKey: "expiry_5min", value: 300 },
+	{ label: "1 hour", labelKey: "expiry_1h", value: 3600 },
+	{ label: "24 hours", labelKey: "expiry_24h", value: 86400 },
+	{ label: "7 days", labelKey: "expiry_7d", value: 604800 },
+	{ label: "30 days", labelKey: "expiry_30d", value: 2592000 },
 ] as const;

@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeEach, afterAll } from "vitest";
-import { mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { serverEncrypt } from "@secret/crypto";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { startCleanupJob } from "../cleanup.js";
+import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
-import { startCleanupJob } from "../cleanup.js";
 import { LocalStorage } from "../storage/local.js";
-import { serverEncrypt } from "@secret/crypto";
-import type { AppDatabase } from "../db/index.js";
 
 const TEST_DB_PATH = "./data/cleanup-test.db";
 const TEST_FILES_PATH = "./data/cleanup-test-files";

@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeAll, beforeEach, afterAll } from "vitest";
-import { Hono } from "hono";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { Hono } from "hono";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { createNotesRoutes } from "../routes/notes.js";
 import { LocalStorage } from "../storage/local.js";
-import type { AppDatabase } from "../db/index.js";
 
 const TEST_DB_PATH = "./data/test.db";
 const TEST_FILES_PATH = "./data/test-files";
@@ -230,7 +230,7 @@ describe("POST /api/notes/upload (multipart)", () => {
 			method: "POST",
 			body: form,
 		});
-		const { id } = await createRes.json() as { id: string };
+		const { id } = (await createRes.json()) as { id: string };
 
 		const readRes = await app.request(`/api/notes/${id}`);
 		expect(readRes.status).toBe(200);
@@ -296,7 +296,7 @@ describe("POST /api/notes/upload (multipart)", () => {
 			body: form,
 		});
 		expect(createRes.status).toBe(201);
-		const { id } = await createRes.json() as { id: string };
+		const { id } = (await createRes.json()) as { id: string };
 
 		const readRes = await app.request(`/api/notes/${id}`);
 		expect(readRes.status).toBe(200);
@@ -333,7 +333,10 @@ describe("GET /api/notes/:id/exists", () => {
 		// Manually expire the note by updating the DB
 		const { notes } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notes).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(notes.id, id)).run();
+		db.update(notes)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notes.id, id))
+			.run();
 
 		const res = await app.request(`/api/notes/${id}/exists`);
 		expect(res.status).toBe(404);
@@ -348,7 +351,12 @@ describe("GET /api/notes/:id/exists", () => {
 
 	it("returns correct metadata for password-protected note with files", async () => {
 		const testSalt = Buffer.from("test-salt-16bytes").toString("base64");
-		const { id } = await createTestNote({ hasPassword: true, salt: testSalt, fileCount: 3, burnAfterRead: true });
+		const { id } = await createTestNote({
+			hasPassword: true,
+			salt: testSalt,
+			fileCount: 3,
+			burnAfterRead: true,
+		});
 
 		const res = await app.request(`/api/notes/${id}/exists`);
 		expect(res.status).toBe(200);
@@ -454,7 +462,10 @@ describe("GET /api/notes/:id", () => {
 
 		const { notes } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notes).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(notes.id, id)).run();
+		db.update(notes)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notes.id, id))
+			.run();
 
 		const res = await app.request(`/api/notes/${id}`);
 		expect(res.status).toBe(404);

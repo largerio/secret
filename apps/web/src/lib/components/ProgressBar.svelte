@@ -1,10 +1,10 @@
 <script lang="ts">
-	interface Props {
-		progress: number;
-		label?: string;
-	}
+interface Props {
+	progress: number;
+	label?: string;
+}
 
-	let { progress, label }: Props = $props();
+let { progress, label }: Props = $props();
 </script>
 
 <div class="w-full space-y-1">

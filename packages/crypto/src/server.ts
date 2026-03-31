@@ -4,7 +4,10 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
-export function serverEncrypt(data: Uint8Array, serverKey: Buffer): { encrypted: Buffer; iv: Buffer } {
+export function serverEncrypt(
+	data: Uint8Array,
+	serverKey: Buffer,
+): { encrypted: Buffer; iv: Buffer } {
 	const iv = randomBytes(IV_LENGTH);
 	const cipher = createCipheriv(ALGORITHM, serverKey, iv);
 	const encrypted = Buffer.concat([cipher.update(data), cipher.final(), cipher.getAuthTag()]);
