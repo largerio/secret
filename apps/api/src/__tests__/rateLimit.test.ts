@@ -5,16 +5,19 @@ import { createRateLimit } from "../middleware/rateLimit.js";
 describe("createRateLimit", () => {
 	it("allows requests under the limit", async () => {
 		const app = new Hono();
-		app.use("*", createRateLimit({ windowMs: 60_000, max: 5 }));
+		const rl = createRateLimit({ windowMs: 60_000, max: 5 });
+		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
 		const res = await app.request("/test");
 		expect(res.status).toBe(200);
+		rl.cleanup();
 	});
 
 	it("returns 429 when limit is exceeded", async () => {
 		const app = new Hono();
-		app.use("*", createRateLimit({ windowMs: 60_000, max: 2 }));
+		const rl = createRateLimit({ windowMs: 60_000, max: 2 });
+		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
 		await app.request("/test");
@@ -23,11 +26,13 @@ describe("createRateLimit", () => {
 		expect(res.status).toBe(429);
 		const json = await res.json();
 		expect(json.error).toBe("Too many requests");
+		rl.cleanup();
 	});
 
 	it("resets after window expires", async () => {
 		const app = new Hono();
-		app.use("*", createRateLimit({ windowMs: 100, max: 1 }));
+		const rl = createRateLimit({ windowMs: 100, max: 1 });
+		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
 		await app.request("/test");
@@ -37,5 +42,6 @@ describe("createRateLimit", () => {
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		const res = await app.request("/test");
 		expect(res.status).toBe(200);
+		rl.cleanup();
 	});
 });

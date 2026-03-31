@@ -2,6 +2,14 @@ import sodium from "libsodium-wrappers-sumo";
 import { decode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
 
+function isNotePayload(value: unknown): value is NotePayload {
+	if (typeof value !== "object" || value === null) return false;
+	const obj = value as Record<string, unknown>;
+	if (obj["text"] !== undefined && typeof obj["text"] !== "string") return false;
+	if (obj["files"] !== undefined && !Array.isArray(obj["files"])) return false;
+	return true;
+}
+
 export function decryptPayload(
 	ciphertext: Uint8Array,
 	nonce: Uint8Array,
@@ -14,7 +22,11 @@ export function decryptPayload(
 		nonce,
 		key,
 	);
-	return decode(decrypted) as NotePayload;
+	const decoded = decode(decrypted);
+	if (!isNotePayload(decoded)) {
+		throw new Error("Invalid payload structure after decryption");
+	}
+	return decoded;
 }
 
 export function decryptRaw(

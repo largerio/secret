@@ -1,6 +1,7 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { timingSafeEqual } from "node:crypto";
 import { createNoteSchema, noteIdSchema, NOTE_ID_LENGTH } from "@secret/shared";
 import { serverEncrypt, serverDecrypt } from "@secret/crypto";
 import type { AppDatabase } from "../db/index.js";
@@ -156,11 +157,15 @@ export function createNotesRoutes() {
 		const serverIv = Buffer.from(note.serverNonce, "base64");
 
 		let clientBlob: Buffer;
-		if (note.filePath) {
-			const fileData = readFile(note.filePath);
-			clientBlob = serverDecrypt(fileData, serverIv, serverKey);
-		} else {
-			clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
+		try {
+			if (note.filePath) {
+				const fileData = readFile(note.filePath);
+				clientBlob = serverDecrypt(fileData, serverIv, serverKey);
+			} else {
+				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
+			}
+		} catch {
+			return c.json({ error: "Failed to decrypt note" }, 500);
 		}
 
 		if (note.burnAfterRead && note.filePath) {
@@ -199,7 +204,9 @@ export function createNotesRoutes() {
 			return c.json({ error: "Note not found" }, 404);
 		}
 
-		if (note.deleteToken !== token) {
+		const tokenBuf = Buffer.from(token);
+		const storedBuf = Buffer.from(note.deleteToken);
+		if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
 			return c.json({ error: "Invalid delete token" }, 403);
 		}
 
