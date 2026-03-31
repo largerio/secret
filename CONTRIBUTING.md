@@ -61,7 +61,7 @@ Use `import type { ... }` for type-only imports.
 ## Project Structure
 
 ```
-apps/api/       Backend (Hono, Node.js, SQLite)
+apps/api/       Backend (Hono, Node.js 24, SQLite)
 apps/web/       Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)
 packages/shared/    Shared types, Zod schemas, constants
