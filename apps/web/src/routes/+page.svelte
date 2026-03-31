@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
+	import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
 	import type { NotePayload, NoteFile } from "@secret/shared";
 	import { encryptNote } from "$lib/utils/crypto-client";
-	import { createNote } from "$lib/utils/api";
+	import { createNote, createNoteWithProgress } from "$lib/utils/api";
 	import { formatSize } from "$lib/utils/format";
 	import { getConfig } from "$lib/config";
 	import { t } from "$lib/i18n";
 	import { toDataURL } from "qrcode";
+	import ProgressBar from "$lib/components/ProgressBar.svelte";
 
 	let text = $state("");
 	let files = $state<File[]>([]);
@@ -19,6 +20,11 @@
 	let qrCodeUrl = $state("");
 	let copied = $state(false);
 	let isDragging = $state(false);
+	let uploadProgress = $state<number | null>(null);
+
+	const config = $derived(getConfig());
+	const maxFileSize = $derived(config.maxFileSize);
+	const maxFilesPerNote = $derived(config.maxFilesPerNote);
 
 	async function handleSubmit() {
 		if (!text && files.length === 0) {
@@ -32,6 +38,7 @@
 
 		error = "";
 		isSubmitting = true;
+		uploadProgress = null;
 
 		try {
 			const noteFiles: NoteFile[] = [];
@@ -50,15 +57,36 @@
 			if (noteFiles.length > 0) (payload as { files: NoteFile[] }).files = noteFiles;
 
 			const encrypted = await encryptNote(payload, password || undefined);
-			const response = await createNote({
-				encryptedData: encrypted.encryptedData,
-				clientNonce: encrypted.clientNonce,
-				hasPassword: Boolean(password),
-				burnAfterRead,
-				expiresIn,
-				fileCount: noteFiles.length,
-				salt: encrypted.salt,
-			});
+
+			let response;
+			if (noteFiles.length > 0) {
+				const binaryData = Uint8Array.from(atob(encrypted.encryptedData), (c) => c.charCodeAt(0));
+				const formData = new FormData();
+				formData.append("metadata", JSON.stringify({
+					clientNonce: encrypted.clientNonce,
+					hasPassword: Boolean(password),
+					burnAfterRead,
+					expiresIn,
+					fileCount: noteFiles.length,
+					salt: encrypted.salt,
+				}));
+				formData.append("data", new Blob([binaryData], { type: "application/octet-stream" }));
+
+				uploadProgress = 0;
+				response = await createNoteWithProgress(formData, (loaded, total) => {
+					uploadProgress = (loaded / total) * 100;
+				});
+			} else {
+				response = await createNote({
+					encryptedData: encrypted.encryptedData,
+					clientNonce: encrypted.clientNonce,
+					hasPassword: Boolean(password),
+					burnAfterRead,
+					expiresIn,
+					fileCount: noteFiles.length,
+					salt: encrypted.salt,
+				});
+			}
 
 			const baseUrl = window.location.origin;
 			const url = `${baseUrl}/note/${response.id}#${encrypted.keyFragment}`;
@@ -68,6 +96,7 @@
 			error = e instanceof Error ? e.message : "An error occurred";
 		} finally {
 			isSubmitting = false;
+			uploadProgress = null;
 		}
 	}
 
@@ -88,8 +117,8 @@
 	}
 
 	function addFiles(newFiles: File[]) {
-		const validFiles = newFiles.filter((f) => f.size <= MAX_FILE_SIZE);
-		const remaining = MAX_FILES_PER_NOTE - files.length;
+		const validFiles = newFiles.filter((f) => f.size <= maxFileSize);
+		const remaining = maxFilesPerNote - files.length;
 		files = [...files, ...validFiles.slice(0, remaining)];
 	}
 
@@ -121,9 +150,9 @@
 </script>
 
 <svelte:head>
-	<title>{getConfig().appName} — {t("create_title")}</title>
+	<title>{config.appName} — {t("create_title")}</title>
 	<meta name="description" content={t("create_description")} />
-	<meta property="og:title" content="{getConfig().appName} — {t("create_title")}" />
+	<meta property="og:title" content="{config.appName} — {t("create_title")}" />
 	<meta property="og:description" content={t("app_description")} />
 </svelte:head>
 
@@ -220,7 +249,7 @@
 					{t("files_drop")}
 				</p>
 				<p class="mt-1 text-xs text-slate-500">
-					Max {String(MAX_FILES_PER_NOTE)} files, {formatSize(MAX_FILE_SIZE)} each
+					Max {String(maxFilesPerNote)} files, {formatSize(maxFileSize)} each
 				</p>
 			</div>
 
@@ -276,6 +305,10 @@
 			/>
 			<span class="text-sm text-slate-300">{t("burn_label")}</span>
 		</label>
+
+		{#if uploadProgress !== null}
+			<ProgressBar progress={uploadProgress} label={t("submitting")} />
+		{/if}
 
 		<button
 			type="submit"

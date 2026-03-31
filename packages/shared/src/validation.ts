@@ -24,6 +24,23 @@ export const createNoteSchema = z.object({
 	{ message: "Salt is required when password is set", path: ["salt"] },
 );
 
+export const createNoteMultipartSchema = z.object({
+	clientNonce: z.string().min(1).max(100),
+	hasPassword: z.boolean(),
+	burnAfterRead: z.boolean(),
+	expiresIn: z
+		.number()
+		.int()
+		.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
+		.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
+	maxReads: z.number().int().positive().max(1000).optional(),
+	fileCount: z.number().int().min(1).max(MAX_FILES_PER_NOTE),
+	salt: z.string().min(1).max(100).optional(),
+}).refine(
+	(data) => !data.hasPassword || data.salt !== undefined,
+	{ message: "Salt is required when password is set", path: ["salt"] },
+);
+
 export const noteIdSchema = z.string().regex(
 	/^[A-Za-z0-9_-]+$/,
 	"Invalid note ID format",

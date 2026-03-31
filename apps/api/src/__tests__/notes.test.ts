@@ -4,6 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createDatabase } from "../db/index.js";
 import { createNotesRoutes } from "../routes/notes.js";
+import { LocalStorage } from "../storage/local.js";
 import type { AppDatabase } from "../db/index.js";
 
 const TEST_DB_PATH = "./data/test.db";
@@ -14,11 +15,12 @@ let db: AppDatabase;
 let app: Hono;
 
 function createApp(database: AppDatabase) {
+	const storage = new LocalStorage(TEST_FILES_PATH);
 	const hono = new Hono();
 	hono.use("*", async (c, next) => {
 		c.set("db", database);
 		c.set("serverKey", TEST_SERVER_KEY);
-		c.set("filesPath", TEST_FILES_PATH);
+		c.set("storage", storage);
 		await next();
 	});
 	hono.route("/api/notes", createNotesRoutes());

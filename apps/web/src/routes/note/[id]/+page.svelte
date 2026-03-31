@@ -2,18 +2,20 @@
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import type { NotePayload } from "@secret/shared";
-	import { checkNoteExists, readNote } from "$lib/utils/api";
+	import { checkNoteExists, readNoteWithProgress } from "$lib/utils/api";
 	import { decryptNote } from "$lib/utils/crypto-client";
 	import { formatSize } from "$lib/utils/format";
 	import { getConfig } from "$lib/config";
 	import { t } from "$lib/i18n";
 	import { marked } from "marked";
 	import DOMPurify from "isomorphic-dompurify";
+	import ProgressBar from "$lib/components/ProgressBar.svelte";
 
 	type NoteStatus =
 		| { state: "loading" }
 		| { state: "not_found" }
 		| { state: "ready"; hasPassword: boolean; burnAfterRead: boolean; fileCount: number; expiresAt: string }
+		| { state: "downloading"; progress: number }
 		| { state: "decrypting" }
 		| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
 		| { state: "error"; message: string };
@@ -64,10 +66,17 @@
 		const id = page.params["id"];
 		if (!id) return;
 
-		status = { state: "decrypting" };
+		status = { state: "downloading", progress: 0 };
 
 		try {
-			const note = await readNote(id);
+			const note = await readNoteWithProgress(id, (loaded, total) => {
+				if (status.state === "downloading") {
+					status = { state: "downloading", progress: (loaded / total) * 100 };
+				}
+			});
+
+			status = { state: "decrypting" };
+
 			const payload = await decryptNote(
 				note.encryptedData,
 				note.clientNonce,
@@ -191,6 +200,14 @@
 			>
 				{t("decrypt_button")}
 			</button>
+		</div>
+
+	{:else if status.state === "downloading"}
+		<div class="flex flex-col items-center justify-center gap-4 py-12" role="status" aria-label={t("decrypting")}>
+			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
+			<div class="w-64">
+				<ProgressBar progress={status.progress} label={t("decrypting")} />
+			</div>
 		</div>
 
 	{:else if status.state === "decrypting"}

@@ -1,10 +1,11 @@
 import { lt } from "drizzle-orm";
 import type { AppDatabase } from "./db/index.js";
+import type { StorageBackend } from "./storage/index.js";
 import { notes } from "./db/schema.js";
-import { deleteFile } from "./storage/files.js";
 
 export function startCleanupJob(
 	db: AppDatabase,
+	storage: StorageBackend,
 	intervalMs: number,
 ): ReturnType<typeof setInterval> {
 	return setInterval(() => {
@@ -17,7 +18,7 @@ export function startCleanupJob(
 
 		for (const note of expired) {
 			if (note.filePath) {
-				deleteFile(note.filePath);
+				void storage.delete(note.filePath);
 			}
 		}
 

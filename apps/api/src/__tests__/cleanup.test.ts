@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { createDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { startCleanupJob } from "../cleanup.js";
+import { LocalStorage } from "../storage/local.js";
 import { serverEncrypt } from "@secret/crypto";
 import type { AppDatabase } from "../db/index.js";
 
@@ -12,6 +13,7 @@ const TEST_FILES_PATH = "./data/cleanup-test-files";
 const TEST_SERVER_KEY = randomBytes(32);
 
 let db: AppDatabase;
+let storage: LocalStorage;
 
 beforeEach(() => {
 	try {
@@ -25,6 +27,7 @@ beforeEach(() => {
 	mkdirSync("./data", { recursive: true });
 	mkdirSync(TEST_FILES_PATH, { recursive: true });
 	db = createDatabase(TEST_DB_PATH).db;
+	storage = new LocalStorage(TEST_FILES_PATH);
 });
 
 afterAll(() => {
@@ -59,7 +62,7 @@ describe("startCleanupJob", () => {
 			})
 			.run();
 
-		const timer = startCleanupJob(db, 100);
+		const timer = startCleanupJob(db, storage, 100);
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		clearInterval(timer);
 
@@ -90,7 +93,7 @@ describe("startCleanupJob", () => {
 			})
 			.run();
 
-		const timer = startCleanupJob(db, 100);
+		const timer = startCleanupJob(db, storage, 100);
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		clearInterval(timer);
 
@@ -117,7 +120,7 @@ describe("startCleanupJob", () => {
 			})
 			.run();
 
-		const timer = startCleanupJob(db, 100);
+		const timer = startCleanupJob(db, storage, 100);
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		clearInterval(timer);
 
