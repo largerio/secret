@@ -37,7 +37,17 @@ export function createRateLimit(options: {
 
 		if (existing === undefined || existing.resetAt <= now) {
 			if (store.size >= MAX_STORE_SIZE && existing === undefined) {
-				return c.json({ error: "Too many requests" }, 429);
+				let evicted = false;
+				for (const [key, entry] of store) {
+					if (entry.resetAt <= now) {
+						store.delete(key);
+						evicted = true;
+						break;
+					}
+				}
+				if (!evicted) {
+					return c.json({ error: "Too many requests" }, 429);
+				}
 			}
 			store.set(ip, { hits: 1, resetAt: now + options.windowMs });
 			await next();

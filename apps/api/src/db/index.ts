@@ -14,6 +14,7 @@ export function createDatabase(dbPath: string): {
 	sqlite.pragma("foreign_keys = ON");
 	sqlite.pragma("secure_delete = ON");
 	sqlite.pragma("temp_store = MEMORY");
+	sqlite.pragma("cache_size = -8000");
 
 	sqlite.exec(`
 		CREATE TABLE IF NOT EXISTS notes (
@@ -35,6 +36,7 @@ export function createDatabase(dbPath: string): {
 	`);
 
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes (expires_at)`);
+	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_delete_token ON notes (delete_token)`);
 
 	const db = drizzle(sqlite, { schema });
 	return { db, sqlite };

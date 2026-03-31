@@ -3,6 +3,7 @@ import { parseServerKey } from "@secret/crypto";
 import { CLEANUP_INTERVAL_MS, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { compress } from "hono/compress";
 import { startCleanupJob } from "./cleanup.js";
 import type { AppDatabase } from "./db/index.js";
 import { createDatabase } from "./db/index.js";
@@ -107,6 +108,7 @@ app.notFound((c) => c.json({ error: "Not found" }, 404));
 
 app.use("*", createSecurityHeaders());
 app.use("*", createCors([APP_URL]));
+app.use("*", compress());
 
 const maxBodySize = CONFIGURED_MAX_FILE_SIZE * CONFIGURED_MAX_FILES + 1024 * 1024;
 app.use(
@@ -132,9 +134,13 @@ app.use("*", async (c, next) => {
 	await next();
 });
 
-app.get("/api/health", (c) => c.json({ status: "ok" }));
-app.get("/api/config", (c) =>
-	c.json({
+app.get("/api/health", (c) => {
+	c.header("Cache-Control", "no-cache");
+	return c.json({ status: "ok" });
+});
+app.get("/api/config", (c) => {
+	c.header("Cache-Control", "public, max-age=3600");
+	return c.json({
 		appName: APP_NAME,
 		appDescription: APP_DESCRIPTION,
 		primaryColor: APP_PRIMARY_COLOR,
@@ -143,8 +149,8 @@ app.get("/api/config", (c) =>
 		maxFileSize: CONFIGURED_MAX_FILE_SIZE,
 		maxFilesPerNote: CONFIGURED_MAX_FILES,
 		storageType: STORAGE_BACKEND,
-	}),
-);
+	});
+});
 app.route("/api/notes", createNotesRoutes());
 
 const cleanupTimer = startCleanupJob(db, storage, CLEANUP_MS);

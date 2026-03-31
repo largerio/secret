@@ -1,15 +1,25 @@
 import en from "../../../../../messages/en.json";
-import fr from "../../../../../messages/fr.json";
 
 export type Locale = "en" | "fr";
 export type MessageKey = keyof typeof en;
 
-const messages: Record<Locale, Record<string, string>> = { en, fr };
+const messages: Record<Locale, Record<string, string>> = { en, fr: en };
+let localeLoaded = false;
 
 let currentLocale = $state<Locale>("en");
 
+async function loadFrench(): Promise<void> {
+	if (localeLoaded) return;
+	const fr = await import("../../../../../messages/fr.json");
+	messages.fr = fr.default;
+	localeLoaded = true;
+}
+
 export function setLocale(locale: Locale): void {
 	currentLocale = locale;
+	if (locale === "fr") {
+		void loadFrench();
+	}
 }
 
 export function getLocale(): Locale {

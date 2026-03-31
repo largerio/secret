@@ -154,6 +154,36 @@ describe("createRateLimit", () => {
 		rl.cleanup();
 	});
 
+	it("evicts expired entry when store is full and new IP arrives", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 100 });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		// Fill the store with 10,000 unique IPs
+		for (let i = 0; i < 10_000; i++) {
+			const ip = `${(i >> 24) & 255}.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+			await app.request("/test", { headers: { "X-Forwarded-For": ip } });
+		}
+
+		// Mock Date.now to return a time after entries have expired
+		// This makes the middleware see entries as expired without triggering the cleanup interval
+		const originalNow = Date.now;
+		Date.now = () => originalNow() + 120_000;
+
+		try {
+			// A new IP should succeed because an expired entry is evicted
+			const res = await app.request("/test", {
+				headers: { "X-Forwarded-For": "255.255.255.255" },
+			});
+			expect(res.status).toBe(200);
+		} finally {
+			Date.now = originalNow;
+		}
+
+		rl.cleanup();
+	});
+
 	it("returns 429 when store exceeds MAX_STORE_SIZE for new IPs", async () => {
 		const rl = createRateLimit({ windowMs: 60_000, max: 100 });
 		const app = new Hono();
