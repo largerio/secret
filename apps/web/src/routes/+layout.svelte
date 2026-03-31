@@ -8,6 +8,19 @@ const { children } = $props();
 
 const repoUrl = "https://github.com/largerio/secret";
 
+const localeToOg: Record<string, string> = {
+	en: "en_US",
+	fr: "fr_FR",
+	es: "es_ES",
+	de: "de_DE",
+	pt: "pt_PT",
+	it: "it_IT",
+	ja: "ja_JP",
+	zh: "zh_CN",
+	ru: "ru_RU",
+	ko: "ko_KR",
+};
+
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
 const appUrl = $derived(config.appUrl || "https://secret.larger.io");
@@ -27,16 +40,21 @@ onMount(async () => {
 <svelte:head>
 	<meta property="og:site_name" content={config.appName} />
 	<meta property="og:type" content="website" />
-	<meta property="og:locale" content={locale === "fr" ? "fr_FR" : "en_US"} />
-	<meta property="og:locale:alternate" content={locale === "fr" ? "en_US" : "fr_FR"} />
+	<meta property="og:locale" content={localeToOg[locale] ?? "en_US"} />
+	{#each Object.entries(localeToOg) as [code, og]}
+		{#if code !== locale}
+			<meta property="og:locale:alternate" content={og} />
+		{/if}
+	{/each}
 	{#if config.ogImageUrl}
 		<meta property="og:image" content={config.ogImageUrl} />
 		<meta name="twitter:image" content={config.ogImageUrl} />
 	{/if}
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="twitter:site" content="@largerio" />
-	<link rel="alternate" hreflang="en" href={appUrl} />
-	<link rel="alternate" hreflang="fr" href={appUrl} />
+	{#each Object.keys(localeToOg) as code}
+		<link rel="alternate" hreflang={code} href={appUrl} />
+	{/each}
 	<link rel="alternate" hreflang="x-default" href={appUrl} />
 </svelte:head>
 
