@@ -61,7 +61,7 @@ async function checkNote() {
 			};
 		}
 	} catch {
-		status = { state: "error", message: "Failed to check note" };
+		status = { state: "error", message: t("error_check_note") };
 	}
 }
 
@@ -106,7 +106,7 @@ async function _handleDecrypt() {
 
 		status = { state: "decrypted", payload, previewUrls };
 	} catch (e) {
-		const message = e instanceof Error ? e.message : "Decryption failed";
+		const message = e instanceof Error ? e.message : t("error_decryption");
 		status = {
 			state: "error",
 			message:
@@ -166,7 +166,7 @@ function _isPdf(type: string): boolean {
 
 <div class="space-y-6">
 	{#if status.state === "loading"}
-		<div class="flex items-center justify-center py-12" role="status" aria-label="Loading">
+		<div class="flex items-center justify-center py-12" role="status" aria-label={t("loading")}>
 			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
 		</div>
 
@@ -305,7 +305,7 @@ function _isPdf(type: string): boolean {
 
 	{:else if status.state === "error"}
 		<div class="rounded-xl border border-red-800/50 bg-red-900/20 p-6 text-center">
-			<h1 class="text-lg font-semibold text-red-300">Error</h1>
+			<h1 class="text-lg font-semibold text-red-300">{t("error_title")}</h1>
 			<p class="mt-2 text-sm text-red-400">{status.message}</p>
 			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
 				{t("new_note")}

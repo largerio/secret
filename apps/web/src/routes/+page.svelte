@@ -31,11 +31,11 @@ const maxFilesPerNote = $derived(config.maxFilesPerNote);
 
 async function handleSubmit() {
 	if (!text && files.length === 0) {
-		error = "Please enter some text or upload files.";
+		error = t("error_empty_content");
 		return;
 	}
 	if (text.length > MAX_TEXT_SIZE) {
-		error = `Text is too long. Maximum ${String(MAX_TEXT_SIZE / 1024)}KB.`;
+		error = t("error_text_too_long", { max: String(MAX_TEXT_SIZE / 1024) });
 		return;
 	}
 
@@ -104,7 +104,7 @@ async function handleSubmit() {
 		deleteUrl = response.deleteToken;
 		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
 	} catch (e) {
-		error = e instanceof Error ? e.message : "An error occurred";
+		error = e instanceof Error ? e.message : t("error_generic");
 	} finally {
 		isSubmitting = false;
 		uploadProgress = null;
@@ -145,7 +145,7 @@ async function copyToClipboard() {
 			copied = false;
 		}, 2000);
 	} catch {
-		error = "Failed to copy to clipboard";
+		error = t("error_clipboard");
 	}
 }
 
@@ -157,7 +157,7 @@ async function copyDeleteToken() {
 			deleteCopied = false;
 		}, 2000);
 	} catch {
-		error = "Failed to copy to clipboard";
+		error = t("error_clipboard");
 	}
 }
 
@@ -244,7 +244,7 @@ function reset() {
 					<div class="flex justify-center">
 						<img
 							src={qrCodeUrl}
-							alt="QR code for the share link"
+							alt={t("qr_alt")}
 							class="rounded-lg"
 							width="256"
 							height="256"
@@ -294,7 +294,7 @@ function reset() {
 				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 			></textarea>
 			<p class="mt-1 text-xs text-slate-500">
-				{text.length.toLocaleString()} / {MAX_TEXT_SIZE.toLocaleString()} characters
+				{t("char_count", { count: text.length.toLocaleString(), max: MAX_TEXT_SIZE.toLocaleString() })}
 			</p>
 		</div>
 
@@ -328,12 +328,12 @@ function reset() {
 					{t("files_drop")}
 				</p>
 				<p class="mt-1 text-xs text-slate-500">
-					Max {String(maxFilesPerNote)} files, {formatSize(maxFileSize)} each
+					{t("files_limit", { count: maxFilesPerNote, size: formatSize(maxFileSize) })}
 				</p>
 			</div>
 
 			{#if files.length > 0}
-				<ul class="mt-3 space-y-2" aria-label="Attached files">
+				<ul class="mt-3 space-y-2" aria-label={t("attached_files")}>
 					{#each files as file, i}
 						<li
 							class="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800 px-3 py-2"
@@ -345,7 +345,7 @@ function reset() {
 								type="button"
 								onclick={() => removeFile(i)}
 								class="ml-2 text-slate-500 hover:text-red-400"
-								aria-label="Remove {file.name}"
+								aria-label={t("remove_file", { name: file.name })}
 							>
 								&times;
 							</button>

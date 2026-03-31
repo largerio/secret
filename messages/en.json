@@ -36,6 +36,13 @@
 	"not_found_title": "Note not found",
 	"not_found_description": "This note may have expired, been deleted, or never existed.",
 	"error_wrong_password": "Wrong password or invalid key",
+	"error_empty_content": "Please enter some text or upload files.",
+	"error_text_too_long": "Text is too long. Maximum {max}KB.",
+	"error_generic": "An error occurred",
+	"error_clipboard": "Failed to copy to clipboard",
+	"error_check_note": "Failed to check note",
+	"error_decryption": "Decryption failed",
+	"error_title": "Error",
 	"new_note": "Create a new note",
 	"footer_powered": "Powered by",
 	"footer_tagline": "Zero-knowledge encrypted sharing",
@@ -53,5 +60,12 @@
 	"note_deleted": "Note deleted successfully",
 	"delete_button": "Delete this note",
 	"delete_confirm": "Are you sure? This cannot be undone.",
-	"deleting": "Deleting..."
+	"deleting": "Deleting...",
+	"qr_alt": "QR code for the share link",
+	"char_count": "{count} / {max} characters",
+	"files_limit": "Max {count} files, {size} each",
+	"attached_files": "Attached files",
+	"remove_file": "Remove {name}",
+	"skip_to_content": "Skip to content",
+	"loading": "Loading"
 }

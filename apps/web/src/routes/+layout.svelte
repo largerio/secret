@@ -30,7 +30,7 @@ onMount(async () => {
 		href="#main-content"
 		class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-primary focus:px-4 focus:py-2 focus:text-white"
 	>
-		Skip to content
+		{t("skip_to_content")}
 	</a>
 
 	<header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">

@@ -36,6 +36,13 @@
 	"not_found_title": "Note introuvable",
 	"not_found_description": "Cette note a peut-être expiré, été supprimée, ou n'a jamais existé.",
 	"error_wrong_password": "Mot de passe incorrect ou clé invalide",
+	"error_empty_content": "Veuillez entrer du texte ou ajouter des fichiers.",
+	"error_text_too_long": "Le texte est trop long. Maximum {max} Ko.",
+	"error_generic": "Une erreur est survenue",
+	"error_clipboard": "Échec de la copie dans le presse-papiers",
+	"error_check_note": "Impossible de vérifier la note",
+	"error_decryption": "Échec du déchiffrement",
+	"error_title": "Erreur",
 	"new_note": "Créer une nouvelle note",
 	"footer_powered": "Propulsé par",
 	"footer_tagline": "Partage chiffré zero-knowledge",
@@ -53,5 +60,12 @@
 	"note_deleted": "Note supprimée avec succès",
 	"delete_button": "Supprimer cette note",
 	"delete_confirm": "Êtes-vous sûr ? Cette action est irréversible.",
-	"deleting": "Suppression..."
+	"deleting": "Suppression...",
+	"qr_alt": "QR code du lien de partage",
+	"char_count": "{count} / {max} caractères",
+	"files_limit": "Max {count} fichiers, {size} chacun",
+	"attached_files": "Fichiers joints",
+	"remove_file": "Supprimer {name}",
+	"skip_to_content": "Aller au contenu",
+	"loading": "Chargement"
 }
