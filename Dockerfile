@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:24-alpine AS builder
+FROM node:25-alpine AS builder
 
 RUN corepack enable pnpm
 
@@ -22,7 +22,7 @@ RUN pnpm --filter @secret/web build
 RUN pnpm --filter @secret/api build
 
 # Stage 2: Production
-FROM node:24-alpine AS production
+FROM node:25-alpine AS production
 
 RUN adduser -D -u 1001 appuser
 
