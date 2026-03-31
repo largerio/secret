@@ -124,6 +124,23 @@ describe("POST /api/notes", () => {
 		expect(res.status).toBe(201);
 	});
 
+	it("stores and returns salt for password-protected notes", async () => {
+		const testSalt = Buffer.from("test-salt-data-16bytes").toString("base64");
+		const createRes = await app.request("/api/notes", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(validBody({ hasPassword: true, salt: testSalt })),
+		});
+		expect(createRes.status).toBe(201);
+		const { id } = await createRes.json();
+
+		const readRes = await app.request(`/api/notes/${id}`);
+		expect(readRes.status).toBe(200);
+		const note = await readRes.json();
+		expect(note.hasPassword).toBe(true);
+		expect(note.salt).toBe(testSalt);
+	});
+
 	it("creates a note with burn after read", async () => {
 		const res = await app.request("/api/notes", {
 			method: "POST",

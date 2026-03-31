@@ -26,7 +26,7 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
 		}
 
-		const { encryptedData, clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount } = parsed.data;
+		const { encryptedData, clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } = parsed.data;
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
@@ -49,6 +49,7 @@ export function createNotesRoutes() {
 					serverNonce: serverIv.toString("base64"),
 					clientNonce,
 					hasPassword,
+					salt: salt ?? null,
 					burnAfterRead,
 					fileCount,
 					filePath,
@@ -65,6 +66,7 @@ export function createNotesRoutes() {
 					serverNonce: serverIv.toString("base64"),
 					clientNonce,
 					hasPassword,
+					salt: salt ?? null,
 					burnAfterRead,
 					fileCount,
 					filePath: null,
@@ -116,25 +118,44 @@ export function createNotesRoutes() {
 		}
 
 		const db = c.get("db");
-		const note = db.select().from(notes).where(eq(notes.id, id.data)).get();
-
-		if (note === undefined) {
-			return c.json({ error: "Note not found" }, 404);
-		}
-
-		if (note.expiresAt < new Date()) {
-			db.delete(notes).where(eq(notes.id, id.data)).run();
-			if (note.filePath) deleteFile(note.filePath);
-			return c.json({ error: "Note has expired" }, 404);
-		}
-
-		if (note.maxReads !== null && note.readCount >= note.maxReads) {
-			db.delete(notes).where(eq(notes.id, id.data)).run();
-			if (note.filePath) deleteFile(note.filePath);
-			return c.json({ error: "Note has reached maximum reads" }, 404);
-		}
-
 		const serverKey = c.get("serverKey");
+
+		const result = db.transaction((tx) => {
+			const note = tx.select().from(notes).where(eq(notes.id, id.data)).get();
+
+			if (note === undefined) {
+				return { error: "Note not found" as const, status: 404 as const };
+			}
+
+			if (note.expiresAt < new Date()) {
+				tx.delete(notes).where(eq(notes.id, id.data)).run();
+				if (note.filePath) deleteFile(note.filePath);
+				return { error: "Note has expired" as const, status: 404 as const };
+			}
+
+			if (note.maxReads !== null && note.readCount >= note.maxReads) {
+				tx.delete(notes).where(eq(notes.id, id.data)).run();
+				if (note.filePath) deleteFile(note.filePath);
+				return { error: "Note has reached maximum reads" as const, status: 404 as const };
+			}
+
+			if (note.burnAfterRead) {
+				tx.delete(notes).where(eq(notes.id, id.data)).run();
+			} else {
+				tx.update(notes)
+					.set({ readCount: note.readCount + 1 })
+					.where(eq(notes.id, id.data))
+					.run();
+			}
+
+			return { note };
+		});
+
+		if ("error" in result) {
+			return c.json({ error: result.error }, result.status);
+		}
+
+		const { note } = result;
 		const serverIv = Buffer.from(note.serverNonce, "base64");
 
 		let clientBlob: Buffer;
@@ -145,20 +166,15 @@ export function createNotesRoutes() {
 			clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 		}
 
-		if (note.burnAfterRead) {
-			db.delete(notes).where(eq(notes.id, id.data)).run();
-			if (note.filePath) deleteFile(note.filePath);
-		} else {
-			db.update(notes)
-				.set({ readCount: note.readCount + 1 })
-				.where(eq(notes.id, id.data))
-				.run();
+		if (note.burnAfterRead && note.filePath) {
+			deleteFile(note.filePath);
 		}
 
 		return c.json({
 			encryptedData: clientBlob.toString("base64"),
 			clientNonce: note.clientNonce,
 			hasPassword: note.hasPassword,
+			salt: note.salt ?? undefined,
 			fileCount: note.fileCount,
 			createdAt: note.createdAt.toISOString(),
 			expiresAt: note.expiresAt.toISOString(),

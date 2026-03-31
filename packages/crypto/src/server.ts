@@ -12,6 +12,9 @@ export function serverEncrypt(data: Uint8Array, serverKey: Buffer): { encrypted:
 }
 
 export function serverDecrypt(encrypted: Buffer, iv: Buffer, serverKey: Buffer): Buffer {
+	if (encrypted.length < AUTH_TAG_LENGTH) {
+		throw new Error("Invalid encrypted data: too short for auth tag");
+	}
 	const authTag = encrypted.subarray(encrypted.length - AUTH_TAG_LENGTH);
 	const ciphertext = encrypted.subarray(0, encrypted.length - AUTH_TAG_LENGTH);
 	const decipher = createDecipheriv(ALGORITHM, serverKey, iv);

@@ -5,6 +5,7 @@
 	import { checkNoteExists, readNote } from "$lib/utils/api";
 	import { decryptNote } from "$lib/utils/crypto-client";
 	import { marked } from "marked";
+	import DOMPurify from "isomorphic-dompurify";
 
 	type NoteStatus =
 		| { state: "loading" }
@@ -63,6 +64,7 @@
 				note.clientNonce,
 				keyFragment,
 				password || undefined,
+				note.salt,
 			);
 			status = { state: "decrypted", payload };
 		} catch (e) {
@@ -72,7 +74,8 @@
 	}
 
 	function renderMarkdown(text: string): string {
-		return marked.parse(text, { async: false }) as string;
+		const raw = marked.parse(text, { async: false }) as string;
+		return DOMPurify.sanitize(raw);
 	}
 
 	function downloadFile(name: string, type: string, data: Uint8Array) {
@@ -159,6 +162,7 @@
 						type="password"
 						bind:value={password}
 						placeholder="Enter the password"
+						autocomplete="off"
 						class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 						onkeydown={(e) => { if (e.key === "Enter") handleDecrypt(); }}
 					/>
@@ -226,6 +230,7 @@
 									src={getFilePreviewUrl(file.type, new Uint8Array(file.data as ArrayLike<number>))}
 									class="h-96 w-full"
 									title={file.name}
+									sandbox="allow-same-origin"
 								></iframe>
 							{/if}
 

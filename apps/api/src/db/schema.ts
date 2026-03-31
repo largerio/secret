@@ -6,6 +6,7 @@ export const notes = sqliteTable("notes", {
 	serverNonce: text("server_nonce").notNull(),
 	clientNonce: text("client_nonce").notNull(),
 	hasPassword: integer("has_password", { mode: "boolean" }).notNull().default(false),
+	salt: text("salt"),
 	burnAfterRead: integer("burn_after_read", { mode: "boolean" }).notNull().default(false),
 	fileCount: integer("file_count").notNull().default(0),
 	filePath: text("file_path"),

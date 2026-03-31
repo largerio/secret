@@ -46,6 +46,12 @@ describe("serverEncrypt / serverDecrypt", () => {
 		const decrypted = serverDecrypt(encrypted, iv, serverKey);
 		expect(new Uint8Array(decrypted)).toEqual(data);
 	});
+
+	it("throws on data too short for auth tag", () => {
+		const iv = randomBytes(12);
+		const tooShort = Buffer.from([1, 2, 3]);
+		expect(() => serverDecrypt(tooShort, iv, serverKey)).toThrow("too short for auth tag");
+	});
 });
 
 describe("parseServerKey", () => {

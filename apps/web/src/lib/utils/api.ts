@@ -22,6 +22,9 @@ export async function createNote(request: CreateNoteRequest): Promise<CreateNote
 
 export async function checkNoteExists(id: string): Promise<NoteExistsResponse> {
 	const res = await fetch(`${API_BASE}/notes/${id}/exists`);
+	if (!res.ok) {
+		return { exists: false, hasPassword: false, fileCount: 0, expiresAt: "", burnAfterRead: false };
+	}
 	return res.json() as Promise<NoteExistsResponse>;
 }
 
