@@ -97,7 +97,7 @@ jobs:
 
             echo "Waiting for health check..."
             for i in $(seq 1 30); do
-              if docker compose exec -T app wget -q --spider http://localhost:3000/api/health 2>/dev/null; then
+              if docker compose exec -T app curl -fsS http://localhost:3000/api/health; then
                 echo "Health check passed"
                 exit 0
               fi
