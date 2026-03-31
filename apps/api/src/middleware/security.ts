@@ -8,9 +8,11 @@ export function createSecurityHeaders(): MiddlewareHandler {
 			defaultSrc: ["'none'"],
 			scriptSrc: ["'self'"],
 			styleSrc: ["'self'", "'unsafe-inline'"],
-			imgSrc: ["'self'", "data:"],
+			imgSrc: ["'self'", "data:", "blob:"],
 			connectSrc: ["'self'"],
 			fontSrc: ["'self'"],
+			mediaSrc: ["blob:"],
+			frameSrc: ["blob:"],
 			frameAncestors: ["'none'"],
 			baseUri: ["'self'"],
 			formAction: ["'self'"],
@@ -27,7 +29,7 @@ export function createCors(allowedOrigins: ReadonlyArray<string>): MiddlewareHan
 	return cors({
 		origin: [...allowedOrigins],
 		allowMethods: ["GET", "POST", "DELETE"],
-		allowHeaders: ["Content-Type"],
+		allowHeaders: ["Content-Type", "X-Delete-Token"],
 		maxAge: 86400,
 	});
 }

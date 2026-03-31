@@ -1,7 +1,8 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { parseServerKey } from "@secret/crypto";
-import { CLEANUP_INTERVAL_MS } from "@secret/shared";
+import { CLEANUP_INTERVAL_MS, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 import { createDatabase } from "./db/index.js";
 import { createNotesRoutes } from "./routes/notes.js";
 import { createSecurityHeaders, createCors } from "./middleware/security.js";
@@ -24,13 +25,16 @@ if (!SERVER_KEY_ENV) {
 }
 
 const serverKey = parseServerKey(SERVER_KEY_ENV);
-const db = createDatabase(DATABASE_PATH);
+const { db, sqlite } = createDatabase(DATABASE_PATH);
 ensureFilesDir(FILES_PATH);
 
 const app = new Hono();
 
 app.use("*", createSecurityHeaders());
 app.use("*", createCors([APP_URL]));
+
+const maxBodySize = MAX_FILE_SIZE * MAX_FILES_PER_NOTE + 1024 * 1024;
+app.use("/api/notes", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
 app.use("/api/notes", createRateLimit({ windowMs: 60_000, max: 100 }));
 app.use("/api/notes/*", createRateLimit({ windowMs: 60_000, max: 200 }));
 
@@ -49,6 +53,7 @@ const cleanupTimer = startCleanupJob(db, CLEANUP_MS);
 function shutdown() {
 	console.log("[shutdown] Graceful shutdown initiated");
 	clearInterval(cleanupTimer);
+	sqlite.close();
 	process.exit(0);
 }
 

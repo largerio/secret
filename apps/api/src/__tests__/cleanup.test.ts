@@ -24,7 +24,7 @@ beforeEach(() => {
 	}
 	mkdirSync("./data", { recursive: true });
 	mkdirSync(TEST_FILES_PATH, { recursive: true });
-	db = createDatabase(TEST_DB_PATH);
+	db = createDatabase(TEST_DB_PATH).db;
 });
 
 afterAll(() => {
@@ -50,6 +50,7 @@ describe("startCleanupJob", () => {
 				serverNonce: iv.toString("base64"),
 				clientNonce: "test",
 				hasPassword: false,
+				deleteToken: "test-token",
 				burnAfterRead: false,
 				fileCount: 0,
 				filePath: null,
@@ -80,6 +81,7 @@ describe("startCleanupJob", () => {
 				serverNonce: iv.toString("base64"),
 				clientNonce: "test",
 				hasPassword: false,
+				deleteToken: "test-token",
 				burnAfterRead: false,
 				fileCount: 1,
 				filePath,
@@ -106,6 +108,7 @@ describe("startCleanupJob", () => {
 				serverNonce: iv.toString("base64"),
 				clientNonce: "test",
 				hasPassword: false,
+				deleteToken: "test-token",
 				burnAfterRead: false,
 				fileCount: 0,
 				filePath: null,

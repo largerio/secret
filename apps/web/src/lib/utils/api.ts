@@ -36,7 +36,3 @@ export async function readNote(id: string): Promise<ReadNoteResponse> {
 	}
 	return res.json() as Promise<ReadNoteResponse>;
 }
-
-export async function deleteNote(id: string): Promise<void> {
-	await fetch(`${API_BASE}/notes/${id}`, { method: "DELETE" });
-}

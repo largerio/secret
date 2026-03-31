@@ -3,6 +3,7 @@
 	import type { NotePayload, NoteFile } from "@secret/shared";
 	import { encryptNote } from "$lib/utils/crypto-client";
 	import { createNote } from "$lib/utils/api";
+	import { formatSize } from "$lib/utils/format";
 	import { toDataURL } from "qrcode";
 
 	let text = $state("");
@@ -95,9 +96,13 @@
 	}
 
 	async function copyToClipboard() {
-		await navigator.clipboard.writeText(shareUrl);
-		copied = true;
-		setTimeout(() => { copied = false; }, 2000);
+		try {
+			await navigator.clipboard.writeText(shareUrl);
+			copied = true;
+			setTimeout(() => { copied = false; }, 2000);
+		} catch {
+			error = "Failed to copy to clipboard";
+		}
 	}
 
 	function reset() {
@@ -111,11 +116,6 @@
 		error = "";
 	}
 
-	function formatSize(bytes: number): string {
-		if (bytes < 1024) return `${String(bytes)} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	}
 </script>
 
 <svelte:head>

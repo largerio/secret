@@ -9,6 +9,7 @@ export const notes = sqliteTable("notes", {
 	salt: text("salt"),
 	burnAfterRead: integer("burn_after_read", { mode: "boolean" }).notNull().default(false),
 	fileCount: integer("file_count").notNull().default(0),
+	deleteToken: text("delete_token").notNull(),
 	filePath: text("file_path"),
 	expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
 	readCount: integer("read_count").notNull().default(0),

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import { browser } from "$app/environment";
+	import { onMount } from "svelte";
 	import type { NotePayload } from "@secret/shared";
 	import { checkNoteExists, readNote } from "$lib/utils/api";
 	import { decryptNote } from "$lib/utils/crypto-client";
+	import { formatSize } from "$lib/utils/format";
 	import { marked } from "marked";
 	import DOMPurify from "isomorphic-dompurify";
 
@@ -12,18 +13,24 @@
 		| { state: "not_found" }
 		| { state: "ready"; hasPassword: boolean; burnAfterRead: boolean; fileCount: number; expiresAt: string }
 		| { state: "decrypting" }
-		| { state: "decrypted"; payload: NotePayload }
+		| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
 		| { state: "error"; message: string };
 
 	let status = $state<NoteStatus>({ state: "loading" });
 	let password = $state("");
 	let keyFragment = $state("");
 
-	$effect(() => {
-		if (browser) {
-			keyFragment = window.location.hash.slice(1);
-			checkNote();
-		}
+	onMount(() => {
+		keyFragment = window.location.hash.slice(1);
+		checkNote();
+
+		return () => {
+			if (status.state === "decrypted") {
+				for (const url of status.previewUrls) {
+					URL.revokeObjectURL(url);
+				}
+			}
+		};
 	});
 
 	async function checkNote() {
@@ -66,7 +73,20 @@
 				password || undefined,
 				note.salt,
 			);
-			status = { state: "decrypted", payload };
+
+			const previewUrls: string[] = [];
+			if (payload.files) {
+				for (const file of payload.files) {
+					if (isPreviewable(file.type)) {
+						const url = URL.createObjectURL(new Blob([new Uint8Array(file.data as ArrayLike<number>)], { type: file.type }));
+						previewUrls.push(url);
+					} else {
+						previewUrls.push("");
+					}
+				}
+			}
+
+			status = { state: "decrypted", payload, previewUrls };
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Decryption failed";
 			status = { state: "error", message: message.includes("wrong") || message.includes("ciphertext") ? "Wrong password or invalid key" : message };
@@ -88,8 +108,8 @@
 		URL.revokeObjectURL(url);
 	}
 
-	function getFilePreviewUrl(type: string, data: Uint8Array): string {
-		return URL.createObjectURL(new Blob([data], { type }));
+	function isPreviewable(type: string): boolean {
+		return type.startsWith("image/") || type.startsWith("video/") || type.startsWith("audio/") || type === "application/pdf";
 	}
 
 	function isImage(type: string): boolean {
@@ -106,12 +126,6 @@
 
 	function isPdf(type: string): boolean {
 		return type === "application/pdf";
-	}
-
-	function formatSize(bytes: number): string {
-		if (bytes < 1024) return `${String(bytes)} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 </script>
 
@@ -200,34 +214,34 @@
 						{String(status.payload.files.length)} file{status.payload.files.length > 1 ? "s" : ""}
 					</h2>
 
-					{#each status.payload.files as file}
+					{#each status.payload.files as file, i}
 						<div class="rounded-xl border border-slate-700 bg-slate-900 overflow-hidden">
-							{#if isImage(file.type)}
+							{#if isImage(file.type) && status.previewUrls[i]}
 								<img
-									src={getFilePreviewUrl(file.type, new Uint8Array(file.data as ArrayLike<number>))}
+									src={status.previewUrls[i]}
 									alt={file.name}
 									class="max-h-96 w-full object-contain bg-slate-800"
 								/>
-							{:else if isVideo(file.type)}
+							{:else if isVideo(file.type) && status.previewUrls[i]}
 								<video
 									controls
 									class="max-h-96 w-full bg-slate-800"
 									aria-label={file.name}
 								>
-									<source src={getFilePreviewUrl(file.type, new Uint8Array(file.data as ArrayLike<number>))} type={file.type} />
+									<source src={status.previewUrls[i]} type={file.type} />
 									<track kind="captions" />
 								</video>
-							{:else if isAudio(file.type)}
+							{:else if isAudio(file.type) && status.previewUrls[i]}
 								<audio
 									controls
 									class="w-full p-4"
 									aria-label={file.name}
 								>
-									<source src={getFilePreviewUrl(file.type, new Uint8Array(file.data as ArrayLike<number>))} type={file.type} />
+									<source src={status.previewUrls[i]} type={file.type} />
 								</audio>
-							{:else if isPdf(file.type)}
+							{:else if isPdf(file.type) && status.previewUrls[i]}
 								<iframe
-									src={getFilePreviewUrl(file.type, new Uint8Array(file.data as ArrayLike<number>))}
+									src={status.previewUrls[i]}
 									class="h-96 w-full"
 									title={file.name}
 									sandbox="allow-same-origin"
