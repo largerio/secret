@@ -1,6 +1,12 @@
 # Secret
 
-Zero-knowledge encrypted note and file sharing. Data is encrypted in your browser before reaching the server — the server never sees your content.
+[![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-24-green.svg)](https://nodejs.org/)
+
+Self-hosted, zero-knowledge, end-to-end encrypted note and file sharing. Encrypt in the browser, store on the server — the server never sees your content. One Docker container, no accounts, no tracking.
+
+> **GitHub Topics:** `encryption` `zero-knowledge` `secret-sharing` `self-hosted` `end-to-end-encryption` `privacy` `secure-notes` `file-sharing` `svelte` `hono`
 
 ## Features
 
@@ -126,7 +132,7 @@ Set `client_max_body_size` to match `MAX_FILE_SIZE`.
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 154 tests
+pnpm test         # 169 tests, 100% backend coverage
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
@@ -160,3 +166,7 @@ messages/         i18n (en.json, fr.json)
 ## License
 
 [MIT](LICENSE)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
