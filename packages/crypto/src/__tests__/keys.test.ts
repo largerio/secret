@@ -10,6 +10,7 @@ import {
 	keyFromBase64Url,
 	keyToBase64Url,
 	toBase64,
+	zeroMemory,
 } from "../keys.js";
 
 beforeAll(async () => {
@@ -122,5 +123,18 @@ describe("toBase64 / fromBase64", () => {
 		const data = new Uint8Array([42]);
 		const encoded = toBase64(data);
 		expect(encoded.length).toBeGreaterThan(0);
+	});
+});
+
+describe("zeroMemory", () => {
+	it("zeroes out a buffer", () => {
+		const buf = new Uint8Array([1, 2, 3, 4, 5]);
+		zeroMemory(buf);
+		expect(buf).toEqual(new Uint8Array([0, 0, 0, 0, 0]));
+	});
+
+	it("handles empty buffer", () => {
+		const buf = new Uint8Array(0);
+		expect(() => zeroMemory(buf)).not.toThrow();
 	});
 });

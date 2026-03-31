@@ -1,8 +1,10 @@
+import { encode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
+import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it } from "vitest";
 import { decryptPayload, decryptRaw } from "../decrypt.js";
 import { encryptPayload, encryptRaw } from "../encrypt.js";
-import { generateKey, initSodium } from "../keys.js";
+import { generateKey, generateNonce, initSodium } from "../keys.js";
 
 beforeAll(async () => {
 	await initSodium();
@@ -63,6 +65,55 @@ describe("encryptPayload / decryptPayload", () => {
 		const payload: NotePayload = { text: "secret" };
 		const { ciphertext, nonce } = encryptPayload(payload, key1);
 		expect(() => decryptPayload(ciphertext, nonce, key2)).toThrow();
+	});
+
+	it("throws when decoded payload has invalid structure", () => {
+		const key = generateKey();
+		// Encode a value that has text as a number (invalid for NotePayload)
+		const invalidPayload = encode({ text: 12345 });
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws when decoded payload has files as non-array", () => {
+		const key = generateKey();
+		const invalidPayload = encode({ files: "not-an-array" });
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws when decoded value is not an object", () => {
+		const key = generateKey();
+		const invalidPayload = encode("just a string");
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
 	});
 
 	it("produces different ciphertexts for the same plaintext", () => {

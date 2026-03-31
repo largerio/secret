@@ -209,6 +209,17 @@ describe("POST /api/notes", () => {
 });
 
 describe("POST /api/notes/upload (multipart)", () => {
+	it("rejects non-multipart body", async () => {
+		const res = await app.request("/api/notes/upload", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ invalid: true }),
+		});
+		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json.error).toBe("Invalid multipart body");
+	});
+
 	it("creates a note via multipart upload", async () => {
 		const form = multipartForm(validMultipartMeta());
 		const res = await app.request("/api/notes/upload", {
@@ -349,6 +360,13 @@ describe("GET /api/notes/:id/exists", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("returns 400 for too-short note ID on exists", async () => {
+		const res = await app.request("/api/notes/short/exists");
+		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json.error).toBe("Invalid note ID");
+	});
+
 	it("returns correct metadata for password-protected note with files", async () => {
 		const testSalt = Buffer.from("test-salt-16bytes").toString("base64");
 		const { id } = await createTestNote({
@@ -479,6 +497,23 @@ describe("GET /api/notes/:id", () => {
 		const res = await app.request(`/api/notes/${id}`);
 		const json = await res.json();
 		expect(json.salt).toBeUndefined();
+	});
+
+	it("returns 500 when server decryption fails due to corrupted data", async () => {
+		const { id } = await createTestNote();
+
+		// Corrupt the encrypted data directly in the database
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes)
+			.set({ encryptedData: Buffer.from("corrupted-data") })
+			.where(eq(notes.id, id))
+			.run();
+
+		const res = await app.request(`/api/notes/${id}`);
+		expect(res.status).toBe(500);
+		const json = await res.json();
+		expect(json.error).toBe("Failed to decrypt note");
 	});
 });
 
