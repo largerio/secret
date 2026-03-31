@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNoteSchema, noteIdSchema } from "../validation.js";
-import { MAX_EXPIRY_SECONDS, MIN_EXPIRY_SECONDS } from "../constants.js";
+import { createNoteSchema, createNoteMultipartSchema, noteIdSchema } from "../validation.js";
+import { MAX_EXPIRY_SECONDS, MIN_EXPIRY_SECONDS, NOTE_ID_LENGTH } from "../constants.js";
 
 describe("createNoteSchema", () => {
 	const validRequest = {
@@ -88,6 +88,96 @@ describe("createNoteSchema", () => {
 		});
 		expect(result.success).toBe(true);
 	});
+
+	it("rejects hasPassword without salt", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true });
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts hasPassword with salt", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "somesalt" });
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects clientNonce exceeding max length", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(101) });
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects salt exceeding max length", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "a".repeat(101) });
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts salt at max length", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, hasPassword: true, salt: "a".repeat(100) });
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects maxReads above 1000", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, maxReads: 1001 });
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts maxReads at 1000", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, maxReads: 1000 });
+		expect(result.success).toBe(true);
+	});
+});
+
+describe("createNoteMultipartSchema", () => {
+	const validMeta = {
+		clientNonce: "base64nonce==",
+		hasPassword: false,
+		burnAfterRead: false,
+		expiresIn: 3600,
+		fileCount: 1,
+	};
+
+	it("accepts valid metadata", () => {
+		const result = createNoteMultipartSchema.safeParse(validMeta);
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects fileCount of 0", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, fileCount: 0 });
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects missing clientNonce", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, clientNonce: "" });
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects hasPassword without salt", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, hasPassword: true });
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts hasPassword with salt", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, hasPassword: true, salt: "somesalt" });
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects expiresIn below minimum", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, expiresIn: 1 });
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects expiresIn above maximum", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, expiresIn: MAX_EXPIRY_SECONDS + 1 });
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts optional maxReads", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, maxReads: 5 });
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects clientNonce exceeding max length", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, clientNonce: "a".repeat(101) });
+		expect(result.success).toBe(false);
+	});
 });
 
 describe("noteIdSchema", () => {
@@ -99,5 +189,25 @@ describe("noteIdSchema", () => {
 	it("rejects an empty string", () => {
 		const result = noteIdSchema.safeParse("");
 		expect(result.success).toBe(false);
+	});
+
+	it("rejects an ID that is too short", () => {
+		const result = noteIdSchema.safeParse("abc");
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects an ID that is too long", () => {
+		const result = noteIdSchema.safeParse("a".repeat(NOTE_ID_LENGTH + 1));
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects special characters", () => {
+		const result = noteIdSchema.safeParse("abc!@#$%^&*()");
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts URL-safe characters (hyphen, underscore)", () => {
+		const result = noteIdSchema.safeParse("abc_def-gh12");
+		expect(result.success).toBe(true);
 	});
 });
