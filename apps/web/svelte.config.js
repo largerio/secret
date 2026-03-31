@@ -10,7 +10,7 @@ const config = {
 			mode: "auto",
 			directives: {
 				"default-src": ["none"],
-				"script-src": ["self"],
+				"script-src": ["self", "wasm-unsafe-eval"],
 				"style-src": ["self", "unsafe-inline", "https://cdnjs.cloudflare.com"],
 				"img-src": ["self", "data:", "blob:"],
 				"connect-src": ["self"],
