@@ -18,6 +18,12 @@ const SERVER_KEY_ENV = process.env["SERVER_ENCRYPTION_KEY"];
 const APP_URL = process.env["APP_URL"] ?? `http://localhost:${String(PORT)}`;
 const CLEANUP_MS = Number(process.env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
 
+const APP_NAME = process.env["APP_NAME"] ?? "Secret";
+const APP_DESCRIPTION = process.env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing";
+const APP_PRIMARY_COLOR = process.env["APP_PRIMARY_COLOR"] ?? "#6366f1";
+const APP_FOOTER_TEXT = process.env["APP_FOOTER_TEXT"] ?? "";
+const APP_OG_IMAGE_URL = process.env["APP_OG_IMAGE_URL"] ?? "";
+
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
 	console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
@@ -46,6 +52,13 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
+app.get("/api/config", (c) => c.json({
+	appName: APP_NAME,
+	appDescription: APP_DESCRIPTION,
+	primaryColor: APP_PRIMARY_COLOR,
+	footerText: APP_FOOTER_TEXT,
+	ogImageUrl: APP_OG_IMAGE_URL,
+}));
 app.route("/api/notes", createNotesRoutes());
 
 const cleanupTimer = startCleanupJob(db, CLEANUP_MS);
