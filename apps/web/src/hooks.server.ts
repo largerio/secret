@@ -12,10 +12,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 			duplex: "half",
 		} as RequestInit);
 
+		const headers = new Headers(res.headers);
+		// Node.js fetch auto-decompresses responses, so the body is plain text
+		// but the original Content-Encoding/Content-Length headers are stale.
+		// Forwarding them causes browsers to fail decoding the response.
+		headers.delete("content-encoding");
+		headers.delete("content-length");
+
 		return new Response(res.body, {
 			status: res.status,
 			statusText: res.statusText,
-			headers: res.headers,
+			headers,
 		});
 	}
 
