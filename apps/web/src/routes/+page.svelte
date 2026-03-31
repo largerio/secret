@@ -183,10 +183,34 @@ function reset() {
 </script>
 
 <svelte:head>
-	<title>{config.appName} — {t("create_title")}</title>
-	<meta name="description" content={t("create_description")} />
-	<meta property="og:title" content="{config.appName} — {t("create_title")}" />
-	<meta property="og:description" content={t("app_description")} />
+	<title>{t("seo_title")}</title>
+	<meta name="description" content={t("seo_description")} />
+	<meta name="keywords" content={t("seo_keywords")} />
+	<link rel="canonical" href={config.appUrl || "https://secret.larger.io"} />
+	<meta property="og:title" content={t("seo_title")} />
+	<meta property="og:description" content={t("seo_description")} />
+	<meta property="og:url" content={config.appUrl || "https://secret.larger.io"} />
+	<meta name="twitter:title" content={t("seo_title")} />
+	<meta name="twitter:description" content={t("seo_description")} />
+	{@html `<script type="application/ld+json">${JSON.stringify({
+		"@context": "https://schema.org",
+		"@type": "WebApplication",
+		name: config.appName,
+		url: config.appUrl || "https://secret.larger.io",
+		description: t("seo_description"),
+		applicationCategory: "SecurityApplication",
+		operatingSystem: "Any",
+		offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+		featureList: [
+			"End-to-end encryption",
+			"Zero-knowledge architecture",
+			"Burn after reading",
+			"Password protection",
+			"File sharing",
+			"QR code sharing",
+			"Self-hostable",
+		],
+	})}</script>`}
 </svelte:head>
 
 {#if shareUrl}

@@ -163,6 +163,8 @@ function isPdf(type: string): boolean {
 
 <svelte:head>
 	<title>{getConfig().appName} — {t("view_title")}</title>
+	<meta name="robots" content="noindex, nofollow" />
+	<meta name="description" content={t("view_description")} />
 	<meta property="og:title" content="{getConfig().appName} — {t("view_title")}" />
 	<meta property="og:description" content={t("view_description")} />
 </svelte:head>

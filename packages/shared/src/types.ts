@@ -50,6 +50,7 @@ export interface ReadNoteResponse {
 export interface ServerConfig {
 	readonly appName: string;
 	readonly appDescription: string;
+	readonly appUrl: string;
 	readonly primaryColor: string;
 	readonly footerText: string;
 	readonly ogImageUrl: string;

@@ -81,5 +81,8 @@
 	"password_copied": "Copié !",
 	"md_write": "Écrire",
 	"md_preview": "Aperçu",
-	"md_preview_empty": "Rien à prévisualiser"
+	"md_preview_empty": "Rien à prévisualiser",
+	"seo_title": "Secret — Partage sécurisé de notes et fichiers chiffrés zero-knowledge",
+	"seo_description": "Partagez mots de passe, notes et fichiers en toute sécurité avec un chiffrement de bout en bout. Vos données sont chiffrées dans le navigateur — le serveur ne voit jamais votre contenu. Gratuit, open-source, sans compte requis.",
+	"seo_keywords": "notes chiffrées, partage de fichiers sécurisé, chiffrement zero-knowledge, partage de mots de passe, destruction après lecture, chiffrement de bout en bout, auto-hébergé, vie privée, partage de secrets"
 }
