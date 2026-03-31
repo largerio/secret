@@ -25,7 +25,7 @@ pnpm typecheck        # TypeScript strict check (all packages)
 
 Monorepo with pnpm workspaces:
 
-- **`apps/api`** — Hono HTTP server (Node.js 22, TypeScript)
+- **`apps/api`** — Hono HTTP server (Node.js 24, TypeScript)
   - Routes: `src/routes/notes.ts` (CRUD + multipart upload)
   - Database: SQLite via better-sqlite3 + Drizzle ORM (`src/db/`)
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
@@ -39,7 +39,7 @@ Monorepo with pnpm workspaces:
   - Crypto client: `src/lib/utils/crypto-client.ts`
   - API client: `src/lib/utils/api.ts`
   - i18n: `src/lib/i18n/` (imports from `messages/en.json`, `messages/fr.json`)
-  - Runtime config: `src/lib/config.ts` (fetches `/api/config`)
+  - Runtime config: `src/lib/config.svelte.ts` (fetches `/api/config`)
 
 - **`packages/crypto`** — Encryption library
   - Client: XChaCha20-Poly1305 via libsodium-wrappers-sumo
@@ -70,7 +70,7 @@ Monorepo with pnpm workspaces:
 
 ## Environment
 
-- Node.js >= 22
+- Node.js >= 24
 - pnpm (workspace monorepo)
 - ES modules throughout
 - SQLite data in `./data/` (gitignored)

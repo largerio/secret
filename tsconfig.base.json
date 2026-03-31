@@ -9,7 +9,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
-		"target": "ES2024",
+		"target": "ES2025",
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		"resolveJsonModule": true,
