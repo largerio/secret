@@ -114,8 +114,7 @@ export async function readNoteWithProgress(
 export async function deleteNote(id: string, deleteToken: string): Promise<void> {
 	const res = await fetch(`${API_BASE}/notes/${id}`, {
 		method: "DELETE",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ deleteToken }),
+		headers: { "X-Delete-Token": deleteToken },
 	});
 	if (!res.ok) {
 		const error = await res.json().catch(() => ({ error: "Request failed" }));

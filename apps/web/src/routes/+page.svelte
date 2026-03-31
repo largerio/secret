@@ -5,7 +5,7 @@ import { toDataURL } from "qrcode";
 import ProgressBar from "$lib/components/ProgressBar.svelte";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
-import { createNote, createNoteWithProgress } from "$lib/utils/api";
+import { createNote, createNoteWithProgress, deleteNote } from "$lib/utils/api";
 import { encryptNote } from "$lib/utils/crypto-client";
 import { formatSize } from "$lib/utils/format";
 
@@ -18,10 +18,12 @@ let maxReads = $state("");
 let isSubmitting = $state(false);
 let error = $state("");
 let shareUrl = $state("");
-let deleteUrl = $state("");
+let noteId = $state("");
+let deleteToken = $state("");
 let qrCodeUrl = $state("");
 let copied = $state(false);
-let deleteCopied = $state(false);
+let isDeleting = $state(false);
+let isDeleted = $state(false);
 let isDragging = $state(false);
 let uploadProgress = $state<number | null>(null);
 
@@ -101,7 +103,8 @@ async function handleSubmit() {
 		const baseUrl = window.location.origin;
 		const url = `${baseUrl}/note/${response.id}#${encrypted.keyFragment}`;
 		shareUrl = url;
-		deleteUrl = response.deleteToken;
+		noteId = response.id;
+		deleteToken = response.deleteToken;
 		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
 	} catch (e) {
 		error = e instanceof Error ? e.message : t("error_generic");
@@ -149,15 +152,17 @@ async function copyToClipboard() {
 	}
 }
 
-async function copyDeleteToken() {
+async function handleDelete() {
+	if (!confirm(t("delete_confirm"))) return;
+
+	isDeleting = true;
 	try {
-		await navigator.clipboard.writeText(deleteUrl);
-		deleteCopied = true;
-		setTimeout(() => {
-			deleteCopied = false;
-		}, 2000);
-	} catch {
-		error = t("error_clipboard");
+		await deleteNote(noteId, deleteToken);
+		isDeleted = true;
+	} catch (e) {
+		error = e instanceof Error ? e.message : t("error_generic");
+	} finally {
+		isDeleting = false;
 	}
 }
 
@@ -169,9 +174,11 @@ function reset() {
 	expiresIn = 86400;
 	maxReads = "";
 	shareUrl = "";
-	deleteUrl = "";
+	noteId = "";
+	deleteToken = "";
 	qrCodeUrl = "";
 	error = "";
+	isDeleted = false;
 }
 </script>
 
@@ -216,28 +223,18 @@ function reset() {
 					</p>
 				{/if}
 
-				{#if deleteUrl}
-					<div>
-						<label for="delete-token" class="mb-1 block text-sm text-slate-400"
-							>{t("delete_label")}</label
-						>
-						<div class="flex gap-2">
-							<input
-								id="delete-token"
-								type="text"
-								readonly
-								value={deleteUrl}
-								class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-mono text-slate-400"
-							/>
-							<button
-								onclick={copyDeleteToken}
-								class="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-700 transition-colors"
-							>
-								{deleteCopied ? t("delete_copied") : t("copy_button")}
-							</button>
-						</div>
-						<p class="mt-1 text-xs text-slate-500">{t("delete_warning")}</p>
-					</div>
+				{#if deleteToken && !isDeleted}
+					<button
+						onclick={handleDelete}
+						disabled={isDeleting}
+						class="w-full rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2.5 text-sm font-medium text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
+					>
+						{isDeleting ? "..." : t("delete_button")}
+					</button>
+				{/if}
+
+				{#if isDeleted}
+					<p class="text-sm text-green-400" role="status">{t("note_deleted")}</p>
 				{/if}
 
 				{#if qrCodeUrl}
