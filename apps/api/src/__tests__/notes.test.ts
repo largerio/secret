@@ -5,18 +5,27 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { createNotesRoutes } from "../routes/notes.js";
+import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+
+interface AppEnv {
+	Variables: {
+		db: AppDatabase;
+		serverKey: Buffer;
+		storage: StorageBackend;
+	};
+}
 
 const TEST_DB_PATH = "./data/test.db";
 const TEST_FILES_PATH = "./data/test-files";
 const TEST_SERVER_KEY = randomBytes(32);
 
 let db: AppDatabase;
-let app: Hono;
+let app: Hono<AppEnv>;
 
 function createApp(database: AppDatabase) {
 	const storage = new LocalStorage(TEST_FILES_PATH);
-	const hono = new Hono();
+	const hono = new Hono<AppEnv>();
 	hono.use("*", async (c, next) => {
 		c.set("db", database);
 		c.set("serverKey", TEST_SERVER_KEY);
@@ -50,11 +59,11 @@ async function createTestNote(body: Record<string, unknown> = {}) {
 
 function multipartForm(
 	metadata: Record<string, unknown>,
-	data: Buffer = Buffer.from("test-encrypted-data"),
+	data: Uint8Array = Buffer.from("test-encrypted-data"),
 ): FormData {
 	const form = new FormData();
 	form.append("metadata", JSON.stringify(metadata));
-	form.append("data", new Blob([data], { type: "application/octet-stream" }));
+	form.append("data", new Blob([data] as BlobPart[], { type: "application/octet-stream" }));
 	return form;
 }
 
@@ -252,7 +261,7 @@ describe("POST /api/notes/upload (multipart)", () => {
 
 	it("rejects missing metadata part", async () => {
 		const form = new FormData();
-		form.append("data", new Blob([Buffer.from("test")]));
+		form.append("data", new Blob([Buffer.from("test")] as BlobPart[]));
 		const res = await app.request("/api/notes/upload", {
 			method: "POST",
 			body: form,
@@ -273,7 +282,7 @@ describe("POST /api/notes/upload (multipart)", () => {
 	it("rejects invalid metadata JSON", async () => {
 		const form = new FormData();
 		form.append("metadata", "not-json{{{");
-		form.append("data", new Blob([Buffer.from("test")]));
+		form.append("data", new Blob([Buffer.from("test")] as BlobPart[]));
 		const res = await app.request("/api/notes/upload", {
 			method: "POST",
 			body: form,

@@ -12,30 +12,31 @@ import { createNotesRoutes } from "./routes/notes.js";
 import type { StorageBackend, StorageType } from "./storage/index.js";
 import { createStorageBackend } from "./storage/index.js";
 
-const PORT = Number(process.env.PORT ?? "3001");
-const HOST = process.env.HOST ?? "0.0.0.0";
-const DATABASE_PATH = process.env.DATABASE_PATH ?? "./data/secret.db";
-const FILES_PATH = process.env.FILES_PATH ?? "./data/files";
-const SERVER_KEY_ENV = process.env.SERVER_ENCRYPTION_KEY;
-const APP_URL = process.env.APP_URL ?? `http://localhost:${String(PORT)}`;
-const CLEANUP_MS = Number(process.env.CLEANUP_INTERVAL_MS ?? String(CLEANUP_INTERVAL_MS));
+const env = process.env;
+const PORT = Number(env["PORT"] ?? "3001");
+const HOST = env["HOST"] ?? "0.0.0.0";
+const DATABASE_PATH = env["DATABASE_PATH"] ?? "./data/secret.db";
+const FILES_PATH = env["FILES_PATH"] ?? "./data/files";
+const SERVER_KEY_ENV = env["SERVER_ENCRYPTION_KEY"];
+const APP_URL = env["APP_URL"] ?? `http://localhost:${String(PORT)}`;
+const CLEANUP_MS = Number(env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
 
-const APP_NAME = process.env.APP_NAME ?? "Secret";
-const APP_DESCRIPTION = process.env.APP_DESCRIPTION ?? "Zero-knowledge encrypted sharing";
-const APP_PRIMARY_COLOR = process.env.APP_PRIMARY_COLOR ?? "#6366f1";
-const APP_FOOTER_TEXT = process.env.APP_FOOTER_TEXT ?? "";
-const APP_OG_IMAGE_URL = process.env.APP_OG_IMAGE_URL ?? "";
+const APP_NAME = env["APP_NAME"] ?? "Secret";
+const APP_DESCRIPTION = env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing";
+const APP_PRIMARY_COLOR = env["APP_PRIMARY_COLOR"] ?? "#6366f1";
+const APP_FOOTER_TEXT = env["APP_FOOTER_TEXT"] ?? "";
+const APP_OG_IMAGE_URL = env["APP_OG_IMAGE_URL"] ?? "";
 
-const STORAGE_BACKEND = (process.env.STORAGE_BACKEND ?? "local") as StorageType;
-const S3_BUCKET = process.env.S3_BUCKET ?? "";
-const S3_REGION = process.env.S3_REGION ?? "us-east-1";
-const S3_ENDPOINT = process.env.S3_ENDPOINT ?? "";
-const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID ?? "";
-const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY ?? "";
-const S3_FORCE_PATH_STYLE = process.env.S3_FORCE_PATH_STYLE === "true";
+const STORAGE_BACKEND = (env["STORAGE_BACKEND"] ?? "local") as StorageType;
+const S3_BUCKET = env["S3_BUCKET"] ?? "";
+const S3_REGION = env["S3_REGION"] ?? "us-east-1";
+const S3_ENDPOINT = env["S3_ENDPOINT"];
+const S3_ACCESS_KEY_ID = env["S3_ACCESS_KEY_ID"] ?? "";
+const S3_SECRET_ACCESS_KEY = env["S3_SECRET_ACCESS_KEY"] ?? "";
+const S3_FORCE_PATH_STYLE = env["S3_FORCE_PATH_STYLE"] === "true";
 
-const CONFIGURED_MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE ?? String(MAX_FILE_SIZE));
-const CONFIGURED_MAX_FILES = Number(process.env.MAX_FILES_PER_NOTE ?? String(MAX_FILES_PER_NOTE));
+const CONFIGURED_MAX_FILE_SIZE = Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
+const CONFIGURED_MAX_FILES = Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
 
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
@@ -70,7 +71,7 @@ const storage = createStorageBackend(
 				s3: {
 					bucket: S3_BUCKET,
 					region: S3_REGION,
-					endpoint: S3_ENDPOINT || undefined,
+					...(S3_ENDPOINT ? { endpoint: S3_ENDPOINT } : {}),
 					accessKeyId: S3_ACCESS_KEY_ID,
 					secretAccessKey: S3_SECRET_ACCESS_KEY,
 					forcePathStyle: S3_FORCE_PATH_STYLE,

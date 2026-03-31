@@ -3,16 +3,20 @@
 	"version": "1.0.0",
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./client": "./src/client.ts",
+		"./server": "./src/server.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
 		"@msgpack/msgpack": "^3.1.1",
+		"@secret/shared": "workspace:*",
 		"libsodium-wrappers-sumo": "^0.8.2"
 	},
 	"devDependencies": {
-		"@types/libsodium-wrappers-sumo": "^0.8.2"
+		"@types/libsodium-wrappers-sumo": "^0.8.2",
+		"@types/node": "^24.0.0"
 	}
 }

@@ -5,8 +5,8 @@ import sodium from "libsodium-wrappers-sumo";
 function isNotePayload(value: unknown): value is NotePayload {
 	if (typeof value !== "object" || value === null) return false;
 	const obj = value as Record<string, unknown>;
-	if (obj.text !== undefined && typeof obj.text !== "string") return false;
-	if (obj.files !== undefined && !Array.isArray(obj.files)) return false;
+	if (obj["text"] !== undefined && typeof obj["text"] !== "string") return false;
+	if (obj["files"] !== undefined && !Array.isArray(obj["files"])) return false;
 	return true;
 }
 

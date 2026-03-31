@@ -42,7 +42,7 @@ export function createNoteWithProgress(
 				if (xhr.status >= 200 && xhr.status < 300) {
 					resolve(data as unknown as CreateNoteResponse);
 				} else {
-					reject(new Error((data.error as string) ?? `HTTP ${String(xhr.status)}`));
+					reject(new Error((data["error"] as string) ?? `HTTP ${String(xhr.status)}`));
 				}
 			} catch {
 				reject(new Error("Invalid response"));

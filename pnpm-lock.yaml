@@ -124,6 +124,9 @@ importers:
       '@msgpack/msgpack':
         specifier: ^3.1.1
         version: 3.1.3
+      '@secret/shared':
+        specifier: workspace:*
+        version: link:../shared
       libsodium-wrappers-sumo:
         specifier: ^0.8.2
         version: 0.8.2
@@ -131,6 +134,9 @@ importers:
       '@types/libsodium-wrappers-sumo':
         specifier: ^0.8.2
         version: 0.8.2
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.0
 
   packages/shared:
     dependencies:
@@ -1598,6 +1604,9 @@ packages:
     resolution: {integrity: sha512-uFOBpg/r21hExVlh2ty8YpDfSR+Yy3Jn8XS4+SSjitbhTxdYq+pBz/49XRxyUFe8SzqujHf/Wu0/O4d+FUtNfQ==}
     deprecated: This is a stub types definition. libsodium-wrappers-sumo provides its own type definitions, so you do not need this installed.
 
+  '@types/node@24.12.0':
+    resolution: {integrity: sha512-GYDxsZi3ChgmckRT9HPU0WEhKLP08ev/Yfcq2AstjrDASOYCSXeyjDsHg4v5t4jOj7cyDX3vmprafKlWIG9MXQ==}
+
   '@types/node@25.5.0':
     resolution: {integrity: sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw==}
 
@@ -2503,6 +2512,9 @@ packages:
     resolution: {integrity: sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==}
     engines: {node: '>=14.17'}
     hasBin: true
+
+  undici-types@7.16.0:
+    resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
@@ -4189,6 +4201,10 @@ snapshots:
     dependencies:
       libsodium-wrappers-sumo: 0.8.2
 
+  '@types/node@24.12.0':
+    dependencies:
+      undici-types: 7.16.0
+
   '@types/node@25.5.0':
     dependencies:
       undici-types: 7.18.2
@@ -5070,6 +5086,8 @@ snapshots:
       safe-buffer: 5.2.1
 
   typescript@6.0.2: {}
+
+  undici-types@7.16.0: {}
 
   undici-types@7.18.2: {}
 

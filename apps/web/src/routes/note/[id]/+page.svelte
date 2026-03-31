@@ -4,9 +4,12 @@ import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { onMount } from "svelte";
 import { page } from "$app/state";
+import ProgressBar from "$lib/components/ProgressBar.svelte";
+import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
 import { checkNoteExists, readNoteWithProgress } from "$lib/utils/api";
 import { decryptNote } from "$lib/utils/crypto-client";
+import { formatSize } from "$lib/utils/format";
 
 type NoteStatus =
 	| { state: "loading" }
@@ -41,7 +44,7 @@ onMount(() => {
 });
 
 async function checkNote() {
-	const id = page.params.id;
+	const id = page.params["id"];
 	if (!id || !keyFragment) {
 		status = { state: "not_found" };
 		return;
@@ -65,8 +68,8 @@ async function checkNote() {
 	}
 }
 
-async function _handleDecrypt() {
-	const id = page.params.id;
+async function handleDecrypt() {
+	const id = page.params["id"];
 	if (!id) return;
 
 	status = { state: "downloading", progress: 0 };
@@ -117,12 +120,12 @@ async function _handleDecrypt() {
 	}
 }
 
-function _renderMarkdown(text: string): string {
+function renderMarkdown(text: string): string {
 	const raw = marked.parse(text, { async: false }) as string;
 	return DOMPurify.sanitize(raw);
 }
 
-function _downloadFile(name: string, type: string, data: Uint8Array) {
+function downloadFile(name: string, type: string, data: Uint8Array) {
 	const blob = new Blob([data] as BlobPart[], { type });
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
@@ -141,19 +144,19 @@ function isPreviewable(type: string): boolean {
 	);
 }
 
-function _isImage(type: string): boolean {
+function isImage(type: string): boolean {
 	return type.startsWith("image/");
 }
 
-function _isVideo(type: string): boolean {
+function isVideo(type: string): boolean {
 	return type.startsWith("video/");
 }
 
-function _isAudio(type: string): boolean {
+function isAudio(type: string): boolean {
 	return type.startsWith("audio/");
 }
 
-function _isPdf(type: string): boolean {
+function isPdf(type: string): boolean {
 	return type === "application/pdf";
 }
 </script>

@@ -19,7 +19,7 @@ export class S3Storage implements StorageBackend {
 		this.bucket = config.bucket;
 		this.client = new S3Client({
 			region: config.region,
-			endpoint: config.endpoint || undefined,
+			...(config.endpoint ? { endpoint: config.endpoint } : {}),
 			forcePathStyle: config.forcePathStyle,
 			credentials: {
 				accessKeyId: config.accessKeyId,

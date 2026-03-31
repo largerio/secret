@@ -10,7 +10,7 @@ import {
 	keyToBase64Url,
 	toBase64,
 	zeroMemory,
-} from "@secret/crypto";
+} from "@secret/crypto/client";
 import type { NotePayload } from "@secret/shared";
 
 let initialized = false;

@@ -1,0 +1,15 @@
+FROM node:24-alpine
+
+RUN corepack enable pnpm
+
+WORKDIR /app
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/crypto/package.json packages/crypto/
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+
+RUN pnpm install --frozen-lockfile
+
+EXPOSE 5173 3000

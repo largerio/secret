@@ -1,8 +1,12 @@
+import type BetterSqlite3 from "better-sqlite3";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-export function createDatabase(dbPath: string) {
+export function createDatabase(dbPath: string): {
+	db: ReturnType<typeof drizzle>;
+	sqlite: BetterSqlite3.Database;
+} {
 	const sqlite = new Database(dbPath);
 
 	sqlite.pragma("journal_mode = WAL");
