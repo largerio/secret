@@ -9,6 +9,7 @@ import {
 	keyFromBase64Url,
 	toBase64,
 	fromBase64,
+	zeroMemory,
 } from "@secret/crypto";
 import type { NotePayload } from "@secret/shared";
 
@@ -47,12 +48,18 @@ export async function encryptNote(
 
 	const { ciphertext, nonce } = encryptPayload(payload, encryptionKey);
 
-	return {
+	const result: EncryptResult = {
 		encryptedData: toBase64(ciphertext),
 		clientNonce: toBase64(nonce),
 		keyFragment: keyToBase64Url(baseKey),
 		salt: salt ? toBase64(salt) : undefined,
 	};
+
+	if (password) {
+		zeroMemory(encryptionKey);
+	}
+
+	return result;
 }
 
 export async function decryptNote(
@@ -73,5 +80,11 @@ export async function decryptNote(
 		decryptionKey = baseKey;
 	}
 
-	return decryptPayload(fromBase64(encryptedData), fromBase64(clientNonce), decryptionKey);
+	const result = decryptPayload(fromBase64(encryptedData), fromBase64(clientNonce), decryptionKey);
+
+	if (password && salt) {
+		zeroMemory(decryptionKey);
+	}
+
+	return result;
 }

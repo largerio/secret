@@ -4,6 +4,8 @@
 	import { encryptNote } from "$lib/utils/crypto-client";
 	import { createNote } from "$lib/utils/api";
 	import { formatSize } from "$lib/utils/format";
+	import { getConfig } from "$lib/config";
+	import { t } from "$lib/i18n";
 	import { toDataURL } from "qrcode";
 
 	let text = $state("");
@@ -119,20 +121,20 @@
 </script>
 
 <svelte:head>
-	<title>Secret — Secure Note Sharing</title>
-	<meta name="description" content="Share encrypted notes and files securely. Zero-knowledge encryption — the server never sees your data." />
-	<meta property="og:title" content="Secret — Secure Note Sharing" />
-	<meta property="og:description" content="Share encrypted notes and files securely." />
+	<title>{getConfig().appName} — {t("create_title")}</title>
+	<meta name="description" content={t("create_description")} />
+	<meta property="og:title" content="{getConfig().appName} — {t("create_title")}" />
+	<meta property="og:description" content={t("app_description")} />
 </svelte:head>
 
 {#if shareUrl}
 	<div class="space-y-6">
 		<div class="rounded-xl border border-green-800/50 bg-green-900/20 p-6">
-			<h2 class="mb-4 text-lg font-semibold text-green-300">Note created successfully</h2>
+			<h2 class="mb-4 text-lg font-semibold text-green-300">{t("success_title")}</h2>
 
 			<div class="space-y-4">
 				<div>
-					<label for="share-url" class="mb-1 block text-sm text-slate-400">Share this link:</label>
+					<label for="share-url" class="mb-1 block text-sm text-slate-400">{t("share_label")}</label>
 					<div class="flex gap-2">
 						<input
 							id="share-url"
@@ -144,16 +146,16 @@
 						<button
 							onclick={copyToClipboard}
 							class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors"
-							aria-label="Copy link to clipboard"
+							aria-label={t("copy_button")}
 						>
-							{copied ? "Copied!" : "Copy"}
+							{copied ? t("copied") : t("copy_button")}
 						</button>
 					</div>
 				</div>
 
 				{#if burnAfterRead}
 					<p class="text-sm text-amber-400" role="alert">
-						This note will be destroyed after the first read.
+						{t("burn_warning")}
 					</p>
 				{/if}
 
@@ -169,13 +171,13 @@
 			onclick={reset}
 			class="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-medium text-white hover:bg-slate-700 transition-colors"
 		>
-			Create another note
+			{t("create_another")}
 		</button>
 	</div>
 {:else}
 	<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-6">
-		<h1 class="text-2xl font-bold">Create a secure note</h1>
-		<p class="text-slate-400">Your content is encrypted in your browser before being sent to the server. The server never sees your data.</p>
+		<h1 class="text-2xl font-bold">{t("create_title")}</h1>
+		<p class="text-slate-400">{t("create_description")}</p>
 
 		{#if error}
 			<div class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300" role="alert">
@@ -184,11 +186,11 @@
 		{/if}
 
 		<div>
-			<label for="note-text" class="mb-1 block text-sm font-medium text-slate-300">Text content</label>
+			<label for="note-text" class="mb-1 block text-sm font-medium text-slate-300">{t("text_label")}</label>
 			<textarea
 				id="note-text"
 				bind:value={text}
-				placeholder="Enter your secret note here..."
+				placeholder={t("text_placeholder")}
 				rows="6"
 				maxlength={MAX_TEXT_SIZE}
 				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
@@ -197,7 +199,7 @@
 		</div>
 
 		<div>
-			<label class="mb-1 block text-sm font-medium text-slate-300">Files</label>
+			<label class="mb-1 block text-sm font-medium text-slate-300">{t("files_label")}</label>
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="relative rounded-lg border-2 border-dashed p-6 text-center transition-colors {isDragging ? 'border-primary bg-primary/10' : 'border-slate-700 hover:border-slate-600'}"
@@ -205,17 +207,17 @@
 				ondragleave={() => { isDragging = false; }}
 				ondrop={handleDrop}
 				role="region"
-				aria-label="File drop zone"
+				aria-label={t("files_drop")}
 			>
 				<input
 					type="file"
 					multiple
 					onchange={handleFileInput}
 					class="absolute inset-0 cursor-pointer opacity-0"
-					aria-label="Upload files"
+					aria-label={t("files_drop")}
 				/>
 				<p class="text-sm text-slate-400">
-					Drag & drop files here or click to browse
+					{t("files_drop")}
 				</p>
 				<p class="mt-1 text-xs text-slate-500">
 					Max {String(MAX_FILES_PER_NOTE)} files, {formatSize(MAX_FILE_SIZE)} each
@@ -242,19 +244,19 @@
 		</div>
 
 		<div>
-			<label for="password" class="mb-1 block text-sm font-medium text-slate-300">Password protection (optional)</label>
+			<label for="password" class="mb-1 block text-sm font-medium text-slate-300">{t("password_label")}</label>
 			<input
 				id="password"
 				type="password"
 				bind:value={password}
-				placeholder="Add a password for extra security"
+				placeholder={t("password_placeholder")}
 				autocomplete="off"
 				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 			/>
 		</div>
 
 		<div>
-			<label for="expires" class="mb-1 block text-sm font-medium text-slate-300">Expires in</label>
+			<label for="expires" class="mb-1 block text-sm font-medium text-slate-300">{t("expires_label")}</label>
 			<select
 				id="expires"
 				bind:value={expiresIn}
@@ -272,7 +274,7 @@
 				bind:checked={burnAfterRead}
 				class="h-4 w-4 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
 			/>
-			<span class="text-sm text-slate-300">Burn after read (destroy after first view)</span>
+			<span class="text-sm text-slate-300">{t("burn_label")}</span>
 		</label>
 
 		<button
@@ -280,7 +282,7 @@
 			disabled={isSubmitting}
 			class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 		>
-			{isSubmitting ? "Encrypting..." : "Create encrypted note"}
+			{isSubmitting ? t("submitting") : t("submit_button")}
 		</button>
 	</form>
 {/if}

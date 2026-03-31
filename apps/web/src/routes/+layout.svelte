@@ -1,13 +1,32 @@
 <script lang="ts">
 	import "../app.css";
+	import { onMount } from "svelte";
+	import { loadConfig, getConfig } from "$lib/config";
+	import { detectLocale, setLocale, t } from "$lib/i18n";
 
 	const { children } = $props();
 
 	const repoUrl = "https://github.com/largerio/secret";
+
+	let appName = $state("Secret");
+	let appDescription = $state("Zero-knowledge encrypted sharing");
+	let footerText = $state("");
+
+	onMount(async () => {
+		setLocale(detectLocale());
+		const config = await loadConfig();
+		appName = config.appName;
+		appDescription = config.appDescription;
+		footerText = config.footerText;
+
+		if (config.primaryColor && config.primaryColor !== "#6366f1") {
+			document.documentElement.style.setProperty("--app-primary-color", config.primaryColor);
+		}
+	});
 </script>
 
 <svelte:head>
-	<meta property="og:site_name" content="Secret" />
+	<meta property="og:site_name" content={appName} />
 	<meta property="og:type" content="website" />
 </svelte:head>
 
@@ -26,16 +45,16 @@
 					<rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
 					<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 				</svg>
-				Secret
+				{appName}
 			</a>
 			<a
 				href={repoUrl}
 				target="_blank"
 				rel="noopener noreferrer"
 				class="text-sm text-slate-400 hover:text-white transition-colors"
-				aria-label="View source code on GitHub"
+				aria-label={t("github")}
 			>
-				GitHub
+				{t("github")}
 			</a>
 		</nav>
 	</header>
@@ -46,8 +65,11 @@
 
 	<footer class="border-t border-slate-800 bg-slate-900/50">
 		<div class="mx-auto max-w-3xl px-4 py-4 text-center text-sm text-slate-500">
-			Powered by <a href={repoUrl} target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:text-white transition-colors">Secret</a>
-			&mdash; Zero-knowledge encrypted sharing
+			{#if footerText}
+				{footerText} &mdash;
+			{/if}
+			{t("footer_powered")} <a href={repoUrl} target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:text-white transition-colors">{appName}</a>
+			&mdash; {t("footer_tagline")}
 		</div>
 	</footer>
 </div>

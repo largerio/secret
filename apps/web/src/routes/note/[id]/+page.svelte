@@ -5,6 +5,8 @@
 	import { checkNoteExists, readNote } from "$lib/utils/api";
 	import { decryptNote } from "$lib/utils/crypto-client";
 	import { formatSize } from "$lib/utils/format";
+	import { getConfig } from "$lib/config";
+	import { t } from "$lib/i18n";
 	import { marked } from "marked";
 	import DOMPurify from "isomorphic-dompurify";
 
@@ -89,7 +91,7 @@
 			status = { state: "decrypted", payload, previewUrls };
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Decryption failed";
-			status = { state: "error", message: message.includes("wrong") || message.includes("ciphertext") ? "Wrong password or invalid key" : message };
+			status = { state: "error", message: message.includes("wrong") || message.includes("ciphertext") ? t("error_wrong_password") : message };
 		}
 	}
 
@@ -130,9 +132,9 @@
 </script>
 
 <svelte:head>
-	<title>Secret — View Note</title>
-	<meta property="og:title" content="Secret — Encrypted Note" />
-	<meta property="og:description" content="Click to decrypt this secure note" />
+	<title>{getConfig().appName} — {t("view_title")}</title>
+	<meta property="og:title" content="{getConfig().appName} — {t("view_title")}" />
+	<meta property="og:description" content={t("view_description")} />
 </svelte:head>
 
 <div class="space-y-6">
@@ -143,39 +145,39 @@
 
 	{:else if status.state === "not_found"}
 		<div class="rounded-xl border border-slate-700 bg-slate-900 p-8 text-center">
-			<h1 class="text-xl font-semibold text-slate-300">Note not found</h1>
-			<p class="mt-2 text-slate-500">This note may have expired, been deleted, or never existed.</p>
+			<h1 class="text-xl font-semibold text-slate-300">{t("not_found_title")}</h1>
+			<p class="mt-2 text-slate-500">{t("not_found_description")}</p>
 			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				Create a new note
+				{t("new_note")}
 			</a>
 		</div>
 
 	{:else if status.state === "ready"}
 		<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 space-y-4">
-			<h1 class="text-xl font-semibold">Encrypted note</h1>
-			<p class="text-sm text-slate-400">This note is encrypted. Click the button below to decrypt it in your browser.</p>
+			<h1 class="text-xl font-semibold">{t("view_title")}</h1>
+			<p class="text-sm text-slate-400">{t("view_description")}</p>
 
 			{#if status.burnAfterRead}
 				<div class="rounded-lg border border-amber-800/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300" role="alert">
-					This note will be <strong>destroyed</strong> after you read it.
+					{t("view_burn_warning")}
 				</div>
 			{/if}
 
 			<p class="text-xs text-slate-500">
-				Expires: {new Date(status.expiresAt).toLocaleString()}
+				{t("expires")} {new Date(status.expiresAt).toLocaleString()}
 				{#if status.fileCount > 0}
-					&bull; {String(status.fileCount)} file{status.fileCount > 1 ? "s" : ""} attached
+					&bull; {t("files_count", { count: status.fileCount })}
 				{/if}
 			</p>
 
 			{#if status.hasPassword}
 				<div>
-					<label for="decrypt-password" class="mb-1 block text-sm font-medium text-slate-300">Password required</label>
+					<label for="decrypt-password" class="mb-1 block text-sm font-medium text-slate-300">{t("view_password_label")}</label>
 					<input
 						id="decrypt-password"
 						type="password"
 						bind:value={password}
-						placeholder="Enter the password"
+						placeholder={t("view_password_placeholder")}
 						autocomplete="off"
 						class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
 						onkeydown={(e) => { if (e.key === "Enter") handleDecrypt(); }}
@@ -187,21 +189,21 @@
 				onclick={handleDecrypt}
 				class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark transition-colors"
 			>
-				Decrypt note
+				{t("decrypt_button")}
 			</button>
 		</div>
 
 	{:else if status.state === "decrypting"}
-		<div class="flex items-center justify-center py-12" role="status" aria-label="Decrypting">
+		<div class="flex items-center justify-center py-12" role="status" aria-label={t("decrypting")}>
 			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
-			<span class="ml-3 text-slate-400">Decrypting...</span>
+			<span class="ml-3 text-slate-400">{t("decrypting")}</span>
 		</div>
 
 	{:else if status.state === "decrypted"}
 		<div class="space-y-6">
 			{#if status.payload.text}
 				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6">
-					<h2 class="mb-3 text-sm font-medium text-slate-400">Text content</h2>
+					<h2 class="mb-3 text-sm font-medium text-slate-400">{t("text_content")}</h2>
 					<div class="prose prose-invert prose-sm max-w-none">
 						{@html renderMarkdown(status.payload.text)}
 					</div>
@@ -211,7 +213,7 @@
 			{#if status.payload.files && status.payload.files.length > 0}
 				<div class="space-y-4">
 					<h2 class="text-sm font-medium text-slate-400">
-						{String(status.payload.files.length)} file{status.payload.files.length > 1 ? "s" : ""}
+						{t("files_count", { count: status.payload.files.length })}
 					</h2>
 
 					{#each status.payload.files as file, i}
@@ -257,7 +259,7 @@
 									onclick={() => downloadFile(file.name, file.type, new Uint8Array(file.data as ArrayLike<number>))}
 									class="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
 								>
-									Download
+									{t("download")}
 								</button>
 							</div>
 						</div>
@@ -271,7 +273,7 @@
 			<h1 class="text-lg font-semibold text-red-300">Error</h1>
 			<p class="mt-2 text-sm text-red-400">{status.message}</p>
 			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				Create a new note
+				{t("new_note")}
 			</a>
 		</div>
 	{/if}

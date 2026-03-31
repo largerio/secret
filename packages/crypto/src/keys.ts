@@ -47,3 +47,7 @@ export function toBase64(data: Uint8Array): string {
 export function fromBase64(encoded: string): Uint8Array {
 	return sodium.from_base64(encoded, sodium.base64_variants.ORIGINAL);
 }
+
+export function zeroMemory(buf: Uint8Array): void {
+	sodium.memzero(buf);
+}
