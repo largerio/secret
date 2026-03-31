@@ -5,6 +5,7 @@ export type {
 	CreateNoteResponse,
 	NoteExistsResponse,
 	ReadNoteResponse,
+	ServerConfig,
 	ExpirationOption,
 } from "./types.js";
 
@@ -13,6 +14,7 @@ export { EXPIRATION_OPTIONS } from "./types.js";
 export {
 	MAX_TEXT_SIZE,
 	MAX_FILE_SIZE,
+	S3_MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 	DEFAULT_EXPIRY_SECONDS,
 	MAX_EXPIRY_SECONDS,
@@ -21,4 +23,4 @@ export {
 	CLEANUP_INTERVAL_MS,
 } from "./constants.js";
 
-export { createNoteSchema, noteIdSchema } from "./validation.js";
+export { createNoteSchema, createNoteMultipartSchema, noteIdSchema } from "./validation.js";

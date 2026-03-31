@@ -8,7 +8,8 @@ import { createNotesRoutes } from "./routes/notes.js";
 import { createSecurityHeaders, createCors } from "./middleware/security.js";
 import { createRateLimit } from "./middleware/rateLimit.js";
 import { startCleanupJob } from "./cleanup.js";
-import { ensureFilesDir } from "./storage/files.js";
+import { createStorageBackend } from "./storage/index.js";
+import type { StorageBackend, StorageType } from "./storage/index.js";
 import type { AppDatabase } from "./db/index.js";
 
 const PORT = Number(process.env["PORT"] ?? "3001");
@@ -24,6 +25,17 @@ const APP_DESCRIPTION = process.env["APP_DESCRIPTION"] ?? "Zero-knowledge encryp
 const APP_PRIMARY_COLOR = process.env["APP_PRIMARY_COLOR"] ?? "#6366f1";
 const APP_FOOTER_TEXT = process.env["APP_FOOTER_TEXT"] ?? "";
 const APP_OG_IMAGE_URL = process.env["APP_OG_IMAGE_URL"] ?? "";
+
+const STORAGE_BACKEND = (process.env["STORAGE_BACKEND"] ?? "local") as StorageType;
+const S3_BUCKET = process.env["S3_BUCKET"] ?? "";
+const S3_REGION = process.env["S3_REGION"] ?? "us-east-1";
+const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? "";
+const S3_ACCESS_KEY_ID = process.env["S3_ACCESS_KEY_ID"] ?? "";
+const S3_SECRET_ACCESS_KEY = process.env["S3_SECRET_ACCESS_KEY"] ?? "";
+const S3_FORCE_PATH_STYLE = process.env["S3_FORCE_PATH_STYLE"] === "true";
+
+const CONFIGURED_MAX_FILE_SIZE = Number(process.env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
+const CONFIGURED_MAX_FILES = Number(process.env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
 
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
@@ -41,15 +53,35 @@ if (Number.isNaN(CLEANUP_MS) || CLEANUP_MS <= 0) {
 	process.exit(1);
 }
 
+if (STORAGE_BACKEND !== "local" && STORAGE_BACKEND !== "s3") {
+	console.error("ERROR: STORAGE_BACKEND must be 'local' or 's3'");
+	process.exit(1);
+}
+
 const serverKey = parseServerKey(SERVER_KEY_ENV);
 const { db, sqlite } = createDatabase(DATABASE_PATH);
-ensureFilesDir(FILES_PATH);
+
+const storage = createStorageBackend(
+	STORAGE_BACKEND === "s3"
+		? {
+				type: "s3",
+				s3: {
+					bucket: S3_BUCKET,
+					region: S3_REGION,
+					endpoint: S3_ENDPOINT || undefined,
+					accessKeyId: S3_ACCESS_KEY_ID,
+					secretAccessKey: S3_SECRET_ACCESS_KEY,
+					forcePathStyle: S3_FORCE_PATH_STYLE,
+				},
+			}
+		: { type: "local", localPath: FILES_PATH },
+);
 
 interface AppEnv {
 	Variables: {
 		db: AppDatabase;
 		serverKey: Buffer;
-		filesPath: string;
+		storage: StorageBackend;
 	};
 }
 
@@ -65,8 +97,9 @@ app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.use("*", createSecurityHeaders());
 app.use("*", createCors([APP_URL]));
 
-const maxBodySize = MAX_FILE_SIZE * MAX_FILES_PER_NOTE + 1024 * 1024;
+const maxBodySize = CONFIGURED_MAX_FILE_SIZE * CONFIGURED_MAX_FILES + 1024 * 1024;
 app.use("/api/notes", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
+app.use("/api/notes/upload", bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }));
 
 const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 100 });
 const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
@@ -76,7 +109,7 @@ app.use("/api/notes/*", notesDetailRateLimit.middleware);
 app.use("*", async (c, next) => {
 	c.set("db", db);
 	c.set("serverKey", serverKey);
-	c.set("filesPath", FILES_PATH);
+	c.set("storage", storage);
 	await next();
 });
 
@@ -87,10 +120,13 @@ app.get("/api/config", (c) => c.json({
 	primaryColor: APP_PRIMARY_COLOR,
 	footerText: APP_FOOTER_TEXT,
 	ogImageUrl: APP_OG_IMAGE_URL,
+	maxFileSize: CONFIGURED_MAX_FILE_SIZE,
+	maxFilesPerNote: CONFIGURED_MAX_FILES,
+	storageType: STORAGE_BACKEND,
 }));
 app.route("/api/notes", createNotesRoutes());
 
-const cleanupTimer = startCleanupJob(db, CLEANUP_MS);
+const cleanupTimer = startCleanupJob(db, storage, CLEANUP_MS);
 
 const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT });
 
@@ -108,4 +144,4 @@ function shutdown(): void {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-console.log(`Secret API listening on ${HOST}:${String(PORT)}`);
+console.log(`Secret API listening on ${HOST}:${String(PORT)} [storage=${STORAGE_BACKEND}]`);

@@ -45,6 +45,17 @@ export interface ReadNoteResponse {
 	readonly salt?: string;
 }
 
+export interface ServerConfig {
+	readonly appName: string;
+	readonly appDescription: string;
+	readonly primaryColor: string;
+	readonly footerText: string;
+	readonly ogImageUrl: string;
+	readonly maxFileSize: number;
+	readonly maxFilesPerNote: number;
+	readonly storageType: "local" | "s3";
+}
+
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];
 
 export const EXPIRATION_OPTIONS = [
