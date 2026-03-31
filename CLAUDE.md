@@ -13,7 +13,7 @@ pnpm install          # Install dependencies
 pnpm dev              # Start API + web dev servers in parallel
 pnpm test             # Run all tests (vitest)
 pnpm test:watch       # Run tests in watch mode
-pnpm test:coverage    # Run tests with coverage
+pnpm test:coverage    # Run tests with coverage (100% required)
 pnpm lint             # Biome lint + format check
 pnpm lint:fix         # Auto-fix lint issues
 pnpm format           # Format all files
@@ -38,8 +38,8 @@ Monorepo with pnpm workspaces:
   - View page: `src/routes/note/[id]/+page.svelte`
   - Crypto client: `src/lib/utils/crypto-client.ts`
   - API client: `src/lib/utils/api.ts`
-  - i18n: `src/lib/i18n/` (imports from `messages/en.json`, `messages/fr.json`)
-  - Runtime config: `src/lib/config.svelte.ts` (fetches `/api/config`)
+  - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
+  - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune for reactive config
 
 - **`packages/crypto`** — Encryption library
   - Client: XChaCha20-Poly1305 via libsodium-wrappers-sumo
@@ -60,13 +60,19 @@ Monorepo with pnpm workspaces:
 
 ## Code Style
 
-- **Formatter**: Biome — tabs, 100-char lines
+- **Formatter**: Biome 2.4 — tabs, 100-char lines, double quotes, semicolons always
 - **TypeScript**: Strict mode (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noNonNullAssertion`)
 - **No `any`**: Biome enforces `noExplicitAny`
 - **Imports**: Use `type` imports for type-only (`import type { ... }`)
 - **Async storage**: All `StorageBackend` methods are async (return `Promise`)
 - **Error handling**: Routes return `{ error: string }` JSON — never leak internal details
-- **Testing**: Vitest, 154 tests across 11 files. Run `pnpm test` before committing.
+
+## Gotchas
+
+- **`exactOptionalPropertyTypes`**: You cannot write `salt: salt ?? undefined`. Use conditional spread instead: `...(salt ? { salt } : {})`.
+- **Svelte 5 reactive modules**: Files using `$state`/`$derived` outside components must use the `.svelte.ts` extension (e.g. `config.svelte.ts`, `index.svelte.ts`).
+- **Biome + Svelte**: `biome.json` has overrides for `**/*.svelte` that disable `noUnusedVariables`, `noUnusedImports`, and `organizeImports` — Biome doesn't understand Svelte template references and produces false positives.
+- **Uint8Array in TS 6**: `new Blob([uint8array])` fails because `Uint8Array<ArrayBufferLike>` isn't assignable to `BlobPart`. Cast with `as BlobPart[]`.
 
 ## Environment
 
@@ -81,7 +87,13 @@ Monorepo with pnpm workspaces:
 - `./data/` — SQLite database and encrypted files. Never commit.
 - Server encryption key cannot be changed after deployment — all existing notes become inaccessible.
 
-## Testing Patterns
+## Testing
+
+169 tests across 12 files. 100% backend coverage enforced (statements, branches, functions, lines). Frontend (`apps/web/src/`) is excluded from coverage thresholds.
+
+Run `pnpm test` before committing. New features must include tests.
+
+### Patterns
 
 - API tests use Hono's `app.request()` — no HTTP server needed
 - Database tests use real SQLite (file-based, cleaned up in `beforeEach`)
