@@ -8,6 +8,7 @@
 		"./server": "./src/server.ts"
 	},
 	"scripts": {
+		"build": "tsc",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {

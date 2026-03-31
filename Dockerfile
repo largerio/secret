@@ -18,8 +18,21 @@ COPY packages/ packages/
 COPY apps/ apps/
 COPY messages/ messages/
 
+RUN pnpm --filter @secret/shared build
+RUN pnpm --filter @secret/crypto build
 RUN pnpm --filter @secret/web build
 RUN pnpm --filter @secret/api build
+
+# Rewrite package exports from .ts sources to compiled .js dist
+RUN node -e " \
+  const fs = require('fs'); \
+  for (const pkg of ['packages/shared', 'packages/crypto']) { \
+    const p = JSON.parse(fs.readFileSync(pkg + '/package.json', 'utf8')); \
+    const rewrite = (v) => v.replace('./src/', './dist/').replace('.ts', '.js'); \
+    if (typeof p.exports === 'string') { p.exports = rewrite(p.exports); } \
+    else { for (const k of Object.keys(p.exports)) { p.exports[k] = rewrite(p.exports[k]); } } \
+    fs.writeFileSync(pkg + '/package.json', JSON.stringify(p, null, 2)); \
+  }"
 
 # Stage 2: Production
 FROM node:24-alpine AS production
@@ -38,8 +51,8 @@ COPY --from=builder /build/apps/web/package.json apps/web/
 
 RUN pnpm install --frozen-lockfile --prod
 
-COPY --from=builder /build/packages/shared/src packages/shared/src
-COPY --from=builder /build/packages/crypto/src packages/crypto/src
+COPY --from=builder /build/packages/shared/dist packages/shared/dist
+COPY --from=builder /build/packages/crypto/dist packages/crypto/dist
 COPY --from=builder /build/apps/api/dist apps/api/dist
 COPY --from=builder /build/apps/web/build apps/web/build
 
