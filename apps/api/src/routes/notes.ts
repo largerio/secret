@@ -1,11 +1,13 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { createNoteSchema, noteIdSchema, NOTE_ID_LENGTH } from "@secret/shared";
-import { serverEncrypt, serverDecrypt, parseServerKey } from "@secret/crypto";
+import { serverEncrypt, serverDecrypt } from "@secret/crypto";
 import type { AppDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { saveFile, readFile, deleteFile } from "../storage/files.js";
+
+const DELETE_TOKEN_LENGTH = 32;
 
 interface NotesEnv {
 	Variables: {
@@ -19,11 +21,16 @@ export function createNotesRoutes() {
 	const app = new Hono<NotesEnv>();
 
 	app.post("/", async (c) => {
-		const body = await c.req.json();
+		let body: unknown;
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
 		const parsed = createNoteSchema.safeParse(body);
 
 		if (!parsed.success) {
-			return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
+			return c.json({ error: "Invalid request" }, 400);
 		}
 
 		const { encryptedData, clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } = parsed.data;
@@ -36,48 +43,38 @@ export function createNotesRoutes() {
 		const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(clientBlob, serverKey);
 
 		const id = nanoid(NOTE_ID_LENGTH);
+		const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + expiresIn * 1000);
 
 		let filePath: string | null = null;
+		let storedBlob: Buffer;
 		if (fileCount > 0) {
 			filePath = saveFile(filesPath, id, serverBlob);
-			db.insert(notes)
-				.values({
-					id,
-					encryptedData: Buffer.alloc(0),
-					serverNonce: serverIv.toString("base64"),
-					clientNonce,
-					hasPassword,
-					salt: salt ?? null,
-					burnAfterRead,
-					fileCount,
-					filePath,
-					expiresAt,
-					maxReads: maxReads ?? null,
-					createdAt: now,
-				})
-				.run();
+			storedBlob = Buffer.alloc(0);
 		} else {
-			db.insert(notes)
-				.values({
-					id,
-					encryptedData: serverBlob,
-					serverNonce: serverIv.toString("base64"),
-					clientNonce,
-					hasPassword,
-					salt: salt ?? null,
-					burnAfterRead,
-					fileCount,
-					filePath: null,
-					expiresAt,
-					maxReads: maxReads ?? null,
-					createdAt: now,
-				})
-				.run();
+			storedBlob = serverBlob;
 		}
 
-		return c.json({ id, expiresAt: expiresAt.toISOString() }, 201);
+		db.insert(notes)
+			.values({
+				id,
+				encryptedData: storedBlob,
+				serverNonce: serverIv.toString("base64"),
+				clientNonce,
+				hasPassword,
+				salt: salt ?? null,
+				deleteToken,
+				burnAfterRead,
+				fileCount,
+				filePath,
+				expiresAt,
+				maxReads: maxReads ?? null,
+				createdAt: now,
+			})
+			.run();
+
+		return c.json({ id, expiresAt: expiresAt.toISOString(), deleteToken }, 201);
 	});
 
 	app.get("/:id/exists", (c) => {
@@ -187,11 +184,23 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid note ID" }, 400);
 		}
 
+		const token = c.req.header("x-delete-token");
+		if (!token) {
+			return c.json({ error: "Delete token required" }, 401);
+		}
+
 		const db = c.get("db");
-		const note = db.select({ filePath: notes.filePath }).from(notes).where(eq(notes.id, id.data)).get();
+		const note = db.select({ filePath: notes.filePath, deleteToken: notes.deleteToken })
+			.from(notes)
+			.where(eq(notes.id, id.data))
+			.get();
 
 		if (note === undefined) {
 			return c.json({ error: "Note not found" }, 404);
+		}
+
+		if (note.deleteToken !== token) {
+			return c.json({ error: "Invalid delete token" }, 403);
 		}
 
 		if (note.filePath) {

@@ -19,6 +19,7 @@ export function createDatabase(dbPath: string) {
 			client_nonce TEXT NOT NULL,
 			has_password INTEGER NOT NULL DEFAULT 0,
 			salt TEXT,
+			delete_token TEXT NOT NULL DEFAULT '',
 			burn_after_read INTEGER NOT NULL DEFAULT 0,
 			file_count INTEGER NOT NULL DEFAULT 0,
 			file_path TEXT,
@@ -29,7 +30,10 @@ export function createDatabase(dbPath: string) {
 		)
 	`);
 
-	return drizzle(sqlite, { schema });
+	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes (expires_at)`);
+
+	const db = drizzle(sqlite, { schema });
+	return { db, sqlite };
 }
 
-export type AppDatabase = ReturnType<typeof createDatabase>;
+export type AppDatabase = ReturnType<typeof createDatabase>["db"];

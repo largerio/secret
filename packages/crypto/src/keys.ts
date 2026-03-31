@@ -21,7 +21,7 @@ export function deriveKeyFromPassword(
 	salt: Uint8Array,
 	baseKey: Uint8Array,
 ): Uint8Array {
-	const combined = `${password}:${sodium.to_base64(baseKey)}`;
+	const combined = `${password}:${sodium.to_base64(baseKey, sodium.base64_variants.URLSAFE_NO_PADDING)}`;
 	return sodium.crypto_pwhash(
 		sodium.crypto_aead_xchacha20poly1305_ietf_KEYBYTES,
 		combined,

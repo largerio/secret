@@ -16,6 +16,7 @@ const config = {
 				"connect-src": ["self"],
 				"font-src": ["self"],
 				"media-src": ["self", "blob:"],
+				"frame-src": ["blob:"],
 				"object-src": ["none"],
 				"frame-ancestors": ["none"],
 				"base-uri": ["self"],

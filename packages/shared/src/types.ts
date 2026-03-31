@@ -24,6 +24,7 @@ export interface CreateNoteRequest {
 export interface CreateNoteResponse {
 	readonly id: string;
 	readonly expiresAt: string;
+	readonly deleteToken: string;
 }
 
 export interface NoteExistsResponse {

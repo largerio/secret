@@ -37,6 +37,15 @@ function validBody(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+async function createTestNote(body: Record<string, unknown> = {}) {
+	const res = await app.request("/api/notes", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(validBody(body)),
+	});
+	return res.json() as Promise<{ id: string; expiresAt: string; deleteToken: string }>;
+}
+
 beforeAll(() => {
 	mkdirSync("./data", { recursive: true });
 	mkdirSync(TEST_FILES_PATH, { recursive: true });
@@ -50,7 +59,8 @@ beforeEach(() => {
 	} catch {
 		/* ignore */
 	}
-	db = createDatabase(TEST_DB_PATH);
+	const result = createDatabase(TEST_DB_PATH);
+	db = result.db;
 	app = createApp(db);
 });
 
@@ -66,7 +76,7 @@ afterAll(() => {
 });
 
 describe("POST /api/notes", () => {
-	it("creates a note and returns id + expiresAt", async () => {
+	it("creates a note and returns id, expiresAt, and deleteToken", async () => {
 		const res = await app.request("/api/notes", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -77,6 +87,8 @@ describe("POST /api/notes", () => {
 		expect(json.id).toBeDefined();
 		expect(json.id.length).toBe(12);
 		expect(json.expiresAt).toBeDefined();
+		expect(json.deleteToken).toBeDefined();
+		expect(json.deleteToken.length).toBe(32);
 	});
 
 	it("rejects missing encryptedData", async () => {
@@ -115,24 +127,28 @@ describe("POST /api/notes", () => {
 		expect(res.status).toBe(201);
 	});
 
-	it("creates a note with password flag", async () => {
+	it("creates a note with password and salt", async () => {
+		const testSalt = Buffer.from("test-salt-data-16bytes").toString("base64");
+		const res = await app.request("/api/notes", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(validBody({ hasPassword: true, salt: testSalt })),
+		});
+		expect(res.status).toBe(201);
+	});
+
+	it("rejects hasPassword without salt", async () => {
 		const res = await app.request("/api/notes", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(validBody({ hasPassword: true })),
 		});
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 
 	it("stores and returns salt for password-protected notes", async () => {
 		const testSalt = Buffer.from("test-salt-data-16bytes").toString("base64");
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ hasPassword: true, salt: testSalt })),
-		});
-		expect(createRes.status).toBe(201);
-		const { id } = await createRes.json();
+		const { id } = await createTestNote({ hasPassword: true, salt: testSalt });
 
 		const readRes = await app.request(`/api/notes/${id}`);
 		expect(readRes.status).toBe(200);
@@ -158,16 +174,20 @@ describe("POST /api/notes", () => {
 		});
 		expect(res.status).toBe(201);
 	});
+
+	it("rejects invalid JSON body", async () => {
+		const res = await app.request("/api/notes", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "not json",
+		});
+		expect(res.status).toBe(400);
+	});
 });
 
 describe("GET /api/notes/:id/exists", () => {
 	it("returns exists true for a valid note", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody()),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote();
 
 		const res = await app.request(`/api/notes/${id}/exists`);
 		expect(res.status).toBe(200);
@@ -188,12 +208,7 @@ describe("GET /api/notes/:id/exists", () => {
 
 describe("GET /api/notes/:id", () => {
 	it("returns the encrypted note data", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody()),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote();
 
 		const res = await app.request(`/api/notes/${id}`);
 		expect(res.status).toBe(200);
@@ -210,12 +225,7 @@ describe("GET /api/notes/:id", () => {
 	});
 
 	it("deletes note after read when burnAfterRead is true", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ burnAfterRead: true })),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote({ burnAfterRead: true });
 
 		const readRes = await app.request(`/api/notes/${id}`);
 		expect(readRes.status).toBe(200);
@@ -225,12 +235,7 @@ describe("GET /api/notes/:id", () => {
 	});
 
 	it("increments readCount for non-burn notes", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody()),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote();
 
 		await app.request(`/api/notes/${id}`);
 		await app.request(`/api/notes/${id}`);
@@ -240,12 +245,7 @@ describe("GET /api/notes/:id", () => {
 	});
 
 	it("returns 404 when maxReads is exceeded", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ maxReads: 1 })),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote({ maxReads: 1 });
 
 		const firstRead = await app.request(`/api/notes/${id}`);
 		expect(firstRead.status).toBe(200);
@@ -255,12 +255,7 @@ describe("GET /api/notes/:id", () => {
 	});
 
 	it("reads note with file data from disk", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ fileCount: 1 })),
-		});
-		const { id } = await createRes.json();
+		const { id } = await createTestNote({ fileCount: 1 });
 
 		const res = await app.request(`/api/notes/${id}`);
 		expect(res.status).toBe(200);
@@ -270,15 +265,13 @@ describe("GET /api/notes/:id", () => {
 });
 
 describe("DELETE /api/notes/:id", () => {
-	it("deletes an existing note", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody()),
-		});
-		const { id } = await createRes.json();
+	it("deletes an existing note with valid token", async () => {
+		const { id, deleteToken } = await createTestNote();
 
-		const deleteRes = await app.request(`/api/notes/${id}`, { method: "DELETE" });
+		const deleteRes = await app.request(`/api/notes/${id}`, {
+			method: "DELETE",
+			headers: { "X-Delete-Token": deleteToken },
+		});
 		expect(deleteRes.status).toBe(200);
 		const json = await deleteRes.json();
 		expect(json.deleted).toBe(true);
@@ -287,20 +280,38 @@ describe("DELETE /api/notes/:id", () => {
 		expect(getRes.status).toBe(404);
 	});
 
+	it("returns 401 without delete token", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/notes/${id}`, { method: "DELETE" });
+		expect(res.status).toBe(401);
+	});
+
+	it("returns 403 with wrong delete token", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/notes/${id}`, {
+			method: "DELETE",
+			headers: { "X-Delete-Token": "wrong-token" },
+		});
+		expect(res.status).toBe(403);
+	});
+
 	it("returns 404 for a non-existent note", async () => {
-		const res = await app.request("/api/notes/nonexistent1", { method: "DELETE" });
+		const res = await app.request("/api/notes/nonexistent1", {
+			method: "DELETE",
+			headers: { "X-Delete-Token": "some-token" },
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it("deletes file from disk when note has files", async () => {
-		const createRes = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ fileCount: 1 })),
-		});
-		const { id } = await createRes.json();
+		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
 
-		const deleteRes = await app.request(`/api/notes/${id}`, { method: "DELETE" });
+		const deleteRes = await app.request(`/api/notes/${id}`, {
+			method: "DELETE",
+			headers: { "X-Delete-Token": deleteToken },
+		});
 		expect(deleteRes.status).toBe(200);
 	});
 });
