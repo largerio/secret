@@ -1,6 +1,4 @@
 <script lang="ts">
-import DOMPurify from "isomorphic-dompurify";
-import { marked } from "marked";
 import { t } from "$lib/i18n/index.svelte";
 
 interface Props {
@@ -13,10 +11,28 @@ let { value = $bindable(), maxlength, placeholder }: Props = $props();
 
 let activeTab = $state<"write" | "preview">("write");
 let textarea = $state<HTMLTextAreaElement | null>(null);
+let renderedHtml = $state("");
 
-let renderedHtml = $derived(
-	value.trim() ? DOMPurify.sanitize(marked.parse(value, { async: false }) as string) : "",
-);
+$effect(() => {
+	const currentValue = value;
+	if (activeTab !== "preview") return;
+
+	const timer = setTimeout(async () => {
+		if (!currentValue.trim()) {
+			renderedHtml = "";
+			return;
+		}
+		const [{ marked }, DOMPurify] = await Promise.all([
+			import("marked"),
+			import("isomorphic-dompurify"),
+		]);
+		renderedHtml = DOMPurify.default.sanitize(
+			marked.parse(currentValue, { async: false }) as string,
+		);
+	}, 200);
+
+	return () => clearTimeout(timer);
+});
 
 function wrapSelection(before: string, after: string, placeholder: string) {
 	if (!textarea) return;

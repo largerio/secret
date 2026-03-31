@@ -1,7 +1,6 @@
 <script lang="ts">
 import type { ContentMode, CreateNoteResponse, NoteFile, NotePayload } from "@secret/shared";
 import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
-import { toDataURL } from "qrcode";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import ProgressBar from "$lib/components/ProgressBar.svelte";
@@ -105,6 +104,7 @@ async function handleSubmit() {
 		shareUrl = url;
 		noteId = response.id;
 		deleteToken = response.deleteToken;
+		const { toDataURL } = await import("qrcode");
 		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
 	} catch (e) {
 		error = e instanceof Error ? e.message : t("error_generic");

@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { StorageBackend } from "./interface.js";
 
@@ -20,19 +21,19 @@ export class LocalStorage implements StorageBackend {
 
 	async save(noteId: string, data: Buffer): Promise<string> {
 		const filePath = this.assertSafePath(join(this.filesPath, noteId));
-		writeFileSync(filePath, data, { mode: 0o600 });
+		await writeFile(filePath, data, { mode: 0o600 });
 		return filePath;
 	}
 
 	async read(storageKey: string): Promise<Buffer> {
 		const safePath = this.assertSafePath(storageKey);
-		return readFileSync(safePath);
+		return readFile(safePath);
 	}
 
 	async delete(storageKey: string): Promise<void> {
 		try {
 			const safePath = this.assertSafePath(storageKey);
-			unlinkSync(safePath);
+			await unlink(safePath);
 		} catch {
 			/* file already deleted or missing */
 		}

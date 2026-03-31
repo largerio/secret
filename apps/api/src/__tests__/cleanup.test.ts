@@ -151,6 +151,38 @@ describe("startCleanupJob", () => {
 		consoleSpy.mockRestore();
 	});
 
+	it("catches and logs errors when database transaction fails", async () => {
+		const failingDb = {
+			transaction: () => {
+				throw new Error("database locked");
+			},
+		} as unknown as AppDatabase;
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(failingDb, storage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith("[cleanup] Cleanup job failed:", "database locked");
+		consoleSpy.mockRestore();
+	});
+
+	it("catches and logs non-Error exceptions in cleanup job", async () => {
+		const failingDb = {
+			transaction: () => {
+				throw "string error";
+			},
+		} as unknown as AppDatabase;
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(failingDb, storage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith("[cleanup] Cleanup job failed:", "string error");
+		consoleSpy.mockRestore();
+	});
+
 	it("logs non-Error rejection values in cleanup", async () => {
 		const filePath = resolve(`${TEST_FILES_PATH}/fail-str`);
 		writeFileSync(filePath, "encrypted-data");
