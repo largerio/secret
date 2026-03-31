@@ -41,8 +41,8 @@ function validBody(overrides: Record<string, unknown> = {}) {
 		encryptedData: Buffer.from("test-encrypted-data").toString("base64"),
 		clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
 		hasPassword: false,
-		burnAfterRead: false,
 		expiresIn: 3600,
+		maxReads: 0,
 		fileCount: 0,
 		...overrides,
 	};
@@ -71,8 +71,8 @@ function validMultipartMeta(overrides: Record<string, unknown> = {}) {
 	return {
 		clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
 		hasPassword: false,
-		burnAfterRead: false,
 		expiresIn: 3600,
+		maxReads: 0,
 		fileCount: 1,
 		...overrides,
 	};
@@ -189,15 +189,6 @@ describe("POST /api/notes", () => {
 		expect(note.salt).toBe(testSalt);
 	});
 
-	it("creates a note with burn after read", async () => {
-		const res = await app.request("/api/notes", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody({ burnAfterRead: true })),
-		});
-		expect(res.status).toBe(201);
-	});
-
 	it("creates a note with maxReads", async () => {
 		const res = await app.request("/api/notes", {
 			method: "POST",
@@ -309,8 +300,8 @@ describe("POST /api/notes/upload (multipart)", () => {
 		expect(res.status).toBe(201);
 	});
 
-	it("supports burn after read via multipart", async () => {
-		const form = multipartForm(validMultipartMeta({ burnAfterRead: true }));
+	it("supports maxReads via multipart upload", async () => {
+		const form = multipartForm(validMultipartMeta({ maxReads: 1 }));
 		const createRes = await app.request("/api/notes/upload", {
 			method: "POST",
 			body: form,
@@ -336,7 +327,7 @@ describe("GET /api/notes/:id/exists", () => {
 		expect(json.exists).toBe(true);
 		expect(json.hasPassword).toBe(false);
 		expect(json.fileCount).toBe(0);
-		expect(json.burnAfterRead).toBe(false);
+		expect(json.maxReads).toBe(0);
 		expect(json.expiresAt).toBeDefined();
 	});
 
@@ -382,7 +373,7 @@ describe("GET /api/notes/:id/exists", () => {
 			hasPassword: true,
 			salt: testSalt,
 			fileCount: 3,
-			burnAfterRead: true,
+			maxReads: 1,
 		});
 
 		const res = await app.request(`/api/notes/${id}/exists`);
@@ -390,7 +381,7 @@ describe("GET /api/notes/:id/exists", () => {
 		const json = await res.json();
 		expect(json.hasPassword).toBe(true);
 		expect(json.fileCount).toBe(3);
-		expect(json.burnAfterRead).toBe(true);
+		expect(json.maxReads).toBe(1);
 	});
 });
 
@@ -421,8 +412,8 @@ describe("GET /api/notes/:id", () => {
 		expect(res.status).toBe(400);
 	});
 
-	it("deletes note after read when burnAfterRead is true", async () => {
-		const { id } = await createTestNote({ burnAfterRead: true });
+	it("deletes note after read when maxReads is 1", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
 
 		const readRes = await app.request(`/api/notes/${id}`);
 		expect(readRes.status).toBe(200);
@@ -431,8 +422,8 @@ describe("GET /api/notes/:id", () => {
 		expect(secondRead.status).toBe(404);
 	});
 
-	it("deletes file from disk on burn after read with files", async () => {
-		const { id } = await createTestNote({ burnAfterRead: true, fileCount: 1 });
+	it("deletes file from disk when maxReads is reached with files", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
 
 		const filePath = `${TEST_FILES_PATH}/${id}`;
 		expect(existsSync(filePath)).toBe(true);
@@ -498,6 +489,24 @@ describe("GET /api/notes/:id", () => {
 		expect(res.status).toBe(404);
 		const json = await res.json();
 		expect(json.error).toBe("Note has expired");
+	});
+
+	it("returns 404 and deletes file for expired note with files", async () => {
+		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+
+		const filePath = `${TEST_FILES_PATH}/${id}`;
+		expect(existsSync(filePath)).toBe(true);
+
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notes.id, id))
+			.run();
+
+		const res = await app.request(`/api/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect(existsSync(filePath)).toBe(false);
 	});
 
 	it("does not return salt for non-password notes", async () => {

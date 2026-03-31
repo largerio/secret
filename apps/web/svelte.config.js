@@ -11,10 +11,10 @@ const config = {
 			directives: {
 				"default-src": ["none"],
 				"script-src": ["self"],
-				"style-src": ["self", "unsafe-inline"],
+				"style-src": ["self", "unsafe-inline", "https://cdnjs.cloudflare.com"],
 				"img-src": ["self", "data:", "blob:"],
 				"connect-src": ["self"],
-				"font-src": ["self"],
+				"font-src": ["self", "https://cdnjs.cloudflare.com"],
 				"media-src": ["self", "blob:"],
 				"frame-src": ["blob:"],
 				"object-src": ["none"],

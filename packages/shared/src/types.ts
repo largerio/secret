@@ -1,5 +1,8 @@
+export type ContentMode = "text" | "markdown" | "secret";
+
 export interface NotePayload {
 	readonly text?: string;
+	readonly contentMode?: ContentMode;
 	readonly files?: ReadonlyArray<NoteFile>;
 }
 
@@ -14,9 +17,8 @@ export interface CreateNoteRequest {
 	readonly encryptedData: string;
 	readonly clientNonce: string;
 	readonly hasPassword: boolean;
-	readonly burnAfterRead: boolean;
 	readonly expiresIn: number;
-	readonly maxReads?: number;
+	readonly maxReads: number;
 	readonly fileCount: number;
 	readonly salt?: string;
 }
@@ -32,7 +34,7 @@ export interface NoteExistsResponse {
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
 	readonly expiresAt: string;
-	readonly burnAfterRead: boolean;
+	readonly maxReads: number;
 }
 
 export interface ReadNoteResponse {

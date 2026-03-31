@@ -129,6 +129,31 @@ describe("createRateLimit", () => {
 		rl.cleanup();
 	});
 
+	it("cleanup interval keeps non-expired entries", async () => {
+		const rl = createRateLimit({ windowMs: 50, max: 100 });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		// First request expires quickly
+		await app.request("/test", { headers: { "X-Forwarded-For": "8.8.8.8" } });
+
+		// Wait for first entry to expire
+		await new Promise((resolve) => setTimeout(resolve, 70));
+
+		// Second request is still fresh
+		await app.request("/test", { headers: { "X-Forwarded-For": "7.7.7.7" } });
+
+		// Wait for cleanup interval to fire (covers both branches: expired + non-expired)
+		await new Promise((resolve) => setTimeout(resolve, 60));
+
+		// 8.8.8.8 was cleaned up, 7.7.7.7 still has an entry
+		const res = await app.request("/test", { headers: { "X-Forwarded-For": "8.8.8.8" } });
+		expect(res.status).toBe(200);
+
+		rl.cleanup();
+	});
+
 	it("returns 429 when store exceeds MAX_STORE_SIZE for new IPs", async () => {
 		const rl = createRateLimit({ windowMs: 60_000, max: 100 });
 		const app = new Hono();

@@ -10,6 +10,7 @@ export {
 	S3_MAX_FILE_SIZE,
 } from "./constants.js";
 export type {
+	ContentMode,
 	CreateNoteRequest,
 	CreateNoteResponse,
 	ExpirationOption,

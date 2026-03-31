@@ -11,13 +11,12 @@ export const createNoteSchema = z
 		encryptedData: z.string().min(1, "Encrypted data is required").max(50_000_000),
 		clientNonce: z.string().min(1, "Client nonce is required").max(100),
 		hasPassword: z.boolean(),
-		burnAfterRead: z.boolean(),
 		expiresIn: z
 			.number()
 			.int()
 			.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
 			.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
-		maxReads: z.number().int().positive().max(1000).optional(),
+		maxReads: z.number().int().min(0).max(1000).default(1),
 		fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
 		salt: z.string().min(1).max(100).optional(),
 	})
@@ -30,13 +29,12 @@ export const createNoteMultipartSchema = z
 	.object({
 		clientNonce: z.string().min(1).max(100),
 		hasPassword: z.boolean(),
-		burnAfterRead: z.boolean(),
 		expiresIn: z
 			.number()
 			.int()
 			.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
 			.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
-		maxReads: z.number().int().positive().max(1000).optional(),
+		maxReads: z.number().int().min(0).max(1000).default(1),
 		fileCount: z.number().int().min(1).max(MAX_FILES_PER_NOTE),
 		salt: z.string().min(1).max(100).optional(),
 	})

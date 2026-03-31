@@ -39,16 +39,8 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid request" }, 400);
 		}
 
-		const {
-			encryptedData,
-			clientNonce,
-			hasPassword,
-			burnAfterRead,
-			expiresIn,
-			maxReads,
-			fileCount,
-			salt,
-		} = parsed.data;
+		const { encryptedData, clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } =
+			parsed.data;
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
@@ -80,11 +72,11 @@ export function createNotesRoutes() {
 				hasPassword,
 				salt: salt ?? null,
 				deleteToken,
-				burnAfterRead,
+				burnAfterRead: maxReads === 1,
 				fileCount,
 				filePath,
 				expiresAt,
-				maxReads: maxReads ?? null,
+				maxReads,
 				createdAt: now,
 			})
 			.run();
@@ -122,8 +114,7 @@ export function createNotesRoutes() {
 			return c.json({ error: "Invalid request" }, 400);
 		}
 
-		const { clientNonce, hasPassword, burnAfterRead, expiresIn, maxReads, fileCount, salt } =
-			parsed.data;
+		const { clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } = parsed.data;
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
@@ -148,11 +139,11 @@ export function createNotesRoutes() {
 				hasPassword,
 				salt: salt ?? null,
 				deleteToken,
-				burnAfterRead,
+				burnAfterRead: maxReads === 1,
 				fileCount,
 				filePath,
 				expiresAt,
-				maxReads: maxReads ?? null,
+				maxReads,
 				createdAt: now,
 			})
 			.run();
@@ -172,7 +163,7 @@ export function createNotesRoutes() {
 				hasPassword: notes.hasPassword,
 				fileCount: notes.fileCount,
 				expiresAt: notes.expiresAt,
-				burnAfterRead: notes.burnAfterRead,
+				maxReads: notes.maxReads,
 			})
 			.from(notes)
 			.where(eq(notes.id, id.data))
@@ -191,7 +182,7 @@ export function createNotesRoutes() {
 			hasPassword: note.hasPassword,
 			fileCount: note.fileCount,
 			expiresAt: note.expiresAt.toISOString(),
-			burnAfterRead: note.burnAfterRead,
+			maxReads: note.maxReads as number,
 		});
 	});
 
@@ -221,25 +212,17 @@ export function createNotesRoutes() {
 				};
 			}
 
-			if (note.maxReads !== null && note.readCount >= note.maxReads) {
-				tx.delete(notes).where(eq(notes.id, id.data)).run();
-				return {
-					error: "Note has reached maximum reads" as const,
-					status: 404 as const,
-					filePath: note.filePath,
-				};
-			}
+			const maxReads = note.maxReads as number;
+			const newReadCount = note.readCount + 1;
+			const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
 
-			if (note.burnAfterRead) {
+			if (shouldDelete) {
 				tx.delete(notes).where(eq(notes.id, id.data)).run();
 			} else {
-				tx.update(notes)
-					.set({ readCount: note.readCount + 1 })
-					.where(eq(notes.id, id.data))
-					.run();
+				tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id.data)).run();
 			}
 
-			return { note };
+			return { note, shouldDelete };
 		});
 
 		if ("error" in result) {
@@ -264,7 +247,7 @@ export function createNotesRoutes() {
 			return c.json({ error: "Failed to decrypt note" }, 500);
 		}
 
-		if (note.burnAfterRead && note.filePath) {
+		if (result.shouldDelete && note.filePath) {
 			await storage.delete(note.filePath);
 		}
 

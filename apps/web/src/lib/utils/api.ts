@@ -59,7 +59,7 @@ export function createNoteWithProgress(
 export async function checkNoteExists(id: string): Promise<NoteExistsResponse> {
 	const res = await fetch(`${API_BASE}/notes/${id}/exists`);
 	if (!res.ok) {
-		return { exists: false, hasPassword: false, fileCount: 0, expiresAt: "", burnAfterRead: false };
+		return { exists: false, hasPassword: false, fileCount: 0, expiresAt: "", maxReads: 1 };
 	}
 	return res.json() as Promise<NoteExistsResponse>;
 }

@@ -36,10 +36,7 @@ onMount(async () => {
 	<header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
 		<nav class="mx-auto flex max-w-3xl items-center justify-between px-4 py-4" aria-label="Main navigation">
 			<a href="/" class="flex items-center gap-2 text-xl font-bold text-white hover:text-primary-light transition-colors">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6" aria-hidden="true">
-					<rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-					<path d="M7 11V7a5 5 0 0 1 10 0v4" />
-				</svg>
+				<i class="fa-solid fa-lock" aria-hidden="true"></i>
 				{config.appName}
 			</a>
 			<a
@@ -49,7 +46,7 @@ onMount(async () => {
 				class="text-sm text-slate-400 hover:text-white transition-colors"
 				aria-label={t("github")}
 			>
-				{t("github")}
+				<i class="fa-brands fa-github"></i> {t("github")}
 			</a>
 		</nav>
 	</header>

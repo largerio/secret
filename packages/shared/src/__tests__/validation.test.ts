@@ -7,8 +7,8 @@ describe("createNoteSchema", () => {
 		encryptedData: "base64encrypteddata==",
 		clientNonce: "base64nonce==",
 		hasPassword: false,
-		burnAfterRead: true,
 		expiresIn: 3600,
+		maxReads: 1,
 		fileCount: 0,
 	};
 
@@ -17,8 +17,8 @@ describe("createNoteSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
-	it("accepts a request with optional maxReads", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, maxReads: 5 });
+	it("accepts maxReads of 0 (unlimited)", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, maxReads: 0 });
 		expect(result.success).toBe(true);
 	});
 
@@ -58,9 +58,13 @@ describe("createNoteSchema", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("rejects zero maxReads", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, maxReads: 0 });
-		expect(result.success).toBe(false);
+	it("defaults maxReads to 1 when not provided", () => {
+		const { maxReads: _, ...withoutMaxReads } = validRequest;
+		const result = createNoteSchema.safeParse(withoutMaxReads);
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.maxReads).toBe(1);
+		}
 	});
 
 	it("rejects negative fileCount", () => {
@@ -141,8 +145,8 @@ describe("createNoteMultipartSchema", () => {
 	const validMeta = {
 		clientNonce: "base64nonce==",
 		hasPassword: false,
-		burnAfterRead: false,
 		expiresIn: 3600,
+		maxReads: 1,
 		fileCount: 1,
 	};
 
@@ -188,8 +192,8 @@ describe("createNoteMultipartSchema", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("accepts optional maxReads", () => {
-		const result = createNoteMultipartSchema.safeParse({ ...validMeta, maxReads: 5 });
+	it("accepts maxReads of 0 (unlimited)", () => {
+		const result = createNoteMultipartSchema.safeParse({ ...validMeta, maxReads: 0 });
 		expect(result.success).toBe(true);
 	});
 

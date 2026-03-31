@@ -16,7 +16,7 @@ services:
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
       - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-dev-key-change-me-in-production-32ch}
-    command: pnpm dev
+    command: sh -c "pnpm install && pnpm dev"
     tty: true
 
 volumes:

@@ -17,7 +17,7 @@ type NoteStatus =
 	| {
 			state: "ready";
 			hasPassword: boolean;
-			burnAfterRead: boolean;
+			maxReads: number;
 			fileCount: number;
 			expiresAt: string;
 	  }
@@ -58,7 +58,7 @@ async function checkNote() {
 			status = {
 				state: "ready",
 				hasPassword: result.hasPassword,
-				burnAfterRead: result.burnAfterRead,
+				maxReads: result.maxReads,
 				fileCount: result.fileCount,
 				expiresAt: result.expiresAt,
 			};
@@ -187,7 +187,7 @@ function isPdf(type: string): boolean {
 			<h1 class="text-xl font-semibold">{t("view_title")}</h1>
 			<p class="text-sm text-slate-400">{t("view_description")}</p>
 
-			{#if status.burnAfterRead}
+			{#if status.maxReads === 1}
 				<div class="rounded-lg border border-amber-800/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300" role="alert">
 					{t("view_burn_warning")}
 				</div>
@@ -242,9 +242,15 @@ function isPdf(type: string): boolean {
 			{#if status.payload.text}
 				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6">
 					<h2 class="mb-3 text-sm font-medium text-slate-400">{t("text_content")}</h2>
-					<div class="prose prose-invert prose-sm max-w-none">
-						{@html renderMarkdown(status.payload.text)}
-					</div>
+					{#if status.payload.contentMode === "markdown" || !status.payload.contentMode}
+						<div class="prose prose-invert prose-sm max-w-none">
+							{@html renderMarkdown(status.payload.text)}
+						</div>
+					{:else if status.payload.contentMode === "secret"}
+						<code class="block rounded-lg bg-slate-800 px-4 py-3 font-mono text-sm text-white break-all select-all">{status.payload.text}</code>
+					{:else}
+						<pre class="whitespace-pre-wrap text-sm text-slate-200">{status.payload.text}</pre>
+					{/if}
 				</div>
 			{/if}
 

@@ -1,7 +1,9 @@
 <script lang="ts">
-import type { CreateNoteResponse, NoteFile, NotePayload } from "@secret/shared";
+import type { ContentMode, CreateNoteResponse, NoteFile, NotePayload } from "@secret/shared";
 import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
 import { toDataURL } from "qrcode";
+import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
+import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import ProgressBar from "$lib/components/ProgressBar.svelte";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
@@ -9,12 +11,12 @@ import { createNote, createNoteWithProgress, deleteNote } from "$lib/utils/api";
 import { encryptNote } from "$lib/utils/crypto-client";
 import { formatSize } from "$lib/utils/format";
 
+let contentMode = $state<ContentMode>("text");
 let text = $state("");
 let files = $state<File[]>([]);
 let password = $state("");
-let burnAfterRead = $state(false);
 let expiresIn = $state(86400);
-let maxReads = $state("");
+let maxReads = $state("1");
 let isSubmitting = $state(false);
 let error = $state("");
 let shareUrl = $state("");
@@ -58,12 +60,12 @@ async function handleSubmit() {
 		}
 
 		const payload: NotePayload = {
-			...(text ? { text } : {}),
+			...(text ? { text, contentMode } : {}),
 			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
 		};
 
 		const encrypted = await encryptNote(payload, password || undefined);
-		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : undefined;
+		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : 1;
 
 		let response: CreateNoteResponse;
 		if (noteFiles.length > 0) {
@@ -74,11 +76,10 @@ async function handleSubmit() {
 				JSON.stringify({
 					clientNonce: encrypted.clientNonce,
 					hasPassword: Boolean(password),
-					burnAfterRead,
 					expiresIn,
 					fileCount: noteFiles.length,
+					maxReads: parsedMaxReads,
 					...(encrypted.salt ? { salt: encrypted.salt } : {}),
-					...(parsedMaxReads ? { maxReads: parsedMaxReads } : {}),
 				}),
 			);
 			formData.append("data", new Blob([binaryData], { type: "application/octet-stream" }));
@@ -92,11 +93,10 @@ async function handleSubmit() {
 				encryptedData: encrypted.encryptedData,
 				clientNonce: encrypted.clientNonce,
 				hasPassword: Boolean(password),
-				burnAfterRead,
 				expiresIn,
 				fileCount: noteFiles.length,
+				maxReads: parsedMaxReads,
 				...(encrypted.salt ? { salt: encrypted.salt } : {}),
-				...(parsedMaxReads ? { maxReads: parsedMaxReads } : {}),
 			});
 		}
 
@@ -167,12 +167,12 @@ async function handleDelete() {
 }
 
 function reset() {
+	contentMode = "text";
 	text = "";
 	files = [];
 	password = "";
-	burnAfterRead = false;
 	expiresIn = 86400;
-	maxReads = "";
+	maxReads = "1";
 	shareUrl = "";
 	noteId = "";
 	deleteToken = "";
@@ -212,30 +212,10 @@ function reset() {
 							class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors"
 							aria-label={t("copy_button")}
 						>
-							{copied ? t("copied") : t("copy_button")}
+							<i class="fa-regular fa-copy"></i> {copied ? t("copied") : t("copy_button")}
 						</button>
 					</div>
 				</div>
-
-				{#if burnAfterRead}
-					<p class="text-sm text-amber-400" role="alert">
-						{t("burn_warning")}
-					</p>
-				{/if}
-
-				{#if deleteToken && !isDeleted}
-					<button
-						onclick={handleDelete}
-						disabled={isDeleting}
-						class="w-full rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2.5 text-sm font-medium text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
-					>
-						{isDeleting ? "..." : t("delete_button")}
-					</button>
-				{/if}
-
-				{#if isDeleted}
-					<p class="text-sm text-green-400" role="status">{t("note_deleted")}</p>
-				{/if}
 
 				{#if qrCodeUrl}
 					<div class="flex justify-center">
@@ -251,12 +231,26 @@ function reset() {
 			</div>
 		</div>
 
+		{#if isDeleted}
+			<p class="text-sm text-green-400" role="status"><i class="fa-solid fa-check"></i> {t("note_deleted")}</p>
+		{/if}
+
 		<button
 			onclick={reset}
 			class="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-medium text-white hover:bg-slate-700 transition-colors"
 		>
-			{t("create_another")}
+			<i class="fa-solid fa-plus"></i> {t("create_another")}
 		</button>
+
+		{#if deleteToken && !isDeleted}
+			<button
+				onclick={handleDelete}
+				disabled={isDeleting}
+				class="w-full rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2.5 text-sm font-medium text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
+			>
+				<i class="fa-solid fa-trash"></i> {isDeleting ? "..." : t("delete_button")}
+			</button>
+		{/if}
 	</div>
 {:else}
 	<form
@@ -278,26 +272,55 @@ function reset() {
 			</div>
 		{/if}
 
+		<ul class="flex w-full rounded-lg border border-slate-700 bg-slate-800 text-xs font-medium sm:text-sm">
+			<li class="flex-1 border-r border-slate-700">
+				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'text' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
+					<input type="radio" name="content-mode" value="text" bind:group={contentMode} class="sr-only" />
+					<i class="fa-solid fa-align-left"></i>
+					{t("content_mode_text")}
+				</label>
+			</li>
+			<li class="flex-1 border-r border-slate-700">
+				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'markdown' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
+					<input type="radio" name="content-mode" value="markdown" bind:group={contentMode} class="sr-only" />
+					<i class="fa-brands fa-markdown"></i>
+					{t("content_mode_markdown")}
+				</label>
+			</li>
+			<li class="flex-1">
+				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'secret' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
+					<input type="radio" name="content-mode" value="secret" bind:group={contentMode} class="sr-only" />
+					<i class="fa-solid fa-key"></i>
+					{t("content_mode_secret")}
+				</label>
+			</li>
+		</ul>
+
 		<div>
-			<label for="note-text" class="mb-1 block text-sm font-medium text-slate-300"
-				>{t("text_label")}</label
-			>
-			<textarea
-				id="note-text"
-				bind:value={text}
-				placeholder={t("text_placeholder")}
-				rows="6"
-				maxlength={MAX_TEXT_SIZE}
-				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-			></textarea>
-			<p class="mt-1 text-xs text-slate-500">
-				{t("char_count", { count: text.length.toLocaleString(), max: MAX_TEXT_SIZE.toLocaleString() })}
-			</p>
+			{#if contentMode === "secret"}
+				<PasswordGenerator bind:value={text} />
+			{:else if contentMode === "markdown"}
+				<MarkdownEditor bind:value={text} maxlength={MAX_TEXT_SIZE} placeholder={t("text_placeholder")} />
+			{:else}
+				<textarea
+					id="note-text"
+					bind:value={text}
+					placeholder={t("text_placeholder")}
+					rows="6"
+					maxlength={MAX_TEXT_SIZE}
+					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+				></textarea>
+			{/if}
+			{#if contentMode !== "secret"}
+				<p class="mt-1 text-xs text-slate-500">
+					{t("char_count", { count: text.length.toLocaleString(), max: MAX_TEXT_SIZE.toLocaleString() })}
+				</p>
+			{/if}
 		</div>
 
 		<div>
 			<label for="file-upload" class="mb-1 block text-sm font-medium text-slate-300"
-				>{t("files_label")}</label
+				><i class="fa-solid fa-paperclip"></i> {t("files_label")}</label
 			>
 			<div
 				class="relative rounded-lg border-2 border-dashed p-6 text-center transition-colors {isDragging
@@ -352,59 +375,51 @@ function reset() {
 			{/if}
 		</div>
 
-		<div>
-			<label for="password" class="mb-1 block text-sm font-medium text-slate-300"
-				>{t("password_label")}</label
-			>
-			<input
-				id="password"
-				type="password"
-				bind:value={password}
-				placeholder={t("password_placeholder")}
-				autocomplete="off"
-				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-			/>
-		</div>
+		<div class="grid grid-cols-1 gap-4 md:grid-cols-3 md:items-end">
+			<div>
+				<label for="password" class="mb-1 block text-sm font-medium text-slate-300"
+					><i class="fa-solid fa-shield-halved"></i> {t("password_label")}</label
+				>
+				<input
+					id="password"
+					type="password"
+					bind:value={password}
+					placeholder={t("password_placeholder")}
+					autocomplete="off"
+					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+				/>
+			</div>
 
-		<div>
-			<label for="expires" class="mb-1 block text-sm font-medium text-slate-300"
-				>{t("expires_label")}</label
-			>
-			<select
-				id="expires"
-				bind:value={expiresIn}
-				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-			>
-				{#each EXPIRATION_OPTIONS as option}
-					<option value={option.value}>{t(option.labelKey)}</option>
-				{/each}
-			</select>
-		</div>
+			<div>
+				<label for="expires" class="mb-1 block text-sm font-medium text-slate-300"
+					><i class="fa-regular fa-clock"></i> {t("expires_label")}</label
+				>
+				<select
+					id="expires"
+					bind:value={expiresIn}
+					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+				>
+					{#each EXPIRATION_OPTIONS as option}
+						<option value={option.value}>{t(option.labelKey)}</option>
+					{/each}
+				</select>
+			</div>
 
-		<div>
-			<label for="max-reads" class="mb-1 block text-sm font-medium text-slate-300"
-				>{t("max_reads_label")}</label
-			>
-			<input
-				id="max-reads"
-				type="number"
-				bind:value={maxReads}
-				placeholder={t("max_reads_placeholder")}
-				min="1"
-				max="1000"
-				class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-			/>
-			<p class="mt-1 text-xs text-slate-500">{t("max_reads_help")}</p>
+			<div>
+				<label for="max-reads" class="mb-1 block text-sm font-medium text-slate-300"
+					><i class="fa-solid fa-eye"></i> {t("max_reads_label")}</label
+				>
+				<input
+					id="max-reads"
+					type="number"
+					bind:value={maxReads}
+					placeholder={t("max_reads_placeholder")}
+					min="0"
+					max="1000"
+					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+				/>
+			</div>
 		</div>
-
-		<label class="flex items-center gap-3 cursor-pointer">
-			<input
-				type="checkbox"
-				bind:checked={burnAfterRead}
-				class="h-4 w-4 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
-			/>
-			<span class="text-sm text-slate-300">{t("burn_label")}</span>
-		</label>
 
 		{#if uploadProgress !== null}
 			<ProgressBar progress={uploadProgress} label={t("uploading")} />
@@ -415,7 +430,11 @@ function reset() {
 			disabled={isSubmitting}
 			class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 		>
-			{isSubmitting ? t("submitting") : t("submit_button")}
+			{#if isSubmitting}
+				<i class="fa-solid fa-spinner fa-spin"></i> {t("submitting")}
+			{:else}
+				<i class="fa-solid fa-lock"></i> {t("submit_button")}
+			{/if}
 		</button>
 	</form>
 {/if}

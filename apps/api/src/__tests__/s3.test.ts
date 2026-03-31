@@ -40,6 +40,11 @@ describe("S3Storage", () => {
 		storage = new S3Storage(config);
 	});
 
+	it("accepts config with custom endpoint", () => {
+		const s3 = new S3Storage({ ...config, endpoint: "https://minio.local:9000" });
+		expect(s3).toBeDefined();
+	});
+
 	describe("save", () => {
 		it("returns the S3 key", async () => {
 			const key = await storage.save("note123", Buffer.from("encrypted-data"));
