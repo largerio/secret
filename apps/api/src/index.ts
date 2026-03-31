@@ -61,6 +61,13 @@ if (STORAGE_BACKEND !== "local" && STORAGE_BACKEND !== "s3") {
 	process.exit(1);
 }
 
+if (STORAGE_BACKEND === "s3" && (!S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY)) {
+	console.error(
+		"ERROR: S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required when STORAGE_BACKEND=s3",
+	);
+	process.exit(1);
+}
+
 const serverKey = parseServerKey(SERVER_KEY_ENV);
 const { db, sqlite } = createDatabase(DATABASE_PATH);
 
@@ -91,8 +98,9 @@ interface AppEnv {
 const app = new Hono<AppEnv>();
 
 app.onError((err, c) => {
-	console.error("[error]", err.message);
-	return c.json({ error: "Internal server error" }, 500);
+	const errorId = crypto.randomUUID();
+	console.error(`[error] ${errorId}:`, err);
+	return c.json({ error: "Internal server error", errorId }, 500);
 });
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
@@ -110,9 +118,11 @@ app.use(
 	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
 );
 
-const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 100 });
-const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
+const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 30 });
+const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 60 });
+const existsRateLimit = createRateLimit({ windowMs: 60_000, max: 20 });
 app.use("/api/notes", notesRateLimit.middleware);
+app.use("/api/notes/*/exists", existsRateLimit.middleware);
 app.use("/api/notes/*", notesDetailRateLimit.middleware);
 
 app.use("*", async (c, next) => {
@@ -146,6 +156,7 @@ function shutdown(): void {
 	clearInterval(cleanupTimer);
 	notesRateLimit.cleanup();
 	notesDetailRateLimit.cleanup();
+	existsRateLimit.cleanup();
 	server.close(() => {
 		sqlite.close();
 		process.exit(0);

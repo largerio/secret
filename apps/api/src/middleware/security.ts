@@ -17,11 +17,20 @@ export function createSecurityHeaders(): MiddlewareHandler {
 			baseUri: ["'self'"],
 			formAction: ["'self'"],
 		},
+		strictTransportSecurity: "max-age=63072000; includeSubDomains; preload",
 		crossOriginOpenerPolicy: "same-origin",
 		crossOriginResourcePolicy: "same-origin",
 		referrerPolicy: "no-referrer",
 		xContentTypeOptions: "nosniff",
 		xFrameOptions: "DENY",
+		permissionsPolicy: {
+			camera: [],
+			microphone: [],
+			geolocation: [],
+			gyroscope: [],
+			magnetometer: [],
+			accelerometer: [],
+		},
 	});
 }
 

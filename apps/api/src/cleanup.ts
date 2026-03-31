@@ -18,7 +18,12 @@ export function startCleanupJob(
 
 		for (const note of expired) {
 			if (note.filePath) {
-				void storage.delete(note.filePath);
+				storage.delete(note.filePath).catch((err: unknown) => {
+					console.error(
+						`[cleanup] Failed to delete file for note ${note.id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
 			}
 		}
 
