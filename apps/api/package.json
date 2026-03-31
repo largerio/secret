@@ -18,7 +18,7 @@
 		"drizzle-orm": "^0.45.2",
 		"hono": "^4.12.9",
 		"nanoid": "^5.1.7",
-		"zod": "^3.25.67"
+		"zod": "^4.3.6"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
