@@ -8,6 +8,7 @@ WORKDIR /build
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/crypto/package.json packages/crypto/
+COPY packages/sdk-js/package.json packages/sdk-js/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 
@@ -20,13 +21,14 @@ COPY messages/ messages/
 
 RUN pnpm --filter @secret/shared build
 RUN pnpm --filter @secret/crypto build
+RUN pnpm --filter @secret/sdk-js build
 RUN pnpm --filter @secret/web build
 RUN pnpm --filter @secret/api build
 
 # Rewrite package exports from .ts sources to compiled .js dist
 RUN node -e " \
   const fs = require('fs'); \
-  for (const pkg of ['packages/shared', 'packages/crypto']) { \
+  for (const pkg of ['packages/shared', 'packages/crypto', 'packages/sdk-js']) { \
     const p = JSON.parse(fs.readFileSync(pkg + '/package.json', 'utf8')); \
     const rewrite = (v) => v.replace('./src/', './dist/').replace('.ts', '.js'); \
     if (typeof p.exports === 'string') { p.exports = rewrite(p.exports); } \
@@ -46,6 +48,7 @@ RUN corepack enable pnpm
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/
 COPY --from=builder /build/packages/crypto/package.json packages/crypto/
+COPY --from=builder /build/packages/sdk-js/package.json packages/sdk-js/
 COPY --from=builder /build/apps/api/package.json apps/api/
 COPY --from=builder /build/apps/web/package.json apps/web/
 
@@ -53,6 +56,7 @@ RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /build/packages/shared/dist packages/shared/dist
 COPY --from=builder /build/packages/crypto/dist packages/crypto/dist
+COPY --from=builder /build/packages/sdk-js/dist packages/sdk-js/dist
 COPY --from=builder /build/apps/api/dist apps/api/dist
 COPY --from=builder /build/apps/web/build apps/web/build
 COPY entrypoint.sh ./
