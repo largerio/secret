@@ -25,7 +25,7 @@ pnpm typecheck        # TypeScript strict check (all packages)
 
 Monorepo with pnpm workspaces:
 
-- **`apps/api`** — Hono HTTP server (Node.js 24, TypeScript)
+- **`apps/api`** — Hono HTTP server (Node.js 25, TypeScript)
   - Routes: `src/routes/notes.ts` — OpenAPI routes via `@hono/zod-openapi`
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
   - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
@@ -91,7 +91,7 @@ Monorepo with pnpm workspaces:
 
 ## Environment
 
-- Node.js >= 24
+- Node.js >= 25
 - pnpm (workspace monorepo)
 - ES modules throughout
 - SQLite data in `./data/` (gitignored)

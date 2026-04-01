@@ -1,5 +1,6 @@
 import {
 	DeleteObjectCommand,
+	DeleteObjectsCommand,
 	GetObjectCommand,
 	PutObjectCommand,
 	S3Client,
@@ -14,6 +15,20 @@ export interface S3Config {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
 	readonly forcePathStyle: boolean;
+}
+
+async function streamToBuffer(body: { transformToWebStream(): ReadableStream }): Promise<Buffer> {
+	const chunks: Uint8Array[] = [];
+	const stream = body.transformToWebStream();
+	const reader = stream.getReader();
+
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		chunks.push(value);
+	}
+
+	return Buffer.concat(chunks);
 }
 
 export class S3Storage implements StorageBackend {
@@ -63,17 +78,7 @@ export class S3Storage implements StorageBackend {
 			throw new Error("Empty response from S3");
 		}
 
-		const chunks: Uint8Array[] = [];
-		const stream = response.Body.transformToWebStream();
-		const reader = stream.getReader();
-
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			chunks.push(value);
-		}
-
-		return Buffer.concat(chunks);
+		return streamToBuffer(response.Body);
 	}
 
 	async delete(storageKey: string): Promise<void> {
@@ -118,30 +123,26 @@ export class S3Storage implements StorageBackend {
 			throw new Error("Empty response from S3");
 		}
 
-		const chunks: Uint8Array[] = [];
-		const stream = response.Body.transformToWebStream();
-		const reader = stream.getReader();
-
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			chunks.push(value);
-		}
-
-		return Buffer.concat(chunks);
+		return streamToBuffer(response.Body);
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
-		for (let i = 0; i < chunkCount; i++) {
+		const objects = Array.from({ length: chunkCount }, (_, i) => ({
+			Key: `notes/${noteId}/chunk_${String(i)}`,
+		}));
+
+		// S3 DeleteObjects supports up to 1000 keys per batch
+		for (let start = 0; start < objects.length; start += 1000) {
+			const batch = objects.slice(start, start + 1000);
 			try {
 				await this.client.send(
-					new DeleteObjectCommand({
+					new DeleteObjectsCommand({
 						Bucket: this.bucket,
-						Key: `notes/${noteId}/chunk_${String(i)}`,
+						Delete: { Objects: batch, Quiet: true },
 					}),
 				);
 			} catch {
-				/* chunk already deleted or missing */
+				/* batch delete failed — individual chunks may remain */
 			}
 		}
 	}

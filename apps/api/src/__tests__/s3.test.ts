@@ -18,6 +18,9 @@ vi.mock("@aws-sdk/client-s3", () => {
 		DeleteObjectCommand: class MockDeleteObjectCommand {
 			constructor(public params: unknown) {}
 		},
+		DeleteObjectsCommand: class MockDeleteObjectsCommand {
+			constructor(public params: unknown) {}
+		},
 	};
 });
 
@@ -159,23 +162,24 @@ describe("S3Storage", () => {
 	});
 
 	describe("deleteChunks", () => {
-		it("sends Delete for all chunk objects", async () => {
+		it("sends batch Delete for all chunk objects", async () => {
 			mockSend.mockResolvedValue({});
 			await storage.deleteChunks("note123", 3);
-			expect(mockSend).toHaveBeenCalledTimes(3);
+			expect(mockSend).toHaveBeenCalledTimes(1);
 
-			const keys = mockSend.mock.calls.map(
-				(call: Array<{ params: { Key: string } }>) => call[0]?.params?.Key,
-			);
-			expect(keys).toEqual([
-				"notes/note123/chunk_0",
-				"notes/note123/chunk_1",
-				"notes/note123/chunk_2",
+			const cmd = mockSend.mock.calls[0]?.[0] as {
+				params?: { Delete?: { Objects?: Array<{ Key: string }> } };
+			};
+			const objects = cmd?.params?.Delete?.Objects ?? [];
+			expect(objects).toEqual([
+				{ Key: "notes/note123/chunk_0" },
+				{ Key: "notes/note123/chunk_1" },
+				{ Key: "notes/note123/chunk_2" },
 			]);
 		});
 
-		it("does not throw when individual chunk deletes fail", async () => {
-			mockSend.mockRejectedValue(new Error("NoSuchKey"));
+		it("does not throw when batch delete fails", async () => {
+			mockSend.mockRejectedValue(new Error("S3 error"));
 			await expect(storage.deleteChunks("note123", 2)).resolves.not.toThrow();
 		});
 	});

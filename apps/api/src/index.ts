@@ -211,7 +211,6 @@ v1.get("/config", (c) => {
 		maxFilesPerNote: CONFIGURED_MAX_FILES,
 		chunkSize: CHUNK_SIZE,
 		maxChunkedFileSize: MAX_CHUNKED_FILE_SIZE,
-		storageType: STORAGE_BACKEND,
 	});
 });
 

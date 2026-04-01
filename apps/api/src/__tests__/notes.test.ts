@@ -648,6 +648,164 @@ describe("GET /api/v1/notes/:id", () => {
 		const json = await res.json();
 		expect(json.error).toBe("Failed to decrypt note");
 	});
+
+	it("logs error when chunk cleanup fails for expired chunked note", async () => {
+		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		// Use failing storage for chunk deletion
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failStorage: StorageBackend = {
+			save: (nid, data) => realStorage.save(nid, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
+			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
+			deleteChunks: () => Promise.reject("chunk fail string"),
+		};
+		const customApp = new Hono<AppEnv>();
+		customApp.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		customApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		customApp.use("/api/v1/notes/*", writeAuth);
+		customApp.route("/api/v1/notes", createNotesRoutes());
+
+		const res = await customApp.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+	});
+
+	it("logs error when chunk cleanup fails for burn-after-read chunked note", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ chunkCount: 1, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failStorage: StorageBackend = {
+			save: (nid, data) => realStorage.save(nid, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
+			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
+			deleteChunks: () => Promise.reject("chunk burn fail string"),
+		};
+		const customApp = new Hono<AppEnv>();
+		customApp.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		customApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		customApp.use("/api/v1/notes/*", writeAuth);
+		customApp.route("/api/v1/notes", createNotesRoutes());
+
+		// Read succeeds (data served from encryptedData blob, not chunks since we didn't save actual chunks)
+		const res = await customApp.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(200);
+	});
+
+	it("logs Error.message when chunk cleanup fails with Error for expired chunked note", async () => {
+		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failStorage: StorageBackend = {
+			save: (nid, data) => realStorage.save(nid, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
+			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
+			deleteChunks: () => Promise.reject(new Error("chunk fail error")),
+		};
+		const customApp = new Hono<AppEnv>();
+		customApp.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		customApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		customApp.use("/api/v1/notes/*", writeAuth);
+		customApp.route("/api/v1/notes", createNotesRoutes());
+
+		const res = await customApp.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+
+		// Also test burn-after-read with Error
+		const { id: id2 } = await createTestNote({ maxReads: 1, fileCount: 0 });
+		db.update(notesTable)
+			.set({ chunkCount: 1, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id2))
+			.run();
+		const res2 = await customApp.request(`/api/v1/notes/${id2}`);
+		expect(res2.status).toBe(200);
+	});
+
+	it("returns 404 and cleans up chunks for expired chunked note", async () => {
+		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Note has expired");
+	});
+
+	it("handles burn-after-read chunked note via JSON endpoint", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ chunkCount: 1, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(200);
+
+		const res2 = await app.request(`/api/v1/notes/${id}`);
+		expect(res2.status).toBe(404);
+	});
 });
 
 describe("GET /api/v1/notes/:id/raw", () => {
@@ -1388,6 +1546,92 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 		const json = await res.json();
 		expect(json.error).toBe("Note has expired");
+	});
+
+	it("logs error when chunk cleanup fails for expired chunked note on stream", async () => {
+		const { id } = await createChunkedNote();
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const failStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue("stream chunk fail string"),
+		};
+		const failApp = new Hono<AppEnv>();
+		failApp.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		failApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		failApp.route("/api/v1/notes", createNotesRoutes());
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`[notes] Failed to delete chunks for expired note ${id}`),
+			"stream chunk fail string",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("logs Error.message when chunk cleanup fails with Error for expired note on stream", async () => {
+		const { id } = await createChunkedNote();
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const failStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue(new Error("stream chunk error obj")),
+		};
+		const errApp = new Hono<AppEnv>();
+		errApp.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		errApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		errApp.route("/api/v1/notes", createNotesRoutes());
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const res = await errApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`[notes] Failed to delete chunks for expired note ${id}`),
+			"stream chunk error obj",
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it("returns 404 for non-existent note on stream", async () => {

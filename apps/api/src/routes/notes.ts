@@ -280,6 +280,7 @@ export function createNotesRoutes() {
 					error: "Note has expired" as const,
 					status: 404 as const,
 					filePath: note.filePath,
+					chunkCount: note.chunkCount,
 				};
 			}
 
@@ -297,10 +298,17 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			if ("filePath" in result && result.filePath) {
+			if ("chunkCount" in result && result.chunkCount && result.chunkCount > 0) {
+				await storage.deleteChunks(id, result.chunkCount).catch((err: unknown) => {
+					console.error(
+						`[notes] Failed to delete chunks for expired note ${id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
+			} else if ("filePath" in result && result.filePath) {
 				await storage.delete(result.filePath).catch((err: unknown) => {
 					console.error(
-						`[notes] Failed to delete file for expired note:`,
+						`[notes] Failed to delete file for expired note ${id}:`,
 						err instanceof Error ? err.message : err,
 					);
 				});
@@ -323,13 +331,22 @@ export function createNotesRoutes() {
 			httpError(500, "Failed to decrypt note");
 		}
 
-		if (result.shouldDelete && note.filePath) {
-			await storage.delete(note.filePath).catch((err: unknown) => {
-				console.error(
-					`[notes] Failed to delete file for burned note ${id}:`,
-					err instanceof Error ? err.message : err,
-				);
-			});
+		if (result.shouldDelete) {
+			if (note.chunkCount && note.chunkCount > 0) {
+				await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
+					console.error(
+						`[notes] Failed to delete chunks for burned note ${id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
+			} else if (note.filePath) {
+				await storage.delete(note.filePath).catch((err: unknown) => {
+					console.error(
+						`[notes] Failed to delete file for burned note ${id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
+			}
 		}
 
 		return { clientBlob, note };
@@ -655,7 +672,11 @@ export function createNotesRoutes() {
 
 			if (note.expiresAt < new Date()) {
 				tx.delete(notes).where(eq(notes.id, id)).run();
-				return { error: "Note has expired" as const, status: 404 as const };
+				return {
+					error: "Note has expired" as const,
+					status: 404 as const,
+					expiredChunkCount: note.chunkCount,
+				};
 			}
 
 			if (!note.chunkCount || !note.streamHeader) {
@@ -676,6 +697,18 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
+			if (
+				"expiredChunkCount" in result &&
+				result.expiredChunkCount &&
+				result.expiredChunkCount > 0
+			) {
+				await storage.deleteChunks(id, result.expiredChunkCount).catch((err: unknown) => {
+					console.error(
+						`[notes] Failed to delete chunks for expired note ${id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
+			}
 			httpError(result.status as 404, result.error);
 		}
 
