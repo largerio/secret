@@ -32,3 +32,31 @@ export function decryptPayload(
 export function decryptRaw(ciphertext: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array {
 	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, null, nonce, key);
 }
+
+// --- Streaming decryption (secretstream) ---
+
+export function initStreamDecrypt(
+	header: Uint8Array,
+	key: Uint8Array,
+): import("libsodium-wrappers-sumo").StateAddress {
+	return sodium.crypto_secretstream_xchacha20poly1305_init_pull(header, key);
+}
+
+export interface DecryptChunkResult {
+	readonly decrypted: Uint8Array;
+	readonly isFinal: boolean;
+}
+
+export function decryptChunk(
+	state: import("libsodium-wrappers-sumo").StateAddress,
+	encryptedChunk: Uint8Array,
+): DecryptChunkResult {
+	const result = sodium.crypto_secretstream_xchacha20poly1305_pull(state, encryptedChunk, null);
+	if (!result) {
+		throw new Error("Failed to decrypt chunk: invalid or corrupted data");
+	}
+	return {
+		decrypted: result.message,
+		isFinal: result.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL,
+	};
+}

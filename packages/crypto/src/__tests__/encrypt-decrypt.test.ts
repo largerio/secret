@@ -2,8 +2,14 @@ import { encode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it } from "vitest";
-import { decryptPayload, decryptRaw } from "../decrypt.js";
-import { encryptPayload, encryptRaw } from "../encrypt.js";
+import { decryptChunk, decryptPayload, decryptRaw, initStreamDecrypt } from "../decrypt.js";
+import {
+	encryptChunk,
+	encryptPayload,
+	encryptRaw,
+	initStreamEncrypt,
+	SECRETSTREAM_ABYTES,
+} from "../encrypt.js";
 import { generateKey, generateNonce, initSodium } from "../keys.js";
 
 beforeAll(async () => {
@@ -149,5 +155,131 @@ describe("encryptRaw / decryptRaw", () => {
 		const { ciphertext, nonce } = encryptRaw(data, key);
 		const decrypted = decryptRaw(ciphertext, nonce, key);
 		expect(decrypted).toEqual(data);
+	});
+});
+
+describe("secretstream (chunked encryption)", () => {
+	it("roundtrips a single chunk", () => {
+		const key = generateKey();
+		const data = new Uint8Array([1, 2, 3, 4, 5]);
+
+		const { state: encState, header } = initStreamEncrypt(key);
+		const encrypted = encryptChunk(encState, data, true);
+
+		const decState = initStreamDecrypt(header, key);
+		const { decrypted, isFinal } = decryptChunk(decState, encrypted);
+
+		expect(decrypted).toEqual(data);
+		expect(isFinal).toBe(true);
+	});
+
+	it("roundtrips multiple chunks", () => {
+		const key = generateKey();
+		const chunks = [
+			new Uint8Array([10, 20, 30]),
+			new Uint8Array([40, 50, 60]),
+			new Uint8Array([70, 80, 90]),
+		];
+
+		const { state: encState, header } = initStreamEncrypt(key);
+		const encrypted = chunks.map((chunk, i) =>
+			encryptChunk(encState, chunk, i === chunks.length - 1),
+		);
+
+		const decState = initStreamDecrypt(header, key);
+		const decrypted = encrypted.map((enc) => decryptChunk(decState, enc));
+
+		expect(decrypted[0]?.decrypted).toEqual(chunks[0]);
+		expect(decrypted[0]?.isFinal).toBe(false);
+		expect(decrypted[1]?.decrypted).toEqual(chunks[1]);
+		expect(decrypted[1]?.isFinal).toBe(false);
+		expect(decrypted[2]?.decrypted).toEqual(chunks[2]);
+		expect(decrypted[2]?.isFinal).toBe(true);
+	});
+
+	it("detects corrupted chunk", () => {
+		const key = generateKey();
+		const { state: encState, header } = initStreamEncrypt(key);
+		const encrypted = encryptChunk(encState, new Uint8Array([1, 2, 3]), true);
+
+		// Corrupt a byte
+		const corrupted = new Uint8Array(encrypted);
+		corrupted[0] = corrupted[0]! ^ 0xff;
+
+		const decState = initStreamDecrypt(header, key);
+		expect(() => decryptChunk(decState, corrupted)).toThrow();
+	});
+
+	it("detects truncated chunk", () => {
+		const key = generateKey();
+		const { state: encState, header } = initStreamEncrypt(key);
+		const encrypted = encryptChunk(encState, new Uint8Array([1, 2, 3]), true);
+
+		const truncated = encrypted.slice(0, encrypted.length - 2);
+
+		const decState = initStreamDecrypt(header, key);
+		expect(() => decryptChunk(decState, truncated)).toThrow();
+	});
+
+	it("fails with wrong key", () => {
+		const key1 = generateKey();
+		const key2 = generateKey();
+
+		const { state: encState, header } = initStreamEncrypt(key1);
+		const encrypted = encryptChunk(encState, new Uint8Array([1, 2, 3]), true);
+
+		// initStreamDecrypt may not throw, but decryptChunk will fail
+		const decState = initStreamDecrypt(header, key2);
+		expect(() => decryptChunk(decState, encrypted)).toThrow();
+	});
+
+	it("each encrypted chunk adds ABYTES overhead", () => {
+		const key = generateKey();
+		const data = new Uint8Array(100);
+
+		const { state: encState } = initStreamEncrypt(key);
+		const encrypted = encryptChunk(encState, data, true);
+
+		expect(encrypted.length).toBe(data.length + SECRETSTREAM_ABYTES);
+	});
+
+	it("roundtrips large data split into chunks", () => {
+		const key = generateKey();
+		const chunkSize = 64;
+		const totalSize = 250;
+		const original = new Uint8Array(totalSize);
+		for (let i = 0; i < totalSize; i++) {
+			original[i] = i % 256;
+		}
+
+		// Split into chunks
+		const inputChunks: Uint8Array[] = [];
+		for (let offset = 0; offset < totalSize; offset += chunkSize) {
+			inputChunks.push(original.slice(offset, Math.min(offset + chunkSize, totalSize)));
+		}
+
+		// Encrypt
+		const { state: encState, header } = initStreamEncrypt(key);
+		const encryptedChunks = inputChunks.map((chunk, i) =>
+			encryptChunk(encState, chunk, i === inputChunks.length - 1),
+		);
+
+		// Decrypt
+		const decState = initStreamDecrypt(header, key);
+		const decryptedParts: Uint8Array[] = [];
+		for (const enc of encryptedChunks) {
+			const { decrypted } = decryptChunk(decState, enc);
+			decryptedParts.push(decrypted);
+		}
+
+		// Reassemble
+		const reassembled = new Uint8Array(totalSize);
+		let offset = 0;
+		for (const part of decryptedParts) {
+			reassembled.set(part, offset);
+			offset += part.length;
+		}
+
+		expect(reassembled).toEqual(original);
 	});
 });

@@ -47,6 +47,33 @@ export interface ReadNoteResponse {
 	readonly salt?: string;
 }
 
+// Chunked upload types
+export interface ChunkedUploadInitRequest {
+	readonly streamHeader: string;
+	readonly clientNonce: string;
+	readonly hasPassword: boolean;
+	readonly expiresIn: number;
+	readonly maxReads: number;
+	readonly fileCount: number;
+	readonly chunkCount: number;
+	readonly salt?: string;
+}
+
+export interface ChunkedUploadInitResponse {
+	readonly uploadId: string;
+	readonly expiresAt: string;
+}
+
+export interface ChunkUploadResponse {
+	readonly received: true;
+}
+
+export interface ChunkedUploadCompleteResponse {
+	readonly id: string;
+	readonly expiresAt: string;
+	readonly deleteToken: string;
+}
+
 export interface ServerConfig {
 	readonly appName: string;
 	readonly appDescription: string;
