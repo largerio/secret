@@ -1,5 +1,5 @@
-import { MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 import type { ServerConfig } from "@secret/shared";
+import { MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 import type { ServerLoad } from "@sveltejs/kit";
 
 const env = process.env;

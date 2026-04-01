@@ -3,11 +3,11 @@
  * Run with: docker compose -f docker-compose.dev.yml run --rm app pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { encode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { expect, test } from "vitest";
 
 test("generate test vectors", async () => {
@@ -181,10 +181,14 @@ test("generate test vectors", async () => {
 		},
 	};
 
-	const outDir = resolve(import.meta.dirname!, "../../../shared/src/test-vectors");
+	const dirname = import.meta.dirname;
+	if (!dirname) {
+		throw new Error("import.meta.dirname is undefined");
+	}
+	const outDir = resolve(dirname, "../../../shared/src/test-vectors");
 	mkdirSync(outDir, { recursive: true });
 	const outPath = resolve(outDir, "vectors.json");
-	writeFileSync(outPath, JSON.stringify(vectors, null, "\t") + "\n");
+	writeFileSync(outPath, `${JSON.stringify(vectors, null, "\t")}\n`);
 
 	expect(vectors.vectors.xchacha20poly1305).toHaveLength(2);
 	expect(vectors.vectors.argon2id).toHaveLength(1);

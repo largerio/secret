@@ -111,7 +111,7 @@ describe("SecretClient", () => {
 
 		await client.checkNote("aBcDeFgHiJkL");
 
-		const config = http.checkNote.mock.calls[0]![0] as import("../http.js").HttpClientConfig;
+		const config = http.checkNote.mock.calls[0]?.[0] as import("../http.js").HttpClientConfig;
 		expect(config.apiKey).toBe("test-key-123");
 	});
 
@@ -153,7 +153,7 @@ describe("SecretClient", () => {
 		expect(result.keyFragment).toBe("base64urlKey");
 
 		expect(http.postJson).toHaveBeenCalledOnce();
-		const body = http.postJson.mock.calls[0]![2] as Record<string, unknown>;
+		const body = http.postJson.mock.calls[0]?.[2] as Record<string, unknown>;
 		expect(body["encryptedData"]).toBe("base64EncData");
 		expect(body["clientNonce"]).toBe("base64Nonce");
 		expect(body["hasPassword"]).toBe(false);
@@ -173,7 +173,7 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({ text: "test", expiresIn: 3600, maxReads: 5 });
 
-		const body = http.postJson.mock.calls[0]![2] as Record<string, unknown>;
+		const body = http.postJson.mock.calls[0]?.[2] as Record<string, unknown>;
 		expect(body["expiresIn"]).toBe(3600);
 		expect(body["maxReads"]).toBe(5);
 	});
@@ -197,7 +197,7 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({ text: "secret", password: "pass123" });
 
-		const body = http.postJson.mock.calls[0]![2] as Record<string, unknown>;
+		const body = http.postJson.mock.calls[0]?.[2] as Record<string, unknown>;
 		expect(body["hasPassword"]).toBe(true);
 		expect(body["salt"]).toBe("someSalt");
 	});
@@ -230,7 +230,7 @@ describe("SecretClient", () => {
 		expect(result.id).toBe("fileNote12345");
 		expect(http.postFormData).toHaveBeenCalledOnce();
 
-		const callArgs = http.postFormData.mock.calls[0]!;
+		const callArgs = http.postFormData.mock.calls[0] ?? [];
 		expect(callArgs[1]).toBe("/notes/upload");
 		const formData = callArgs[2] as FormData;
 		expect(formData.get("metadata")).toBeTruthy();
@@ -267,7 +267,7 @@ describe("SecretClient", () => {
 			password: "secret",
 		});
 
-		const formData = http.postFormData.mock.calls[0]![2] as FormData;
+		const formData = http.postFormData.mock.calls[0]?.[2] as FormData;
 		const metadata = JSON.parse(formData.get("metadata") as string) as Record<string, unknown>;
 		expect(metadata["salt"]).toBe("fileSalt");
 		expect(metadata["hasPassword"]).toBe(true);

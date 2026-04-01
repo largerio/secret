@@ -1,3 +1,4 @@
+export type { ContentMode, NoteFile, NotePayload } from "@secret/shared";
 export { SecretClient } from "./client.js";
 export { SecretApiError, SecretDecryptionError } from "./errors.js";
 export type {
@@ -8,5 +9,3 @@ export type {
 	ReadNoteResult,
 	SecretClientConfig,
 } from "./types.js";
-
-export type { ContentMode, NoteFile, NotePayload } from "@secret/shared";

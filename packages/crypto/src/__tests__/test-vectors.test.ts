@@ -52,11 +52,13 @@ describe("test vectors", () => {
 			if (v.payload.files) {
 				expect(payload.files).toHaveLength(v.payload.files.length);
 				for (let i = 0; i < v.payload.files.length; i++) {
-					const expected = v.payload.files[i]!;
-					const actual = payload.files![i]!;
-					expect(actual.name).toBe(expected.name);
-					expect(actual.type).toBe(expected.type);
-					expect(actual.size).toBe(expected.size);
+					const expected = v.payload.files[i];
+					const actual = payload.files?.[i];
+					expect(expected).toBeDefined();
+					expect(actual).toBeDefined();
+					expect(actual?.name).toBe(expected?.name);
+					expect(actual?.type).toBe(expected?.type);
+					expect(actual?.size).toBe(expected?.size);
 				}
 			}
 		}

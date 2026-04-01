@@ -10,6 +10,14 @@ export {
 	S3_MAX_FILE_SIZE,
 } from "./constants.js";
 export type {
+	Argon2idVector,
+	EncodingVector,
+	PipelineVector,
+	TestVectors,
+	XChaCha20Vector,
+} from "./test-vectors/index.js";
+export { testVectors } from "./test-vectors/index.js";
+export type {
 	ContentMode,
 	CreateNoteRequest,
 	CreateNoteResponse,
@@ -21,7 +29,6 @@ export type {
 	ServerConfig,
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
-
 export {
 	createNoteMultipartSchema,
 	createNoteResponseSchema,
@@ -33,12 +40,3 @@ export {
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
 } from "./validation.js";
-
-export { testVectors } from "./test-vectors/index.js";
-export type {
-	Argon2idVector,
-	EncodingVector,
-	PipelineVector,
-	TestVectors,
-	XChaCha20Vector,
-} from "./test-vectors/index.js";

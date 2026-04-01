@@ -6,9 +6,9 @@ import {
 	createNoteResponseSchema,
 	createNoteSchema,
 	deleteNoteResponseSchema,
+	NOTE_ID_LENGTH,
 	noteExistsResponseSchema,
 	readNoteResponseSchema,
-	NOTE_ID_LENGTH,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";

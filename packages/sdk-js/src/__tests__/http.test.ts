@@ -10,8 +10,9 @@ async function catchApiError(promise: Promise<unknown>): Promise<SecretApiError>
 		throw err;
 	}
 }
-import { checkNote, deleteNote, getJson, getNote, postFormData, postJson } from "../http.js";
+
 import type { HttpClientConfig } from "../http.js";
+import { checkNote, deleteNote, getJson, getNote, postFormData, postJson } from "../http.js";
 
 function createConfig(fetchMock: typeof fetch, apiKey?: string): HttpClientConfig {
 	return {
@@ -46,7 +47,7 @@ describe("postJson", () => {
 		expect(result).toEqual(responseBody);
 		expect(fetchMock).toHaveBeenCalledOnce();
 
-		const [url, init] = fetchMock.mock.calls[0]!;
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe("https://api.example.com/notes");
 		expect((init as RequestInit).method).toBe("POST");
 		expect((init as RequestInit).headers).toEqual(
@@ -63,7 +64,7 @@ describe("postJson", () => {
 
 		await postJson(config, "/notes", {});
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer my-api-key");
 	});
@@ -76,7 +77,7 @@ describe("postJson", () => {
 
 		await postJson(config, "/notes", {}, "my-cap-token");
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["X-Cap-Token"]).toBe("my-cap-token");
 	});
@@ -128,7 +129,7 @@ describe("postFormData", () => {
 		expect(result).toEqual(responseBody);
 		expect(fetchMock).toHaveBeenCalledOnce();
 
-		const [url, init] = fetchMock.mock.calls[0]!;
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe("https://api.example.com/notes/upload");
 		expect((init as RequestInit).method).toBe("POST");
 	});
@@ -157,7 +158,7 @@ describe("postFormData", () => {
 		const formData = new FormData();
 		await postFormData(config, "/notes/upload", formData);
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer form-key");
 	});
@@ -187,12 +188,12 @@ describe("postFormData with XMLHttpRequest", () => {
 			upload: {
 				addEventListener: vi.fn((event: string, handler: (e: unknown) => void) => {
 					uploadListeners[event] = uploadListeners[event] ?? [];
-					uploadListeners[event]!.push(handler);
+					uploadListeners[event]?.push(handler);
 				}),
 			},
 			addEventListener: vi.fn((event: string, handler: (e: unknown) => void) => {
 				listeners[event] = listeners[event] ?? [];
-				listeners[event]!.push(handler);
+				listeners[event]?.push(handler);
 			}),
 		};
 
@@ -424,7 +425,7 @@ describe("getJson", () => {
 
 		await getJson(config, "/data");
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer get-key");
 	});
@@ -571,7 +572,7 @@ describe("getNote", () => {
 		const result = await getNote(config, "testId123456");
 
 		expect(result).toEqual(noteData);
-		const [url] = fetchMock.mock.calls[0]!;
+		const [url] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe("https://api.example.com/notes/testId123456");
 	});
 
@@ -627,7 +628,7 @@ describe("checkNote", () => {
 		const result = await checkNote(config, "noteId123456");
 
 		expect(result).toEqual(info);
-		const [url] = fetchMock.mock.calls[0]!;
+		const [url] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe("https://api.example.com/notes/noteId123456/exists");
 	});
 
@@ -658,7 +659,7 @@ describe("checkNote", () => {
 
 		await checkNote(config, "noteId123456");
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer check-key");
 	});
@@ -671,7 +672,7 @@ describe("deleteNote", () => {
 
 		await expect(deleteNote(config, "noteId123456", "del-token")).resolves.toBeUndefined();
 
-		const [url, init] = fetchMock.mock.calls[0]!;
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe("https://api.example.com/notes/noteId123456");
 		expect((init as RequestInit).method).toBe("DELETE");
 		const headers = (init as RequestInit).headers as Record<string, string>;
@@ -684,7 +685,7 @@ describe("deleteNote", () => {
 
 		await deleteNote(config, "noteId123456", "del-token");
 
-		const [, init] = fetchMock.mock.calls[0]!;
+		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer del-key");
 	});

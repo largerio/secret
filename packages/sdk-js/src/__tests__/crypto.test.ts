@@ -77,7 +77,7 @@ describe("SDK crypto", () => {
 
 		expect(decrypted.text).toBe("Note with file");
 		expect(decrypted.files).toHaveLength(1);
-		expect(decrypted.files![0]!.name).toBe("test.txt");
+		expect(decrypted.files?.[0]?.name).toBe("test.txt");
 	});
 
 	test("is compatible with test vectors", async () => {

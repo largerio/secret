@@ -1,9 +1,9 @@
-import { DEFAULT_EXPIRY_SECONDS } from "@secret/shared";
 import type { NotePayload } from "@secret/shared";
+import { DEFAULT_EXPIRY_SECONDS } from "@secret/shared";
 import { decryptNote, encryptNote, ensureInit } from "./crypto.js";
 import { SecretDecryptionError } from "./errors.js";
-import * as http from "./http.js";
 import type { HttpClientConfig } from "./http.js";
+import * as http from "./http.js";
 import type {
 	CreateNoteOptions,
 	CreateNoteResult,
@@ -148,11 +148,10 @@ export class SecretClient {
 		const pathParts = parsed.pathname.split("/");
 		const noteIndex = pathParts.indexOf("note");
 
-		if (noteIndex === -1 || noteIndex + 1 >= pathParts.length) {
+		const id = noteIndex !== -1 ? pathParts[noteIndex + 1] : undefined;
+		if (!id) {
 			throw new Error("Invalid share URL: missing note ID");
 		}
-
-		const id = pathParts[noteIndex + 1]!;
 		const keyFragment = parsed.hash.slice(1);
 
 		if (!keyFragment) {

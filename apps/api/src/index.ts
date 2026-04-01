@@ -27,12 +27,6 @@ const SERVER_KEY_ENV = env["SERVER_ENCRYPTION_KEY"];
 const APP_URL = env["APP_URL"] ?? `http://localhost:${String(PORT)}`;
 const CLEANUP_MS = Number(env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
 
-const APP_NAME = env["APP_NAME"] ?? "Secret";
-const APP_DESCRIPTION = env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing";
-const APP_PRIMARY_COLOR = env["APP_PRIMARY_COLOR"] ?? "#6366f1";
-const APP_FOOTER_TEXT = env["APP_FOOTER_TEXT"] ?? "";
-const APP_OG_IMAGE_URL = env["APP_OG_IMAGE_URL"] ?? "";
-
 const API_KEYS = Object.entries(env)
 	.filter(([key]) => /^API_KEY(_\d+)?$/.test(key))
 	.map(([, value]) => value?.trim())
