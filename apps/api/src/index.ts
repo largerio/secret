@@ -113,7 +113,13 @@ app.onError((err, c) => {
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
-app.use("*", createSecurityHeaders());
+app.use("*", async (c, next) => {
+	if (c.req.path === "/api/v1/docs") {
+		await next();
+		return;
+	}
+	return createSecurityHeaders()(c, next);
+});
 app.use("*", createCors([APP_URL]));
 app.use("*", compress());
 
@@ -188,7 +194,7 @@ v1.doc31("/openapi.json", {
 v1.get("/docs", async (c, next) => {
 	c.header(
 		"Content-Security-Policy",
-		"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'; img-src 'self' data:; font-src https://cdn.jsdelivr.net; frame-ancestors 'none'",
+		"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://api.scalar.com; img-src 'self' data: https://cdn.jsdelivr.net; font-src *; frame-ancestors 'none'",
 	);
 	await next();
 });
@@ -198,6 +204,7 @@ v1.get(
 		url: "/api/v1/openapi.json",
 		theme: "kepler",
 		_integration: "hono",
+		telemetry: false,
 	}),
 );
 
