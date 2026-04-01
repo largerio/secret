@@ -95,11 +95,7 @@ export const chunkedUploadInitSchema = z
 		streamHeader: z.string().min(1).max(200),
 		clientNonce: z.string().min(1).max(200),
 		hasPassword: z.boolean(),
-		expiresIn: z
-			.number()
-			.int()
-			.min(MIN_EXPIRY_SECONDS)
-			.max(MAX_EXPIRY_SECONDS),
+		expiresIn: z.number().int().min(MIN_EXPIRY_SECONDS).max(MAX_EXPIRY_SECONDS),
 		maxReads: z.number().int().min(0).max(1000).default(1),
 		fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
 		chunkCount: z.number().int().min(1).max(10000),

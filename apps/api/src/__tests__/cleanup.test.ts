@@ -133,6 +133,9 @@ describe("startCleanupJob", () => {
 			save: vi.fn(),
 			read: vi.fn(),
 			delete: vi.fn().mockRejectedValue(new Error("disk error")),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
 		};
 
 		insertNote("faildelete01", { fileCount: 1, filePath });
@@ -191,6 +194,9 @@ describe("startCleanupJob", () => {
 			save: vi.fn(),
 			read: vi.fn(),
 			delete: vi.fn().mockRejectedValue("string-error"),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
 		};
 
 		insertNote("failstring01", { fileCount: 1, filePath });

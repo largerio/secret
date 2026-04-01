@@ -204,7 +204,7 @@ describe("secretstream (chunked encryption)", () => {
 
 		// Corrupt a byte
 		const corrupted = new Uint8Array(encrypted);
-		corrupted[0] = corrupted[0]! ^ 0xff;
+		corrupted[0] = (corrupted[0] ?? 0) ^ 0xff;
 
 		const decState = initStreamDecrypt(header, key);
 		expect(() => decryptChunk(decState, corrupted)).toThrow();

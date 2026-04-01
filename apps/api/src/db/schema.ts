@@ -15,4 +15,17 @@ export const notes = sqliteTable("notes", {
 	readCount: integer("read_count").notNull().default(0),
 	maxReads: integer("max_reads"),
 	createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+	chunkCount: integer("chunk_count"),
+	streamHeader: text("stream_header"),
+});
+
+export const uploads = sqliteTable("uploads", {
+	id: text("id").primaryKey(),
+	metadata: text("metadata").notNull(),
+	chunkCount: integer("chunk_count").notNull(),
+	chunksReceived: text("chunks_received").notNull().default("[]"),
+	noteId: text("note_id").notNull(),
+	deleteToken: text("delete_token").notNull(),
+	createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+	expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
 });

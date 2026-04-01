@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -23,6 +23,8 @@ interface AppEnv {
 		db: AppDatabase;
 		serverKey: Buffer;
 		storage: StorageBackend;
+		chunkSize: number;
+		maxChunkedFileSize: number;
 	};
 }
 
@@ -46,6 +48,8 @@ function createApp(database: AppDatabase) {
 		c.set("db", database);
 		c.set("serverKey", TEST_SERVER_KEY);
 		c.set("storage", storage);
+		c.set("chunkSize", 4_194_304);
+		c.set("maxChunkedFileSize", 524_288_000);
 		await next();
 	});
 	const writeAuth = createWriteAuth([]);
@@ -168,6 +172,8 @@ describe("POST /api/v1/notes", () => {
 			c.set("db", db);
 			c.set("serverKey", TEST_SERVER_KEY);
 			c.set("storage", storage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
 			await next();
 		});
 		const writeAuth = createWriteAuth(["valid-api-key"]);
@@ -800,6 +806,9 @@ describe("storage.delete error resilience", () => {
 			save: (id, data) => realStorage.save(id, data),
 			read: (key) => realStorage.read(key),
 			delete: () => Promise.reject(new Error("Simulated storage failure")),
+			saveChunk: (id, index, data) => realStorage.saveChunk(id, index, data),
+			readChunk: (id, index) => realStorage.readChunk(id, index),
+			deleteChunks: () => Promise.reject(new Error("Simulated storage failure")),
 		};
 		const hono = new Hono<AppEnv>();
 		hono.onError((err, c) => {
@@ -812,6 +821,8 @@ describe("storage.delete error resilience", () => {
 			c.set("db", database);
 			c.set("serverKey", TEST_SERVER_KEY);
 			c.set("storage", failingStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -865,5 +876,198 @@ describe("storage.delete error resilience", () => {
 		// Note should still be deleted from DB
 		const secondRead = await failApp.request(`/api/v1/notes/${id}`);
 		expect(secondRead.status).toBe(404);
+	});
+});
+
+describe("Chunked upload flow", () => {
+	function initPayload(overrides: Record<string, unknown> = {}) {
+		return {
+			streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+			clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+			hasPassword: false,
+			expiresIn: 3600,
+			maxReads: 0,
+			fileCount: 1,
+			chunkCount: 2,
+			...overrides,
+		};
+	}
+
+	async function initUpload(overrides: Record<string, unknown> = {}) {
+		const res = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(initPayload(overrides)),
+		});
+		return { res, json: (await res.json()) as { uploadId: string; expiresAt: string } };
+	}
+
+	function chunkData(content: string): Uint8Array {
+		return new Uint8Array(Buffer.from(content));
+	}
+
+	function sha256hex(data: Uint8Array): string {
+		return createHash("sha256").update(data).digest("hex");
+	}
+
+	it("completes a full chunked upload flow", async () => {
+		const { res: initRes, json: initJson } = await initUpload();
+		expect(initRes.status).toBe(201);
+		expect(initJson.uploadId).toBeDefined();
+		expect(initJson.expiresAt).toBeDefined();
+
+		const chunk0 = chunkData("chunk-zero-data");
+		const chunk1 = chunkData("chunk-one-data!");
+
+		// Upload chunk 0
+		const res0 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk0) },
+			body: chunk0 as BodyInit,
+		});
+		expect(res0.status).toBe(200);
+		expect((await res0.json()).received).toBe(true);
+
+		// Upload chunk 1
+		const res1 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/1`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk1) },
+			body: chunk1 as BodyInit,
+		});
+		expect(res1.status).toBe(200);
+
+		// Complete
+		const completeRes = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(completeRes.status).toBe(201);
+		const note = (await completeRes.json()) as {
+			id: string;
+			expiresAt: string;
+			deleteToken: string;
+		};
+		expect(note.id).toBeDefined();
+		expect(note.deleteToken).toBeDefined();
+	});
+
+	it("rejects init without auth", async () => {
+		const res = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(initPayload()),
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it("rejects chunk with missing hash", async () => {
+		const { json: initJson } = await initUpload();
+		const chunk = chunkData("test");
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream" },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Missing X-Chunk-Hash header");
+	});
+
+	it("rejects chunk with hash mismatch", async () => {
+		const { json: initJson } = await initUpload();
+		const chunk = chunkData("test");
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": "badhash" },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Chunk hash mismatch");
+	});
+
+	it("rejects chunk with out-of-range index", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("test");
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/5`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Chunk index out of range");
+	});
+
+	it("rejects complete with missing chunks", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("only-one");
+
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toContain("Missing chunks");
+	});
+
+	it("rejects chunk for non-existent upload session", async () => {
+		const chunk = chunkData("test");
+		const res = await app.request("/api/v1/notes/upload/nonexistent-session-id-here!!/chunks/0", {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it("rejects double complete (409 conflict)", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("data");
+
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const res1 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res1.status).toBe(201);
+
+		// Second complete should fail (session deleted)
+		const res2 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res2.status).toBe(404);
+	});
+
+	it("chunk upload is idempotent (same index twice)", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("data");
+		const hash = sha256hex(chunk);
+
+		const res1 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": hash },
+			body: chunk as BodyInit,
+		});
+		expect(res1.status).toBe(200);
+
+		const res2 = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": hash },
+			body: chunk as BodyInit,
+		});
+		expect(res2.status).toBe(200);
 	});
 });

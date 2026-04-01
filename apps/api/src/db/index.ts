@@ -35,8 +35,34 @@ export function createDatabase(dbPath: string): {
 		)
 	`);
 
+	// Add chunk columns to existing notes table (no-op if already present)
+	try {
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN chunk_count INTEGER`);
+	} catch {
+		/* column already exists */
+	}
+	try {
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN stream_header TEXT`);
+	} catch {
+		/* column already exists */
+	}
+
+	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS uploads (
+			id TEXT PRIMARY KEY,
+			metadata TEXT NOT NULL,
+			chunk_count INTEGER NOT NULL,
+			chunks_received TEXT NOT NULL DEFAULT '[]',
+			note_id TEXT NOT NULL,
+			delete_token TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`);
+
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes (expires_at)`);
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_delete_token ON notes (delete_token)`);
+	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_uploads_expires_at ON uploads (expires_at)`);
 
 	const db = drizzle(sqlite, { schema });
 	return { db, sqlite };

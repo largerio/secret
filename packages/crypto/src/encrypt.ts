@@ -41,8 +41,7 @@ export interface StreamEncryptState {
 }
 
 export function initStreamEncrypt(key: Uint8Array): StreamEncryptState {
-	const { state, header } =
-		sodium.crypto_secretstream_xchacha20poly1305_init_push(key);
+	const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(key);
 	return { state, header };
 }
 

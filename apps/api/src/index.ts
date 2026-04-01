@@ -2,7 +2,13 @@ import { serve } from "@hono/node-server";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
 import { parseServerKey } from "@secret/crypto";
-import { CLEANUP_INTERVAL_MS, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
+import {
+	CLEANUP_INTERVAL_MS,
+	DEFAULT_CHUNK_SIZE,
+	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_FILE_SIZE,
+	MAX_FILES_PER_NOTE,
+} from "@secret/shared";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
@@ -42,6 +48,10 @@ const S3_FORCE_PATH_STYLE = env["S3_FORCE_PATH_STYLE"] === "true";
 
 const CONFIGURED_MAX_FILE_SIZE = Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
 const CONFIGURED_MAX_FILES = Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
+const CHUNK_SIZE = Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE));
+const MAX_CHUNKED_FILE_SIZE = Number(
+	env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
+);
 
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
@@ -97,6 +107,8 @@ interface AppEnv {
 		db: AppDatabase;
 		serverKey: Buffer;
 		storage: StorageBackend;
+		chunkSize: number;
+		maxChunkedFileSize: number;
 	};
 }
 
@@ -132,12 +144,22 @@ app.use(
 	"/api/v1/notes/upload",
 	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
 );
+const chunkBodySize = CHUNK_SIZE + 1024; // chunk + overhead
+app.use(
+	"/api/v1/notes/upload/*/chunks/*",
+	bodyLimit({
+		maxSize: chunkBodySize,
+		onError: (c) => c.json({ error: "Chunk too large" }, 413),
+	}),
+);
 
 const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 30 });
 const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 60 });
 const existsRateLimit = createRateLimit({ windowMs: 60_000, max: 20 });
+const chunksRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
 app.use("/api/v1/notes", notesRateLimit.middleware);
 app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
+app.use("/api/v1/notes/upload/*/chunks/*", chunksRateLimit.middleware);
 app.use("/api/v1/notes/*", notesDetailRateLimit.middleware);
 
 const writeAuth = createWriteAuth(API_KEYS);
@@ -147,6 +169,8 @@ app.use("*", async (c, next) => {
 	c.set("db", db);
 	c.set("serverKey", serverKey);
 	c.set("storage", storage);
+	c.set("chunkSize", CHUNK_SIZE);
+	c.set("maxChunkedFileSize", MAX_CHUNKED_FILE_SIZE);
 	await next();
 });
 
@@ -180,6 +204,16 @@ app.route("/api/cap", createCapRoutes());
 const v1 = new OpenAPIHono<AppEnv>();
 
 v1.route("/notes", createNotesRoutes());
+
+v1.get("/config", (c) => {
+	return c.json({
+		maxFileSize: CONFIGURED_MAX_FILE_SIZE,
+		maxFilesPerNote: CONFIGURED_MAX_FILES,
+		chunkSize: CHUNK_SIZE,
+		maxChunkedFileSize: MAX_CHUNKED_FILE_SIZE,
+		storageType: STORAGE_BACKEND,
+	});
+});
 
 v1.doc31("/openapi.json", {
 	openapi: "3.1.0",
@@ -222,6 +256,7 @@ function shutdown(): void {
 	notesRateLimit.cleanup();
 	notesDetailRateLimit.cleanup();
 	existsRateLimit.cleanup();
+	chunksRateLimit.cleanup();
 	server.close(() => {
 		sqlite.close();
 		process.exit(0);
