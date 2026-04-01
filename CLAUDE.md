@@ -26,20 +26,30 @@ pnpm typecheck        # TypeScript strict check (all packages)
 Monorepo with pnpm workspaces:
 
 - **`apps/api`** — Hono HTTP server (Node.js 24, TypeScript)
-  - Routes: `src/routes/notes.ts` (CRUD + multipart upload)
+  - Routes: `src/routes/notes.ts` — OpenAPI routes via `@hono/zod-openapi`
+  - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
+  - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
   - Database: SQLite via better-sqlite3 + Drizzle ORM (`src/db/`)
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
+  - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
+  - Error handling: Business logic errors use `HTTPException`, validation via `defaultHook`
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`)
   - Entry point: `src/index.ts`
 
 - **`apps/web`** — SvelteKit 2 frontend (Svelte 5, Tailwind CSS 4)
   - Create page: `src/routes/+page.svelte`
   - View page: `src/routes/note/[id]/+page.svelte`
-  - Crypto client: `src/lib/utils/crypto-client.ts`
-  - API client: `src/lib/utils/api.ts`
+  - SDK client singleton: `src/lib/client.ts` — lazy-initialized `SecretClient`
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
-  - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune for reactive config
+  - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, fetches via SDK
+
+- **`packages/sdk-js`** — JS/TS SDK for Secret instances
+  - `SecretClient` class: create, read, check, delete notes + getConfig
+  - Handles full encrypt→send and receive→decrypt flows
+  - Progress callbacks for uploads (XHR in browser) and downloads (streaming fetch)
+  - Optional API key support (`Authorization: Bearer <key>`)
+  - Re-exports types from `@secret/shared`
 
 - **`packages/crypto`** — Encryption library
   - Client: XChaCha20-Poly1305 via libsodium-wrappers-sumo
@@ -48,7 +58,9 @@ Monorepo with pnpm workspaces:
   - Serialization: MessagePack for payloads
   - Key encoding: Base64url for URL fragments
 
-- **`packages/shared`** — Shared types, Zod schemas, constants
+- **`packages/shared`** — Shared types, Zod schemas, constants, test vectors
+  - Request + response Zod schemas (used by OpenAPI route definitions)
+  - Crypto test vectors (`src/test-vectors/vectors.json`) for cross-language SDK interoperability
 
 ## Key Design Decisions
 
@@ -56,7 +68,10 @@ Monorepo with pnpm workspaces:
 - **URL fragment for keys**: The `#key` part of URLs is never sent to the server. This is the foundation of zero-knowledge.
 - **Storage abstraction**: `StorageBackend` interface with `LocalStorage` and `S3Storage` implementations. Routes never import storage directly — they use the interface from Hono context.
 - **Text in DB, files on disk/S3**: Notes with `fileCount === 0` store encrypted data in SQLite. Notes with files store it on filesystem or S3 (opaque key in `filePath` column).
-- **Multipart upload**: `POST /api/notes/upload` accepts binary data (no base64 overhead) for large files with progress tracking.
+- **Multipart upload**: `POST /api/v1/notes/upload` accepts binary data (no base64 overhead) for large files with progress tracking.
+- **API versioning**: All note and config endpoints under `/api/v1/`. OpenAPI 3.1 spec auto-generated from Zod schemas via `@hono/zod-openapi`.
+- **SDK-first frontend**: The web app consumes `@secret/sdk-js` (dog-fooding). No direct API calls or crypto operations in the frontend.
+- **Write auth**: POST and DELETE require either a PoW token (`X-Cap-Token` header, via `@cap.js/server`) or an API key (`Authorization: Bearer <key>`). Reads stay open. Cap endpoints at `/api/cap/` (internal, not documented). SDK API keys configured via `API_KEY` env var (or `API_KEY_1`, `API_KEY_2`, etc. for multiple clients).
 
 ## Code Style
 
@@ -89,7 +104,7 @@ Monorepo with pnpm workspaces:
 
 ## Testing
 
-179 tests across 12 files. 100% backend coverage enforced (statements, branches, functions, lines). Frontend (`apps/web/src/`) is excluded from coverage thresholds.
+269 tests across 18 files. 100% backend coverage enforced (statements, branches, functions, lines). Frontend (`apps/web/src/`) is excluded from coverage thresholds.
 
 Run `pnpm test` before committing. New features must include tests.
 

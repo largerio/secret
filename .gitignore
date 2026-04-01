@@ -11,3 +11,5 @@ data/
 .DS_Store
 coverage/
 *.tgz
+.pnpm-store/
+.idea/

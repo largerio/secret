@@ -15,7 +15,7 @@ import type { NotePayload } from "@secret/shared";
 
 let initialized = false;
 
-async function ensureInit(): Promise<void> {
+export async function ensureInit(): Promise<void> {
 	if (!initialized) {
 		await initSodium();
 		initialized = true;
@@ -45,16 +45,19 @@ export async function encryptNote(payload: NotePayload, password?: string): Prom
 
 	const { ciphertext, nonce } = encryptPayload(payload, encryptionKey);
 
+	const keyFragment = keyToBase64Url(baseKey);
+
 	const result: EncryptResult = {
 		encryptedData: toBase64(ciphertext),
 		clientNonce: toBase64(nonce),
-		keyFragment: keyToBase64Url(baseKey),
+		keyFragment,
 		...(salt ? { salt: toBase64(salt) } : {}),
 	};
 
 	if (password) {
 		zeroMemory(encryptionKey);
 	}
+	zeroMemory(baseKey);
 
 	return result;
 }
@@ -82,6 +85,7 @@ export async function decryptNote(
 	if (password && salt) {
 		zeroMemory(decryptionKey);
 	}
+	zeroMemory(baseKey);
 
 	return result;
 }

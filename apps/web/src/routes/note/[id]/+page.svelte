@@ -5,10 +5,9 @@ import { marked } from "marked";
 import { onMount } from "svelte";
 import { page } from "$app/state";
 import ProgressBar from "$lib/components/ProgressBar.svelte";
+import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
-import { checkNoteExists, readNoteWithProgress } from "$lib/utils/api";
-import { decryptNote } from "$lib/utils/crypto-client";
 import { formatSize } from "$lib/utils/format";
 
 type NoteStatus =
@@ -29,6 +28,19 @@ type NoteStatus =
 let status = $state<NoteStatus>({ state: "loading" });
 let password = $state("");
 let keyFragment = $state("");
+let copied = $state(false);
+
+async function copyText(text: string) {
+	try {
+		await navigator.clipboard.writeText(text);
+		copied = true;
+		setTimeout(() => {
+			copied = false;
+		}, 2000);
+	} catch {
+		/* clipboard API unavailable */
+	}
+}
 
 onMount(() => {
 	keyFragment = window.location.hash.slice(1);
@@ -51,7 +63,8 @@ async function checkNote() {
 	}
 
 	try {
-		const result = await checkNoteExists(id);
+		const client = await getClient();
+		const result = await client.checkNote(id);
 		if (!result.exists) {
 			status = { state: "not_found" };
 		} else {
@@ -75,22 +88,17 @@ async function handleDecrypt() {
 	status = { state: "downloading", progress: 0 };
 
 	try {
-		const note = await readNoteWithProgress(id, (loaded, total) => {
-			if (status.state === "downloading") {
-				status = { state: "downloading", progress: (loaded / total) * 100 };
-			}
+		const client = await getClient();
+		const result = await client.readNote(id, keyFragment, {
+			...(password ? { password } : {}),
+			onDownloadProgress: (p) => {
+				if (status.state === "downloading") {
+					status = { state: "downloading", progress: p * 100 };
+				}
+			},
 		});
 
-		status = { state: "decrypting" };
-
-		const payload = await decryptNote(
-			note.encryptedData,
-			note.clientNonce,
-			keyFragment,
-			password || undefined,
-			note.salt,
-		);
-
+		const { payload } = result;
 		const previewUrls: string[] = [];
 		if (payload.files) {
 			for (const file of payload.files) {
@@ -243,7 +251,20 @@ function isPdf(type: string): boolean {
 		<div class="space-y-6">
 			{#if status.payload.text}
 				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6">
-					<h2 class="mb-3 text-sm font-medium text-slate-400">{t("text_content")}</h2>
+					<div class="mb-3 flex items-center justify-between">
+						<h2 class="text-sm font-medium text-slate-400">{t("text_content")}</h2>
+						<button
+							onclick={() => copyText(status.state === "decrypted" ? status.payload.text ?? "" : "")}
+							class="rounded-md px-2 py-1 text-sm text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+							aria-label={t("copy_button")}
+						>
+							{#if copied}
+								<i class="fa-solid fa-check text-green-400"></i>
+							{:else}
+								<i class="fa-regular fa-copy"></i>
+							{/if}
+						</button>
+					</div>
 					{#if status.payload.contentMode === "markdown" || !status.payload.contentMode}
 						<div class="prose prose-invert prose-sm max-w-none">
 							{@html renderMarkdown(status.payload.text)}

@@ -15,6 +15,7 @@ const config = {
 				"img-src": ["self", "data:", "blob:"],
 				"connect-src": ["self"],
 				"font-src": ["self", "https://cdnjs.cloudflare.com"],
+				"worker-src": ["self", "blob:"],
 				"media-src": ["self", "blob:"],
 				"frame-src": ["blob:"],
 				"object-src": ["none"],

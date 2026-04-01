@@ -15,18 +15,8 @@ const DEFAULT_CONFIG: ServerConfig = {
 
 let config = $state<ServerConfig>(DEFAULT_CONFIG);
 
-export async function loadConfig(): Promise<ServerConfig> {
-	try {
-		const res = await fetch("/api/config");
-		if (res.ok) {
-			config = (await res.json()) as ServerConfig;
-			return config;
-		}
-	} catch {
-		/* fallback to defaults */
-	}
-
-	return config;
+export function setConfig(newConfig: ServerConfig): void {
+	config = newConfig;
 }
 
 export function getConfig(): ServerConfig {

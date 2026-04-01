@@ -9,7 +9,9 @@
 		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
 	},
 	"dependencies": {
-		"@secret/crypto": "workspace:*",
+		"@cap.js/wasm": "^0.0.6",
+		"@cap.js/widget": "^0.1.43",
+		"@secret/sdk-js": "workspace:*",
 		"@secret/shared": "workspace:*",
 		"isomorphic-dompurify": "^3.7.1",
 		"marked": "^17.0.5",

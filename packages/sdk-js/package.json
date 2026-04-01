@@ -1,17 +1,17 @@
 {
-	"name": "@secret/shared",
+	"name": "@secret/sdk-js",
 	"version": "1.0.0",
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts",
-		"./auth": "./src/auth.ts"
+		".": "./src/index.ts"
 	},
 	"scripts": {
 		"build": "tsc",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"zod": "^4.3.6"
+		"@secret/crypto": "workspace:*",
+		"@secret/shared": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^25.5.0"

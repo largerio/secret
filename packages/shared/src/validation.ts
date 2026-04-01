@@ -47,3 +47,42 @@ export const noteIdSchema = z
 	.string()
 	.regex(/^[A-Za-z0-9_-]+$/, "Invalid note ID format")
 	.length(NOTE_ID_LENGTH, `Note ID must be ${String(NOTE_ID_LENGTH)} characters`);
+
+// --- Response schemas ---
+
+export const createNoteResponseSchema = z.object({
+	id: z.string(),
+	expiresAt: z.string(),
+	deleteToken: z.string(),
+});
+
+export const noteExistsResponseSchema = z.object({
+	exists: z.literal(true),
+	hasPassword: z.boolean(),
+	fileCount: z.number().int(),
+	expiresAt: z.string(),
+	maxReads: z.number().int(),
+});
+
+export const noteNotFoundResponseSchema = z.object({
+	exists: z.literal(false),
+});
+
+export const readNoteResponseSchema = z.object({
+	encryptedData: z.string(),
+	clientNonce: z.string(),
+	hasPassword: z.boolean(),
+	fileCount: z.number().int(),
+	createdAt: z.string(),
+	expiresAt: z.string(),
+	salt: z.string().optional(),
+});
+
+export const deleteNoteResponseSchema = z.object({
+	deleted: z.literal(true),
+});
+
+export const errorResponseSchema = z.object({
+	error: z.string(),
+	errorId: z.string().optional(),
+});
