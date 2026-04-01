@@ -1,6 +1,6 @@
 import type { NotePayload } from "@secret/shared";
 import { DEFAULT_EXPIRY_SECONDS } from "@secret/shared";
-import { decryptNote, encryptNote, ensureInit } from "./crypto.js";
+import { decryptNote, decryptNoteBytes, encryptNote, ensureInit } from "./crypto.js";
 import { SecretDecryptionError } from "./errors.js";
 import type { HttpClientConfig } from "./http.js";
 import * as http from "./http.js";
@@ -62,9 +62,7 @@ export class SecretClient {
 				...(encrypted.salt ? { salt: encrypted.salt } : {}),
 			});
 
-			const blob = new Blob([
-				Uint8Array.from(atob(encrypted.encryptedData), (c) => c.charCodeAt(0)),
-			]);
+			const blob = new Blob([encrypted.encryptedBytes] as BlobPart[]);
 
 			const formData = new FormData();
 			formData.append("metadata", metadata);
@@ -107,6 +105,51 @@ export class SecretClient {
 	}
 
 	async readNote(
+		id: string,
+		keyFragment: string,
+		options?: ReadNoteOptions,
+	): Promise<ReadNoteResult> {
+		try {
+			return await this.readNoteRaw(id, keyFragment, options);
+		} catch (err) {
+			// Only fallback to legacy JSON endpoint for HTTP/network errors on the raw endpoint itself,
+			// not for decryption failures (which mean the note was already consumed)
+			if (err instanceof SecretDecryptionError) {
+				throw err;
+			}
+			return this.readNoteLegacy(id, keyFragment, options);
+		}
+	}
+
+	private async readNoteRaw(
+		id: string,
+		keyFragment: string,
+		options?: ReadNoteOptions,
+	): Promise<ReadNoteResult> {
+		const response = await http.getNoteRaw(this.httpConfig, id, options?.onDownloadProgress);
+
+		let payload: NotePayload;
+		try {
+			payload = await decryptNoteBytes(
+				response.encryptedBytes,
+				response.nonceBytes,
+				keyFragment,
+				options?.password,
+				response.salt,
+			);
+		} catch (err) {
+			throw new SecretDecryptionError(err instanceof Error ? err.message : "Decryption failed");
+		}
+
+		return {
+			payload,
+			createdAt: response.createdAt,
+			expiresAt: response.expiresAt,
+			fileCount: response.fileCount,
+		};
+	}
+
+	private async readNoteLegacy(
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,

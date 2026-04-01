@@ -24,6 +24,7 @@ export async function ensureInit(): Promise<void> {
 
 export interface EncryptResult {
 	readonly encryptedData: string;
+	readonly encryptedBytes: Uint8Array;
 	readonly clientNonce: string;
 	readonly keyFragment: string;
 	readonly salt?: string;
@@ -49,6 +50,7 @@ export async function encryptNote(payload: NotePayload, password?: string): Prom
 
 	const result: EncryptResult = {
 		encryptedData: toBase64(ciphertext),
+		encryptedBytes: ciphertext,
 		clientNonce: toBase64(nonce),
 		keyFragment,
 		...(salt ? { salt: toBase64(salt) } : {}),
@@ -69,6 +71,22 @@ export async function decryptNote(
 	password?: string,
 	salt?: string,
 ): Promise<NotePayload> {
+	return decryptNoteBytes(
+		fromBase64(encryptedData),
+		fromBase64(clientNonce),
+		keyFragment,
+		password,
+		salt,
+	);
+}
+
+export async function decryptNoteBytes(
+	encryptedBytes: Uint8Array,
+	nonceBytes: Uint8Array,
+	keyFragment: string,
+	password?: string,
+	salt?: string,
+): Promise<NotePayload> {
 	await ensureInit();
 
 	const baseKey = keyFromBase64Url(keyFragment);
@@ -80,7 +98,7 @@ export async function decryptNote(
 		decryptionKey = baseKey;
 	}
 
-	const result = decryptPayload(fromBase64(encryptedData), fromBase64(clientNonce), decryptionKey);
+	const result = decryptPayload(encryptedBytes, nonceBytes, decryptionKey);
 
 	if (password && salt) {
 		zeroMemory(decryptionKey);

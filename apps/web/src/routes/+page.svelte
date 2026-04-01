@@ -7,6 +7,7 @@ import ProgressBar from "$lib/components/ProgressBar.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { solveCap } from "$lib/utils/cap";
 import { formatSize } from "$lib/utils/format";
 
 let contentMode = $state<ContentMode>("text");
@@ -46,16 +47,7 @@ async function handleSubmit() {
 	uploadProgress = null;
 
 	try {
-		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
-		const Cap = (await import("@cap.js/widget")).default;
-		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
-		const capResult = await capClient.solve();
-		if (!capResult.success || !capResult.token) {
-			error = t("error_generic");
-			return;
-		}
-		const capToken = capResult.token;
-
+		const capToken = await solveCap();
 		const client = await getClient();
 		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : 1;
 
@@ -135,16 +127,7 @@ async function handleDelete() {
 
 	isDeleting = true;
 	try {
-		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
-		const Cap = (await import("@cap.js/widget")).default;
-		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
-		const capResult = await capClient.solve();
-		if (!capResult.success || !capResult.token) {
-			error = t("error_generic");
-			return;
-		}
-		const capToken = capResult.token;
-
+		const capToken = await solveCap();
 		const client = await getClient();
 		await client.deleteNote(noteId, deleteToken, capToken);
 		isDeleted = true;

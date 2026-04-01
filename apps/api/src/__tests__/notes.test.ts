@@ -644,6 +644,71 @@ describe("GET /api/v1/notes/:id", () => {
 	});
 });
 
+describe("GET /api/v1/notes/:id/raw", () => {
+	it("returns binary data with correct headers", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
+		expect(res.headers.get("X-Client-Nonce")).toBeDefined();
+		expect(res.headers.get("X-Has-Password")).toBe("false");
+		expect(res.headers.get("X-File-Count")).toBe("0");
+		expect(res.headers.get("X-Created-At")).toBeDefined();
+		expect(res.headers.get("X-Expires-At")).toBeDefined();
+		expect(res.headers.get("Content-Length")).toBeDefined();
+
+		const data = await res.arrayBuffer();
+		expect(data.byteLength).toBeGreaterThan(0);
+	});
+
+	it("returns salt header for password-protected notes", async () => {
+		const testSalt = Buffer.from("test-salt-data-16bytes").toString("base64");
+		const { id } = await createTestNote({ hasPassword: true, salt: testSalt });
+
+		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("X-Has-Password")).toBe("true");
+		expect(res.headers.get("X-Salt")).toBe(testSalt);
+	});
+
+	it("returns 404 for non-existent note", async () => {
+		const res = await app.request("/api/v1/notes/nonexistent1/raw");
+		expect(res.status).toBe(404);
+	});
+
+	it("returns 400 for invalid note ID", async () => {
+		const res = await app.request("/api/v1/notes/bad!id/raw");
+		expect(res.status).toBe(400);
+	});
+
+	it("deletes note after read when maxReads is 1", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+
+		const readRes = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(readRes.status).toBe(200);
+
+		const secondRead = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(secondRead.status).toBe(404);
+	});
+
+	it("returns binary data matching JSON endpoint content", async () => {
+		const { id: id1 } = await createTestNote();
+		const { id: id2 } = await createTestNote();
+
+		// Use different notes since reading consumes readCount
+		const jsonRes = await app.request(`/api/v1/notes/${id1}`);
+		const jsonData = await jsonRes.json();
+
+		const rawRes = await app.request(`/api/v1/notes/${id2}/raw`);
+		const rawData = await rawRes.arrayBuffer();
+
+		// Both should return valid data
+		expect(jsonData.encryptedData).toBeDefined();
+		expect(rawData.byteLength).toBeGreaterThan(0);
+	});
+});
+
 describe("DELETE /api/v1/notes/:id", () => {
 	it("deletes an existing note with valid token", async () => {
 		const { id, deleteToken } = await createTestNote();
@@ -725,5 +790,80 @@ describe("DELETE /api/v1/notes/:id", () => {
 			headers: authHeaders({ "X-Delete-Token": "short" }),
 		});
 		expect(res.status).toBe(403);
+	});
+});
+
+describe("storage.delete error resilience", () => {
+	function createAppWithFailingStorage(database: AppDatabase) {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failingStorage: StorageBackend = {
+			save: (id, data) => realStorage.save(id, data),
+			read: (key) => realStorage.read(key),
+			delete: () => Promise.reject(new Error("Simulated storage failure")),
+		};
+		const hono = new Hono<AppEnv>();
+		hono.onError((err, c) => {
+			if (err instanceof HTTPException) {
+				return c.json({ error: err.message }, err.status);
+			}
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		hono.use("*", async (c, next) => {
+			c.set("db", database);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failingStorage);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		hono.use("/api/v1/notes/*", writeAuth);
+		hono.route("/api/v1/notes", createNotesRoutes());
+		return hono;
+	}
+
+	it("delete endpoint succeeds even when storage.delete fails", async () => {
+		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
+		const failApp = createAppWithFailingStorage(db);
+
+		const res = await failApp.request(`/api/v1/notes/${id}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": deleteToken }),
+		});
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.deleted).toBe(true);
+
+		// DB record should be gone
+		const getRes = await failApp.request(`/api/v1/notes/${id}`);
+		expect(getRes.status).toBe(404);
+	});
+
+	it("read endpoint returns 404 for expired note even when storage.delete fails", async () => {
+		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+		const failApp = createAppWithFailingStorage(db);
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const res = await failApp.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Note has expired");
+	});
+
+	it("burn-after-read returns data even when storage.delete fails", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+		const failApp = createAppWithFailingStorage(db);
+
+		const res = await failApp.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.encryptedData).toBeDefined();
+
+		// Note should still be deleted from DB
+		const secondRead = await failApp.request(`/api/v1/notes/${id}`);
+		expect(secondRead.status).toBe(404);
 	});
 });

@@ -166,6 +166,82 @@ export async function getJson<T>(
 	return res.json() as Promise<T>;
 }
 
+export interface RawNoteResponse {
+	readonly encryptedBytes: Uint8Array;
+	readonly nonceBytes: Uint8Array;
+	readonly hasPassword: boolean;
+	readonly fileCount: number;
+	readonly createdAt: string;
+	readonly expiresAt: string;
+	readonly salt?: string;
+}
+
+export async function getNoteRaw(
+	config: HttpClientConfig,
+	id: string,
+	onProgress?: (progress: number) => void,
+): Promise<RawNoteResponse> {
+	const res = await config.fetch(`${config.baseUrl}/notes/${id}/raw`, {
+		headers: authHeaders(config.apiKey),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({ error: "Request failed" }));
+		throw new SecretApiError(
+			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
+			res.status,
+		);
+	}
+
+	const headers = res.headers;
+	const clientNonce = headers.get("X-Client-Nonce") ?? "";
+	const hasPassword = headers.get("X-Has-Password") === "true";
+	const fileCount = parseInt(headers.get("X-File-Count") ?? "0", 10);
+	const createdAt = headers.get("X-Created-At") ?? "";
+	const expiresAt = headers.get("X-Expires-At") ?? "";
+	const salt = headers.get("X-Salt") ?? undefined;
+
+	let data: ArrayBuffer;
+	if (onProgress && res.body) {
+		const contentLength = headers.get("Content-Length");
+		const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+		if (total > 0) {
+			const reader = res.body.getReader();
+			const chunks: Uint8Array[] = [];
+			let loaded = 0;
+
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				chunks.push(value);
+				loaded += value.length;
+				onProgress(loaded / total);
+			}
+
+			data = await new Blob(chunks as BlobPart[]).arrayBuffer();
+		} else {
+			data = await res.arrayBuffer();
+		}
+	} else {
+		data = await res.arrayBuffer();
+	}
+
+	// Decode nonce from base64
+	const nonceStr = clientNonce;
+	const nonceBytes = Uint8Array.from(atob(nonceStr), (c) => c.charCodeAt(0));
+
+	return {
+		encryptedBytes: new Uint8Array(data),
+		nonceBytes,
+		hasPassword,
+		fileCount,
+		createdAt,
+		expiresAt,
+		...(salt ? { salt } : {}),
+	};
+}
+
 export async function getNote(
 	config: HttpClientConfig,
 	id: string,

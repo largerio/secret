@@ -256,13 +256,12 @@ export function createNotesRoutes() {
 		});
 	});
 
-	app.openapi(readNoteRoute, async (c) => {
-		const { id } = c.req.valid("param");
-
-		const db = c.get("db");
-		const serverKey = c.get("serverKey");
-		const storage = c.get("storage");
-
+	async function consumeNote(
+		db: AppDatabase,
+		serverKey: Buffer,
+		storage: StorageBackend,
+		id: string,
+	) {
 		const result = db.transaction((tx) => {
 			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
 
@@ -294,7 +293,12 @@ export function createNotesRoutes() {
 
 		if ("error" in result) {
 			if ("filePath" in result && result.filePath) {
-				await storage.delete(result.filePath);
+				await storage.delete(result.filePath).catch((err: unknown) => {
+					console.error(
+						`[notes] Failed to delete file for expired note:`,
+						err instanceof Error ? err.message : err,
+					);
+				});
 			}
 			httpError(result.status as 404, result.error);
 		}
@@ -315,8 +319,25 @@ export function createNotesRoutes() {
 		}
 
 		if (result.shouldDelete && note.filePath) {
-			await storage.delete(note.filePath);
+			await storage.delete(note.filePath).catch((err: unknown) => {
+				console.error(
+					`[notes] Failed to delete file for burned note ${id}:`,
+					err instanceof Error ? err.message : err,
+				);
+			});
 		}
+
+		return { clientBlob, note };
+	}
+
+	app.openapi(readNoteRoute, async (c) => {
+		const { id } = c.req.valid("param");
+		const { clientBlob, note } = await consumeNote(
+			c.get("db"),
+			c.get("serverKey"),
+			c.get("storage"),
+			id,
+		);
 
 		return c.json({
 			encryptedData: clientBlob.toString("base64"),
@@ -327,6 +348,35 @@ export function createNotesRoutes() {
 			createdAt: note.createdAt.toISOString(),
 			expiresAt: note.expiresAt.toISOString(),
 		});
+	});
+
+	app.get("/:id/raw", async (c) => {
+		const id = c.req.param("id");
+		if (!id || !/^[A-Za-z0-9_-]+$/.test(id) || id.length !== NOTE_ID_LENGTH) {
+			return c.json({ error: "Invalid note ID" }, 400);
+		}
+
+		const { clientBlob, note } = await consumeNote(
+			c.get("db"),
+			c.get("serverKey"),
+			c.get("storage"),
+			id,
+		);
+
+		const headers: Record<string, string> = {
+			"Content-Type": "application/octet-stream",
+			"Content-Length": String(clientBlob.length),
+			"X-Client-Nonce": note.clientNonce,
+			"X-Has-Password": String(note.hasPassword),
+			"X-File-Count": String(note.fileCount),
+			"X-Created-At": note.createdAt.toISOString(),
+			"X-Expires-At": note.expiresAt.toISOString(),
+		};
+		if (note.salt) {
+			headers["X-Salt"] = note.salt;
+		}
+
+		return new Response(new Uint8Array(clientBlob) as BodyInit, { status: 200, headers });
 	});
 
 	app.openapi(deleteNoteRoute, async (c) => {
@@ -351,11 +401,17 @@ export function createNotesRoutes() {
 			httpError(403, "Invalid delete token");
 		}
 
+		db.delete(notes).where(eq(notes.id, id)).run();
+
 		if (note.filePath) {
-			await storage.delete(note.filePath);
+			await storage.delete(note.filePath).catch((err: unknown) => {
+				console.error(
+					`[notes] Failed to delete file for note ${id}:`,
+					err instanceof Error ? err.message : err,
+				);
+			});
 		}
 
-		db.delete(notes).where(eq(notes.id, id)).run();
 		return c.json({ deleted: true as const });
 	});
 
