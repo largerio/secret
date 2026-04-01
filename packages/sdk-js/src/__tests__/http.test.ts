@@ -12,7 +12,15 @@ async function catchApiError(promise: Promise<unknown>): Promise<SecretApiError>
 }
 
 import type { HttpClientConfig } from "../http.js";
-import { checkNote, deleteNote, getJson, getNote, postFormData, postJson } from "../http.js";
+import {
+	checkNote,
+	deleteNote,
+	getJson,
+	getNote,
+	getNoteRaw,
+	postFormData,
+	postJson,
+} from "../http.js";
 
 function createConfig(fetchMock: typeof fetch, apiKey?: string): HttpClientConfig {
 	return {
@@ -662,6 +670,158 @@ describe("checkNote", () => {
 		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer check-key");
+	});
+});
+
+describe("getNoteRaw", () => {
+	function rawResponse(body: Uint8Array, headers: Record<string, string>): Response {
+		return new Response(body as BodyInit, {
+			status: 200,
+			headers,
+		});
+	}
+
+	const nonce = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+	const nonceBase64 = btoa(String.fromCharCode(...nonce));
+
+	const defaultHeaders: Record<string, string> = {
+		"X-Client-Nonce": nonceBase64,
+		"X-Has-Password": "false",
+		"X-File-Count": "2",
+		"X-Created-At": "2024-01-01T00:00:00Z",
+		"X-Expires-At": "2099-01-01T00:00:00Z",
+	};
+
+	test("returns encryptedBytes, nonceBytes, and parsed headers on success", async () => {
+		const bodyBytes = new Uint8Array([10, 20, 30, 40]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(bodyBytes, defaultHeaders)),
+		);
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteRaw(config, "noteId123456");
+
+		expect(result.encryptedBytes).toEqual(bodyBytes);
+		expect(result.nonceBytes).toEqual(nonce);
+		expect(result.hasPassword).toBe(false);
+		expect(result.fileCount).toBe(2);
+		expect(result.createdAt).toBe("2024-01-01T00:00:00Z");
+		expect(result.expiresAt).toBe("2099-01-01T00:00:00Z");
+		expect(result.salt).toBeUndefined();
+
+		const [url] = fetchMock.mock.calls[0] ?? [];
+		expect(url).toBe("https://api.example.com/notes/noteId123456/raw");
+	});
+
+	test("includes salt header when present", async () => {
+		const bodyBytes = new Uint8Array([1]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(bodyBytes, { ...defaultHeaders, "X-Salt": "mySalt123" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteRaw(config, "noteId123456");
+
+		expect(result.salt).toBe("mySalt123");
+	});
+
+	test("throws SecretApiError on error response", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(404, { error: "Note not found" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteRaw(config, "missing12345"));
+		expect(err.message).toBe("Note not found");
+		expect(err.status).toBe(404);
+	});
+
+	test("throws SecretApiError with HTTP status fallback when no error field", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(403, { detail: "forbidden" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
+		expect(err.message).toBe("HTTP 403");
+		expect(err.status).toBe(403);
+	});
+
+	test("throws SecretApiError with fallback when error response is not JSON", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response("bad", { status: 500 })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
+		expect(err.message).toBe("Request failed");
+		expect(err.status).toBe(500);
+	});
+
+	test("uses default values when response headers are missing", async () => {
+		const bodyBytes = new Uint8Array([42]);
+		const response = new Response(bodyBytes, {
+			status: 200,
+			headers: {},
+		});
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(response));
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteRaw(config, "noteId123456");
+
+		expect(result.hasPassword).toBe(false);
+		expect(result.fileCount).toBe(0);
+		expect(result.createdAt).toBe("");
+		expect(result.expiresAt).toBe("");
+		expect(result.salt).toBeUndefined();
+	});
+
+	test("streams response with progress callback when Content-Length is present", async () => {
+		const bodyBytes = new Uint8Array([10, 20, 30, 40, 50]);
+		const mid = 2;
+		const chunk1 = bodyBytes.slice(0, mid);
+		const chunk2 = bodyBytes.slice(mid);
+
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(chunk1);
+				controller.enqueue(chunk2);
+				controller.close();
+			},
+		});
+
+		const response = new Response(stream, {
+			status: 200,
+			headers: {
+				...defaultHeaders,
+				"Content-Length": String(bodyBytes.length),
+			},
+		});
+
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(response));
+		const config = createConfig(fetchMock);
+		const onProgress = vi.fn();
+
+		const result = await getNoteRaw(config, "noteId123456", onProgress);
+
+		expect(result.encryptedBytes).toEqual(bodyBytes);
+		expect(onProgress).toHaveBeenCalledTimes(2);
+		expect(onProgress).toHaveBeenCalledWith(mid / bodyBytes.length);
+		expect(onProgress).toHaveBeenCalledWith(1);
+	});
+
+	test("falls back to arrayBuffer when onProgress given but Content-Length is 0", async () => {
+		const bodyBytes = new Uint8Array([1, 2, 3]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(bodyBytes, defaultHeaders)),
+		);
+		const config = createConfig(fetchMock);
+		const onProgress = vi.fn();
+
+		const result = await getNoteRaw(config, "noteId123456", onProgress);
+
+		expect(result.encryptedBytes).toEqual(bodyBytes);
+		expect(onProgress).not.toHaveBeenCalled();
 	});
 });
 

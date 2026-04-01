@@ -71,4 +71,47 @@ describe("LocalStorage", () => {
 			"Path traversal detected",
 		);
 	});
+
+	it("saves and reads chunks in a roundtrip", async () => {
+		const storage = new LocalStorage(storageDir);
+		const chunk0 = Buffer.from("chunk-zero-data");
+		const chunk1 = Buffer.from("chunk-one-data!");
+
+		const key0 = await storage.saveChunk("chunked-note-1", 0, chunk0);
+		const key1 = await storage.saveChunk("chunked-note-1", 1, chunk1);
+
+		expect(key0).toContain("chunked-note-1");
+		expect(key0).toContain("chunk_0");
+		expect(key1).toContain("chunk_1");
+
+		const read0 = await storage.readChunk("chunked-note-1", 0);
+		const read1 = await storage.readChunk("chunked-note-1", 1);
+
+		expect(read0).toEqual(chunk0);
+		expect(read1).toEqual(chunk1);
+	});
+
+	it("deleteChunks removes all chunks and directory", async () => {
+		const storage = new LocalStorage(storageDir);
+		const chunk0 = Buffer.from("to-delete-0");
+		const chunk1 = Buffer.from("to-delete-1");
+
+		await storage.saveChunk("del-chunks-1", 0, chunk0);
+		await storage.saveChunk("del-chunks-1", 1, chunk1);
+
+		// Verify chunks exist
+		const read0 = await storage.readChunk("del-chunks-1", 0);
+		expect(read0).toEqual(chunk0);
+
+		await storage.deleteChunks("del-chunks-1", 2);
+
+		// Chunks should no longer be readable
+		await expect(storage.readChunk("del-chunks-1", 0)).rejects.toThrow();
+		await expect(storage.readChunk("del-chunks-1", 1)).rejects.toThrow();
+	});
+
+	it("deleteChunks does not throw for missing chunks", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.deleteChunks("nonexistent-note", 3)).resolves.not.toThrow();
+	});
 });

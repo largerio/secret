@@ -9,6 +9,7 @@ import {
 	encryptRaw,
 	initStreamEncrypt,
 	SECRETSTREAM_ABYTES,
+	SECRETSTREAM_HEADERBYTES,
 } from "../encrypt.js";
 import { generateKey, generateNonce, initSodium } from "../keys.js";
 
@@ -155,6 +156,16 @@ describe("encryptRaw / decryptRaw", () => {
 		const { ciphertext, nonce } = encryptRaw(data, key);
 		const decrypted = decryptRaw(ciphertext, nonce, key);
 		expect(decrypted).toEqual(data);
+	});
+});
+
+describe("secretstream constants", () => {
+	it("SECRETSTREAM_ABYTES equals 17", () => {
+		expect(SECRETSTREAM_ABYTES).toBe(17);
+	});
+
+	it("SECRETSTREAM_HEADERBYTES equals 24", () => {
+		expect(SECRETSTREAM_HEADERBYTES).toBe(24);
 	});
 });
 

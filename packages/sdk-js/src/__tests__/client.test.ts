@@ -6,6 +6,7 @@ vi.mock("../http.js", () => ({
 	postJson: vi.fn(),
 	postFormData: vi.fn(),
 	getNote: vi.fn(),
+	getNoteRaw: vi.fn(),
 	checkNote: vi.fn(),
 	deleteNote: vi.fn(),
 }));
@@ -20,6 +21,9 @@ vi.mock("../crypto.js", () => ({
 		}),
 	),
 	decryptNote: vi.fn(() => Promise.resolve({ text: "decrypted text", contentMode: "text" })),
+	decryptNoteBytes: vi.fn(() =>
+		Promise.resolve({ text: "decrypted raw text", contentMode: "text" }),
+	),
 }));
 
 async function getHttpMocks() {
@@ -27,6 +31,7 @@ async function getHttpMocks() {
 		postJson: ReturnType<typeof vi.fn>;
 		postFormData: ReturnType<typeof vi.fn>;
 		getNote: ReturnType<typeof vi.fn>;
+		getNoteRaw: ReturnType<typeof vi.fn>;
 		checkNote: ReturnType<typeof vi.fn>;
 		deleteNote: ReturnType<typeof vi.fn>;
 	};
@@ -36,6 +41,7 @@ async function getCryptoMocks() {
 	return (await import("../crypto.js")) as typeof import("../crypto.js") & {
 		encryptNote: ReturnType<typeof vi.fn>;
 		decryptNote: ReturnType<typeof vi.fn>;
+		decryptNoteBytes: ReturnType<typeof vi.fn>;
 	};
 }
 
@@ -45,6 +51,7 @@ describe("SecretClient", () => {
 		http.postJson.mockReset();
 		http.postFormData.mockReset();
 		http.getNote.mockReset();
+		http.getNoteRaw.mockReset();
 		http.checkNote.mockReset();
 		http.deleteNote.mockReset();
 
@@ -56,6 +63,11 @@ describe("SecretClient", () => {
 			keyFragment: "base64urlKey",
 		});
 		crypto.decryptNote.mockReset();
+		crypto.decryptNoteBytes.mockReset();
+		crypto.decryptNoteBytes.mockResolvedValue({
+			text: "decrypted raw text",
+			contentMode: "text",
+		});
 	});
 	test("creates a client with default config", async () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
@@ -273,11 +285,11 @@ describe("SecretClient", () => {
 		expect(metadata["hasPassword"]).toBe(true);
 	});
 
-	test("readNote decrypts and returns the note payload", async () => {
+	test("readNote decrypts and returns the note payload via raw endpoint", async () => {
 		const http = await getHttpMocks();
-		http.getNote.mockResolvedValue({
-			encryptedData: "encData",
-			clientNonce: "nonce",
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1, 2, 3]),
+			nonceBytes: new Uint8Array([4, 5, 6]),
 			hasPassword: false,
 			fileCount: 0,
 			createdAt: "2024-01-01",
@@ -285,7 +297,7 @@ describe("SecretClient", () => {
 		});
 
 		const crypto = await getCryptoMocks();
-		crypto.decryptNote.mockResolvedValue({ text: "hello", contentMode: "text" });
+		crypto.decryptNoteBytes.mockResolvedValue({ text: "hello", contentMode: "text" });
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		const result = await client.readNote("noteId123456", "keyFrag");
@@ -295,20 +307,20 @@ describe("SecretClient", () => {
 		expect(result.expiresAt).toBe("2099-01-01");
 		expect(result.fileCount).toBe(0);
 
-		expect(crypto.decryptNote).toHaveBeenCalledWith(
-			"encData",
-			"nonce",
+		expect(crypto.decryptNoteBytes).toHaveBeenCalledWith(
+			new Uint8Array([1, 2, 3]),
+			new Uint8Array([4, 5, 6]),
 			"keyFrag",
 			undefined,
 			undefined,
 		);
 	});
 
-	test("readNote passes password and onDownloadProgress", async () => {
+	test("readNote passes password and salt to decryptNoteBytes via raw endpoint", async () => {
 		const http = await getHttpMocks();
-		http.getNote.mockResolvedValue({
-			encryptedData: "encData",
-			clientNonce: "nonce",
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([10, 20]),
+			nonceBytes: new Uint8Array([30, 40]),
 			hasPassword: true,
 			fileCount: 0,
 			createdAt: "2024-01-01",
@@ -317,27 +329,18 @@ describe("SecretClient", () => {
 		});
 
 		const crypto = await getCryptoMocks();
-		crypto.decryptNote.mockResolvedValue({ text: "secret text" });
-
-		const onDownloadProgress = vi.fn();
+		crypto.decryptNoteBytes.mockResolvedValue({ text: "secret text" });
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		const result = await client.readNote("noteId123456", "keyFrag", {
 			password: "myPass",
-			onDownloadProgress,
 		});
 
 		expect(result.payload.text).toBe("secret text");
 
-		expect(http.getNote).toHaveBeenCalledWith(
-			expect.objectContaining({ baseUrl: "https://example.com/api/v1" }),
-			"noteId123456",
-			onDownloadProgress,
-		);
-
-		expect(crypto.decryptNote).toHaveBeenCalledWith(
-			"encData",
-			"nonce",
+		expect(crypto.decryptNoteBytes).toHaveBeenCalledWith(
+			new Uint8Array([10, 20]),
+			new Uint8Array([30, 40]),
 			"keyFrag",
 			"myPass",
 			"someSalt",
@@ -346,9 +349,9 @@ describe("SecretClient", () => {
 
 	test("readNote throws SecretDecryptionError on decryption failure (Error instance)", async () => {
 		const http = await getHttpMocks();
-		http.getNote.mockResolvedValue({
-			encryptedData: "bad",
-			clientNonce: "nonce",
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
 			hasPassword: false,
 			fileCount: 0,
 			createdAt: "2024-01-01",
@@ -356,7 +359,7 @@ describe("SecretClient", () => {
 		});
 
 		const crypto = await getCryptoMocks();
-		crypto.decryptNote.mockRejectedValue(new Error("wrong key or corrupted"));
+		crypto.decryptNoteBytes.mockRejectedValue(new Error("wrong key or corrupted"));
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
@@ -368,8 +371,104 @@ describe("SecretClient", () => {
 
 	test("readNote throws SecretDecryptionError with fallback message on non-Error throw", async () => {
 		const http = await getHttpMocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockRejectedValue("string error");
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+	});
+
+	test("readNote falls back to legacy JSON endpoint when raw returns 404", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockRejectedValue(new SecretApiError("Not found", 404));
 		http.getNote.mockResolvedValue({
-			encryptedData: "bad",
+			encryptedData: "legacyEnc",
+			clientNonce: "legacyNonce",
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNote.mockResolvedValue({ text: "legacy text", contentMode: "text" });
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.readNote("noteId123456", "keyFrag");
+
+		expect(result.payload.text).toBe("legacy text");
+		expect(http.getNoteRaw).toHaveBeenCalled();
+		expect(http.getNote).toHaveBeenCalled();
+	});
+
+	test("readNote does NOT fall back when raw returns SecretDecryptionError", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1, 2, 3]),
+			nonceBytes: new Uint8Array([4, 5, 6]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockRejectedValue(new Error("bad key"));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		expect(http.getNote).not.toHaveBeenCalled();
+	});
+
+	test("readNote with onProgress fires downloading and decrypting phases", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockImplementation(
+			async (_config: unknown, _id: unknown, onProgress?: (p: number) => void) => {
+				onProgress?.(0.5);
+				onProgress?.(1);
+				return {
+					encryptedBytes: new Uint8Array([1]),
+					nonceBytes: new Uint8Array([2]),
+					hasPassword: false,
+					fileCount: 0,
+					createdAt: "2024-01-01",
+					expiresAt: "2099-01-01",
+				};
+			},
+		);
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockResolvedValue({
+			text: "progress text",
+			contentMode: "text",
+		});
+
+		const onProgress = vi.fn();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.readNote("noteId123456", "keyFrag", { onProgress });
+
+		const phases = onProgress.mock.calls.map((call: Array<{ phase: string }>) => call[0]?.phase);
+		expect(phases).toContain("downloading");
+		expect(phases).toContain("decrypting");
+	});
+
+	test("readNote legacy path throws SecretDecryptionError on decryption failure", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockRejectedValue(new SecretApiError("Not found", 404));
+		http.getNote.mockResolvedValue({
+			encryptedData: "badData",
 			clientNonce: "nonce",
 			hasPassword: false,
 			fileCount: 0,
@@ -378,7 +477,30 @@ describe("SecretClient", () => {
 		});
 
 		const crypto = await getCryptoMocks();
-		crypto.decryptNote.mockRejectedValue("string error");
+		crypto.decryptNote.mockRejectedValue(new Error("legacy decrypt failed"));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
+			"legacy decrypt failed",
+		);
+	});
+
+	test("readNote legacy path throws SecretDecryptionError with fallback on non-Error throw", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockRejectedValue(new SecretApiError("Not found", 404));
+		http.getNote.mockResolvedValue({
+			encryptedData: "badData",
+			clientNonce: "nonce",
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNote.mockRejectedValue("non-error value");
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 

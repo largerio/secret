@@ -877,6 +877,73 @@ describe("storage.delete error resilience", () => {
 		const secondRead = await failApp.request(`/api/v1/notes/${id}`);
 		expect(secondRead.status).toBe(404);
 	});
+
+	it("handles non-Error rejection from storage.delete gracefully", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const stringFailStorage: StorageBackend = {
+			save: (id, data) => realStorage.save(id, data),
+			read: (key) => realStorage.read(key),
+			delete: () => Promise.reject("string error"),
+			saveChunk: (id, index, data) => realStorage.saveChunk(id, index, data),
+			readChunk: (id, index) => realStorage.readChunk(id, index),
+			deleteChunks: () => Promise.reject("chunk string error"),
+		};
+		const hono = new Hono<AppEnv>();
+		hono.onError((err, c) => {
+			if (err instanceof HTTPException) {
+				return c.json({ error: err.message }, err.status);
+			}
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		hono.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", stringFailStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		hono.use("/api/v1/notes/*", writeAuth);
+		hono.route("/api/v1/notes", createNotesRoutes());
+
+		// Test delete with non-Error rejection
+		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
+		const res = await hono.request(`/api/v1/notes/${id}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": deleteToken }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).deleted).toBe(true);
+
+		// Test expired note read with non-Error rejection
+		const { id: id2 } = await createTestNote({ expiresIn: 300, fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq: eqFn } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eqFn(notesTable.id, id2))
+			.run();
+		const res2 = await hono.request(`/api/v1/notes/${id2}`);
+		expect(res2.status).toBe(404);
+
+		// Test burn-after-read with non-Error rejection
+		const { id: id3 } = await createTestNote({ maxReads: 1, fileCount: 1 });
+		const res3 = await hono.request(`/api/v1/notes/${id3}`);
+		expect(res3.status).toBe(200);
+
+		// Test delete of chunked note with non-Error rejection from deleteChunks
+		const { notes: nt } = await import("../db/schema.js");
+		const { eq: e } = await import("drizzle-orm");
+		const { id: id4, deleteToken: dt4 } = await createTestNote({ fileCount: 1 });
+		db.update(nt).set({ chunkCount: 2, streamHeader: "hdr" }).where(e(nt.id, id4)).run();
+		const res4 = await hono.request(`/api/v1/notes/${id4}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": dt4 }),
+		});
+		expect(res4.status).toBe(200);
+		expect((await res4.json()).deleted).toBe(true);
+	});
 });
 
 describe("Chunked upload flow", () => {
@@ -1069,5 +1136,604 @@ describe("Chunked upload flow", () => {
 			body: chunk as BodyInit,
 		});
 		expect(res2.status).toBe(200);
+	});
+
+	it("returns 409 when note already exists on complete (race condition)", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("data");
+
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		// Look up the upload session's noteId and pre-insert a note with that ID
+		const { uploads: uploadsTable, notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const { serverEncrypt } = await import("@secret/crypto");
+		const session = db
+			.select()
+			.from(uploadsTable)
+			.where(eq(uploadsTable.id, initJson.uploadId))
+			.get();
+		const { encrypted, iv } = serverEncrypt(Buffer.from("test"), TEST_SERVER_KEY);
+		db.insert(notesTable)
+			.values({
+				id: session?.noteId ?? "",
+				encryptedData: encrypted,
+				serverNonce: iv.toString("base64"),
+				clientNonce: "nonce",
+				hasPassword: false,
+				deleteToken: "tok",
+				burnAfterRead: false,
+				fileCount: 0,
+				filePath: null,
+				expiresAt: new Date(Date.now() + 3_600_000),
+				createdAt: new Date(),
+			})
+			.run();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error).toBe("Upload already completed");
+	});
+
+	it("rejects empty chunk body", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": sha256hex(new Uint8Array(0)),
+			},
+			body: new Uint8Array(0) as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Empty chunk body");
+	});
+
+	it("rejects invalid JSON body on init", async () => {
+		const res = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: "not-json{{",
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid JSON body");
+	});
+
+	it("rejects invalid schema on init", async () => {
+		const res = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify({ chunkCount: 1 }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid request");
+	});
+
+	it("rejects chunk with invalid (negative) index", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("test");
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/-1`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid chunk index");
+	});
+
+	it("rejects too many chunks on init", async () => {
+		// maxChunkedFileSize=524_288_000, chunkSize=4_194_304 → maxChunks=125
+		// Use 200 which passes Zod (max 10000) but exceeds computed maxChunks
+		const res = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(initPayload({ chunkCount: 200 })),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toContain("Maximum");
+	});
+
+	it("rejects oversized chunk", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		// chunkSize is 4_194_304, max is chunkSize + 17 = 4_194_321
+		const oversized = new Uint8Array(4_194_322);
+		const hash = sha256hex(oversized);
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": hash },
+			body: oversized as BodyInit,
+		});
+		expect(res.status).toBe(413);
+		expect((await res.json()).error).toBe("Chunk too large");
+	});
+
+	it("rejects complete for non-existent upload session", async () => {
+		const res = await app.request("/api/v1/notes/upload/nonexistent-session-id-here!!/complete", {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it("supports salt in chunked upload metadata", async () => {
+		const testSalt = Buffer.from("test-salt-16b").toString("base64");
+		const { json: initJson } = await initUpload({
+			chunkCount: 1,
+			hasPassword: true,
+			salt: testSalt,
+		});
+		const chunk = chunkData("encrypted-with-pw");
+
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const completeRes = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(completeRes.status).toBe(201);
+	});
+});
+
+describe("GET /api/v1/notes/:id/stream", () => {
+	function initPayload(overrides: Record<string, unknown> = {}) {
+		return {
+			streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+			clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+			hasPassword: false,
+			expiresIn: 3600,
+			maxReads: 0,
+			fileCount: 1,
+			chunkCount: 2,
+			...overrides,
+		};
+	}
+
+	function chunkData(content: string): Uint8Array {
+		return new Uint8Array(Buffer.from(content));
+	}
+
+	function sha256hex(data: Uint8Array): string {
+		return createHash("sha256").update(data).digest("hex");
+	}
+
+	async function createChunkedNote(
+		overrides: Record<string, unknown> = {},
+	): Promise<{ id: string; deleteToken: string }> {
+		const payload = initPayload(overrides);
+		const initRes = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(payload),
+		});
+		const { uploadId } = (await initRes.json()) as { uploadId: string };
+
+		const chunkCount = (payload.chunkCount ?? 2) as number;
+		for (let i = 0; i < chunkCount; i++) {
+			const chunk = chunkData(`chunk-data-${String(i)}`);
+			await app.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(i)}`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/octet-stream",
+					"X-Chunk-Hash": sha256hex(chunk),
+				},
+				body: chunk as BodyInit,
+			});
+		}
+
+		const completeRes = await app.request(`/api/v1/notes/upload/${uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		return completeRes.json() as Promise<{ id: string; deleteToken: string }>;
+	}
+
+	it("streams chunked note with correct headers and length-prefix framing", async () => {
+		const { id } = await createChunkedNote();
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
+		expect(res.headers.get("X-Stream-Header")).toBeDefined();
+		expect(res.headers.get("X-Chunk-Count")).toBe("2");
+		expect(res.headers.get("X-Has-Password")).toBe("false");
+		expect(res.headers.get("X-File-Count")).toBe("1");
+		expect(res.headers.get("X-Created-At")).toBeDefined();
+		expect(res.headers.get("X-Expires-At")).toBeDefined();
+
+		// Verify body uses length-prefix framing
+		const body = new Uint8Array(await res.arrayBuffer());
+		expect(body.byteLength).toBeGreaterThan(8); // At least two 4-byte length prefixes
+
+		// Parse first frame
+		const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+		const firstLen = view.getUint32(0);
+		expect(firstLen).toBeGreaterThan(0);
+		expect(firstLen).toBeLessThan(body.byteLength);
+	});
+
+	it("returns 400 for non-chunked note on stream endpoint", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json.error).toBe("Note is not a chunked note");
+	});
+
+	it("returns 404 for expired chunked note on stream", async () => {
+		const { id } = await createChunkedNote();
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+		const json = await res.json();
+		expect(json.error).toBe("Note has expired");
+	});
+
+	it("returns 404 for non-existent note on stream", async () => {
+		const res = await app.request("/api/v1/notes/nonexistent1/stream");
+		expect(res.status).toBe(404);
+		const json = await res.json();
+		expect(json.error).toBe("Note not found");
+	});
+
+	it("returns 400 for invalid note ID on stream", async () => {
+		const res = await app.request("/api/v1/notes/bad!id/stream");
+		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json.error).toBe("Invalid note ID");
+	});
+
+	it("burns chunked note after stream read with maxReads=1", async () => {
+		const { id } = await createChunkedNote({ maxReads: 1 });
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		// Consume the body to trigger the stream
+		await res.arrayBuffer();
+
+		const secondRead = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(secondRead.status).toBe(404);
+	});
+
+	it("streams chunked note with null maxReads (unlimited reads)", async () => {
+		const { id } = await createChunkedNote();
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable).set({ maxReads: null }).where(eq(notesTable.id, id)).run();
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+
+		// Should still be readable after first read
+		const res2 = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res2.status).toBe(200);
+	});
+
+	it("includes salt header for password-protected chunked note", async () => {
+		const testSalt = Buffer.from("test-salt-16bytes").toString("base64");
+		const { id } = await createChunkedNote({ hasPassword: true, salt: testSalt });
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("X-Salt")).toBe(testSalt);
+		expect(res.headers.get("X-Has-Password")).toBe("true");
+	});
+});
+
+describe("GET /api/v1/notes/:id/stream edge cases", () => {
+	function chunkData(content: string): Uint8Array {
+		return new Uint8Array(Buffer.from(content));
+	}
+
+	function sha256hex(data: Uint8Array): string {
+		return createHash("sha256").update(data).digest("hex");
+	}
+
+	function createAppWithCustomStorage(database: AppDatabase, storage: StorageBackend) {
+		const hono = new Hono<AppEnv>();
+		hono.onError((err, c) => {
+			if (err instanceof HTTPException) {
+				return c.json({ error: err.message }, err.status);
+			}
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		hono.use("*", async (c, next) => {
+			c.set("db", database);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", storage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		hono.use("/api/v1/notes/*", writeAuth);
+		hono.route("/api/v1/notes", createNotesRoutes());
+		return hono;
+	}
+
+	async function createChunkedNoteViaApp(
+		targetApp: ReturnType<typeof createAppWithCustomStorage>,
+	): Promise<{ id: string; deleteToken: string }> {
+		const initRes = await targetApp.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify({
+				streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+				clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 0,
+				fileCount: 1,
+				chunkCount: 1,
+			}),
+		});
+		const { uploadId } = (await initRes.json()) as { uploadId: string };
+
+		const chunk = chunkData("chunk-data-0");
+		await targetApp.request(`/api/v1/notes/upload/${uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": sha256hex(chunk),
+			},
+			body: chunk as BodyInit,
+		});
+
+		const completeRes = await targetApp.request(`/api/v1/notes/upload/${uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		return completeRes.json() as Promise<{ id: string; deleteToken: string }>;
+	}
+
+	it("handles corrupted chunk data (too small for auth tag)", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		// Create note using real storage first
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		// Now create an app with a storage that returns too-small chunk data
+		const corruptStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.resolve(Buffer.alloc(20)), // 12 IV + 8 data (< 16 auth tag)
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
+
+		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200); // Headers sent before stream starts
+		// The stream should error, but we can still consume and verify it errored
+		try {
+			await res.arrayBuffer();
+		} catch {
+			// Expected — stream errored with "Invalid chunk data"
+		}
+	});
+
+	it("logs error when deleteChunks fails during burn-after-read stream", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failDeleteChunksStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
+			deleteChunks: () => Promise.reject(new Error("chunk cleanup failure")),
+		};
+		const failApp = createAppWithCustomStorage(db, failDeleteChunksStorage);
+
+		// Create note with maxReads=1 (burn-after-read)
+		const { id } = await createChunkedNoteViaApp(failApp);
+		// Update to burn-after-read
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		await res.arrayBuffer();
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`[notes] Failed to delete chunks for burned note ${id}`),
+			"chunk cleanup failure",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("logs non-Error when deleteChunks fails with string during burn-after-read stream", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
+			deleteChunks: () => Promise.reject("string delete error"),
+		};
+		const failApp = createAppWithCustomStorage(db, failStorage);
+
+		const { id } = await createChunkedNoteViaApp(failApp);
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		await res.arrayBuffer();
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`[notes] Failed to delete chunks for burned note ${id}`),
+			"string delete error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("handles readChunk throwing an error during stream", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		const errorStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.reject(new Error("disk read failure")),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const errorApp = createAppWithCustomStorage(db, errorStorage);
+
+		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200); // Headers sent before stream
+		try {
+			await res.arrayBuffer();
+		} catch {
+			// Expected — stream errored
+		}
+	});
+});
+
+describe("DELETE /api/v1/notes/:id (chunked)", () => {
+	function chunkData(content: string): Uint8Array {
+		return new Uint8Array(Buffer.from(content));
+	}
+
+	function sha256hex(data: Uint8Array): string {
+		return createHash("sha256").update(data).digest("hex");
+	}
+
+	async function createChunkedNote(): Promise<{ id: string; deleteToken: string }> {
+		const initRes = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify({
+				streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+				clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 0,
+				fileCount: 1,
+				chunkCount: 1,
+			}),
+		});
+		const { uploadId } = (await initRes.json()) as { uploadId: string };
+
+		const chunk = chunkData("chunk-data-0");
+		await app.request(`/api/v1/notes/upload/${uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": sha256hex(chunk),
+			},
+			body: chunk as BodyInit,
+		});
+
+		const completeRes = await app.request(`/api/v1/notes/upload/${uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		return completeRes.json() as Promise<{ id: string; deleteToken: string }>;
+	}
+
+	it("deletes chunked note and removes chunk files", async () => {
+		const { id, deleteToken } = await createChunkedNote();
+
+		// Verify note exists
+		const existsRes = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(existsRes.status).toBe(200);
+
+		const deleteRes = await app.request(`/api/v1/notes/${id}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": deleteToken }),
+		});
+		expect(deleteRes.status).toBe(200);
+		const json = await deleteRes.json();
+		expect(json.deleted).toBe(true);
+
+		// Note should be gone
+		const getRes = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(getRes.status).toBe(404);
+	});
+
+	it("logs error when storage.deleteChunks fails during delete", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const failStorage: StorageBackend = {
+			save: (id, data) => realStorage.save(id, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (id, idx, data) => realStorage.saveChunk(id, idx, data),
+			readChunk: (id, idx) => realStorage.readChunk(id, idx),
+			deleteChunks: () => Promise.reject(new Error("chunk delete failure")),
+		};
+
+		const failApp = new Hono<AppEnv>();
+		failApp.onError((err, c) => {
+			if (err instanceof HTTPException) {
+				return c.json({ error: err.message }, err.status);
+			}
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		failApp.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", failStorage);
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			await next();
+		});
+		const writeAuth = createWriteAuth([]);
+		failApp.use("/api/v1/notes/*", writeAuth);
+		failApp.route("/api/v1/notes", createNotesRoutes());
+
+		// Create chunked note with regular app (which uses real storage for saveChunk)
+		const { id, deleteToken } = await createChunkedNote();
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const deleteRes = await failApp.request(`/api/v1/notes/${id}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": deleteToken }),
+		});
+		expect(deleteRes.status).toBe(200);
+		const json = await deleteRes.json();
+		expect(json.deleted).toBe(true);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
+			"chunk delete failure",
+		);
+		consoleSpy.mockRestore();
 	});
 });

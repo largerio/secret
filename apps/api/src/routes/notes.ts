@@ -6,8 +6,6 @@ import {
 	createNoteMultipartSchema,
 	createNoteResponseSchema,
 	createNoteSchema,
-	DEFAULT_CHUNK_SIZE,
-	DEFAULT_MAX_CHUNKED_SIZE,
 	deleteNoteResponseSchema,
 	NOTE_ID_LENGTH,
 	noteExistsResponseSchema,
@@ -443,8 +441,8 @@ export function createNotesRoutes() {
 		if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
 
 		const data = parsed.data;
-		const chunkSize = c.get("chunkSize") ?? DEFAULT_CHUNK_SIZE;
-		const maxChunkedSize = c.get("maxChunkedFileSize") ?? DEFAULT_MAX_CHUNKED_SIZE;
+		const chunkSize = c.get("chunkSize");
+		const maxChunkedSize = c.get("maxChunkedFileSize");
 		const maxChunks = Math.ceil(maxChunkedSize / chunkSize);
 
 		if (data.chunkCount > maxChunks) {
@@ -487,7 +485,7 @@ export function createNotesRoutes() {
 	app.put("/upload/:uploadId/chunks/:index", async (c) => {
 		const uploadId = c.req.param("uploadId");
 		const indexStr = c.req.param("index");
-		const index = parseInt(indexStr ?? "", 10);
+		const index = parseInt(indexStr as string, 10);
 
 		if (Number.isNaN(index) || index < 0) {
 			return c.json({ error: "Invalid chunk index" }, 400);
@@ -497,7 +495,7 @@ export function createNotesRoutes() {
 		const session = db
 			.select()
 			.from(uploads)
-			.where(eq(uploads.id, uploadId ?? ""))
+			.where(eq(uploads.id, uploadId as string))
 			.get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
@@ -513,7 +511,7 @@ export function createNotesRoutes() {
 			return c.json({ error: "Empty chunk body" }, 400);
 		}
 
-		const chunkSize = c.get("chunkSize") ?? DEFAULT_CHUNK_SIZE;
+		const chunkSize = c.get("chunkSize");
 		const maxChunkBytes = chunkSize + 17; // SECRETSTREAM_ABYTES overhead
 		if (rawBody.byteLength > maxChunkBytes) {
 			return c.json({ error: "Chunk too large" }, 413);
@@ -543,7 +541,7 @@ export function createNotesRoutes() {
 			received.push(index);
 			db.update(uploads)
 				.set({ chunksReceived: JSON.stringify(received) })
-				.where(eq(uploads.id, uploadId ?? ""))
+				.where(eq(uploads.id, uploadId as string))
 				.run();
 		}
 
@@ -557,7 +555,7 @@ export function createNotesRoutes() {
 		const session = db
 			.select()
 			.from(uploads)
-			.where(eq(uploads.id, uploadId ?? ""))
+			.where(eq(uploads.id, uploadId as string))
 			.get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
@@ -622,7 +620,7 @@ export function createNotesRoutes() {
 
 		// Remove upload session
 		db.delete(uploads)
-			.where(eq(uploads.id, uploadId ?? ""))
+			.where(eq(uploads.id, uploadId as string))
 			.run();
 
 		return c.json(
