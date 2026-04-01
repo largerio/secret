@@ -42,10 +42,10 @@ Monorepo with pnpm workspaces:
   - View page: `src/routes/note/[id]/+page.svelte`
   - SDK client singleton: `src/lib/client.ts` — lazy-initialized `SecretClient`
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
-  - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, fetches via SDK
+  - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
 
 - **`packages/sdk-js`** — JS/TS SDK for Secret instances
-  - `SecretClient` class: create, read, check, delete notes + getConfig
+  - `SecretClient` class: create, read, check, delete notes
   - Handles full encrypt→send and receive→decrypt flows
   - Progress callbacks for uploads (XHR in browser) and downloads (streaming fetch)
   - Optional API key support (`Authorization: Bearer <key>`)

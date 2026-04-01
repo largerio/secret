@@ -22,7 +22,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
-- **i18n** — English and French
+- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko)
 - **Self-hostable** — Single Docker container, customizable branding
 
 ## Quick Start
@@ -68,7 +68,9 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `APP_PRIMARY_COLOR` | `#6366f1` | Brand color |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note |
-| `MAX_EXPIRY` | `604800` | Max expiry in seconds (7 days) |
+| `MAX_EXPIRY` | `2592000` | Max expiry in seconds (30 days) |
+| `API_KEY` | — | API key for SDK clients (optional) |
+| `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `PORT` | `3000` | Server port |
 
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable.
@@ -134,7 +136,7 @@ Set `client_max_body_size` to match `MAX_FILE_SIZE`.
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 179 tests, 100% backend coverage
+pnpm test         # 269 tests, 100% backend coverage
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
@@ -143,11 +145,12 @@ pnpm typecheck    # TypeScript strict
 ### Structure
 
 ```
-apps/api/         Hono API (Node.js, SQLite, Drizzle ORM)
+apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
 apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4)
+packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/crypto/  libsodium + AES-256-GCM encryption
-packages/shared/  Zod schemas, types, constants
-messages/         i18n (en.json, fr.json)
+packages/shared/  Zod schemas, types, constants, crypto test vectors
+messages/         i18n (10 languages)
 ```
 
 ## Security
@@ -157,6 +160,7 @@ messages/         i18n (en.json, fr.json)
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
 | Server encryption | AES-256-GCM (defense-in-depth) |
 | Password KDF | Argon2id (64 MiB, 3 iterations) |
+| Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
 | Key hygiene | Zeroed after use (`sodium.memzero`) |
 | Privacy | No IP logging, no cookies, no tracking |
