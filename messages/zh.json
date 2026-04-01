@@ -28,6 +28,7 @@
 	"decrypting": "解密中...",
 	"downloading": "下载中...",
 	"uploading": "上传中...",
+	"done": "Done",
 	"expiry_5min": "5分钟",
 	"expiry_1h": "1小时",
 	"expiry_24h": "24小时",

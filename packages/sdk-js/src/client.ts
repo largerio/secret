@@ -48,8 +48,11 @@ export class SecretClient {
 				: {}),
 		};
 
+		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const encrypted = await encryptNote(payload, options.password);
+		options.onProgress?.({ phase: "encrypting", phaseProgress: 1, overallProgress: 0.3 });
 
+		options.onProgress?.({ phase: "uploading", phaseProgress: 0, overallProgress: 0.3 });
 		let response: { id: string; expiresAt: string; deleteToken: string };
 
 		if (fileCount > 0) {
@@ -92,6 +95,8 @@ export class SecretClient {
 			);
 		}
 
+		options.onProgress?.({ phase: "processing", phaseProgress: 1, overallProgress: 1 });
+
 		return {
 			id: response.id,
 			expiresAt: response.expiresAt,
@@ -109,11 +114,11 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
+		options?.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 		try {
-			return await this.readNoteRaw(id, keyFragment, options);
+			const result = await this.readNoteRaw(id, keyFragment, options);
+			return result;
 		} catch (err) {
-			// Only fallback to legacy JSON endpoint for HTTP/network errors on the raw endpoint itself,
-			// not for decryption failures (which mean the note was already consumed)
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
@@ -126,8 +131,12 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNoteRaw(this.httpConfig, id, options?.onDownloadProgress);
+		const response = await http.getNoteRaw(this.httpConfig, id, (p) => {
+			options?.onDownloadProgress?.(p);
+			options?.onProgress?.({ phase: "downloading", phaseProgress: p, overallProgress: p * 0.7 });
+		});
 
+		options?.onProgress?.({ phase: "decrypting", phaseProgress: 0, overallProgress: 0.7 });
 		let payload: NotePayload;
 		try {
 			payload = await decryptNoteBytes(
@@ -140,6 +149,8 @@ export class SecretClient {
 		} catch (err) {
 			throw new SecretDecryptionError(err instanceof Error ? err.message : "Decryption failed");
 		}
+
+		options?.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });
 
 		return {
 			payload,

@@ -1,5 +1,16 @@
 import type { ContentMode } from "@secret/shared";
 
+export type UploadPhase = "encrypting" | "uploading" | "processing";
+export type DownloadPhase = "downloading" | "decrypting";
+
+export interface ProgressInfo {
+	readonly phase: UploadPhase | DownloadPhase;
+	readonly phaseProgress: number;
+	readonly overallProgress: number;
+	readonly currentChunk?: number;
+	readonly totalChunks?: number;
+}
+
 export interface SecretClientConfig {
 	/** Base URL of the Secret instance. Defaults to "" (relative URLs for browser). */
 	readonly baseUrl?: string;
@@ -24,6 +35,10 @@ export interface CreateNoteOptions {
 	readonly maxReads?: number;
 	/** Upload progress callback (0 to 1). Browser-only for multipart uploads. */
 	readonly onUploadProgress?: (progress: number) => void;
+	/** Structured progress callback with phase info. */
+	readonly onProgress?: (info: ProgressInfo) => void;
+	/** AbortSignal to cancel the upload. */
+	readonly signal?: AbortSignal;
 	/** PoW token from Cap widget. Required for browser clients without API key. */
 	readonly capToken?: string;
 }
@@ -40,6 +55,8 @@ export interface ReadNoteOptions {
 	readonly password?: string;
 	/** Download progress callback (0 to 1). */
 	readonly onDownloadProgress?: (progress: number) => void;
+	/** Structured progress callback with phase info. */
+	readonly onProgress?: (info: ProgressInfo) => void;
 }
 
 export interface ReadNoteResult {

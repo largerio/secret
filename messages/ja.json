@@ -28,6 +28,7 @@
 	"decrypting": "復号中...",
 	"downloading": "ダウンロード中...",
 	"uploading": "アップロード中...",
+	"done": "Done",
 	"expiry_5min": "5分",
 	"expiry_1h": "1時間",
 	"expiry_24h": "24時間",

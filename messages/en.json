@@ -28,6 +28,7 @@
 	"decrypting": "Decrypting...",
 	"downloading": "Downloading...",
 	"uploading": "Uploading...",
+	"done": "Done",
 	"expiry_5min": "5 minutes",
 	"expiry_1h": "1 hour",
 	"expiry_24h": "24 hours",

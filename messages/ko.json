@@ -28,6 +28,7 @@
 	"decrypting": "복호화 중...",
 	"downloading": "다운로드 중...",
 	"uploading": "업로드 중...",
+	"done": "Done",
 	"expiry_5min": "5분",
 	"expiry_1h": "1시간",
 	"expiry_24h": "24시간",
