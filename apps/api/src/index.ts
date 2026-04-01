@@ -1,14 +1,19 @@
 import { serve } from "@hono/node-server";
+import { OpenAPIHono } from "@hono/zod-openapi";
+import { Scalar } from "@scalar/hono-api-reference";
 import { parseServerKey } from "@secret/crypto";
 import { CLEANUP_INTERVAL_MS, MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
+import { HTTPException } from "hono/http-exception";
 import { startCleanupJob } from "./cleanup.js";
 import type { AppDatabase } from "./db/index.js";
 import { createDatabase } from "./db/index.js";
+import { createWriteAuth } from "./middleware/auth.js";
 import { createRateLimit } from "./middleware/rateLimit.js";
 import { createCors, createSecurityHeaders } from "./middleware/security.js";
+import { createCapRoutes } from "./routes/cap.js";
 import { createNotesRoutes } from "./routes/notes.js";
 import type { StorageBackend, StorageType } from "./storage/index.js";
 import { createStorageBackend } from "./storage/index.js";
@@ -27,6 +32,11 @@ const APP_DESCRIPTION = env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted shar
 const APP_PRIMARY_COLOR = env["APP_PRIMARY_COLOR"] ?? "#6366f1";
 const APP_FOOTER_TEXT = env["APP_FOOTER_TEXT"] ?? "";
 const APP_OG_IMAGE_URL = env["APP_OG_IMAGE_URL"] ?? "";
+
+const API_KEYS = Object.entries(env)
+	.filter(([key]) => /^API_KEY(_\d+)?$/.test(key))
+	.map(([, value]) => value?.trim())
+	.filter((v): v is string => Boolean(v));
 
 const STORAGE_BACKEND = (env["STORAGE_BACKEND"] ?? "local") as StorageType;
 const S3_BUCKET = env["S3_BUCKET"] ?? "";
@@ -99,6 +109,9 @@ interface AppEnv {
 const app = new Hono<AppEnv>();
 
 app.onError((err, c) => {
+	if (err instanceof HTTPException) {
+		return c.json({ error: err.message }, err.status);
+	}
 	const errorId = crypto.randomUUID();
 	console.error(`[error] ${errorId}:`, err);
 	return c.json({ error: "Internal server error", errorId }, 500);
@@ -112,20 +125,23 @@ app.use("*", compress());
 
 const maxBodySize = CONFIGURED_MAX_FILE_SIZE * CONFIGURED_MAX_FILES + 1024 * 1024;
 app.use(
-	"/api/notes",
+	"/api/v1/notes",
 	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
 );
 app.use(
-	"/api/notes/upload",
+	"/api/v1/notes/upload",
 	bodyLimit({ maxSize: maxBodySize, onError: (c) => c.json({ error: "Payload too large" }, 413) }),
 );
 
 const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 30 });
 const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 60 });
 const existsRateLimit = createRateLimit({ windowMs: 60_000, max: 20 });
-app.use("/api/notes", notesRateLimit.middleware);
-app.use("/api/notes/*/exists", existsRateLimit.middleware);
-app.use("/api/notes/*", notesDetailRateLimit.middleware);
+app.use("/api/v1/notes", notesRateLimit.middleware);
+app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
+app.use("/api/v1/notes/*", notesDetailRateLimit.middleware);
+
+const writeAuth = createWriteAuth(API_KEYS);
+app.use("/api/v1/notes/*", writeAuth);
 
 app.use("*", async (c, next) => {
 	c.set("db", db);
@@ -134,23 +150,11 @@ app.use("*", async (c, next) => {
 	await next();
 });
 
+// --- Unversioned routes ---
+
 app.get("/api/health", (c) => {
 	c.header("Cache-Control", "no-cache");
 	return c.json({ status: "ok" });
-});
-app.get("/api/config", (c) => {
-	c.header("Cache-Control", "public, max-age=3600");
-	return c.json({
-		appName: APP_NAME,
-		appDescription: APP_DESCRIPTION,
-		appUrl: APP_URL,
-		primaryColor: APP_PRIMARY_COLOR,
-		footerText: APP_FOOTER_TEXT,
-		ogImageUrl: APP_OG_IMAGE_URL,
-		maxFileSize: CONFIGURED_MAX_FILE_SIZE,
-		maxFilesPerNote: CONFIGURED_MAX_FILES,
-		storageType: STORAGE_BACKEND,
-	});
 });
 app.get("/robots.txt", (c) => {
 	c.header("Content-Type", "text/plain");
@@ -166,7 +170,46 @@ app.get("/sitemap.xml", (c) => {
 		`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n  <url>\n    <loc>${APP_URL}/</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${APP_URL}/" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${APP_URL}/" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${APP_URL}/" />\n    <changefreq>monthly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
 	);
 });
-app.route("/api/notes", createNotesRoutes());
+
+// --- Cap (internal, not versioned, not documented) ---
+
+app.route("/api/cap", createCapRoutes());
+
+// --- Versioned API (v1) ---
+
+const v1 = new OpenAPIHono<AppEnv>();
+
+v1.route("/notes", createNotesRoutes());
+
+v1.doc31("/openapi.json", {
+	openapi: "3.1.0",
+	info: {
+		title: "Secret API",
+		version: "1.0.0",
+		description:
+			"Zero-knowledge encrypted note and file sharing API. Data is encrypted client-side before transmission; the server never sees plaintext.",
+	},
+});
+
+v1.get("/docs", async (c, next) => {
+	c.header(
+		"Content-Security-Policy",
+		"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'; img-src 'self' data:; font-src https://cdn.jsdelivr.net; frame-ancestors 'none'",
+	);
+	await next();
+});
+v1.get(
+	"/docs",
+	Scalar({
+		url: "/api/v1/openapi.json",
+		theme: "kepler",
+		_integration: "hono",
+	}),
+);
+
+app.route("/api/v1", v1);
+
+// --- Cleanup & server ---
 
 const cleanupTimer = startCleanupJob(db, storage, CLEANUP_MS);
 

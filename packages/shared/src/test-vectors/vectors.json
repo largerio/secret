@@ -1,0 +1,80 @@
+{
+	"version": 1,
+	"generatedWith": "libsodium-wrappers-sumo 1.0.21",
+	"vectors": {
+		"xchacha20poly1305": [
+			{
+				"description": "encrypt empty plaintext",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"plaintext": "",
+				"ciphertext": "9r1kHxOfZKzt5CJygrm71g=="
+			},
+			{
+				"description": "encrypt short plaintext",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"plaintext": "SGVsbG8sIFNlY3JldCE=",
+				"ciphertext": "DYlmcdhxhP8EDF/sBRGjq0leBJ/G5zh9ZGfCHe5c"
+			}
+		],
+		"argon2id": [
+			{
+				"description": "derive key from password with base key",
+				"password": "test-password-123",
+				"salt": "wMHCw8TFxsfIycrLzM3Ozw==",
+				"baseKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+				"baseKeyUrl": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+				"combinedInput": "test-password-123:ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+				"opsLimit": 3,
+				"memLimit": 268435456,
+				"algorithm": "argon2id13",
+				"derivedKey": "EiT1xdd7hrEBZFlE1TMhtKCikNdA7qeU3Z98paoTK64="
+			}
+		],
+		"pipeline": [
+			{
+				"description": "text-only note, no password",
+				"payload": {
+					"text": "Hello, world!",
+					"contentMode": "text"
+				},
+				"payloadMsgpack": "gqR0ZXh0rUhlbGxvLCB3b3JsZCGrY29udGVudE1vZGWkdGV4dA==",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"ciphertext": "x0h+eM8pCeQEA0HmXRDUr0nG+w0BZaW3aSXlk6rMmlN1889XMm6kYEpWV+qm3mvBoVcsPB8="
+			},
+			{
+				"description": "note with file, no password",
+				"payload": {
+					"text": "Note with file",
+					"contentMode": "text",
+					"files": [
+						{
+							"name": "test.txt",
+							"type": "text/plain",
+							"size": 19,
+							"data": "c2VjcmV0IGZpbGUgY29udGVudA=="
+						}
+					]
+				},
+				"payloadMsgpack": "g6R0ZXh0rk5vdGUgd2l0aCBmaWxlq2NvbnRlbnRNb2RlpHRleHSlZmlsZXORhKRuYW1lqHRlc3QudHh0pHR5cGWqdGV4dC9wbGFpbqRzaXplE6RkYXRhxBNzZWNyZXQgZmlsZSBjb250ZW50",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"ciphertext": "xkh+eM8pCuIOG0ipBlnXqBvM9kDPram2czTuiZPukVK0I95KPjLZqsyHCyUKsAtAxEtDUa4No9PUw3mejVUL8wPYkhnUn0dN9Q0jAtwuVQWpdH4sd3baxkyAQ2TlO2IQbDvCAfkutCcINL27JU2I5rIuMiDv0hJ5N1iWLw=="
+			}
+		],
+		"encoding": [
+			{
+				"description": "base64url key encoding (32 bytes)",
+				"raw": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"base64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+			},
+			{
+				"description": "base64url key encoding (32 bytes, alternate)",
+				"raw": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+				"base64url": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+			}
+		]
+	}
+}

@@ -1,13 +1,12 @@
 <script lang="ts">
-import type { ContentMode, CreateNoteResponse, NoteFile, NotePayload } from "@secret/shared";
+import type { ContentMode } from "@secret/shared";
 import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import ProgressBar from "$lib/components/ProgressBar.svelte";
+import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
-import { createNote, createNoteWithProgress, deleteNote } from "$lib/utils/api";
-import { encryptNote } from "$lib/utils/crypto-client";
 import { formatSize } from "$lib/utils/format";
 
 let contentMode = $state<ContentMode>("text");
@@ -47,63 +46,42 @@ async function handleSubmit() {
 	uploadProgress = null;
 
 	try {
-		const noteFiles: NoteFile[] = [];
-		for (const file of files) {
-			const buffer = await file.arrayBuffer();
-			noteFiles.push({
-				name: file.name,
-				type: file.type,
-				size: file.size,
-				data: new Uint8Array(buffer),
-			});
+		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
+		const Cap = (await import("@cap.js/widget")).default;
+		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
+		const capResult = await capClient.solve();
+		if (!capResult.success || !capResult.token) {
+			error = t("error_generic");
+			return;
 		}
+		const capToken = capResult.token;
 
-		const payload: NotePayload = {
-			...(text ? { text, contentMode } : {}),
-			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
-		};
-
-		const encrypted = await encryptNote(payload, password || undefined);
+		const client = await getClient();
 		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : 1;
 
-		let response: CreateNoteResponse;
-		if (noteFiles.length > 0) {
-			const binaryData = Uint8Array.from(atob(encrypted.encryptedData), (c) => c.charCodeAt(0));
-			const formData = new FormData();
-			formData.append(
-				"metadata",
-				JSON.stringify({
-					clientNonce: encrypted.clientNonce,
-					hasPassword: Boolean(password),
-					expiresIn,
-					fileCount: noteFiles.length,
-					maxReads: parsedMaxReads,
-					...(encrypted.salt ? { salt: encrypted.salt } : {}),
-				}),
-			);
-			formData.append("data", new Blob([binaryData], { type: "application/octet-stream" }));
+		const noteFiles = await Promise.all(
+			files.map(async (file) => {
+				const buffer = await file.arrayBuffer();
+				return { name: file.name, type: file.type, data: new Uint8Array(buffer) };
+			}),
+		);
 
-			uploadProgress = 0;
-			response = await createNoteWithProgress(formData, (loaded, total) => {
-				uploadProgress = (loaded / total) * 100;
-			});
-		} else {
-			response = await createNote({
-				encryptedData: encrypted.encryptedData,
-				clientNonce: encrypted.clientNonce,
-				hasPassword: Boolean(password),
-				expiresIn,
-				fileCount: noteFiles.length,
-				maxReads: parsedMaxReads,
-				...(encrypted.salt ? { salt: encrypted.salt } : {}),
-			});
-		}
+		const result = await client.createNote({
+			...(text ? { text, contentMode } : {}),
+			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
+			...(password ? { password } : {}),
+			expiresIn,
+			maxReads: parsedMaxReads,
+			capToken,
+			onUploadProgress: (p) => {
+				uploadProgress = p * 100;
+			},
+		});
 
-		const baseUrl = window.location.origin;
-		const url = `${baseUrl}/note/${response.id}#${encrypted.keyFragment}`;
+		const url = `${window.location.origin}/note/${result.id}#${result.keyFragment}`;
 		shareUrl = url;
-		noteId = response.id;
-		deleteToken = response.deleteToken;
+		noteId = result.id;
+		deleteToken = result.deleteToken;
 		const { toDataURL } = await import("qrcode");
 		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
 	} catch (e) {
@@ -157,7 +135,18 @@ async function handleDelete() {
 
 	isDeleting = true;
 	try {
-		await deleteNote(noteId, deleteToken);
+		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
+		const Cap = (await import("@cap.js/widget")).default;
+		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
+		const capResult = await capClient.solve();
+		if (!capResult.success || !capResult.token) {
+			error = t("error_generic");
+			return;
+		}
+		const capToken = capResult.token;
+
+		const client = await getClient();
+		await client.deleteNote(noteId, deleteToken, capToken);
 		isDeleted = true;
 	} catch (e) {
 		error = e instanceof Error ? e.message : t("error_generic");

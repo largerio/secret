@@ -6,11 +6,12 @@ export function createSecurityHeaders(): MiddlewareHandler {
 	return secureHeaders({
 		contentSecurityPolicy: {
 			defaultSrc: ["'none'"],
-			scriptSrc: ["'self'"],
+			scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
 			styleSrc: ["'self'", "'unsafe-inline'"],
 			imgSrc: ["'self'", "data:", "blob:"],
 			connectSrc: ["'self'"],
 			fontSrc: ["'self'"],
+			workerSrc: ["'self'", "blob:"],
 			mediaSrc: ["blob:"],
 			frameSrc: ["blob:"],
 			frameAncestors: ["'none'"],
@@ -38,7 +39,7 @@ export function createCors(allowedOrigins: ReadonlyArray<string>): MiddlewareHan
 	return cors({
 		origin: [...allowedOrigins],
 		allowMethods: ["GET", "POST", "DELETE"],
-		allowHeaders: ["Content-Type", "X-Delete-Token"],
+		allowHeaders: ["Content-Type", "Authorization", "X-Delete-Token", "X-Cap-Token"],
 		maxAge: 86400,
 	});
 }

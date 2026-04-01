@@ -1,10 +1,10 @@
 <script lang="ts">
 import "../app.css";
 import { onMount } from "svelte";
-import { getConfig, loadConfig } from "$lib/config.svelte";
+import { getConfig, setConfig } from "$lib/config.svelte";
 import { detectLocale, getLocale, setLocale, t } from "$lib/i18n/index.svelte";
 
-const { children } = $props();
+const { data, children } = $props();
 
 const repoUrl = "https://github.com/largerio/secret";
 
@@ -21,16 +21,19 @@ const localeToOg: Record<string, string> = {
 	ko: "ko_KR",
 };
 
+$effect(() => {
+	setConfig(data.config);
+});
+
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
 const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 
-onMount(async () => {
+onMount(() => {
 	setLocale(detectLocale());
-	const loaded = await loadConfig();
 
-	if (loaded.primaryColor && loaded.primaryColor !== "#6366f1") {
-		document.documentElement.style.setProperty("--app-primary-color", loaded.primaryColor);
+	if (config.primaryColor && config.primaryColor !== "#6366f1") {
+		document.documentElement.style.setProperty("--app-primary-color", config.primaryColor);
 	}
 
 	document.documentElement.lang = getLocale();

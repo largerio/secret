@@ -1,19 +1,27 @@
 import { timingSafeEqual } from "node:crypto";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { serverDecrypt, serverEncrypt } from "@secret/crypto";
 import {
 	createNoteMultipartSchema,
+	createNoteResponseSchema,
 	createNoteSchema,
+	deleteNoteResponseSchema,
+	noteExistsResponseSchema,
+	readNoteResponseSchema,
 	NOTE_ID_LENGTH,
-	noteIdSchema,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
+
+function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never {
+	throw new HTTPException(status, { message });
+}
 
 interface NotesEnv {
 	Variables: {
@@ -23,40 +31,114 @@ interface NotesEnv {
 	};
 }
 
+const noteIdParam = z
+	.string()
+	.regex(/^[A-Za-z0-9_-]+$/, "Invalid note ID format")
+	.length(NOTE_ID_LENGTH, `Note ID must be ${String(NOTE_ID_LENGTH)} characters`)
+	.openapi({ param: { name: "id", in: "path" }, example: "aBcDeFgHiJkL" });
+
+// --- Route definitions ---
+
+const createNoteRoute = createRoute({
+	method: "post",
+	path: "/",
+	tags: ["Notes"],
+	summary: "Create an encrypted note (JSON)",
+	request: {
+		body: { content: { "application/json": { schema: createNoteSchema } } },
+	},
+	responses: {
+		201: {
+			content: { "application/json": { schema: createNoteResponseSchema } },
+			description: "Note created",
+		},
+	},
+});
+
+const existsRoute = createRoute({
+	method: "get",
+	path: "/{id}/exists",
+	tags: ["Notes"],
+	summary: "Check if a note exists",
+	request: {
+		params: z.object({ id: noteIdParam }),
+	},
+	responses: {
+		200: {
+			content: { "application/json": { schema: noteExistsResponseSchema } },
+			description: "Note exists",
+		},
+	},
+});
+
+const readNoteRoute = createRoute({
+	method: "get",
+	path: "/{id}",
+	tags: ["Notes"],
+	summary: "Read and decrypt a note (server-side decryption layer only)",
+	request: {
+		params: z.object({ id: noteIdParam }),
+	},
+	responses: {
+		200: {
+			content: { "application/json": { schema: readNoteResponseSchema } },
+			description: "Note data (still client-encrypted)",
+		},
+	},
+});
+
+const deleteNoteRoute = createRoute({
+	method: "delete",
+	path: "/{id}",
+	tags: ["Notes"],
+	summary: "Delete a note",
+	request: {
+		params: z.object({ id: noteIdParam }),
+		headers: z.object({ "x-delete-token": z.string().openapi({ example: "abc123..." }) }),
+	},
+	responses: {
+		200: {
+			content: { "application/json": { schema: deleteNoteResponseSchema } },
+			description: "Note deleted",
+		},
+	},
+});
+
+// --- Handlers ---
+
 export function createNotesRoutes() {
-	const app = new Hono<NotesEnv>();
+	const app = new OpenAPIHono<NotesEnv>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json({ error: "Invalid request" }, 400);
+			}
+		},
+	});
 
-	app.post("/", async (c) => {
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: "Invalid JSON body" }, 400);
-		}
-		const parsed = createNoteSchema.safeParse(body);
-
-		if (!parsed.success) {
-			return c.json({ error: "Invalid request" }, 400);
-		}
-
-		const { encryptedData, clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } =
-			parsed.data;
-
-		const db = c.get("db");
-		const serverKey = c.get("serverKey");
-		const storage = c.get("storage");
-
-		const clientBlob = Buffer.from(encryptedData, "base64");
-		const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(clientBlob, serverKey);
+	async function insertNote(
+		db: AppDatabase,
+		serverKey: Buffer,
+		storage: StorageBackend,
+		params: {
+			clientBlob: Buffer;
+			clientNonce: string;
+			hasPassword: boolean;
+			expiresIn: number;
+			maxReads: number;
+			fileCount: number;
+			salt: string | null;
+		},
+	) {
+		const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(params.clientBlob, serverKey);
 
 		const id = nanoid(NOTE_ID_LENGTH);
 		const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
 		const now = new Date();
-		const expiresAt = new Date(now.getTime() + expiresIn * 1000);
+		const expiresAt = new Date(now.getTime() + params.expiresIn * 1000);
 
 		let filePath: string | null = null;
 		let storedBlob: Buffer;
-		if (fileCount > 0) {
+		if (params.fileCount > 0) {
 			filePath = await storage.save(id, serverBlob);
 			storedBlob = Buffer.alloc(0);
 		} else {
@@ -68,20 +150,37 @@ export function createNotesRoutes() {
 				id,
 				encryptedData: storedBlob,
 				serverNonce: serverIv.toString("base64"),
-				clientNonce,
-				hasPassword,
-				salt: salt ?? null,
+				clientNonce: params.clientNonce,
+				hasPassword: params.hasPassword,
+				salt: params.salt,
 				deleteToken,
-				burnAfterRead: maxReads === 1,
-				fileCount,
+				burnAfterRead: params.maxReads === 1,
+				fileCount: params.fileCount,
 				filePath,
 				expiresAt,
-				maxReads,
+				maxReads: params.maxReads,
 				createdAt: now,
 			})
 			.run();
 
-		return c.json({ id, expiresAt: expiresAt.toISOString(), deleteToken }, 201);
+		return { id, expiresAt: expiresAt.toISOString(), deleteToken };
+	}
+
+	app.openapi(createNoteRoute, async (c) => {
+		const { encryptedData, clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } =
+			c.req.valid("json");
+
+		const result = await insertNote(c.get("db"), c.get("serverKey"), c.get("storage"), {
+			clientBlob: Buffer.from(encryptedData, "base64"),
+			clientNonce,
+			hasPassword,
+			expiresIn,
+			maxReads,
+			fileCount,
+			salt: salt ?? null,
+		});
+
+		return c.json(result, 201);
 	});
 
 	app.post("/upload", async (c) => {
@@ -116,46 +215,21 @@ export function createNotesRoutes() {
 
 		const { clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } = parsed.data;
 
-		const db = c.get("db");
-		const serverKey = c.get("serverKey");
-		const storage = c.get("storage");
+		const result = await insertNote(c.get("db"), c.get("serverKey"), c.get("storage"), {
+			clientBlob: Buffer.from(await dataBlob.arrayBuffer()),
+			clientNonce,
+			hasPassword,
+			expiresIn,
+			maxReads,
+			fileCount,
+			salt: salt ?? null,
+		});
 
-		const clientBlob = Buffer.from(await dataBlob.arrayBuffer());
-		const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(clientBlob, serverKey);
-
-		const id = nanoid(NOTE_ID_LENGTH);
-		const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
-		const now = new Date();
-		const expiresAt = new Date(now.getTime() + expiresIn * 1000);
-
-		const filePath = await storage.save(id, serverBlob);
-
-		db.insert(notes)
-			.values({
-				id,
-				encryptedData: Buffer.alloc(0),
-				serverNonce: serverIv.toString("base64"),
-				clientNonce,
-				hasPassword,
-				salt: salt ?? null,
-				deleteToken,
-				burnAfterRead: maxReads === 1,
-				fileCount,
-				filePath,
-				expiresAt,
-				maxReads,
-				createdAt: now,
-			})
-			.run();
-
-		return c.json({ id, expiresAt: expiresAt.toISOString(), deleteToken }, 201);
+		return c.json(result, 201);
 	});
 
-	app.get("/:id/exists", (c) => {
-		const id = noteIdSchema.safeParse(c.req.param("id"));
-		if (!id.success) {
-			return c.json({ error: "Invalid note ID" }, 400);
-		}
+	app.openapi(existsRoute, (c) => {
+		const { id } = c.req.valid("param");
 
 		const db = c.get("db");
 		const note = db
@@ -166,45 +240,38 @@ export function createNotesRoutes() {
 				maxReads: notes.maxReads,
 			})
 			.from(notes)
-			.where(eq(notes.id, id.data))
+			.where(eq(notes.id, id))
 			.get();
 
-		if (note === undefined) {
-			return c.json({ exists: false }, 404);
-		}
-
-		if (note.expiresAt < new Date()) {
-			return c.json({ exists: false }, 404);
+		if (note === undefined || note.expiresAt < new Date()) {
+			httpError(404, "Note not found");
 		}
 
 		return c.json({
-			exists: true,
+			exists: true as const,
 			hasPassword: note.hasPassword,
 			fileCount: note.fileCount,
 			expiresAt: note.expiresAt.toISOString(),
-			maxReads: note.maxReads as number,
+			maxReads: note.maxReads ?? 0,
 		});
 	});
 
-	app.get("/:id", async (c) => {
-		const id = noteIdSchema.safeParse(c.req.param("id"));
-		if (!id.success) {
-			return c.json({ error: "Invalid note ID" }, 400);
-		}
+	app.openapi(readNoteRoute, async (c) => {
+		const { id } = c.req.valid("param");
 
 		const db = c.get("db");
 		const serverKey = c.get("serverKey");
 		const storage = c.get("storage");
 
 		const result = db.transaction((tx) => {
-			const note = tx.select().from(notes).where(eq(notes.id, id.data)).get();
+			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
 
 			if (note === undefined) {
 				return { error: "Note not found" as const, status: 404 as const };
 			}
 
 			if (note.expiresAt < new Date()) {
-				tx.delete(notes).where(eq(notes.id, id.data)).run();
+				tx.delete(notes).where(eq(notes.id, id)).run();
 				return {
 					error: "Note has expired" as const,
 					status: 404 as const,
@@ -212,24 +279,24 @@ export function createNotesRoutes() {
 				};
 			}
 
-			const maxReads = note.maxReads as number;
+			const maxReads = note.maxReads ?? 0;
 			const newReadCount = note.readCount + 1;
 			const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
 
 			if (shouldDelete) {
-				tx.delete(notes).where(eq(notes.id, id.data)).run();
+				tx.delete(notes).where(eq(notes.id, id)).run();
 			} else {
-				tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id.data)).run();
+				tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
 			}
 
 			return { note, shouldDelete };
 		});
 
 		if ("error" in result) {
-			if (result.filePath) {
+			if ("filePath" in result && result.filePath) {
 				await storage.delete(result.filePath);
 			}
-			return c.json({ error: result.error }, result.status);
+			httpError(result.status as 404, result.error);
 		}
 
 		const { note } = result;
@@ -244,7 +311,7 @@ export function createNotesRoutes() {
 				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 			}
 		} catch {
-			return c.json({ error: "Failed to decrypt note" }, 500);
+			httpError(500, "Failed to decrypt note");
 		}
 
 		if (result.shouldDelete && note.filePath) {
@@ -255,48 +322,41 @@ export function createNotesRoutes() {
 			encryptedData: clientBlob.toString("base64"),
 			clientNonce: note.clientNonce,
 			hasPassword: note.hasPassword,
-			salt: note.salt ?? undefined,
+			...(note.salt ? { salt: note.salt } : {}),
 			fileCount: note.fileCount,
 			createdAt: note.createdAt.toISOString(),
 			expiresAt: note.expiresAt.toISOString(),
 		});
 	});
 
-	app.delete("/:id", async (c) => {
-		const id = noteIdSchema.safeParse(c.req.param("id"));
-		if (!id.success) {
-			return c.json({ error: "Invalid note ID" }, 400);
-		}
-
-		const token = c.req.header("x-delete-token");
-		if (!token) {
-			return c.json({ error: "Delete token required" }, 401);
-		}
+	app.openapi(deleteNoteRoute, async (c) => {
+		const { id } = c.req.valid("param");
+		const token = c.req.valid("header")["x-delete-token"];
 
 		const db = c.get("db");
 		const storage = c.get("storage");
 		const note = db
 			.select({ filePath: notes.filePath, deleteToken: notes.deleteToken })
 			.from(notes)
-			.where(eq(notes.id, id.data))
+			.where(eq(notes.id, id))
 			.get();
 
 		if (note === undefined) {
-			return c.json({ error: "Note not found" }, 404);
+			httpError(404, "Note not found");
 		}
 
 		const tokenBuf = Buffer.from(token);
 		const storedBuf = Buffer.from(note.deleteToken);
 		if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
-			return c.json({ error: "Invalid delete token" }, 403);
+			httpError(403, "Invalid delete token");
 		}
 
 		if (note.filePath) {
 			await storage.delete(note.filePath);
 		}
 
-		db.delete(notes).where(eq(notes.id, id.data)).run();
-		return c.json({ deleted: true });
+		db.delete(notes).where(eq(notes.id, id)).run();
+		return c.json({ deleted: true as const });
 	});
 
 	return app;

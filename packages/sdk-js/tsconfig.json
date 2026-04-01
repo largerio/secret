@@ -3,9 +3,7 @@
 	"compilerOptions": {
 		"outDir": "./dist",
 		"rootDir": "./src",
-		"declaration": true,
-		"declarationMap": true,
-		"sourceMap": true,
+		"lib": ["ES2025", "DOM"],
 		"types": ["node"]
 	},
 	"include": ["src"]
