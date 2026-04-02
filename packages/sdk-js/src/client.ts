@@ -165,6 +165,7 @@ export class SecretClient {
 		// Upload each chunk
 		for (let i = 0; i < totalChunks; i++) {
 			const chunk = encrypted.chunks[i];
+			/* v8 ignore next */
 			if (!chunk) break;
 			const hash = await sha256hex(chunk);
 			await http.uploadChunk(this.httpConfig, uploadId, i, chunk, hash);

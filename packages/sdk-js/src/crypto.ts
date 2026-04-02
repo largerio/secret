@@ -150,9 +150,9 @@ export async function encryptNoteChunked(
 	// Split into chunks and encrypt each
 	const chunks: Uint8Array[] = [];
 
+	/* v8 ignore next 3 -- MessagePack encode always produces at least 1 byte */
 	if (encoded.length === 0) {
-		const encrypted = cryptoEncryptChunk(state, new Uint8Array(0), true);
-		chunks.push(encrypted);
+		chunks.push(cryptoEncryptChunk(state, new Uint8Array(0), true));
 	} else {
 		for (let offset = 0; offset < encoded.length; offset += chunkSize) {
 			const end = Math.min(offset + chunkSize, encoded.length);

@@ -987,6 +987,17 @@ describe("uploadChunk", () => {
 		expect(err.message).toBe("Request failed");
 		expect(err.status).toBe(500);
 	});
+
+	test("throws SecretApiError with HTTP status fallback when no error field", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(500, { detail: "internal" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(uploadChunk(config, "u1", 0, new Uint8Array([1]), "hash"));
+		expect(err.message).toBe("HTTP 500");
+		expect(err.status).toBe(500);
+	});
 });
 
 describe("completeChunkedUpload", () => {
@@ -1210,5 +1221,53 @@ describe("getNoteStream", () => {
 		const [, init] = fetchMock.mock.calls[0] ?? [];
 		const headers = (init as RequestInit).headers as Record<string, string>;
 		expect(headers["Authorization"]).toBe("Bearer stream-key");
+	});
+
+	test("throws SecretApiError with HTTP status fallback when no error field", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(403, { detail: "forbidden" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteStream(config, "noteId123456"));
+		expect(err.message).toBe("HTTP 403");
+		expect(err.status).toBe(403);
+	});
+
+	test("handles truncated body where length prefix exceeds buffer", async () => {
+		// Body has X-Chunk-Count: 2 but body is too short (only 2 bytes, need at least 4 for length prefix)
+		const body = new ArrayBuffer(2);
+		const truncatedHeaders = { ...streamHeaders, "X-Chunk-Count": "2" };
+
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(body, { status: 200, headers: truncatedHeaders })),
+		);
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteStream(config, "noteId123456");
+
+		// Should stop parsing and return fewer chunks than declared
+		expect(result.chunks).toHaveLength(0);
+		expect(result.chunkCount).toBe(2);
+	});
+
+	test("handles truncated body where chunk data exceeds buffer", async () => {
+		// Build a body with a valid length prefix claiming 100 bytes, but only 10 bytes of data
+		const buffer = new ArrayBuffer(14); // 4 bytes length + 10 bytes data
+		const view = new DataView(buffer);
+		view.setUint32(0, 100); // claims chunk is 100 bytes
+		// Only 10 bytes of actual data follow
+		const truncatedHeaders = { ...streamHeaders, "X-Chunk-Count": "2" };
+
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(buffer, { status: 200, headers: truncatedHeaders })),
+		);
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteStream(config, "noteId123456");
+
+		// Should stop parsing because offset + len > byteLength
+		expect(result.chunks).toHaveLength(0);
+		expect(result.chunkCount).toBe(2);
 	});
 });

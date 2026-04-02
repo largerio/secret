@@ -7,8 +7,12 @@ vi.mock("../http.js", () => ({
 	postFormData: vi.fn(),
 	getNote: vi.fn(),
 	getNoteRaw: vi.fn(),
+	getNoteStream: vi.fn(),
 	checkNote: vi.fn(),
 	deleteNote: vi.fn(),
+	initChunkedUpload: vi.fn(),
+	uploadChunk: vi.fn(),
+	completeChunkedUpload: vi.fn(),
 }));
 
 vi.mock("../crypto.js", () => ({
@@ -20,9 +24,19 @@ vi.mock("../crypto.js", () => ({
 			keyFragment: "base64urlKey",
 		}),
 	),
+	encryptNoteChunked: vi.fn(() =>
+		Promise.resolve({
+			header: "streamHeaderB64",
+			chunks: [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])],
+			keyFragment: "chunkedKeyFrag",
+		}),
+	),
 	decryptNote: vi.fn(() => Promise.resolve({ text: "decrypted text", contentMode: "text" })),
 	decryptNoteBytes: vi.fn(() =>
 		Promise.resolve({ text: "decrypted raw text", contentMode: "text" }),
+	),
+	decryptNoteChunked: vi.fn(() =>
+		Promise.resolve({ text: "decrypted chunked text", contentMode: "text" }),
 	),
 }));
 
@@ -32,16 +46,22 @@ async function getHttpMocks() {
 		postFormData: ReturnType<typeof vi.fn>;
 		getNote: ReturnType<typeof vi.fn>;
 		getNoteRaw: ReturnType<typeof vi.fn>;
+		getNoteStream: ReturnType<typeof vi.fn>;
 		checkNote: ReturnType<typeof vi.fn>;
 		deleteNote: ReturnType<typeof vi.fn>;
+		initChunkedUpload: ReturnType<typeof vi.fn>;
+		uploadChunk: ReturnType<typeof vi.fn>;
+		completeChunkedUpload: ReturnType<typeof vi.fn>;
 	};
 }
 
 async function getCryptoMocks() {
 	return (await import("../crypto.js")) as typeof import("../crypto.js") & {
 		encryptNote: ReturnType<typeof vi.fn>;
+		encryptNoteChunked: ReturnType<typeof vi.fn>;
 		decryptNote: ReturnType<typeof vi.fn>;
 		decryptNoteBytes: ReturnType<typeof vi.fn>;
+		decryptNoteChunked: ReturnType<typeof vi.fn>;
 	};
 }
 
@@ -52,8 +72,15 @@ describe("SecretClient", () => {
 		http.postFormData.mockReset();
 		http.getNote.mockReset();
 		http.getNoteRaw.mockReset();
+		http.getNoteStream.mockReset();
 		http.checkNote.mockReset();
 		http.deleteNote.mockReset();
+		http.initChunkedUpload.mockReset();
+		http.uploadChunk.mockReset();
+		http.completeChunkedUpload.mockReset();
+
+		// Default: stream endpoint rejects with 400 so tests fall through to raw/legacy
+		http.getNoteStream.mockRejectedValue(new SecretApiError("Not a chunked note", 400));
 
 		const crypto = await getCryptoMocks();
 		crypto.encryptNote.mockReset();
@@ -62,10 +89,21 @@ describe("SecretClient", () => {
 			clientNonce: "base64Nonce",
 			keyFragment: "base64urlKey",
 		});
+		crypto.encryptNoteChunked.mockReset();
+		crypto.encryptNoteChunked.mockResolvedValue({
+			header: "streamHeaderB64",
+			chunks: [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])],
+			keyFragment: "chunkedKeyFrag",
+		});
 		crypto.decryptNote.mockReset();
 		crypto.decryptNoteBytes.mockReset();
 		crypto.decryptNoteBytes.mockResolvedValue({
 			text: "decrypted raw text",
+			contentMode: "text",
+		});
+		crypto.decryptNoteChunked.mockReset();
+		crypto.decryptNoteChunked.mockResolvedValue({
+			text: "decrypted chunked text",
 			contentMode: "text",
 		});
 	});
@@ -506,5 +544,408 @@ describe("SecretClient", () => {
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+	});
+
+	// --- Chunked upload (createNoteChunked) tests ---
+
+	test("createNote with chunked: true uses chunked upload flow", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-abc",
+			expiresAt: "2099-01-01T00:00:00Z",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "chunkedNote123",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "del-chunked",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.createNote({ text: "chunked text", chunked: true });
+
+		expect(result.id).toBe("chunkedNote123");
+		expect(result.deleteToken).toBe("del-chunked");
+		expect(result.keyFragment).toBe("chunkedKeyFrag");
+
+		expect(http.initChunkedUpload).toHaveBeenCalledOnce();
+		const initMeta = http.initChunkedUpload.mock.calls[0]?.[1] as Record<string, unknown>;
+		expect(initMeta["streamHeader"]).toBe("streamHeaderB64");
+		expect(initMeta["chunkCount"]).toBe(2);
+		expect(initMeta["hasPassword"]).toBe(false);
+		expect(initMeta["fileCount"]).toBe(0);
+
+		// Two chunks uploaded
+		expect(http.uploadChunk).toHaveBeenCalledTimes(2);
+		expect(http.completeChunkedUpload).toHaveBeenCalledOnce();
+	});
+
+	test("createNote auto-selects chunked when payload exceeds chunkSize", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-auto",
+			expiresAt: "2099-01-01T00:00:00Z",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "autoChunked12",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "del-auto",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		// Use a very small chunkSize so the text payload exceeds it
+		const result = await client.createNote({
+			text: "x".repeat(100),
+			chunkSize: 10,
+		});
+
+		expect(result.id).toBe("autoChunked12");
+		expect(http.initChunkedUpload).toHaveBeenCalledOnce();
+	});
+
+	test("createNote chunked with password includes salt in metadata", async () => {
+		const crypto = await getCryptoMocks();
+		crypto.encryptNoteChunked.mockResolvedValue({
+			header: "headerB64",
+			chunks: [new Uint8Array([7, 8])],
+			keyFragment: "pwKey",
+			salt: "chunkedSalt",
+		});
+
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-pw",
+			expiresAt: "2099-01-01T00:00:00Z",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "pwChunked1234",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "del-pw",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.createNote({ text: "secret", password: "pass", chunked: true });
+
+		const initMeta = http.initChunkedUpload.mock.calls[0]?.[1] as Record<string, unknown>;
+		expect(initMeta["salt"]).toBe("chunkedSalt");
+		expect(initMeta["hasPassword"]).toBe(true);
+	});
+
+	test("createNote chunked with files passes correct fileCount", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-f",
+			expiresAt: "2099-01-01",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "fileChunked12",
+			expiresAt: "2099-01-01",
+			deleteToken: "del-f",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const fileData = new Uint8Array([1, 2, 3]);
+		await client.createNote({
+			files: [{ name: "f.bin", type: "application/octet-stream", data: fileData }],
+			chunked: true,
+		});
+
+		const initMeta = http.initChunkedUpload.mock.calls[0]?.[1] as Record<string, unknown>;
+		expect(initMeta["fileCount"]).toBe(1);
+	});
+
+	test("createNote chunked fires onProgress and onUploadProgress callbacks", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-prog",
+			expiresAt: "2099-01-01",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "progNote12345",
+			expiresAt: "2099-01-01",
+			deleteToken: "del-prog",
+		});
+
+		const onProgress = vi.fn();
+		const onUploadProgress = vi.fn();
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.createNote({
+			text: "progress test",
+			chunked: true,
+			onProgress,
+			onUploadProgress,
+		});
+
+		// onProgress should have encrypting, uploading, and processing phases
+		const phases = onProgress.mock.calls.map((call: Array<{ phase: string }>) => call[0]?.phase);
+		expect(phases).toContain("encrypting");
+		expect(phases).toContain("uploading");
+		expect(phases).toContain("processing");
+
+		// onUploadProgress called once per chunk (2 chunks)
+		expect(onUploadProgress).toHaveBeenCalledTimes(2);
+		expect(onUploadProgress).toHaveBeenNthCalledWith(1, 0.5);
+		expect(onUploadProgress).toHaveBeenNthCalledWith(2, 1);
+
+		// Check chunk info in uploading progress calls
+		const uploadCalls = onProgress.mock.calls.filter(
+			(call: Array<{ phase: string; currentChunk?: number }>) =>
+				call[0]?.phase === "uploading" && call[0]?.currentChunk !== undefined,
+		);
+		expect(uploadCalls.length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("createNote chunked passes capToken to init and complete", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-cap",
+			expiresAt: "2099-01-01",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "capNote123456",
+			expiresAt: "2099-01-01",
+			deleteToken: "del-cap",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.createNote({
+			text: "cap test",
+			chunked: true,
+			capToken: "my-cap-token",
+		});
+
+		// capToken passed to initChunkedUpload
+		expect(http.initChunkedUpload.mock.calls[0]?.[2]).toBe("my-cap-token");
+		// capToken passed to completeChunkedUpload
+		expect(http.completeChunkedUpload.mock.calls[0]?.[2]).toBe("my-cap-token");
+	});
+
+	test("createNote chunked passes custom expiresIn and maxReads", async () => {
+		const http = await getHttpMocks();
+		http.initChunkedUpload.mockResolvedValue({
+			uploadId: "upload-opts",
+			expiresAt: "2099-01-01",
+		});
+		http.uploadChunk.mockResolvedValue(undefined);
+		http.completeChunkedUpload.mockResolvedValue({
+			id: "optsNote12345",
+			expiresAt: "2099-01-01",
+			deleteToken: "del-opts",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.createNote({
+			text: "opts test",
+			chunked: true,
+			expiresIn: 7200,
+			maxReads: 10,
+		});
+
+		const initMeta = http.initChunkedUpload.mock.calls[0]?.[1] as Record<string, unknown>;
+		expect(initMeta["expiresIn"]).toBe(7200);
+		expect(initMeta["maxReads"]).toBe(10);
+	});
+
+	// --- Stream read (readNoteStream) tests ---
+
+	test("readNote uses stream endpoint when it succeeds", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 2,
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-06-01",
+			expiresAt: "2099-06-01",
+			chunks: [new Uint8Array([10]), new Uint8Array([20])],
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.readNote("streamNote123", "keyFrag");
+
+		expect(result.payload.text).toBe("decrypted chunked text");
+		expect(result.createdAt).toBe("2024-06-01");
+		expect(result.expiresAt).toBe("2099-06-01");
+		expect(result.fileCount).toBe(0);
+
+		expect(http.getNoteStream).toHaveBeenCalled();
+		// raw and legacy should NOT be called
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
+		expect(http.getNote).not.toHaveBeenCalled();
+	});
+
+	test("readNote stream path passes password and salt to decryptNoteChunked", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 1,
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+			salt: "streamSalt",
+			chunks: [new Uint8Array([1])],
+		});
+
+		const crypto = await getCryptoMocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.readNote("streamNote123", "keyFrag", { password: "myPass" });
+
+		expect(crypto.decryptNoteChunked).toHaveBeenCalledWith(
+			[new Uint8Array([1])],
+			"headerB64",
+			"keyFrag",
+			"myPass",
+			"streamSalt",
+		);
+	});
+
+	test("readNote stream path throws SecretDecryptionError on decrypt failure (Error)", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 1,
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+			chunks: [new Uint8Array([1])],
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteChunked.mockRejectedValue(new Error("stream decrypt failed"));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
+			"stream decrypt failed",
+		);
+	});
+
+	test("readNote stream path throws SecretDecryptionError with fallback on non-Error", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 1,
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+			chunks: [new Uint8Array([1])],
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteChunked.mockRejectedValue("non-error value");
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+	});
+
+	test("readNote stream decryption error does NOT fall back to raw", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 1,
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+			chunks: [new Uint8Array([1])],
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteChunked.mockRejectedValue(new Error("bad key"));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
+		expect(http.getNote).not.toHaveBeenCalled();
+	});
+
+	test("readNote falls through to raw when stream returns non-400 API error", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockRejectedValue(new SecretApiError("Server error", 500));
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockResolvedValue({ text: "raw fallback" });
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.readNote("noteId123456", "keyFrag");
+
+		expect(result.payload.text).toBe("raw fallback");
+		expect(http.getNoteRaw).toHaveBeenCalled();
+	});
+
+	test("readNote falls through to raw when stream throws non-SecretApiError", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockRejectedValue(new Error("network failure"));
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockResolvedValue({ text: "raw after error" });
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.readNote("noteId123456", "keyFrag");
+
+		expect(result.payload.text).toBe("raw after error");
+	});
+
+	test("readNote stream path fires download and decrypt progress callbacks", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockImplementation(
+			async (_config: unknown, _id: unknown, onProgress?: (p: number) => void) => {
+				onProgress?.(0.5);
+				onProgress?.(1);
+				return {
+					streamHeader: "headerB64",
+					chunkCount: 1,
+					hasPassword: false,
+					fileCount: 0,
+					createdAt: "2024-01-01",
+					expiresAt: "2099-01-01",
+					chunks: [new Uint8Array([1])],
+				};
+			},
+		);
+
+		const onProgress = vi.fn();
+		const onDownloadProgress = vi.fn();
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.readNote("noteId123456", "keyFrag", { onProgress, onDownloadProgress });
+
+		// onDownloadProgress should be called
+		expect(onDownloadProgress).toHaveBeenCalledWith(0.5);
+		expect(onDownloadProgress).toHaveBeenCalledWith(1);
+
+		// onProgress should include both downloading and decrypting phases
+		const phases = onProgress.mock.calls.map((call: Array<{ phase: string }>) => call[0]?.phase);
+		expect(phases).toContain("downloading");
+		expect(phases).toContain("decrypting");
 	});
 });
