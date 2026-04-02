@@ -1,11 +1,17 @@
 import {
+	decryptChunk as cryptoDecryptChunk,
+	encryptChunk as cryptoEncryptChunk,
+	decodePayloadBytes,
 	decryptPayload,
 	deriveKeyFromPassword,
+	encodePayload,
 	encryptPayload,
 	fromBase64,
 	generateKey,
 	generateSalt,
 	initSodium,
+	initStreamDecrypt,
+	initStreamEncrypt,
 	keyFromBase64Url,
 	keyToBase64Url,
 	toBase64,
@@ -106,4 +112,111 @@ export async function decryptNoteBytes(
 	zeroMemory(baseKey);
 
 	return result;
+}
+
+// --- Chunked encryption/decryption ---
+
+export interface ChunkedEncryptResult {
+	readonly header: string;
+	readonly chunks: Uint8Array[];
+	readonly keyFragment: string;
+	readonly salt?: string;
+}
+
+export async function encryptNoteChunked(
+	payload: NotePayload,
+	chunkSize: number,
+	password?: string,
+): Promise<ChunkedEncryptResult> {
+	await ensureInit();
+
+	const baseKey = generateKey();
+	let encryptionKey: Uint8Array;
+	let salt: Uint8Array | undefined;
+
+	if (password) {
+		salt = generateSalt();
+		encryptionKey = deriveKeyFromPassword(password, salt, baseKey);
+	} else {
+		encryptionKey = baseKey;
+	}
+
+	// MessagePack encode the payload
+	const encoded = encodePayload(payload);
+
+	// Initialize secretstream
+	const { state, header } = initStreamEncrypt(encryptionKey);
+
+	// Split into chunks and encrypt each
+	const chunks: Uint8Array[] = [];
+
+	if (encoded.length === 0) {
+		const encrypted = cryptoEncryptChunk(state, new Uint8Array(0), true);
+		chunks.push(encrypted);
+	} else {
+		for (let offset = 0; offset < encoded.length; offset += chunkSize) {
+			const end = Math.min(offset + chunkSize, encoded.length);
+			const chunk = encoded.slice(offset, end);
+			const isFinal = end >= encoded.length;
+			const encrypted = cryptoEncryptChunk(state, chunk, isFinal);
+			chunks.push(encrypted);
+		}
+	}
+
+	const keyFragment = keyToBase64Url(baseKey);
+
+	if (password) {
+		zeroMemory(encryptionKey);
+	}
+	zeroMemory(baseKey);
+
+	return {
+		header: toBase64(header),
+		chunks,
+		keyFragment,
+		...(salt ? { salt: toBase64(salt) } : {}),
+	};
+}
+
+export async function decryptNoteChunked(
+	encryptedChunks: Uint8Array[],
+	streamHeader: string,
+	keyFragment: string,
+	password?: string,
+	salt?: string,
+): Promise<NotePayload> {
+	await ensureInit();
+
+	const baseKey = keyFromBase64Url(keyFragment);
+	let decryptionKey: Uint8Array;
+
+	if (password && salt) {
+		decryptionKey = deriveKeyFromPassword(password, fromBase64(salt), baseKey);
+	} else {
+		decryptionKey = baseKey;
+	}
+
+	const state = initStreamDecrypt(fromBase64(streamHeader), decryptionKey);
+
+	const decryptedParts: Uint8Array[] = [];
+	for (const chunk of encryptedChunks) {
+		const { decrypted } = cryptoDecryptChunk(state, chunk);
+		decryptedParts.push(decrypted);
+	}
+
+	if (password && salt) {
+		zeroMemory(decryptionKey);
+	}
+	zeroMemory(baseKey);
+
+	// Reassemble and decode MessagePack
+	const totalLength = decryptedParts.reduce((sum, p) => sum + p.length, 0);
+	const combined = new Uint8Array(totalLength);
+	let offset = 0;
+	for (const part of decryptedParts) {
+		combined.set(part, offset);
+		offset += part.length;
+	}
+
+	return decodePayloadBytes(combined);
 }

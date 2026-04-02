@@ -1,7 +1,14 @@
 export type { DecryptChunkResult } from "./decrypt.js";
-export { decryptChunk, decryptPayload, decryptRaw, initStreamDecrypt } from "./decrypt.js";
+export {
+	decodePayloadBytes,
+	decryptChunk,
+	decryptPayload,
+	decryptRaw,
+	initStreamDecrypt,
+} from "./decrypt.js";
 export type { EncryptedNote, StreamEncryptState } from "./encrypt.js";
 export {
+	encodePayload,
 	encryptChunk,
 	encryptPayload,
 	encryptRaw,

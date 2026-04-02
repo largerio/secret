@@ -281,3 +281,130 @@ export async function deleteNote(
 		);
 	}
 }
+
+// --- Chunked upload HTTP functions ---
+
+export interface ChunkedUploadInitResult {
+	readonly uploadId: string;
+	readonly expiresAt: string;
+}
+
+export async function initChunkedUpload(
+	config: HttpClientConfig,
+	metadata: Record<string, unknown>,
+	capToken?: string,
+): Promise<ChunkedUploadInitResult> {
+	const res = await config.fetch(`${config.baseUrl}/notes/upload/init`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey, capToken) },
+		body: JSON.stringify(metadata),
+	});
+	return handleResponse<ChunkedUploadInitResult>(res);
+}
+
+export async function uploadChunk(
+	config: HttpClientConfig,
+	uploadId: string,
+	index: number,
+	data: Uint8Array,
+	hash: string,
+): Promise<void> {
+	const res = await config.fetch(
+		`${config.baseUrl}/notes/upload/${uploadId}/chunks/${String(index)}`,
+		{
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": hash,
+				...authHeaders(config.apiKey),
+			},
+			body: data as BodyInit,
+		},
+	);
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({ error: "Request failed" }));
+		throw new SecretApiError(
+			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
+			res.status,
+		);
+	}
+}
+
+export async function completeChunkedUpload(
+	config: HttpClientConfig,
+	uploadId: string,
+	capToken?: string,
+): Promise<CreateNoteResponse> {
+	const res = await config.fetch(`${config.baseUrl}/notes/upload/${uploadId}/complete`, {
+		method: "POST",
+		headers: authHeaders(config.apiKey, capToken),
+	});
+	return handleResponse<CreateNoteResponse>(res);
+}
+
+// --- Chunked download HTTP function ---
+
+export interface StreamNoteResponse {
+	readonly streamHeader: string;
+	readonly chunkCount: number;
+	readonly hasPassword: boolean;
+	readonly fileCount: number;
+	readonly createdAt: string;
+	readonly expiresAt: string;
+	readonly salt?: string;
+	readonly chunks: Uint8Array[];
+}
+
+export async function getNoteStream(
+	config: HttpClientConfig,
+	id: string,
+	onProgress?: (progress: number) => void,
+): Promise<StreamNoteResponse> {
+	const res = await config.fetch(`${config.baseUrl}/notes/${id}/stream`, {
+		headers: authHeaders(config.apiKey),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({ error: "Request failed" }));
+		throw new SecretApiError(
+			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
+			res.status,
+		);
+	}
+
+	const headers = res.headers;
+	const streamHeader = headers.get("X-Stream-Header") ?? "";
+	const chunkCount = parseInt(headers.get("X-Chunk-Count") ?? "0", 10);
+	const hasPassword = headers.get("X-Has-Password") === "true";
+	const fileCount = parseInt(headers.get("X-File-Count") ?? "0", 10);
+	const createdAt = headers.get("X-Created-At") ?? "";
+	const expiresAt = headers.get("X-Expires-At") ?? "";
+	const salt = headers.get("X-Salt") ?? undefined;
+
+	// Read entire body then parse length-prefixed chunks
+	const bodyData = await res.arrayBuffer();
+	const view = new DataView(bodyData);
+	const chunks: Uint8Array[] = [];
+	let offset = 0;
+
+	for (let i = 0; i < chunkCount; i++) {
+		if (offset + 4 > bodyData.byteLength) break;
+		const len = view.getUint32(offset);
+		offset += 4;
+		if (offset + len > bodyData.byteLength) break;
+		chunks.push(new Uint8Array(bodyData, offset, len));
+		offset += len;
+		onProgress?.((i + 1) / chunkCount);
+	}
+
+	return {
+		streamHeader,
+		chunkCount,
+		hasPassword,
+		fileCount,
+		createdAt,
+		expiresAt,
+		chunks,
+		...(salt ? { salt } : {}),
+	};
+}

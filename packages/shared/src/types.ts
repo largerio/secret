@@ -83,7 +83,8 @@ export interface ServerConfig {
 	readonly ogImageUrl: string;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
-	readonly storageType: "local" | "s3";
+	readonly chunkSize: number;
+	readonly maxChunkedFileSize: number;
 }
 
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];

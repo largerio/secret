@@ -61,3 +61,7 @@ export const SECRETSTREAM_ABYTES: number =
 
 export const SECRETSTREAM_HEADERBYTES: number =
 	sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES ?? 24;
+
+export function encodePayload(payload: NotePayload): Uint8Array {
+	return encode(payload);
+}

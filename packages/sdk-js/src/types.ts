@@ -41,6 +41,10 @@ export interface CreateNoteOptions {
 	readonly signal?: AbortSignal;
 	/** PoW token from Cap widget. Required for browser clients without API key. */
 	readonly capToken?: string;
+	/** Force chunked upload mode. Auto-detected when payload exceeds chunkSize. */
+	readonly chunked?: boolean;
+	/** Chunk size in bytes for chunked upload. Default: 4MB (DEFAULT_CHUNK_SIZE). */
+	readonly chunkSize?: number;
 }
 
 export interface CreateNoteResult {

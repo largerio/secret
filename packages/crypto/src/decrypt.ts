@@ -60,3 +60,11 @@ export function decryptChunk(
 		isFinal: result.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL,
 	};
 }
+
+export function decodePayloadBytes(data: Uint8Array): NotePayload {
+	const decoded = decode(data);
+	if (!isNotePayload(decoded)) {
+		throw new Error("Invalid payload structure after decryption");
+	}
+	return decoded;
+}
