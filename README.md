@@ -8,8 +8,6 @@
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
-> **GitHub Topics:** `encryption` `zero-knowledge` `secret-sharing` `self-hosted` `end-to-end-encryption` `privacy` `secure-notes` `file-sharing` `svelte` `hono` `password-sharing` `burn-after-reading` `privatebin-alternative`
-
 ## Features
 
 - **Zero-knowledge encryption** — XChaCha20-Poly1305 (client) + AES-256-GCM (server)
@@ -20,6 +18,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Read limits** — Auto-delete after N reads
 - **Delete token** — Manually delete a note at any time
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
+- **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko)
@@ -39,7 +38,33 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 docker compose up -d
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
+
+## SDK
+
+Use the JavaScript/TypeScript SDK to interact with any Secret instance programmatically:
+
+```bash
+npm install @secret/sdk-js
+```
+
+```typescript
+import { SecretClient } from "@secret/sdk-js";
+
+const client = await SecretClient.create({
+  baseUrl: "https://secret.example.com",
+  apiKey: "your-api-key",
+});
+
+// Create a note
+const { id, keyFragment } = await client.createNote({ text: "Hello, World!" });
+const shareUrl = client.buildShareUrl(id, keyFragment);
+
+// Read a note from a share URL
+const parsed = SecretClient.parseShareUrl(shareUrl);
+const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
+console.log(payload.text); // "Hello, World!"
+```
 
 ## How It Works
 
@@ -68,9 +93,11 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `APP_PRIMARY_COLOR` | `#6366f1` | Brand color |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note |
-| `MAX_EXPIRY` | `2592000` | Max expiry in seconds (30 days) |
+| `MAX_EXPIRY` | `604800` | Max expiry in seconds (default: 7 days, max: 30 days) |
 | `API_KEY` | — | API key for SDK clients (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
+| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
+| `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Server port |
 
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable.
@@ -95,9 +122,8 @@ Compatible with AWS S3, MinIO, and Cloudflare R2.
 ## Updating
 
 ```bash
-./scripts/backup.sh          # Backup
 docker compose pull           # Pull new image
-docker compose up -d          # Restart (auto-migrations)
+docker compose up -d          # Restart
 docker image prune -f         # Clean up
 ```
 
@@ -124,12 +150,12 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 120M;
+        client_max_body_size 600M;
     }
 }
 ```
 
-Set `client_max_body_size` to match `MAX_FILE_SIZE`.
+Set `client_max_body_size` to match `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used).
 
 ## Development
 
@@ -169,6 +195,8 @@ messages/         i18n (10 languages)
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
 | Storage | Path traversal protection, S3 key validation |
 | Validation | Zod schemas with max length constraints |
+
+See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy.
 
 ## License
 

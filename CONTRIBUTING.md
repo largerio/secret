@@ -30,7 +30,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```bash
 pnpm lint         # Biome lint + format
 pnpm typecheck    # TypeScript strict
-pnpm test         # All 154 tests must pass
+pnpm test         # All 422 tests must pass
 ```
 
 4. Commit with a clear message (see [Commit Messages](#commit-messages))
@@ -61,11 +61,12 @@ Use `import type { ... }` for type-only imports.
 ## Project Structure
 
 ```
-apps/api/       Backend (Hono, Node.js 24, SQLite)
-apps/web/       Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
+apps/api/           Backend (Hono, Node.js 25, SQLite)
+apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
+packages/sdk-js/    JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)
 packages/shared/    Shared types, Zod schemas, constants
-messages/           i18n translations (en.json, fr.json)
+messages/           i18n translations (10 languages)
 ```
 
 ### Where to put things
@@ -74,6 +75,7 @@ messages/           i18n translations (en.json, fr.json)
 - **New validation schema** — `packages/shared/src/validation.ts`
 - **New type** — `packages/shared/src/types.ts` (export from `index.ts`)
 - **New constant** — `packages/shared/src/constants.ts` (export from `index.ts`)
+- **New SDK feature** — `packages/sdk-js/src/`
 - **New crypto function** — `packages/crypto/src/`
 - **New UI component** — `apps/web/src/lib/components/`
 - **New translation key** — `messages/en.json` and `messages/fr.json`
@@ -124,9 +126,9 @@ If you discover a security vulnerability, please report it privately via GitHub 
 
 ## i18n
 
-Translations live in `messages/en.json` and `messages/fr.json`. When adding user-facing strings:
+Translations live in `messages/*.json` (10 languages: en, fr, es, de, pt, it, ja, zh, ru, ko). When adding user-facing strings:
 
-1. Add the key to both files
+1. Add the key to all language files (at minimum `en.json` and `fr.json`)
 2. Use `t("key_name")` in Svelte components
 3. Use `t("key_name", { param: value })` for interpolation
 
