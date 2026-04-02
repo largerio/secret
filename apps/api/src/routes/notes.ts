@@ -22,6 +22,11 @@ import type { StorageBackend } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
 
+/** Strip CRLF and null bytes to prevent HTTP header injection */
+function sanitizeHeaderValue(value: string): string {
+	return value.replace(/[\r\n\0]/g, "");
+}
+
 function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never {
 	throw new HTTPException(status, { message });
 }
@@ -388,14 +393,14 @@ export function createNotesRoutes() {
 		const headers: Record<string, string> = {
 			"Content-Type": "application/octet-stream",
 			"Content-Length": String(clientBlob.length),
-			"X-Client-Nonce": note.clientNonce,
+			"X-Client-Nonce": sanitizeHeaderValue(note.clientNonce),
 			"X-Has-Password": String(note.hasPassword),
 			"X-File-Count": String(note.fileCount),
 			"X-Created-At": note.createdAt.toISOString(),
 			"X-Expires-At": note.expiresAt.toISOString(),
 		};
 		if (note.salt) {
-			headers["X-Salt"] = note.salt;
+			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
 		}
 
 		return new Response(new Uint8Array(clientBlob) as BodyInit, { status: 200, headers });
@@ -501,6 +506,9 @@ export function createNotesRoutes() {
 
 	app.put("/upload/:uploadId/chunks/:index", async (c) => {
 		const uploadId = c.req.param("uploadId");
+		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
+			return c.json({ error: "Invalid upload ID" }, 400);
+		}
 		const indexStr = c.req.param("index");
 		const index = parseInt(indexStr as string, 10);
 
@@ -552,21 +560,32 @@ export function createNotesRoutes() {
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
-		// Update received chunks
-		const received = JSON.parse(session.chunksReceived) as number[];
-		if (!received.includes(index)) {
-			received.push(index);
-			db.update(uploads)
-				.set({ chunksReceived: JSON.stringify(received) })
+		// Update received chunks atomically
+		db.transaction((tx) => {
+			const current = tx
+				.select({ chunksReceived: uploads.chunksReceived })
+				.from(uploads)
 				.where(eq(uploads.id, uploadId as string))
-				.run();
-		}
+				.get();
+			if (!current) return;
+			const received = JSON.parse(current.chunksReceived) as number[];
+			if (!received.includes(index)) {
+				received.push(index);
+				tx.update(uploads)
+					.set({ chunksReceived: JSON.stringify(received) })
+					.where(eq(uploads.id, uploadId as string))
+					.run();
+			}
+		});
 
 		return c.json({ received: true as const });
 	});
 
 	app.post("/upload/:uploadId/complete", async (c) => {
 		const uploadId = c.req.param("uploadId");
+		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
+			return c.json({ error: "Invalid upload ID" }, 400);
+		}
 
 		const db = c.get("db");
 		const session = db
@@ -728,7 +747,7 @@ export function createNotesRoutes() {
 
 		const headers: Record<string, string> = {
 			"Content-Type": "application/octet-stream",
-			"X-Stream-Header": note.streamHeader as string,
+			"X-Stream-Header": sanitizeHeaderValue(note.streamHeader as string),
 			"X-Chunk-Count": String(chunkCount),
 			"X-Has-Password": String(note.hasPassword),
 			"X-File-Count": String(note.fileCount),
@@ -736,7 +755,7 @@ export function createNotesRoutes() {
 			"X-Expires-At": note.expiresAt.toISOString(),
 		};
 		if (note.salt) {
-			headers["X-Salt"] = note.salt;
+			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
 		}
 
 		const IV_LENGTH = 12;

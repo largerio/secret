@@ -1244,7 +1244,7 @@ describe("Chunked upload flow", () => {
 
 	it("rejects chunk for non-existent upload session", async () => {
 		const chunk = chunkData("test");
-		const res = await app.request("/api/v1/notes/upload/nonexistent-session-id-here!!/chunks/0", {
+		const res = await app.request("/api/v1/notes/upload/nonexistent_session_id_padding_/chunks/0", {
 			method: "PUT",
 			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
 			body: chunk as BodyInit,
@@ -1416,7 +1416,7 @@ describe("Chunked upload flow", () => {
 	});
 
 	it("rejects complete for non-existent upload session", async () => {
-		const res = await app.request("/api/v1/notes/upload/nonexistent-session-id-here!!/complete", {
+		const res = await app.request("/api/v1/notes/upload/nonexistent_session_id_padding_/complete", {
 			method: "POST",
 			headers: authHeaders(),
 		});
