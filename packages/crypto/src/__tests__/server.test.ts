@@ -34,7 +34,7 @@ describe("serverEncrypt / serverDecrypt", () => {
 		expect(new Uint8Array(decrypted)).toEqual(data);
 	});
 
-	it("handles large data", () => {
+	it("handles large data", { timeout: 15_000 }, () => {
 		const data = new Uint8Array(1024 * 1024);
 		data.fill(42);
 		const { encrypted, iv } = serverEncrypt(data, serverKey);

@@ -1,6 +1,6 @@
 import type { Handle } from "@sveltejs/kit";
 
-const API_TARGET = `http://localhost:${String(process.env["API_PORT"] ?? "3001")}`;
+const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
 
 const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
 

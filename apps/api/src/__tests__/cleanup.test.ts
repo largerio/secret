@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startCleanupJob } from "../cleanup.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
-import { notes } from "../db/schema.js";
+import { notes, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 
@@ -133,6 +133,9 @@ describe("startCleanupJob", () => {
 			save: vi.fn(),
 			read: vi.fn(),
 			delete: vi.fn().mockRejectedValue(new Error("disk error")),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
 		};
 
 		insertNote("faildelete01", { fileCount: 1, filePath });
@@ -191,6 +194,9 @@ describe("startCleanupJob", () => {
 			save: vi.fn(),
 			read: vi.fn(),
 			delete: vi.fn().mockRejectedValue("string-error"),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
 		};
 
 		insertNote("failstring01", { fileCount: 1, filePath });
@@ -205,5 +211,208 @@ describe("startCleanupJob", () => {
 			"string-error",
 		);
 		consoleSpy.mockRestore();
+	});
+
+	it("removes expired chunked notes and calls deleteChunks", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockResolvedValue(undefined),
+		};
+
+		insertNote("chunked00001", { chunkCount: 3, streamHeader: "header" });
+
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		const remaining = db.select().from(notes).all();
+		expect(remaining).toHaveLength(0);
+		expect(mockStorage.deleteChunks).toHaveBeenCalledWith("chunked00001", 3);
+	});
+
+	it("logs non-Error rejection for expired chunked note deleteChunks", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue("string chunk error"),
+		};
+
+		insertNote("chunkstr001", { chunkCount: 2, streamHeader: "header" });
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete chunks for note chunkstr001"),
+			"string chunk error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("logs error when deleteChunks fails for expired chunked note", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue(new Error("chunk delete failed")),
+		};
+
+		insertNote("chunkfail01", { chunkCount: 2, streamHeader: "header" });
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete chunks for note chunkfail01"),
+			"chunk delete failed",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("removes expired upload sessions and calls deleteChunks", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockResolvedValue(undefined),
+		};
+
+		db.insert(uploads)
+			.values({
+				id: "upload000001",
+				metadata: "{}",
+				chunkCount: 4,
+				chunksReceived: "[]",
+				noteId: "uploadnote01",
+				deleteToken: "tok",
+				createdAt: new Date(),
+				expiresAt: new Date(Date.now() - 10_000),
+			})
+			.run();
+
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		const remainingUploads = db.select().from(uploads).all();
+		expect(remainingUploads).toHaveLength(0);
+		expect(mockStorage.deleteChunks).toHaveBeenCalledWith("uploadnote01", 4);
+	});
+
+	it("logs error when deleteChunks fails for expired upload session", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue(new Error("upload chunk error")),
+		};
+
+		db.insert(uploads)
+			.values({
+				id: "upload000002",
+				metadata: "{}",
+				chunkCount: 2,
+				chunksReceived: "[]",
+				noteId: "uploadnote02",
+				deleteToken: "tok",
+				createdAt: new Date(),
+				expiresAt: new Date(Date.now() - 10_000),
+			})
+			.run();
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete chunks for upload session upload000002"),
+			"upload chunk error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("logs non-Error rejection for expired upload session chunk deletion", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn().mockRejectedValue("string-upload-error"),
+		};
+
+		db.insert(uploads)
+			.values({
+				id: "upload000003",
+				metadata: "{}",
+				chunkCount: 1,
+				chunksReceived: "[]",
+				noteId: "uploadnote03",
+				deleteToken: "tok",
+				createdAt: new Date(),
+				expiresAt: new Date(Date.now() - 10_000),
+			})
+			.run();
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] Failed to delete chunks for upload session upload000003"),
+			"string-upload-error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("does not delete non-expired upload sessions", async () => {
+		const mockStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn(),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
+		};
+
+		db.insert(uploads)
+			.values({
+				id: "upload000004",
+				metadata: "{}",
+				chunkCount: 1,
+				chunksReceived: "[]",
+				noteId: "uploadnote04",
+				deleteToken: "tok",
+				createdAt: new Date(),
+				expiresAt: new Date(Date.now() + 3_600_000),
+			})
+			.run();
+
+		const timer = startCleanupJob(db, mockStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		const remaining = db.select().from(uploads).all();
+		expect(remaining).toHaveLength(1);
+		expect(mockStorage.deleteChunks).not.toHaveBeenCalled();
 	});
 });

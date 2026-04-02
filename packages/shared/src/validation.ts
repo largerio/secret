@@ -1,15 +1,18 @@
 import { z } from "zod";
 import {
+	MAX_ENCRYPTED_DATA_SIZE,
 	MAX_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
+	MAX_NONCE_LENGTH,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
+	UPLOAD_ID_LENGTH,
 } from "./constants.js";
 
 export const createNoteSchema = z
 	.object({
-		encryptedData: z.string().min(1, "Encrypted data is required").max(50_000_000),
-		clientNonce: z.string().min(1, "Client nonce is required").max(100),
+		encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
+		clientNonce: z.string().min(1, "Client nonce is required").max(MAX_NONCE_LENGTH),
 		hasPassword: z.boolean(),
 		expiresIn: z
 			.number()
@@ -27,7 +30,7 @@ export const createNoteSchema = z
 
 export const createNoteMultipartSchema = z
 	.object({
-		clientNonce: z.string().min(1).max(100),
+		clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
 		hasPassword: z.boolean(),
 		expiresIn: z
 			.number()
@@ -85,4 +88,37 @@ export const deleteNoteResponseSchema = z.object({
 export const errorResponseSchema = z.object({
 	error: z.string(),
 	errorId: z.string().optional(),
+});
+
+// --- Chunked upload schemas ---
+
+export const chunkedUploadInitSchema = z
+	.object({
+		streamHeader: z.string().min(1).max(MAX_NONCE_LENGTH),
+		clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
+		hasPassword: z.boolean(),
+		expiresIn: z.number().int().min(MIN_EXPIRY_SECONDS).max(MAX_EXPIRY_SECONDS),
+		maxReads: z.number().int().min(0).max(1000).default(1),
+		fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
+		chunkCount: z.number().int().min(1).max(10000),
+		salt: z.string().min(1).max(100).optional(),
+	})
+	.refine((data) => !data.hasPassword || data.salt !== undefined, {
+		message: "Salt is required when password is set",
+		path: ["salt"],
+	});
+
+export const chunkedUploadInitResponseSchema = z.object({
+	uploadId: z.string().length(UPLOAD_ID_LENGTH),
+	expiresAt: z.string(),
+});
+
+export const chunkUploadResponseSchema = z.object({
+	received: z.literal(true),
+});
+
+export const chunkedUploadCompleteResponseSchema = z.object({
+	id: z.string(),
+	expiresAt: z.string(),
+	deleteToken: z.string(),
 });

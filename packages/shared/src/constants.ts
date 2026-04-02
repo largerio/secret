@@ -7,3 +7,13 @@ export const MAX_EXPIRY_SECONDS = 2_592_000;
 export const MIN_EXPIRY_SECONDS = 300;
 export const NOTE_ID_LENGTH = 12;
 export const CLEANUP_INTERVAL_MS = 300_000;
+
+// Validation limits
+export const MAX_ENCRYPTED_DATA_SIZE = 50_000_000;
+export const MAX_NONCE_LENGTH = 48;
+
+// Chunked upload defaults (configurable per instance via env vars)
+export const DEFAULT_CHUNK_SIZE = 4_194_304; // 4MB per chunk
+export const DEFAULT_MAX_CHUNKED_SIZE = 524_288_000; // 500MB max per note
+export const UPLOAD_SESSION_TTL = 3_600; // 1 hour to complete upload
+export const UPLOAD_ID_LENGTH = 32;

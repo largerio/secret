@@ -1,12 +1,14 @@
 <script lang="ts">
 import type { ContentMode } from "@secret/shared";
 import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
+import type { ProgressInfo, UploadPhase } from "@secret/sdk-js";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
-import ProgressBar from "$lib/components/ProgressBar.svelte";
+import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { solveCap } from "$lib/utils/cap";
 import { formatSize } from "$lib/utils/format";
 
 let contentMode = $state<ContentMode>("text");
@@ -26,6 +28,8 @@ let isDeleting = $state(false);
 let isDeleted = $state(false);
 let isDragging = $state(false);
 let uploadProgress = $state<number | null>(null);
+let uploadPhase = $state<UploadPhase>("encrypting");
+let uploadChunkLabel = $state("");
 
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxFileSize);
@@ -46,16 +50,7 @@ async function handleSubmit() {
 	uploadProgress = null;
 
 	try {
-		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
-		const Cap = (await import("@cap.js/widget")).default;
-		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
-		const capResult = await capClient.solve();
-		if (!capResult.success || !capResult.token) {
-			error = t("error_generic");
-			return;
-		}
-		const capToken = capResult.token;
-
+		const capToken = await solveCap();
 		const client = await getClient();
 		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : 1;
 
@@ -75,6 +70,18 @@ async function handleSubmit() {
 			capToken,
 			onUploadProgress: (p) => {
 				uploadProgress = p * 100;
+			},
+			onProgress: (info: ProgressInfo) => {
+				uploadPhase = info.phase as UploadPhase;
+				uploadProgress = info.overallProgress * 100;
+				if (info.currentChunk && info.totalChunks && info.totalChunks > 1) {
+					uploadChunkLabel = t("chunk_progress", {
+						current: String(info.currentChunk),
+						total: String(info.totalChunks),
+					});
+				} else {
+					uploadChunkLabel = "";
+				}
 			},
 		});
 
@@ -135,16 +142,7 @@ async function handleDelete() {
 
 	isDeleting = true;
 	try {
-		window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";
-		const Cap = (await import("@cap.js/widget")).default;
-		const capClient = new Cap({ apiEndpoint: "/api/cap/" });
-		const capResult = await capClient.solve();
-		if (!capResult.success || !capResult.token) {
-			error = t("error_generic");
-			return;
-		}
-		const capToken = capResult.token;
-
+		const capToken = await solveCap();
 		const client = await getClient();
 		await client.deleteNote(noteId, deleteToken, capToken);
 		isDeleted = true;
@@ -168,6 +166,8 @@ function reset() {
 	qrCodeUrl = "";
 	error = "";
 	isDeleted = false;
+	uploadPhase = "encrypting";
+	uploadChunkLabel = "";
 }
 </script>
 
@@ -199,7 +199,7 @@ function reset() {
 			"QR code sharing",
 			"Self-hostable",
 		],
-	})}</script>`}
+	}).replace(/</g, "\\u003c")}</script>`}
 </svelte:head>
 
 {#if shareUrl}
@@ -434,8 +434,19 @@ function reset() {
 			</div>
 		</div>
 
-		{#if uploadProgress !== null}
-			<ProgressBar progress={uploadProgress} label={t("uploading")} />
+		{#if isSubmitting}
+			<div class="py-2">
+				<StepProgress
+					steps={[
+						{ key: "encrypting", label: t("step_encrypting"), icon: "fa-solid fa-shield-halved" },
+						{ key: "uploading", label: t("step_uploading"), icon: "fa-solid fa-cloud-arrow-up" },
+						{ key: "done", label: t("step_done"), icon: "fa-solid fa-check" },
+					]}
+					currentStep={uploadPhase === "encrypting" ? 0 : uploadPhase === "uploading" ? 1 : 2}
+					progress={uploadProgress ?? 0}
+					label={uploadChunkLabel}
+				/>
+			</div>
 		{/if}
 
 		<button

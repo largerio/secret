@@ -1,5 +1,10 @@
 import type { ServerConfig } from "@secret/shared";
-import { MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
+import {
+	DEFAULT_CHUNK_SIZE,
+	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_FILE_SIZE,
+	MAX_FILES_PER_NOTE,
+} from "@secret/shared";
 
 const DEFAULT_CONFIG: ServerConfig = {
 	appName: "Secret",
@@ -10,7 +15,8 @@ const DEFAULT_CONFIG: ServerConfig = {
 	ogImageUrl: "",
 	maxFileSize: MAX_FILE_SIZE,
 	maxFilesPerNote: MAX_FILES_PER_NOTE,
-	storageType: "local",
+	chunkSize: DEFAULT_CHUNK_SIZE,
+	maxChunkedFileSize: DEFAULT_MAX_CHUNKED_SIZE,
 };
 
 let config = $state<ServerConfig>(DEFAULT_CONFIG);

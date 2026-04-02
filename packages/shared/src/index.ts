@@ -1,13 +1,19 @@
 export {
 	CLEANUP_INTERVAL_MS,
+	DEFAULT_CHUNK_SIZE,
 	DEFAULT_EXPIRY_SECONDS,
+	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_ENCRYPTED_DATA_SIZE,
 	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MAX_NONCE_LENGTH,
 	MAX_TEXT_SIZE,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
 	S3_MAX_FILE_SIZE,
+	UPLOAD_ID_LENGTH,
+	UPLOAD_SESSION_TTL,
 } from "./constants.js";
 export type {
 	Argon2idVector,
@@ -18,6 +24,10 @@ export type {
 } from "./test-vectors/index.js";
 export { testVectors } from "./test-vectors/index.js";
 export type {
+	ChunkedUploadCompleteResponse,
+	ChunkedUploadInitRequest,
+	ChunkedUploadInitResponse,
+	ChunkUploadResponse,
 	ContentMode,
 	CreateNoteRequest,
 	CreateNoteResponse,
@@ -30,6 +40,10 @@ export type {
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
 export {
+	chunkedUploadCompleteResponseSchema,
+	chunkedUploadInitResponseSchema,
+	chunkedUploadInitSchema,
+	chunkUploadResponseSchema,
 	createNoteMultipartSchema,
 	createNoteResponseSchema,
 	createNoteSchema,

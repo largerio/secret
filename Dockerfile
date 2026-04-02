@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:24-alpine AS builder
+FROM node:25-alpine AS builder
 
 RUN corepack enable pnpm
 
@@ -37,7 +37,7 @@ RUN node -e " \
   }"
 
 # Stage 2: Production
-FROM node:24-alpine AS production
+FROM node:25-alpine AS production
 
 RUN apk add --no-cache curl && adduser -D -u 1001 appuser
 

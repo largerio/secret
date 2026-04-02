@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { MAX_EXPIRY_SECONDS, MIN_EXPIRY_SECONDS, NOTE_ID_LENGTH } from "../constants.js";
-import { createNoteMultipartSchema, createNoteSchema, noteIdSchema } from "../validation.js";
+import {
+	chunkedUploadInitSchema,
+	createNoteMultipartSchema,
+	createNoteSchema,
+	noteIdSchema,
+} from "../validation.js";
 
 describe("createNoteSchema", () => {
 	const validRequest = {
@@ -107,8 +112,13 @@ describe("createNoteSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
+	it("accepts clientNonce at max length (48)", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(48) });
+		expect(result.success).toBe(true);
+	});
+
 	it("rejects clientNonce exceeding max length", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(101) });
+		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(49) });
 		expect(result.success).toBe(false);
 	});
 
@@ -200,7 +210,66 @@ describe("createNoteMultipartSchema", () => {
 	it("rejects clientNonce exceeding max length", () => {
 		const result = createNoteMultipartSchema.safeParse({
 			...validMeta,
-			clientNonce: "a".repeat(101),
+			clientNonce: "a".repeat(49),
+		});
+		expect(result.success).toBe(false);
+	});
+});
+
+describe("chunkedUploadInitSchema", () => {
+	const validChunked = {
+		streamHeader: "someHeader",
+		clientNonce: "base64nonce==",
+		hasPassword: false,
+		expiresIn: 3600,
+		maxReads: 1,
+		fileCount: 1,
+		chunkCount: 5,
+	};
+
+	it("accepts a valid request without password", () => {
+		const result = chunkedUploadInitSchema.safeParse(validChunked);
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects hasPassword=true without salt", () => {
+		const result = chunkedUploadInitSchema.safeParse({ ...validChunked, hasPassword: true });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			const saltError = result.error.issues.find((i) => i.path.includes("salt"));
+			expect(saltError?.message).toBe("Salt is required when password is set");
+		}
+	});
+
+	it("accepts hasPassword=true with salt", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			hasPassword: true,
+			salt: "someSalt",
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects streamHeader exceeding max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			streamHeader: "a".repeat(49),
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts streamHeader at max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			streamHeader: "a".repeat(48),
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects clientNonce exceeding max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			clientNonce: "a".repeat(49),
 		});
 		expect(result.success).toBe(false);
 	});

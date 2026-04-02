@@ -9,10 +9,16 @@ vi.mock("@aws-sdk/client-s3", () => {
 		S3Client: class MockS3Client {
 			send = mockSend;
 		},
+		PutObjectCommand: class MockPutObjectCommand {
+			constructor(public params: unknown) {}
+		},
 		GetObjectCommand: class MockGetObjectCommand {
 			constructor(public params: unknown) {}
 		},
 		DeleteObjectCommand: class MockDeleteObjectCommand {
+			constructor(public params: unknown) {}
+		},
+		DeleteObjectsCommand: class MockDeleteObjectsCommand {
 			constructor(public params: unknown) {}
 		},
 	};
@@ -100,6 +106,81 @@ describe("S3Storage", () => {
 		it("does not throw on delete error", async () => {
 			mockSend.mockRejectedValueOnce(new Error("NoSuchKey"));
 			await expect(storage.delete("notes/missing")).resolves.not.toThrow();
+		});
+	});
+
+	describe("saveChunk", () => {
+		it("sends PutObject with correct key", async () => {
+			mockSend.mockResolvedValueOnce({});
+			const key = await storage.saveChunk("note123", 0, Buffer.from("chunk-data"));
+			expect(key).toBe("notes/note123/chunk_0");
+			expect(mockSend).toHaveBeenCalledOnce();
+			const cmd = mockSend.mock.calls[0]?.[0];
+			expect(cmd.params).toEqual({
+				Bucket: "test-bucket",
+				Key: "notes/note123/chunk_0",
+				Body: Buffer.from("chunk-data"),
+				ContentType: "application/octet-stream",
+			});
+		});
+
+		it("rejects note ID with invalid characters", async () => {
+			await expect(storage.saveChunk("../bad", 0, Buffer.from("x"))).rejects.toThrow(
+				"Invalid note ID for storage key",
+			);
+		});
+	});
+
+	describe("readChunk", () => {
+		it("sends GetObject with correct key and returns buffer", async () => {
+			const testData = new Uint8Array([10, 20, 30]);
+			const mockStream = new ReadableStream({
+				start(controller) {
+					controller.enqueue(testData);
+					controller.close();
+				},
+			});
+			mockSend.mockResolvedValueOnce({
+				Body: { transformToWebStream: () => mockStream },
+			});
+
+			const result = await storage.readChunk("note123", 2);
+			expect(Buffer.isBuffer(result)).toBe(true);
+			expect(result).toEqual(Buffer.from(testData));
+
+			const cmd = mockSend.mock.calls[0]?.[0];
+			expect(cmd.params).toEqual({
+				Bucket: "test-bucket",
+				Key: "notes/note123/chunk_2",
+			});
+		});
+
+		it("throws when response body is empty", async () => {
+			mockSend.mockResolvedValueOnce({ Body: null });
+			await expect(storage.readChunk("note123", 0)).rejects.toThrow("Empty response from S3");
+		});
+	});
+
+	describe("deleteChunks", () => {
+		it("sends batch Delete for all chunk objects", async () => {
+			mockSend.mockResolvedValue({});
+			await storage.deleteChunks("note123", 3);
+			expect(mockSend).toHaveBeenCalledTimes(1);
+
+			const cmd = mockSend.mock.calls[0]?.[0] as {
+				params?: { Delete?: { Objects?: Array<{ Key: string }> } };
+			};
+			const objects = cmd?.params?.Delete?.Objects ?? [];
+			expect(objects).toEqual([
+				{ Key: "notes/note123/chunk_0" },
+				{ Key: "notes/note123/chunk_1" },
+				{ Key: "notes/note123/chunk_2" },
+			]);
+		});
+
+		it("does not throw when batch delete fails", async () => {
+			mockSend.mockRejectedValue(new Error("S3 error"));
+			await expect(storage.deleteChunks("note123", 2)).resolves.not.toThrow();
 		});
 	});
 });

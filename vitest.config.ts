@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
+		exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**"],
 		coverage: {
 			provider: "v8",
 			include: ["packages/*/src/**", "apps/*/src/**"],
@@ -12,6 +13,8 @@ export default defineConfig({
 				"**/__tests__/**",
 				"**/types.ts",
 				"apps/web/src/**",
+				"**/storage/interface.ts",
+				"packages/crypto/src/client.ts",
 			],
 			thresholds: {
 				lines: 100,

@@ -1,6 +1,13 @@
+import type { NotePayload } from "@secret/shared";
 import { testVectors } from "@secret/shared";
 import { describe, expect, test } from "vitest";
-import { decryptNote, encryptNote, ensureInit } from "../crypto.js";
+import {
+	decryptNote,
+	decryptNoteChunked,
+	encryptNote,
+	encryptNoteChunked,
+	ensureInit,
+} from "../crypto.js";
 
 describe("SDK crypto", () => {
 	test("encrypts and decrypts a text note without password", async () => {
@@ -76,6 +83,131 @@ describe("SDK crypto", () => {
 		);
 
 		expect(decrypted.text).toBe("Note with file");
+		expect(decrypted.files).toHaveLength(1);
+		expect(decrypted.files?.[0]?.name).toBe("test.txt");
+	});
+
+	test("encryptNoteChunked and decryptNoteChunked roundtrip without password", async () => {
+		await ensureInit();
+
+		const encrypted = await encryptNoteChunked({ text: "chunked hello", contentMode: "text" }, 64);
+
+		expect(encrypted.header).toBeTruthy();
+		expect(encrypted.chunks.length).toBeGreaterThan(0);
+		expect(encrypted.keyFragment).toBeTruthy();
+		expect(encrypted.salt).toBeUndefined();
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.text).toBe("chunked hello");
+		expect(decrypted.contentMode).toBe("text");
+	});
+
+	test("encryptNoteChunked and decryptNoteChunked roundtrip with password", async () => {
+		await ensureInit();
+
+		const encrypted = await encryptNoteChunked(
+			{ text: "chunked secret", contentMode: "secret" },
+			64,
+			"my-password",
+		);
+
+		expect(encrypted.salt).toBeTruthy();
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+			"my-password",
+			encrypted.salt,
+		);
+
+		expect(decrypted.text).toBe("chunked secret");
+	});
+
+	test("decryptNoteChunked fails with wrong password", async () => {
+		await ensureInit();
+
+		const encrypted = await encryptNoteChunked({ text: "secret data" }, 64, "correct-password");
+
+		await expect(
+			decryptNoteChunked(
+				encrypted.chunks,
+				encrypted.header,
+				encrypted.keyFragment,
+				"wrong-password",
+				encrypted.salt,
+			),
+		).rejects.toThrow();
+	});
+
+	test("encryptNoteChunked splits large payloads into multiple chunks", async () => {
+		await ensureInit();
+
+		const fileData = new Uint8Array(500);
+		fileData.fill(42);
+		const payload: NotePayload = {
+			text: "hello",
+			files: [{ name: "big.bin", type: "application/octet-stream", size: 500, data: fileData }],
+		};
+		const encrypted = await encryptNoteChunked(payload, 64);
+
+		// Header chunk + ceil(500/64) = 8 data chunks = 9 total
+		expect(encrypted.chunks.length).toBeGreaterThan(1);
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.text).toBe("hello");
+		expect(decrypted.files).toHaveLength(1);
+		const file = decrypted.files?.[0];
+		expect(file?.name).toBe("big.bin");
+		expect(file?.size).toBe(500);
+		expect(new Uint8Array(file?.data as ArrayLike<number>)).toEqual(fileData);
+	});
+
+	test("encryptNoteChunked handles empty payload", async () => {
+		await ensureInit();
+
+		const encrypted = await encryptNoteChunked({}, 64);
+
+		expect(encrypted.chunks).toHaveLength(1);
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.text).toBeUndefined();
+	});
+
+	test("encryptNoteChunked roundtrips payload with files", async () => {
+		await ensureInit();
+
+		const fileData = new TextEncoder().encode("file content here");
+		const encrypted = await encryptNoteChunked(
+			{
+				text: "with file",
+				files: [{ name: "test.txt", type: "text/plain", size: fileData.length, data: fileData }],
+			},
+			32,
+		);
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.text).toBe("with file");
 		expect(decrypted.files).toHaveLength(1);
 		expect(decrypted.files?.[0]?.name).toBe("test.txt");
 	});

@@ -1,7 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { serverDecrypt, serverEncrypt } from "@secret/crypto";
+import { SECRETSTREAM_ABYTES, serverDecrypt, serverEncrypt } from "@secret/crypto";
 import {
+	chunkedUploadInitSchema,
 	createNoteMultipartSchema,
 	createNoteResponseSchema,
 	createNoteSchema,
@@ -9,18 +10,47 @@ import {
 	NOTE_ID_LENGTH,
 	noteExistsResponseSchema,
 	readNoteResponseSchema,
+	UPLOAD_ID_LENGTH,
+	UPLOAD_SESSION_TTL,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
-import { notes } from "../db/schema.js";
+import { notes, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
 
+/** Strip CRLF and null bytes to prevent HTTP header injection */
+function sanitizeHeaderValue(value: string): string {
+	return value.replace(/[\r\n\0]/g, "");
+}
+
 function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never {
 	throw new HTTPException(status, { message });
+}
+
+async function cleanupNoteStorage(
+	storage: StorageBackend,
+	id: string,
+	note: { chunkCount?: number | null; filePath?: string | null },
+): Promise<void> {
+	if (note.chunkCount && note.chunkCount > 0) {
+		await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
+			console.error(
+				`[notes] Failed to delete chunks for note ${id}:`,
+				err instanceof Error ? err.message : err,
+			);
+		});
+	} else if (note.filePath) {
+		await storage.delete(note.filePath).catch((err: unknown) => {
+			console.error(
+				`[notes] Failed to delete file for note ${id}:`,
+				err instanceof Error ? err.message : err,
+			);
+		});
+	}
 }
 
 interface NotesEnv {
@@ -28,6 +58,8 @@ interface NotesEnv {
 		db: AppDatabase;
 		serverKey: Buffer;
 		storage: StorageBackend;
+		chunkSize: number;
+		maxChunkedFileSize: number;
 	};
 }
 
@@ -256,13 +288,12 @@ export function createNotesRoutes() {
 		});
 	});
 
-	app.openapi(readNoteRoute, async (c) => {
-		const { id } = c.req.valid("param");
-
-		const db = c.get("db");
-		const serverKey = c.get("serverKey");
-		const storage = c.get("storage");
-
+	async function consumeNote(
+		db: AppDatabase,
+		serverKey: Buffer,
+		storage: StorageBackend,
+		id: string,
+	) {
 		const result = db.transaction((tx) => {
 			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
 
@@ -276,6 +307,7 @@ export function createNotesRoutes() {
 					error: "Note has expired" as const,
 					status: 404 as const,
 					filePath: note.filePath,
+					chunkCount: note.chunkCount,
 				};
 			}
 
@@ -293,9 +325,7 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			if ("filePath" in result && result.filePath) {
-				await storage.delete(result.filePath);
-			}
+			await cleanupNoteStorage(storage, id, result);
 			httpError(result.status as 404, result.error);
 		}
 
@@ -311,12 +341,27 @@ export function createNotesRoutes() {
 				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 			}
 		} catch {
+			if (result.shouldDelete) {
+				await cleanupNoteStorage(storage, id, note);
+			}
 			httpError(500, "Failed to decrypt note");
 		}
 
-		if (result.shouldDelete && note.filePath) {
-			await storage.delete(note.filePath);
+		if (result.shouldDelete) {
+			await cleanupNoteStorage(storage, id, note);
 		}
+
+		return { clientBlob, note };
+	}
+
+	app.openapi(readNoteRoute, async (c) => {
+		const { id } = c.req.valid("param");
+		const { clientBlob, note } = await consumeNote(
+			c.get("db"),
+			c.get("serverKey"),
+			c.get("storage"),
+			id,
+		);
 
 		return c.json({
 			encryptedData: clientBlob.toString("base64"),
@@ -329,34 +374,416 @@ export function createNotesRoutes() {
 		});
 	});
 
+	app.get("/:id/raw", async (c) => {
+		const id = c.req.param("id");
+		if (!id || !/^[A-Za-z0-9_-]+$/.test(id) || id.length !== NOTE_ID_LENGTH) {
+			return c.json({ error: "Invalid note ID" }, 400);
+		}
+
+		const { clientBlob, note } = await consumeNote(
+			c.get("db"),
+			c.get("serverKey"),
+			c.get("storage"),
+			id,
+		);
+
+		const headers: Record<string, string> = {
+			"Content-Type": "application/octet-stream",
+			"Content-Length": String(clientBlob.length),
+			"X-Client-Nonce": sanitizeHeaderValue(note.clientNonce),
+			"X-Has-Password": String(note.hasPassword),
+			"X-File-Count": String(note.fileCount),
+			"X-Created-At": note.createdAt.toISOString(),
+			"X-Expires-At": note.expiresAt.toISOString(),
+		};
+		if (note.salt) {
+			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
+		}
+
+		return new Response(new Uint8Array(clientBlob) as BodyInit, { status: 200, headers });
+	});
+
 	app.openapi(deleteNoteRoute, async (c) => {
 		const { id } = c.req.valid("param");
 		const token = c.req.valid("header")["x-delete-token"];
 
 		const db = c.get("db");
 		const storage = c.get("storage");
-		const note = db
-			.select({ filePath: notes.filePath, deleteToken: notes.deleteToken })
-			.from(notes)
-			.where(eq(notes.id, id))
+
+		const result = db.transaction((tx) => {
+			const note = tx
+				.select({
+					filePath: notes.filePath,
+					deleteToken: notes.deleteToken,
+					chunkCount: notes.chunkCount,
+				})
+				.from(notes)
+				.where(eq(notes.id, id))
+				.get();
+
+			if (note === undefined) {
+				return { error: "Note not found" as const, status: 404 as const };
+			}
+
+			const tokenBuf = Buffer.from(token);
+			const storedBuf = Buffer.from(note.deleteToken);
+			if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
+				return { error: "Invalid delete token" as const, status: 403 as const };
+			}
+
+			tx.delete(notes).where(eq(notes.id, id)).run();
+
+			return { note };
+		});
+
+		if ("error" in result) {
+			httpError(result.status as 403, result.error);
+		}
+
+		await cleanupNoteStorage(storage, id, result.note);
+
+		return c.json({ deleted: true as const });
+	});
+
+	// --- Chunked upload endpoints ---
+
+	app.post("/upload/init", async (c) => {
+		const body = await c.req.json().catch(() => null);
+		if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+
+		const parsed = chunkedUploadInitSchema.safeParse(body);
+		if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
+
+		const data = parsed.data;
+		const chunkSize = c.get("chunkSize");
+		const maxChunkedSize = c.get("maxChunkedFileSize");
+		const maxChunks = Math.ceil(maxChunkedSize / chunkSize);
+
+		if (data.chunkCount > maxChunks) {
+			return c.json({ error: `Maximum ${String(maxChunks)} chunks allowed` }, 400);
+		}
+
+		const db = c.get("db");
+		const uploadId = nanoid(UPLOAD_ID_LENGTH);
+		const noteId = nanoid(NOTE_ID_LENGTH);
+		const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
+		const now = new Date();
+		const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL * 1000);
+
+		const metadata = JSON.stringify({
+			streamHeader: data.streamHeader,
+			clientNonce: data.clientNonce,
+			hasPassword: data.hasPassword,
+			expiresIn: data.expiresIn,
+			maxReads: data.maxReads,
+			fileCount: data.fileCount,
+			...(data.salt ? { salt: data.salt } : {}),
+		});
+
+		db.insert(uploads)
+			.values({
+				id: uploadId,
+				metadata,
+				chunkCount: data.chunkCount,
+				chunksReceived: "[]",
+				noteId,
+				deleteToken,
+				createdAt: now,
+				expiresAt,
+			})
+			.run();
+
+		return c.json({ uploadId, expiresAt: expiresAt.toISOString() }, 201);
+	});
+
+	app.put("/upload/:uploadId/chunks/:index", async (c) => {
+		const uploadId = c.req.param("uploadId");
+		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
+			return c.json({ error: "Invalid upload ID" }, 400);
+		}
+		const indexStr = c.req.param("index");
+		const index = parseInt(indexStr as string, 10);
+
+		if (Number.isNaN(index) || index < 0) {
+			return c.json({ error: "Invalid chunk index" }, 400);
+		}
+
+		const db = c.get("db");
+		const session = db
+			.select()
+			.from(uploads)
+			.where(eq(uploads.id, uploadId as string))
 			.get();
 
-		if (note === undefined) {
-			httpError(404, "Note not found");
+		if (session === undefined || session.expiresAt < new Date()) {
+			return c.json({ error: "Upload session not found or expired" }, 404);
 		}
 
-		const tokenBuf = Buffer.from(token);
-		const storedBuf = Buffer.from(note.deleteToken);
-		if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
-			httpError(403, "Invalid delete token");
+		if (index >= session.chunkCount) {
+			return c.json({ error: "Chunk index out of range" }, 400);
 		}
 
-		if (note.filePath) {
-			await storage.delete(note.filePath);
+		const rawBody = await c.req.arrayBuffer();
+		if (rawBody.byteLength === 0) {
+			return c.json({ error: "Empty chunk body" }, 400);
 		}
 
-		db.delete(notes).where(eq(notes.id, id)).run();
-		return c.json({ deleted: true as const });
+		const chunkSize = c.get("chunkSize");
+		const maxChunkBytes = chunkSize + SECRETSTREAM_ABYTES;
+		if (rawBody.byteLength > maxChunkBytes) {
+			return c.json({ error: "Chunk too large" }, 413);
+		}
+
+		// Verify SHA-256 hash
+		const expectedHash = c.req.header("X-Chunk-Hash");
+		if (!expectedHash) {
+			return c.json({ error: "Missing X-Chunk-Hash header" }, 400);
+		}
+		const actualHash = createHash("sha256").update(Buffer.from(rawBody)).digest("hex");
+		if (actualHash !== expectedHash) {
+			return c.json({ error: "Chunk hash mismatch" }, 400);
+		}
+
+		// Server-encrypt the chunk (prepend IV to stored data)
+		const serverKey = c.get("serverKey");
+		const { encrypted, iv } = serverEncrypt(Buffer.from(rawBody), serverKey);
+		const storedData = Buffer.concat([iv, encrypted]);
+
+		const storage = c.get("storage");
+		await storage.saveChunk(session.noteId, index, storedData);
+
+		// Update received chunks atomically
+		db.transaction((tx) => {
+			const current = tx
+				.select({ chunksReceived: uploads.chunksReceived })
+				.from(uploads)
+				.where(eq(uploads.id, uploadId as string))
+				.get();
+			if (!current) return;
+			const received = JSON.parse(current.chunksReceived) as number[];
+			if (!received.includes(index)) {
+				received.push(index);
+				tx.update(uploads)
+					.set({ chunksReceived: JSON.stringify(received) })
+					.where(eq(uploads.id, uploadId as string))
+					.run();
+			}
+		});
+
+		return c.json({ received: true as const });
+	});
+
+	app.post("/upload/:uploadId/complete", async (c) => {
+		const uploadId = c.req.param("uploadId");
+		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
+			return c.json({ error: "Invalid upload ID" }, 400);
+		}
+
+		const db = c.get("db");
+		const session = db
+			.select()
+			.from(uploads)
+			.where(eq(uploads.id, uploadId as string))
+			.get();
+
+		if (session === undefined || session.expiresAt < new Date()) {
+			return c.json({ error: "Upload session not found or expired" }, 404);
+		}
+
+		let received: number[];
+		try {
+			received = JSON.parse(session.chunksReceived) as number[];
+		} catch {
+			return c.json({ error: "Corrupted upload session" }, 500);
+		}
+		const missing: number[] = [];
+		for (let i = 0; i < session.chunkCount; i++) {
+			if (!received.includes(i)) {
+				missing.push(i);
+			}
+		}
+
+		if (missing.length > 0) {
+			return c.json({ error: `Missing chunks: [${missing.join(", ")}]` }, 400);
+		}
+
+		let meta: {
+			streamHeader: string;
+			clientNonce: string;
+			hasPassword: boolean;
+			expiresIn: number;
+			maxReads: number;
+			fileCount: number;
+			salt?: string;
+		};
+		try {
+			meta = JSON.parse(session.metadata) as typeof meta;
+		} catch {
+			return c.json({ error: "Corrupted upload session" }, 500);
+		}
+
+		const now = new Date();
+		const expiresAt = new Date(now.getTime() + meta.expiresIn * 1000);
+
+		// Transaction: check duplicate + insert note + delete session atomically
+		const result = db.transaction((tx) => {
+			const existing = tx
+				.select({ id: notes.id })
+				.from(notes)
+				.where(eq(notes.id, session.noteId))
+				.get();
+			if (existing !== undefined) {
+				return { error: "Upload already completed" as const };
+			}
+
+			tx.insert(notes)
+				.values({
+					id: session.noteId,
+					encryptedData: Buffer.alloc(0),
+					serverNonce: "",
+					clientNonce: meta.clientNonce,
+					hasPassword: meta.hasPassword,
+					salt: meta.salt ?? null,
+					deleteToken: session.deleteToken,
+					burnAfterRead: meta.maxReads === 1,
+					fileCount: meta.fileCount,
+					filePath: null,
+					expiresAt,
+					maxReads: meta.maxReads,
+					createdAt: now,
+					chunkCount: session.chunkCount,
+					streamHeader: meta.streamHeader,
+				})
+				.run();
+
+			tx.delete(uploads)
+				.where(eq(uploads.id, uploadId as string))
+				.run();
+
+			return { success: true as const };
+		});
+
+		if ("error" in result) {
+			return c.json({ error: result.error }, 409);
+		}
+
+		return c.json(
+			{
+				id: session.noteId,
+				expiresAt: expiresAt.toISOString(),
+				deleteToken: session.deleteToken,
+			},
+			201,
+		);
+	});
+
+	// --- Chunked stream download ---
+
+	app.get("/:id/stream", async (c) => {
+		const id = c.req.param("id");
+		if (!id || !/^[A-Za-z0-9_-]+$/.test(id) || id.length !== NOTE_ID_LENGTH) {
+			return c.json({ error: "Invalid note ID" }, 400);
+		}
+
+		const db = c.get("db");
+		const serverKey = c.get("serverKey");
+		const storage = c.get("storage");
+
+		// Consume note (same pattern: check expiry, increment/delete readCount)
+		const result = db.transaction((tx) => {
+			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
+
+			if (note === undefined) {
+				return { error: "Note not found" as const, status: 404 as const };
+			}
+
+			if (note.expiresAt < new Date()) {
+				tx.delete(notes).where(eq(notes.id, id)).run();
+				return {
+					error: "Note has expired" as const,
+					status: 404 as const,
+					expiredChunkCount: note.chunkCount,
+				};
+			}
+
+			if (!note.chunkCount || !note.streamHeader) {
+				return { error: "Note is not a chunked note" as const, status: 400 as const };
+			}
+
+			const maxReads = note.maxReads ?? 0;
+			const newReadCount = note.readCount + 1;
+			const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
+
+			if (shouldDelete) {
+				tx.delete(notes).where(eq(notes.id, id)).run();
+			} else {
+				tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
+			}
+
+			return { note, shouldDelete };
+		});
+
+		if ("error" in result) {
+			if ("expiredChunkCount" in result && result.expiredChunkCount) {
+				await cleanupNoteStorage(storage, id, { chunkCount: result.expiredChunkCount });
+			}
+			httpError(result.status as 404, result.error);
+		}
+
+		const { note } = result;
+		const chunkCount = note.chunkCount as number;
+
+		const headers: Record<string, string> = {
+			"Content-Type": "application/octet-stream",
+			"X-Stream-Header": sanitizeHeaderValue(note.streamHeader as string),
+			"X-Chunk-Count": String(chunkCount),
+			"X-Has-Password": String(note.hasPassword),
+			"X-File-Count": String(note.fileCount),
+			"X-Created-At": note.createdAt.toISOString(),
+			"X-Expires-At": note.expiresAt.toISOString(),
+		};
+		if (note.salt) {
+			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
+		}
+
+		const IV_LENGTH = 12;
+		const AUTH_TAG_LENGTH = 16;
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				try {
+					for (let i = 0; i < chunkCount; i++) {
+						const storedData = await storage.readChunk(id, i);
+						const iv = storedData.subarray(0, IV_LENGTH);
+						const encrypted = storedData.subarray(IV_LENGTH);
+
+						// Verify minimum size for auth tag
+						if (encrypted.length < AUTH_TAG_LENGTH) {
+							controller.error(new Error("Invalid chunk data"));
+							return;
+						}
+
+						const clientChunk = serverDecrypt(encrypted, iv, serverKey);
+
+						// Length-prefix framing: 4 bytes big-endian length + chunk data
+						const lengthBuf = Buffer.alloc(4);
+						lengthBuf.writeUInt32BE(clientChunk.length);
+						controller.enqueue(new Uint8Array(lengthBuf));
+						controller.enqueue(new Uint8Array(clientChunk));
+					}
+
+					controller.close();
+				} catch (err) {
+					controller.error(err);
+				} finally {
+					if (result.shouldDelete) {
+						await cleanupNoteStorage(storage, id, { chunkCount });
+					}
+				}
+			},
+		});
+
+		return new Response(stream as BodyInit, { status: 200, headers });
 	});
 
 	return app;

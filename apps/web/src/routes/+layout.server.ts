@@ -1,5 +1,10 @@
 import type { ServerConfig } from "@secret/shared";
-import { MAX_FILE_SIZE, MAX_FILES_PER_NOTE } from "@secret/shared";
+import {
+	DEFAULT_CHUNK_SIZE,
+	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_FILE_SIZE,
+	MAX_FILES_PER_NOTE,
+} from "@secret/shared";
 import type { ServerLoad } from "@sveltejs/kit";
 
 const env = process.env;
@@ -14,7 +19,8 @@ export const load: ServerLoad = ({ url }) => {
 		ogImageUrl: env["APP_OG_IMAGE_URL"] ?? "",
 		maxFileSize: Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE)),
 		maxFilesPerNote: Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE)),
-		storageType: (env["STORAGE_BACKEND"] ?? "local") as "local" | "s3",
+		chunkSize: Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE)),
+		maxChunkedFileSize: Number(env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE)),
 	};
 
 	return { config };

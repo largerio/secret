@@ -21,6 +21,26 @@ body {
 		sans-serif;
 }
 
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+
+.progress-shimmer {
+	background: linear-gradient(
+		90deg,
+		var(--color-primary) 0%,
+		var(--color-primary-light) 50%,
+		var(--color-primary) 100%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

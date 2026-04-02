@@ -3,8 +3,10 @@ import type { NotePayload } from "@secret/shared";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { onMount } from "svelte";
+import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
-import ProgressBar from "$lib/components/ProgressBar.svelte";
+import SkeletonLoader from "$lib/components/SkeletonLoader.svelte";
+import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
@@ -96,7 +98,16 @@ async function handleDecrypt() {
 					status = { state: "downloading", progress: p * 100 };
 				}
 			},
+			onProgress: (info) => {
+				if (info.phase === "downloading" && status.state === "downloading") {
+					status = { state: "downloading", progress: info.phaseProgress * 100 };
+				} else if (info.phase === "decrypting") {
+					status = { state: "decrypting" };
+				}
+			},
 		});
+
+		status = { state: "decrypting" };
 
 		const { payload } = result;
 		const previewUrls: string[] = [];
@@ -117,13 +128,12 @@ async function handleDecrypt() {
 
 		status = { state: "decrypted", payload, previewUrls };
 	} catch (e) {
-		const message = e instanceof Error ? e.message : t("error_decryption");
+		const raw = e instanceof Error ? e.message : "";
+		const isWrongPassword =
+			raw.includes("wrong") || raw.includes("ciphertext") || raw.includes("decrypt");
 		status = {
 			state: "error",
-			message:
-				message.includes("wrong") || message.includes("ciphertext")
-					? t("error_wrong_password")
-					: message,
+			message: isWrongPassword ? t("error_wrong_password") : t("error_decryption"),
 		};
 	}
 }
@@ -179,8 +189,8 @@ function isPdf(type: string): boolean {
 
 <div class="space-y-6">
 	{#if status.state === "loading"}
-		<div class="flex items-center justify-center py-12" role="status" aria-label={t("loading")}>
-			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
+		<div class="flex items-center justify-center py-12" transition:fade={{ duration: 200 }}>
+			<SkeletonLoader label={t("loading")} />
 		</div>
 
 	{:else if status.state === "not_found"}
@@ -233,24 +243,25 @@ function isPdf(type: string): boolean {
 			</button>
 		</div>
 
-	{:else if status.state === "downloading"}
-		<div class="flex flex-col items-center justify-center gap-4 py-12" role="status" aria-label={t("downloading")}>
-			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
-			<div class="w-64">
-				<ProgressBar progress={status.progress} label={t("downloading")} />
+	{:else if status.state === "downloading" || status.state === "decrypting"}
+		<div class="flex flex-col items-center justify-center gap-6 py-12" role="status" transition:fade={{ duration: 200 }}>
+			<div class="w-72">
+				<StepProgress
+					steps={[
+						{ key: "downloading", label: t("downloading"), icon: "fa-solid fa-cloud-arrow-down" },
+						{ key: "decrypting", label: t("decrypting"), icon: "fa-solid fa-lock-open" },
+						{ key: "done", label: t("done"), icon: "fa-solid fa-check" },
+					]}
+					currentStep={status.state === "downloading" ? 0 : 1}
+					progress={status.state === "downloading" ? status.progress : 100}
+				/>
 			</div>
 		</div>
 
-	{:else if status.state === "decrypting"}
-		<div class="flex items-center justify-center py-12" role="status" aria-label={t("decrypting")}>
-			<div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-primary"></div>
-			<span class="ml-3 text-slate-400">{t("decrypting")}</span>
-		</div>
-
 	{:else if status.state === "decrypted"}
-		<div class="space-y-6">
+		<div class="space-y-6" in:fade={{ duration: 200 }}>
 			{#if status.payload.text}
-				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6">
+				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6" in:fly={{ y: 20, duration: 300 }}>
 					<div class="mb-3 flex items-center justify-between">
 						<h2 class="text-sm font-medium text-slate-400">{t("text_content")}</h2>
 						<button
@@ -284,7 +295,7 @@ function isPdf(type: string): boolean {
 					</h2>
 
 					{#each status.payload.files as file, i}
-						<div class="rounded-xl border border-slate-700 bg-slate-900 overflow-hidden">
+						<div class="rounded-xl border border-slate-700 bg-slate-900 overflow-hidden" in:fly={{ y: 20, duration: 300, delay: Math.min(150 * i, 600) }}>
 							{#if isImage(file.type) && status.previewUrls[i]}
 								<img
 									src={status.previewUrls[i]}
@@ -313,7 +324,7 @@ function isPdf(type: string): boolean {
 									src={status.previewUrls[i]}
 									class="h-96 w-full"
 									title={file.name}
-									sandbox="allow-same-origin"
+									sandbox=""
 								></iframe>
 							{/if}
 

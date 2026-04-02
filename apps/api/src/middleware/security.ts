@@ -38,8 +38,14 @@ export function createSecurityHeaders(): MiddlewareHandler {
 export function createCors(allowedOrigins: ReadonlyArray<string>): MiddlewareHandler {
 	return cors({
 		origin: [...allowedOrigins],
-		allowMethods: ["GET", "POST", "DELETE"],
-		allowHeaders: ["Content-Type", "Authorization", "X-Delete-Token", "X-Cap-Token"],
+		allowMethods: ["GET", "POST", "PUT", "DELETE"],
+		allowHeaders: [
+			"Content-Type",
+			"Authorization",
+			"X-Delete-Token",
+			"X-Cap-Token",
+			"X-Chunk-Hash",
+		],
 		maxAge: 86400,
 	});
 }

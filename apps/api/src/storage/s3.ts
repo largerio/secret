@@ -1,4 +1,10 @@
-import { DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+	DeleteObjectCommand,
+	DeleteObjectsCommand,
+	GetObjectCommand,
+	PutObjectCommand,
+	S3Client,
+} from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import type { StorageBackend } from "./interface.js";
 
@@ -9,6 +15,20 @@ export interface S3Config {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
 	readonly forcePathStyle: boolean;
+}
+
+async function streamToBuffer(body: { transformToWebStream(): ReadableStream }): Promise<Buffer> {
+	const chunks: Uint8Array[] = [];
+	const stream = body.transformToWebStream();
+	const reader = stream.getReader();
+
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		chunks.push(value);
+	}
+
+	return Buffer.concat(chunks);
 }
 
 export class S3Storage implements StorageBackend {
@@ -58,17 +78,7 @@ export class S3Storage implements StorageBackend {
 			throw new Error("Empty response from S3");
 		}
 
-		const chunks: Uint8Array[] = [];
-		const stream = response.Body.transformToWebStream();
-		const reader = stream.getReader();
-
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			chunks.push(value);
-		}
-
-		return Buffer.concat(chunks);
+		return streamToBuffer(response.Body);
 	}
 
 	async delete(storageKey: string): Promise<void> {
@@ -81,6 +91,59 @@ export class S3Storage implements StorageBackend {
 			);
 		} catch {
 			/* object already deleted or missing */
+		}
+	}
+
+	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
+		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
+			throw new Error("Invalid note ID for storage key");
+		}
+		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
+		await this.client.send(
+			new PutObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+				Body: data,
+				ContentType: "application/octet-stream",
+			}),
+		);
+		return key;
+	}
+
+	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
+		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
+		const response = await this.client.send(
+			new GetObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+			}),
+		);
+
+		if (!response.Body) {
+			throw new Error("Empty response from S3");
+		}
+
+		return streamToBuffer(response.Body);
+	}
+
+	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
+		const objects = Array.from({ length: chunkCount }, (_, i) => ({
+			Key: `notes/${noteId}/chunk_${String(i)}`,
+		}));
+
+		// S3 DeleteObjects supports up to 1000 keys per batch
+		for (let start = 0; start < objects.length; start += 1000) {
+			const batch = objects.slice(start, start + 1000);
+			try {
+				await this.client.send(
+					new DeleteObjectsCommand({
+						Bucket: this.bucket,
+						Delete: { Objects: batch, Quiet: true },
+					}),
+				);
+			} catch {
+				/* batch delete failed — individual chunks may remain */
+			}
 		}
 	}
 }

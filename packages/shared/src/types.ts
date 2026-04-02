@@ -30,7 +30,7 @@ export interface CreateNoteResponse {
 }
 
 export interface NoteExistsResponse {
-	readonly exists: boolean;
+	readonly exists: true;
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
 	readonly expiresAt: string;
@@ -47,6 +47,33 @@ export interface ReadNoteResponse {
 	readonly salt?: string;
 }
 
+// Chunked upload types
+export interface ChunkedUploadInitRequest {
+	readonly streamHeader: string;
+	readonly clientNonce: string;
+	readonly hasPassword: boolean;
+	readonly expiresIn: number;
+	readonly maxReads: number;
+	readonly fileCount: number;
+	readonly chunkCount: number;
+	readonly salt?: string;
+}
+
+export interface ChunkedUploadInitResponse {
+	readonly uploadId: string;
+	readonly expiresAt: string;
+}
+
+export interface ChunkUploadResponse {
+	readonly received: true;
+}
+
+export interface ChunkedUploadCompleteResponse {
+	readonly id: string;
+	readonly expiresAt: string;
+	readonly deleteToken: string;
+}
+
 export interface ServerConfig {
 	readonly appName: string;
 	readonly appDescription: string;
@@ -56,7 +83,8 @@ export interface ServerConfig {
 	readonly ogImageUrl: string;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
-	readonly storageType: "local" | "s3";
+	readonly chunkSize: number;
+	readonly maxChunkedFileSize: number;
 }
 
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];

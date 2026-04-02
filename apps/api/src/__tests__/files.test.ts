@@ -1,47 +1,11 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
-import { deleteFile, ensureFilesDir, readFile, saveFile } from "../storage/files.js";
 import { LocalStorage } from "../storage/local.js";
 
 const TEST_DIR = "./data/fs-test";
 
 afterAll(() => {
 	rmSync(TEST_DIR, { recursive: true, force: true });
-});
-
-describe("ensureFilesDir", () => {
-	it("creates directory if it does not exist", () => {
-		const dir = `${TEST_DIR}/ensure-test`;
-		ensureFilesDir(dir);
-		expect(existsSync(dir)).toBe(true);
-	});
-
-	it("does not throw if directory already exists", () => {
-		const dir = `${TEST_DIR}/ensure-exists`;
-		mkdirSync(dir, { recursive: true });
-		expect(() => ensureFilesDir(dir)).not.toThrow();
-	});
-});
-
-describe("saveFile / readFile / deleteFile", () => {
-	it("saves and reads a file", () => {
-		const data = Buffer.from("hello world");
-		const filePath = saveFile(TEST_DIR, "test-save", data);
-		const read = readFile(filePath);
-		expect(read).toEqual(data);
-	});
-
-	it("deletes a file", () => {
-		const data = Buffer.from("to delete");
-		const filePath = saveFile(TEST_DIR, "test-delete", data);
-		expect(existsSync(filePath)).toBe(true);
-		deleteFile(filePath);
-		expect(existsSync(filePath)).toBe(false);
-	});
-
-	it("does not throw when deleting non-existent file", () => {
-		expect(() => deleteFile(`${TEST_DIR}/nonexistent`)).not.toThrow();
-	});
 });
 
 describe("LocalStorage", () => {
@@ -106,5 +70,48 @@ describe("LocalStorage", () => {
 		await expect(storage.read(`${storageDir}-evil/secret`)).rejects.toThrow(
 			"Path traversal detected",
 		);
+	});
+
+	it("saves and reads chunks in a roundtrip", async () => {
+		const storage = new LocalStorage(storageDir);
+		const chunk0 = Buffer.from("chunk-zero-data");
+		const chunk1 = Buffer.from("chunk-one-data!");
+
+		const key0 = await storage.saveChunk("chunked-note-1", 0, chunk0);
+		const key1 = await storage.saveChunk("chunked-note-1", 1, chunk1);
+
+		expect(key0).toContain("chunked-note-1");
+		expect(key0).toContain("chunk_0");
+		expect(key1).toContain("chunk_1");
+
+		const read0 = await storage.readChunk("chunked-note-1", 0);
+		const read1 = await storage.readChunk("chunked-note-1", 1);
+
+		expect(read0).toEqual(chunk0);
+		expect(read1).toEqual(chunk1);
+	});
+
+	it("deleteChunks removes all chunks and directory", async () => {
+		const storage = new LocalStorage(storageDir);
+		const chunk0 = Buffer.from("to-delete-0");
+		const chunk1 = Buffer.from("to-delete-1");
+
+		await storage.saveChunk("del-chunks-1", 0, chunk0);
+		await storage.saveChunk("del-chunks-1", 1, chunk1);
+
+		// Verify chunks exist
+		const read0 = await storage.readChunk("del-chunks-1", 0);
+		expect(read0).toEqual(chunk0);
+
+		await storage.deleteChunks("del-chunks-1", 2);
+
+		// Chunks should no longer be readable
+		await expect(storage.readChunk("del-chunks-1", 0)).rejects.toThrow();
+		await expect(storage.readChunk("del-chunks-1", 1)).rejects.toThrow();
+	});
+
+	it("deleteChunks does not throw for missing chunks", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.deleteChunks("nonexistent-note", 3)).resolves.not.toThrow();
 	});
 });
