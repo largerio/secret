@@ -1,6 +1,40 @@
 import type { CreateNoteResponse, NoteExistsResponse, ReadNoteResponse } from "@secret/shared";
 import { SecretApiError } from "./errors.js";
 
+const UINT32_SIZE = 4;
+const MAX_REASONABLE_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB sanity limit
+
+function extractErrorMessage(body: unknown, status: number): string {
+	if (typeof body === "object" && body !== null && "error" in body) {
+		const error = (body as Record<string, unknown>)["error"];
+		if (typeof error === "string") return error;
+	}
+	return `HTTP ${String(status)}`;
+}
+
+function getRequiredHeader(headers: Headers, name: string): string {
+	const value = headers.get(name);
+	if (!value) {
+		throw new SecretApiError(`Missing required header: ${name}`, 502);
+	}
+	return value;
+}
+
+function parsePositiveInt(value: string | null, defaultVal: number): number {
+	if (!value) return defaultVal;
+	const parsed = parseInt(value, 10);
+	if (!Number.isFinite(parsed) || parsed < 0) return defaultVal;
+	return parsed;
+}
+
+function safeAtob(base64: string): Uint8Array {
+	try {
+		return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+	} catch {
+		throw new SecretApiError("Invalid base64 encoding in response", 502);
+	}
+}
+
 export interface HttpClientConfig {
 	readonly baseUrl: string;
 	readonly fetch: typeof fetch;
@@ -22,11 +56,8 @@ function authHeaders(apiKey?: string, capToken?: string): Record<string, string>
 
 async function handleResponse<T>(res: Response): Promise<T> {
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 
 	return res.json() as Promise<T>;
@@ -104,15 +135,10 @@ function postFormDataXhr(
 				if (xhr.status >= 200 && xhr.status < 300) {
 					resolve(data as unknown as CreateNoteResponse);
 				} else {
-					reject(
-						new SecretApiError(
-							(data["error"] as string) ?? `HTTP ${String(xhr.status)}`,
-							xhr.status,
-						),
-					);
+					reject(new SecretApiError(extractErrorMessage(data, xhr.status), xhr.status));
 				}
 			} catch {
-				reject(new SecretApiError("Invalid response", 0));
+				reject(new SecretApiError("Invalid JSON response", xhr.status));
 			}
 		});
 
@@ -133,11 +159,8 @@ export async function getJson<T>(
 	});
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 
 	if (onProgress && res.body) {
@@ -186,25 +209,22 @@ export async function getNoteRaw(
 	});
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 
 	const headers = res.headers;
-	const clientNonce = headers.get("X-Client-Nonce") ?? "";
+	const clientNonce = getRequiredHeader(headers, "X-Client-Nonce");
 	const hasPassword = headers.get("X-Has-Password") === "true";
-	const fileCount = parseInt(headers.get("X-File-Count") ?? "0", 10);
-	const createdAt = headers.get("X-Created-At") ?? "";
-	const expiresAt = headers.get("X-Expires-At") ?? "";
+	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
+	const createdAt = getRequiredHeader(headers, "X-Created-At");
+	const expiresAt = getRequiredHeader(headers, "X-Expires-At");
 	const salt = headers.get("X-Salt") ?? undefined;
 
 	let data: ArrayBuffer;
 	if (onProgress && res.body) {
 		const contentLength = headers.get("Content-Length");
-		const total = contentLength ? parseInt(contentLength, 10) : 0;
+		const total = parsePositiveInt(contentLength, 0);
 
 		if (total > 0) {
 			const reader = res.body.getReader();
@@ -227,9 +247,7 @@ export async function getNoteRaw(
 		data = await res.arrayBuffer();
 	}
 
-	// Decode nonce from base64
-	const nonceStr = clientNonce;
-	const nonceBytes = Uint8Array.from(atob(nonceStr), (c) => c.charCodeAt(0));
+	const nonceBytes = safeAtob(clientNonce);
 
 	return {
 		encryptedBytes: new Uint8Array(data),
@@ -274,11 +292,8 @@ export async function deleteNote(
 	});
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 }
 
@@ -322,11 +337,8 @@ export async function uploadChunk(
 		},
 	);
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 }
 
@@ -365,20 +377,17 @@ export async function getNoteStream(
 	});
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new SecretApiError(
-			((body as Record<string, unknown>)["error"] as string) ?? `HTTP ${String(res.status)}`,
-			res.status,
-		);
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 
 	const headers = res.headers;
-	const streamHeader = headers.get("X-Stream-Header") ?? "";
-	const chunkCount = parseInt(headers.get("X-Chunk-Count") ?? "0", 10);
+	const streamHeader = getRequiredHeader(headers, "X-Stream-Header");
+	const chunkCount = parsePositiveInt(headers.get("X-Chunk-Count"), 0);
 	const hasPassword = headers.get("X-Has-Password") === "true";
-	const fileCount = parseInt(headers.get("X-File-Count") ?? "0", 10);
-	const createdAt = headers.get("X-Created-At") ?? "";
-	const expiresAt = headers.get("X-Expires-At") ?? "";
+	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
+	const createdAt = getRequiredHeader(headers, "X-Created-At");
+	const expiresAt = getRequiredHeader(headers, "X-Expires-At");
 	const salt = headers.get("X-Salt") ?? undefined;
 
 	// Read entire body then parse length-prefixed chunks
@@ -388,10 +397,10 @@ export async function getNoteStream(
 	let offset = 0;
 
 	for (let i = 0; i < chunkCount; i++) {
-		if (offset + 4 > bodyData.byteLength) break;
-		const len = view.getUint32(offset);
-		offset += 4;
-		if (offset + len > bodyData.byteLength) break;
+		if (offset + UINT32_SIZE > bodyData.byteLength) break;
+		const len = view.getUint32(offset, false); // explicit big-endian
+		offset += UINT32_SIZE;
+		if (len > MAX_REASONABLE_CHUNK_SIZE || offset + len > bodyData.byteLength) break;
 		chunks.push(new Uint8Array(bodyData, offset, len));
 		offset += len;
 		onProgress?.((i + 1) / chunkCount);

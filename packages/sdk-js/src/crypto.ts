@@ -19,13 +19,13 @@ import {
 } from "@secret/crypto/client";
 import type { NotePayload } from "@secret/shared";
 
-let initialized = false;
+let initPromise: Promise<void> | undefined;
 
 export async function ensureInit(): Promise<void> {
-	if (!initialized) {
-		await initSodium();
-		initialized = true;
+	if (!initPromise) {
+		initPromise = initSodium();
 	}
+	return initPromise;
 }
 
 export interface EncryptResult {

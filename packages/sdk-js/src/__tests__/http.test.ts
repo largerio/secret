@@ -122,7 +122,7 @@ describe("postJson", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(postJson(config, "/notes", {}));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 		expect(err.status).toBe(502);
 	});
 });
@@ -372,8 +372,8 @@ describe("postFormData with XMLHttpRequest", () => {
 			triggerEvent("load");
 
 			const err = await catchApiError(promise);
-			expect(err.message).toBe("Invalid response");
-			expect(err.status).toBe(0);
+			expect(err.message).toBe("Invalid JSON response");
+			expect(err.status).toBe(200);
 		} finally {
 			removeXhr();
 		}
@@ -470,7 +470,7 @@ describe("getJson", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(getJson(config, "/bad"));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 		expect(err.status).toBe(502);
 	});
 
@@ -758,11 +758,11 @@ describe("getNoteRaw", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 		expect(err.status).toBe(500);
 	});
 
-	test("uses default values when response headers are missing", async () => {
+	test("throws when required response headers are missing", async () => {
 		const bodyBytes = new Uint8Array([42]);
 		const response = new Response(bodyBytes, {
 			status: 200,
@@ -771,13 +771,8 @@ describe("getNoteRaw", () => {
 		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(response));
 		const config = createConfig(fetchMock);
 
-		const result = await getNoteRaw(config, "noteId123456");
-
-		expect(result.hasPassword).toBe(false);
-		expect(result.fileCount).toBe(0);
-		expect(result.createdAt).toBe("");
-		expect(result.expiresAt).toBe("");
-		expect(result.salt).toBeUndefined();
+		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
+		expect(err.message).toContain("Missing required header");
 	});
 
 	test("streams response with progress callback when Content-Length is present", async () => {
@@ -882,7 +877,7 @@ describe("deleteNote", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(deleteNote(config, "noteId123456", "tok"));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 	});
 });
 
@@ -984,7 +979,7 @@ describe("uploadChunk", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(uploadChunk(config, "u1", 0, new Uint8Array([1]), "hash"));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 		expect(err.status).toBe(500);
 	});
 
@@ -1170,7 +1165,7 @@ describe("getNoteStream", () => {
 		const config = createConfig(fetchMock);
 
 		const err = await catchApiError(getNoteStream(config, "noteId123456"));
-		expect(err.message).toBe("Request failed");
+		expect(err.message).toMatch(/^HTTP \d+$/);
 		expect(err.status).toBe(500);
 	});
 
@@ -1189,7 +1184,7 @@ describe("getNoteStream", () => {
 		expect(result.chunkCount).toBe(0);
 	});
 
-	test("uses default header values when response headers are missing", async () => {
+	test("throws when required response headers are missing", async () => {
 		const body = new ArrayBuffer(0);
 
 		const fetchMock = vi.fn<typeof fetch>(() =>
@@ -1197,22 +1192,25 @@ describe("getNoteStream", () => {
 		);
 		const config = createConfig(fetchMock);
 
-		const result = await getNoteStream(config, "noteId123456");
-
-		expect(result.streamHeader).toBe("");
-		expect(result.chunkCount).toBe(0);
-		expect(result.hasPassword).toBe(false);
-		expect(result.fileCount).toBe(0);
-		expect(result.createdAt).toBe("");
-		expect(result.expiresAt).toBe("");
-		expect(result.salt).toBeUndefined();
+		const err = await catchApiError(getNoteStream(config, "noteId123456"));
+		expect(err.message).toContain("Missing required header");
 	});
 
 	test("includes Authorization header when apiKey is set", async () => {
 		const body = new ArrayBuffer(0);
 
 		const fetchMock = vi.fn<typeof fetch>(() =>
-			Promise.resolve(new Response(body, { status: 200, headers: { "X-Chunk-Count": "0" } })),
+			Promise.resolve(
+				new Response(body, {
+					status: 200,
+					headers: {
+						"X-Stream-Header": "hdr",
+						"X-Chunk-Count": "0",
+						"X-Created-At": "2024-01-01T00:00:00Z",
+						"X-Expires-At": "2024-01-02T00:00:00Z",
+					},
+				}),
+			),
 		);
 		const config = createConfig(fetchMock, "stream-key");
 

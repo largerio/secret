@@ -21,7 +21,7 @@ import type {
 } from "./types.js";
 
 async function sha256hex(data: Uint8Array): Promise<string> {
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data as unknown as ArrayBuffer);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer);
 	return Array.from(new Uint8Array(hashBuffer))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
@@ -350,7 +350,7 @@ export class SecretClient {
 
 	buildShareUrl(id: string, keyFragment: string): string {
 		const base = this.httpConfig.baseUrl.replace("/api/v1", "");
-		return `${base}/note/${id}#${keyFragment}`;
+		return `${base}/note/${encodeURIComponent(id)}#${encodeURIComponent(keyFragment)}`;
 	}
 
 	static parseShareUrl(url: string): { id: string; keyFragment: string } {
