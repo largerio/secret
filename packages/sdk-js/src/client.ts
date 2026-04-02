@@ -21,7 +21,10 @@ import type {
 } from "./types.js";
 
 async function sha256hex(data: Uint8Array): Promise<string> {
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer);
+	const hashBuffer = await crypto.subtle.digest(
+		"SHA-256",
+		data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+	);
 	return Array.from(new Uint8Array(hashBuffer))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
@@ -152,6 +155,7 @@ export class SecretClient {
 			this.httpConfig,
 			{
 				streamHeader: encrypted.header,
+				clientNonce: encrypted.header, // reuse header as nonce for metadata consistency
 				chunkCount: totalChunks,
 				hasPassword: !!options.password,
 				expiresIn: options.expiresIn ?? DEFAULT_EXPIRY_SECONDS,
