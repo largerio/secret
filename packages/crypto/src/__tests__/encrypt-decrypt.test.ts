@@ -11,6 +11,7 @@ import {
 } from "../decrypt.js";
 import {
 	encodePayload,
+	encodeRaw,
 	encryptChunk,
 	encryptPayload,
 	encryptRaw,
@@ -117,6 +118,54 @@ describe("encryptPayload / decryptPayload", () => {
 	it("throws when decoded value is not an object", () => {
 		const key = generateKey();
 		const invalidPayload = encode("just a string");
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws when decoded payload has invalid contentMode", () => {
+		const key = generateKey();
+		const invalidPayload = encode({ text: "hello", contentMode: "html" });
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws when file in payload is null", () => {
+		const key = generateKey();
+		const invalidPayload = encode({ files: [null] });
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws when file in payload has non-string name", () => {
+		const key = generateKey();
+		const invalidPayload = encode({ files: [{ name: 123, type: "text/plain" }] });
 		const nonce = generateNonce();
 		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
 			invalidPayload,
@@ -341,5 +390,14 @@ describe("encodePayload / decodePayloadBytes", () => {
 		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow(
 			"Invalid payload structure after decryption",
 		);
+	});
+});
+
+describe("encodeRaw", () => {
+	it("encodes arbitrary data to msgpack bytes", () => {
+		const data = { text: "hello", extra: 42 };
+		const encoded = encodeRaw(data);
+		expect(encoded).toBeInstanceOf(Uint8Array);
+		expect(encoded.length).toBeGreaterThan(0);
 	});
 });

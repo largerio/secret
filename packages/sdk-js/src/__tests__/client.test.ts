@@ -872,47 +872,42 @@ describe("SecretClient", () => {
 		expect(http.getNote).not.toHaveBeenCalled();
 	});
 
-	test("readNote falls through to raw when stream returns non-400 API error", async () => {
+	test("readNote throws on non-400 API error from stream (does not fall through)", async () => {
 		const http = await getHttpMocks();
 		http.getNoteStream.mockRejectedValue(new SecretApiError("Server error", 500));
-		http.getNoteRaw.mockResolvedValue({
-			encryptedBytes: new Uint8Array([1]),
-			nonceBytes: new Uint8Array([2]),
-			hasPassword: false,
-			fileCount: 0,
-			createdAt: "2024-01-01",
-			expiresAt: "2099-01-01",
-		});
-
-		const crypto = await getCryptoMocks();
-		crypto.decryptNoteBytes.mockResolvedValue({ text: "raw fallback" });
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.readNote("noteId123456", "keyFrag");
-
-		expect(result.payload.text).toBe("raw fallback");
-		expect(http.getNoteRaw).toHaveBeenCalled();
+		await expect(client.readNote("noteId123456", "keyFrag")).rejects.toThrow(SecretApiError);
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
 	});
 
-	test("readNote falls through to raw when stream throws non-SecretApiError", async () => {
+	test("readNote throws on network error from stream (does not fall through)", async () => {
 		const http = await getHttpMocks();
 		http.getNoteStream.mockRejectedValue(new Error("network failure"));
-		http.getNoteRaw.mockResolvedValue({
-			encryptedBytes: new Uint8Array([1]),
-			nonceBytes: new Uint8Array([2]),
-			hasPassword: false,
-			fileCount: 0,
-			createdAt: "2024-01-01",
-			expiresAt: "2099-01-01",
-		});
-
-		const crypto = await getCryptoMocks();
-		crypto.decryptNoteBytes.mockResolvedValue({ text: "raw after error" });
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.readNote("noteId123456", "keyFrag");
+		await expect(client.readNote("noteId123456", "keyFrag")).rejects.toThrow("network failure");
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
+	});
 
-		expect(result.payload.text).toBe("raw after error");
+	test("readNote throws on 500 from raw endpoint (does not fall through to legacy)", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockRejectedValue(new SecretApiError("Not chunked", 400));
+		http.getNoteRaw.mockRejectedValue(new SecretApiError("Internal error", 500));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await expect(client.readNote("noteId123456", "keyFrag")).rejects.toThrow(SecretApiError);
+		expect(http.getNote).not.toHaveBeenCalled();
+	});
+
+	test("readNote throws on network error from raw endpoint (does not fall through to legacy)", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockRejectedValue(new SecretApiError("Not chunked", 400));
+		http.getNoteRaw.mockRejectedValue(new Error("connection refused"));
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await expect(client.readNote("noteId123456", "keyFrag")).rejects.toThrow("connection refused");
+		expect(http.getNote).not.toHaveBeenCalled();
 	});
 
 	test("readNote stream path fires download and decrypt progress callbacks", async () => {

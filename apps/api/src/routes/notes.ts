@@ -31,6 +31,28 @@ function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never 
 	throw new HTTPException(status, { message });
 }
 
+async function cleanupNoteStorage(
+	storage: StorageBackend,
+	id: string,
+	note: { chunkCount?: number | null; filePath?: string | null },
+): Promise<void> {
+	if (note.chunkCount && note.chunkCount > 0) {
+		await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
+			console.error(
+				`[notes] Failed to delete chunks for note ${id}:`,
+				err instanceof Error ? err.message : err,
+			);
+		});
+	} else if (note.filePath) {
+		await storage.delete(note.filePath).catch((err: unknown) => {
+			console.error(
+				`[notes] Failed to delete file for note ${id}:`,
+				err instanceof Error ? err.message : err,
+			);
+		});
+	}
+}
+
 interface NotesEnv {
 	Variables: {
 		db: AppDatabase;
@@ -303,21 +325,7 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			if ("chunkCount" in result && result.chunkCount && result.chunkCount > 0) {
-				await storage.deleteChunks(id, result.chunkCount).catch((err: unknown) => {
-					console.error(
-						`[notes] Failed to delete chunks for expired note ${id}:`,
-						err instanceof Error ? err.message : err,
-					);
-				});
-			} else if ("filePath" in result && result.filePath) {
-				await storage.delete(result.filePath).catch((err: unknown) => {
-					console.error(
-						`[notes] Failed to delete file for expired note ${id}:`,
-						err instanceof Error ? err.message : err,
-					);
-				});
-			}
+			await cleanupNoteStorage(storage, id, result);
 			httpError(result.status as 404, result.error);
 		}
 
@@ -333,25 +341,14 @@ export function createNotesRoutes() {
 				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 			}
 		} catch {
+			if (result.shouldDelete) {
+				await cleanupNoteStorage(storage, id, note);
+			}
 			httpError(500, "Failed to decrypt note");
 		}
 
 		if (result.shouldDelete) {
-			if (note.chunkCount && note.chunkCount > 0) {
-				await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
-					console.error(
-						`[notes] Failed to delete chunks for burned note ${id}:`,
-						err instanceof Error ? err.message : err,
-					);
-				});
-			} else if (note.filePath) {
-				await storage.delete(note.filePath).catch((err: unknown) => {
-					console.error(
-						`[notes] Failed to delete file for burned note ${id}:`,
-						err instanceof Error ? err.message : err,
-					);
-				});
-			}
+			await cleanupNoteStorage(storage, id, note);
 		}
 
 		return { clientBlob, note };
@@ -412,43 +409,38 @@ export function createNotesRoutes() {
 
 		const db = c.get("db");
 		const storage = c.get("storage");
-		const note = db
-			.select({
-				filePath: notes.filePath,
-				deleteToken: notes.deleteToken,
-				chunkCount: notes.chunkCount,
-			})
-			.from(notes)
-			.where(eq(notes.id, id))
-			.get();
 
-		if (note === undefined) {
-			httpError(404, "Note not found");
+		const result = db.transaction((tx) => {
+			const note = tx
+				.select({
+					filePath: notes.filePath,
+					deleteToken: notes.deleteToken,
+					chunkCount: notes.chunkCount,
+				})
+				.from(notes)
+				.where(eq(notes.id, id))
+				.get();
+
+			if (note === undefined) {
+				return { error: "Note not found" as const, status: 404 as const };
+			}
+
+			const tokenBuf = Buffer.from(token);
+			const storedBuf = Buffer.from(note.deleteToken);
+			if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
+				return { error: "Invalid delete token" as const, status: 403 as const };
+			}
+
+			tx.delete(notes).where(eq(notes.id, id)).run();
+
+			return { note };
+		});
+
+		if ("error" in result) {
+			httpError(result.status as 403, result.error);
 		}
 
-		const tokenBuf = Buffer.from(token);
-		const storedBuf = Buffer.from(note.deleteToken);
-		if (tokenBuf.length !== storedBuf.length || !timingSafeEqual(tokenBuf, storedBuf)) {
-			httpError(403, "Invalid delete token");
-		}
-
-		db.delete(notes).where(eq(notes.id, id)).run();
-
-		if (note.chunkCount && note.chunkCount > 0) {
-			await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
-				console.error(
-					`[notes] Failed to delete chunks for note ${id}:`,
-					err instanceof Error ? err.message : err,
-				);
-			});
-		} else if (note.filePath) {
-			await storage.delete(note.filePath).catch((err: unknown) => {
-				console.error(
-					`[notes] Failed to delete file for note ${id}:`,
-					err instanceof Error ? err.message : err,
-				);
-			});
-		}
+		await cleanupNoteStorage(storage, id, result.note);
 
 		return c.json({ deleted: true as const });
 	});
@@ -598,7 +590,12 @@ export function createNotesRoutes() {
 			return c.json({ error: "Upload session not found or expired" }, 404);
 		}
 
-		const received = JSON.parse(session.chunksReceived) as number[];
+		let received: number[];
+		try {
+			received = JSON.parse(session.chunksReceived) as number[];
+		} catch {
+			return c.json({ error: "Corrupted upload session" }, 500);
+		}
 		const missing: number[] = [];
 		for (let i = 0; i < session.chunkCount; i++) {
 			if (!received.includes(i)) {
@@ -727,17 +724,8 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			if (
-				"expiredChunkCount" in result &&
-				result.expiredChunkCount &&
-				result.expiredChunkCount > 0
-			) {
-				await storage.deleteChunks(id, result.expiredChunkCount).catch((err: unknown) => {
-					console.error(
-						`[notes] Failed to delete chunks for expired note ${id}:`,
-						err instanceof Error ? err.message : err,
-					);
-				});
+			if ("expiredChunkCount" in result && result.expiredChunkCount) {
+				await cleanupNoteStorage(storage, id, { chunkCount: result.expiredChunkCount });
 			}
 			httpError(result.status as 404, result.error);
 		}
@@ -784,19 +772,13 @@ export function createNotesRoutes() {
 						controller.enqueue(new Uint8Array(clientChunk));
 					}
 
-					// Cleanup file after streaming if burn-after-read
-					if (result.shouldDelete) {
-						await storage.deleteChunks(id, chunkCount).catch((err: unknown) => {
-							console.error(
-								`[notes] Failed to delete chunks for burned note ${id}:`,
-								err instanceof Error ? err.message : err,
-							);
-						});
-					}
-
 					controller.close();
 				} catch (err) {
 					controller.error(err);
+				} finally {
+					if (result.shouldDelete) {
+						await cleanupNoteStorage(storage, id, { chunkCount });
+					}
 				}
 			},
 		});

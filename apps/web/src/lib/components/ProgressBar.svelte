@@ -17,7 +17,7 @@ const isActive = $derived(animated && clamped < 100);
 			<span>{Math.round(clamped)}%</span>
 		</div>
 	{/if}
-	<div class="h-3 w-full rounded-full bg-slate-700 overflow-hidden">
+	<div class="h-3 w-full rounded-full bg-slate-700 overflow-hidden" role="progressbar" aria-valuenow={Math.round(clamped)} aria-valuemin={0} aria-valuemax={100}>
 		<div
 			class="h-full rounded-full transition-all duration-300 ease-out {isActive
 				? 'progress-shimmer'

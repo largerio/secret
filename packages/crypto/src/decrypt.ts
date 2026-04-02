@@ -2,11 +2,24 @@ import { decode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 
+const VALID_CONTENT_MODES = new Set(["text", "markdown", "secret"]);
+
 function isNotePayload(value: unknown): value is NotePayload {
 	if (typeof value !== "object" || value === null) return false;
 	const obj = value as Record<string, unknown>;
 	if (obj["text"] !== undefined && typeof obj["text"] !== "string") return false;
 	if (obj["files"] !== undefined && !Array.isArray(obj["files"])) return false;
+	if (obj["contentMode"] !== undefined && !VALID_CONTENT_MODES.has(obj["contentMode"] as string)) {
+		return false;
+	}
+	if (Array.isArray(obj["files"])) {
+		for (const file of obj["files"]) {
+			if (typeof file !== "object" || file === null) return false;
+			const f = file as Record<string, unknown>;
+			if (typeof f["name"] !== "string" || typeof f["type"] !== "string") return false;
+			if (f["size"] !== undefined && typeof f["size"] !== "number") return false;
+		}
+	}
 	return true;
 }
 

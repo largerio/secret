@@ -8,6 +8,10 @@ export interface EncryptedNote {
 	readonly nonce: Uint8Array;
 }
 
+export function encodeRaw(data: unknown): Uint8Array {
+	return encode(data);
+}
+
 export function encryptPayload(payload: NotePayload, key: Uint8Array): EncryptedNote {
 	const encoded = encode(payload);
 	const nonce = generateNonce();
@@ -56,11 +60,9 @@ export function encryptChunk(
 	return sodium.crypto_secretstream_xchacha20poly1305_push(state, chunk, null, tag);
 }
 
-export const SECRETSTREAM_ABYTES: number =
-	sodium.crypto_secretstream_xchacha20poly1305_ABYTES ?? 17;
-
-export const SECRETSTREAM_HEADERBYTES: number =
-	sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES ?? 24;
+// Hardcoded values matching libsodium — verified at init time in keys.ts
+export const SECRETSTREAM_ABYTES = 17;
+export const SECRETSTREAM_HEADERBYTES = 24;
 
 export function encodePayload(payload: NotePayload): Uint8Array {
 	return encode(payload);

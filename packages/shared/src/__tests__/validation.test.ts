@@ -112,8 +112,13 @@ describe("createNoteSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
+	it("accepts clientNonce at max length (48)", () => {
+		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(48) });
+		expect(result.success).toBe(true);
+	});
+
 	it("rejects clientNonce exceeding max length", () => {
-		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(101) });
+		const result = createNoteSchema.safeParse({ ...validRequest, clientNonce: "a".repeat(49) });
 		expect(result.success).toBe(false);
 	});
 
@@ -205,7 +210,7 @@ describe("createNoteMultipartSchema", () => {
 	it("rejects clientNonce exceeding max length", () => {
 		const result = createNoteMultipartSchema.safeParse({
 			...validMeta,
-			clientNonce: "a".repeat(101),
+			clientNonce: "a".repeat(49),
 		});
 		expect(result.success).toBe(false);
 	});
@@ -243,6 +248,30 @@ describe("chunkedUploadInitSchema", () => {
 			salt: "someSalt",
 		});
 		expect(result.success).toBe(true);
+	});
+
+	it("rejects streamHeader exceeding max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			streamHeader: "a".repeat(49),
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts streamHeader at max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			streamHeader: "a".repeat(48),
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects clientNonce exceeding max length", () => {
+		const result = chunkedUploadInitSchema.safeParse({
+			...validChunked,
+			clientNonce: "a".repeat(49),
+		});
+		expect(result.success).toBe(false);
 	});
 });
 

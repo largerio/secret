@@ -230,9 +230,9 @@ export class SecretClient {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
-			// Stream endpoint returns 400 for non-chunked notes — fall through
+			// Only fall through on 400 (not a chunked note)
 			if (!(err instanceof SecretApiError) || err.status !== 400) {
-				// For non-400 errors from stream, still try raw/legacy
+				throw err;
 			}
 		}
 
@@ -244,7 +244,11 @@ export class SecretClient {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
-			return this.readNoteLegacy(id, keyFragment, options);
+			// Only fall through to legacy on 400/404 (endpoint not found on older servers)
+			if (err instanceof SecretApiError && (err.status === 400 || err.status === 404)) {
+				return this.readNoteLegacy(id, keyFragment, options);
+			}
+			throw err;
 		}
 	}
 

@@ -2,6 +2,15 @@ import sodium from "libsodium-wrappers-sumo";
 
 export async function initSodium(): Promise<void> {
 	await sodium.ready;
+
+	if (sodium.crypto_secretstream_xchacha20poly1305_ABYTES !== 17) {
+		/* v8 ignore next */
+		throw new Error("Unexpected SECRETSTREAM_ABYTES value from libsodium");
+	}
+	if (sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES !== 24) {
+		/* v8 ignore next */
+		throw new Error("Unexpected SECRETSTREAM_HEADERBYTES value from libsodium");
+	}
 }
 
 export function generateKey(): Uint8Array {

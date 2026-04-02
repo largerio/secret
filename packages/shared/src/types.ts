@@ -30,7 +30,7 @@ export interface CreateNoteResponse {
 }
 
 export interface NoteExistsResponse {
-	readonly exists: boolean;
+	readonly exists: true;
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
 	readonly expiresAt: string;

@@ -17,7 +17,7 @@ interface Props {
 let { steps, currentStep, progress, label }: Props = $props();
 </script>
 
-<div class="w-full space-y-4">
+<div class="w-full space-y-4" role="group" aria-label="Progress">
 	<div class="flex items-center justify-center gap-0">
 		{#each steps as step, i}
 			{#if i > 0}

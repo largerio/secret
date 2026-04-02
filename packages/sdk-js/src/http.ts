@@ -1,8 +1,10 @@
-import type { CreateNoteResponse, NoteExistsResponse, ReadNoteResponse } from "@secret/shared";
+import type { CreateNoteResponse, ReadNoteResponse } from "@secret/shared";
 import { SecretApiError } from "./errors.js";
+import type { NoteInfo } from "./types.js";
 
 const UINT32_SIZE = 4;
 const MAX_REASONABLE_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB sanity limit
+const MAX_REASONABLE_CHUNK_COUNT = 10_000;
 
 function extractErrorMessage(body: unknown, status: number): string {
 	if (typeof body === "object" && body !== null && "error" in body) {
@@ -268,16 +270,21 @@ export async function getNote(
 	return getJson<ReadNoteResponse>(config, `/notes/${id}`, onProgress);
 }
 
-export async function checkNote(config: HttpClientConfig, id: string): Promise<NoteExistsResponse> {
+export async function checkNote(config: HttpClientConfig, id: string): Promise<NoteInfo> {
 	const res = await config.fetch(`${config.baseUrl}/notes/${id}/exists`, {
 		headers: authHeaders(config.apiKey),
 	});
 
-	if (!res.ok) {
+	if (res.status === 404) {
 		return { exists: false, hasPassword: false, fileCount: 0, expiresAt: "", maxReads: 1 };
 	}
 
-	return res.json() as Promise<NoteExistsResponse>;
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+	}
+
+	return res.json() as Promise<NoteInfo>;
 }
 
 export async function deleteNote(
@@ -384,6 +391,9 @@ export async function getNoteStream(
 	const headers = res.headers;
 	const streamHeader = getRequiredHeader(headers, "X-Stream-Header");
 	const chunkCount = parsePositiveInt(headers.get("X-Chunk-Count"), 0);
+	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
+		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
+	}
 	const hasPassword = headers.get("X-Has-Password") === "true";
 	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
 	const createdAt = getRequiredHeader(headers, "X-Created-At");
@@ -404,6 +414,13 @@ export async function getNoteStream(
 		chunks.push(new Uint8Array(bodyData, offset, len));
 		offset += len;
 		onProgress?.((i + 1) / chunkCount);
+	}
+
+	if (chunks.length !== chunkCount) {
+		throw new SecretApiError(
+			`Expected ${String(chunkCount)} chunks but received ${String(chunks.length)}`,
+			502,
+		);
 	}
 
 	return {

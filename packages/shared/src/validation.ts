@@ -1,7 +1,9 @@
 import { z } from "zod";
 import {
+	MAX_ENCRYPTED_DATA_SIZE,
 	MAX_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
+	MAX_NONCE_LENGTH,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
 	UPLOAD_ID_LENGTH,
@@ -9,8 +11,8 @@ import {
 
 export const createNoteSchema = z
 	.object({
-		encryptedData: z.string().min(1, "Encrypted data is required").max(50_000_000),
-		clientNonce: z.string().min(1, "Client nonce is required").max(100),
+		encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
+		clientNonce: z.string().min(1, "Client nonce is required").max(MAX_NONCE_LENGTH),
 		hasPassword: z.boolean(),
 		expiresIn: z
 			.number()
@@ -28,7 +30,7 @@ export const createNoteSchema = z
 
 export const createNoteMultipartSchema = z
 	.object({
-		clientNonce: z.string().min(1).max(100),
+		clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
 		hasPassword: z.boolean(),
 		expiresIn: z
 			.number()
@@ -92,8 +94,8 @@ export const errorResponseSchema = z.object({
 
 export const chunkedUploadInitSchema = z
 	.object({
-		streamHeader: z.string().min(1).max(200),
-		clientNonce: z.string().min(1).max(200),
+		streamHeader: z.string().min(1).max(MAX_NONCE_LENGTH),
+		clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
 		hasPassword: z.boolean(),
 		expiresIn: z.number().int().min(MIN_EXPIRY_SECONDS).max(MAX_EXPIRY_SECONDS),
 		maxReads: z.number().int().min(0).max(1000).default(1),

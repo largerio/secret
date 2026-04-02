@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
 	CLEANUP_INTERVAL_MS,
 	DEFAULT_EXPIRY_SECONDS,
+	MAX_ENCRYPTED_DATA_SIZE,
 	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MAX_NONCE_LENGTH,
 	MAX_TEXT_SIZE,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
@@ -59,5 +61,17 @@ describe("constants", () => {
 
 	it("S3_MAX_FILE_SIZE is greater than MAX_FILE_SIZE", () => {
 		expect(S3_MAX_FILE_SIZE).toBeGreaterThan(MAX_FILE_SIZE);
+	});
+
+	it("has correct MAX_ENCRYPTED_DATA_SIZE (50MB)", () => {
+		expect(MAX_ENCRYPTED_DATA_SIZE).toBe(50_000_000);
+	});
+
+	it("has correct MAX_NONCE_LENGTH", () => {
+		expect(MAX_NONCE_LENGTH).toBe(48);
+	});
+
+	it("MAX_NONCE_LENGTH accommodates base64-encoded 24-byte values", () => {
+		expect(MAX_NONCE_LENGTH).toBeGreaterThanOrEqual(32);
 	});
 });

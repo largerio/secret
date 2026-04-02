@@ -37,8 +37,6 @@ export interface CreateNoteOptions {
 	readonly onUploadProgress?: (progress: number) => void;
 	/** Structured progress callback with phase info. */
 	readonly onProgress?: (info: ProgressInfo) => void;
-	/** AbortSignal to cancel the upload. */
-	readonly signal?: AbortSignal;
 	/** PoW token from Cap widget. Required for browser clients without API key. */
 	readonly capToken?: string;
 	/** Force chunked upload mode. Auto-detected when payload exceeds chunkSize. */

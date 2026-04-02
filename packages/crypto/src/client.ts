@@ -10,6 +10,7 @@ export {
 export type { EncryptedNote, StreamEncryptState } from "./encrypt.js";
 export {
 	encodePayload,
+	encodeRaw,
 	encryptChunk,
 	encryptPayload,
 	encryptRaw,

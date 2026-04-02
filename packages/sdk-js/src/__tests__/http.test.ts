@@ -661,6 +661,17 @@ describe("checkNote", () => {
 		});
 	});
 
+	test("throws on server error (non-404)", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(500, { error: "Internal error" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(checkNote(config, "noteId123456"));
+		expect(err.status).toBe(500);
+		expect(err.message).toBe("Internal error");
+	});
+
 	test("includes Authorization header when apiKey is set", async () => {
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(
@@ -1232,8 +1243,7 @@ describe("getNoteStream", () => {
 		expect(err.status).toBe(403);
 	});
 
-	test("handles truncated body where length prefix exceeds buffer", async () => {
-		// Body has X-Chunk-Count: 2 but body is too short (only 2 bytes, need at least 4 for length prefix)
+	test("throws on truncated body where length prefix exceeds buffer", async () => {
 		const body = new ArrayBuffer(2);
 		const truncatedHeaders = { ...streamHeaders, "X-Chunk-Count": "2" };
 
@@ -1242,19 +1252,15 @@ describe("getNoteStream", () => {
 		);
 		const config = createConfig(fetchMock);
 
-		const result = await getNoteStream(config, "noteId123456");
-
-		// Should stop parsing and return fewer chunks than declared
-		expect(result.chunks).toHaveLength(0);
-		expect(result.chunkCount).toBe(2);
+		const err = await catchApiError(getNoteStream(config, "noteId123456"));
+		expect(err.status).toBe(502);
+		expect(err.message).toContain("Expected 2 chunks");
 	});
 
-	test("handles truncated body where chunk data exceeds buffer", async () => {
-		// Build a body with a valid length prefix claiming 100 bytes, but only 10 bytes of data
+	test("throws on truncated body where chunk data exceeds buffer", async () => {
 		const buffer = new ArrayBuffer(14); // 4 bytes length + 10 bytes data
 		const view = new DataView(buffer);
 		view.setUint32(0, 100); // claims chunk is 100 bytes
-		// Only 10 bytes of actual data follow
 		const truncatedHeaders = { ...streamHeaders, "X-Chunk-Count": "2" };
 
 		const fetchMock = vi.fn<typeof fetch>(() =>
@@ -1262,10 +1268,20 @@ describe("getNoteStream", () => {
 		);
 		const config = createConfig(fetchMock);
 
-		const result = await getNoteStream(config, "noteId123456");
+		const err = await catchApiError(getNoteStream(config, "noteId123456"));
+		expect(err.status).toBe(502);
+		expect(err.message).toContain("Expected 2 chunks");
+	});
 
-		// Should stop parsing because offset + len > byteLength
-		expect(result.chunks).toHaveLength(0);
-		expect(result.chunkCount).toBe(2);
+	test("throws when X-Chunk-Count exceeds maximum", async () => {
+		const hugeHeaders = { ...streamHeaders, "X-Chunk-Count": "10001" };
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(new ArrayBuffer(0), { status: 200, headers: hugeHeaders })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteStream(config, "noteId123456"));
+		expect(err.status).toBe(502);
+		expect(err.message).toContain("exceeds maximum");
 	});
 });

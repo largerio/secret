@@ -166,6 +166,8 @@ function reset() {
 	qrCodeUrl = "";
 	error = "";
 	isDeleted = false;
+	uploadPhase = "encrypting";
+	uploadChunkLabel = "";
 }
 </script>
 
@@ -197,7 +199,7 @@ function reset() {
 			"QR code sharing",
 			"Self-hostable",
 		],
-	})}</script>`}
+	}).replace(/</g, "\\u003c")}</script>`}
 </svelte:head>
 
 {#if shareUrl}

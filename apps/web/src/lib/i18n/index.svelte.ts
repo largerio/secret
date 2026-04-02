@@ -47,7 +47,7 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
 	const msg = messages[currentLocale]?.[key] ?? messages.en?.[key] ?? key;
 	if (!params) return msg;
 	return Object.entries(params).reduce<string>(
-		(result, [k, v]) => result.replace(`{${k}}`, String(v)),
+		(result, [k, v]) => result.replaceAll(`{${k}}`, String(v)),
 		msg,
 	);
 }

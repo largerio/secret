@@ -649,6 +649,31 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(json.error).toBe("Failed to decrypt note");
 	});
 
+	it("cleans up storage when decryption fails on burn-after-read file note", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+
+		// Corrupt the file on disk by writing garbage to the stored path
+		const note = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(note).toBeDefined();
+		const filePath = note?.filePath ?? "";
+		expect(filePath).toBeTruthy();
+
+		// Overwrite the stored file with corrupted data
+		const { writeFile } = await import("node:fs/promises");
+		await writeFile(filePath, "corrupted-garbage");
+
+		const res = await app.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe("Failed to decrypt note");
+
+		// Note should be deleted from DB (burn-after-read transaction) and file cleaned up
+		const afterNote = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(afterNote).toBeUndefined();
+	});
+
 	it("logs error when chunk cleanup fails for expired chunked note", async () => {
 		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
 		const { notes: notesTable } = await import("../db/schema.js");
@@ -1444,6 +1469,74 @@ describe("Chunked upload flow", () => {
 		});
 		expect(completeRes.status).toBe(201);
 	});
+
+	it("rejects PUT chunk with invalid uploadId format", async () => {
+		const chunk = chunkData("test");
+		const res = await app.request("/api/v1/notes/upload/invalid%20id!/chunks/0", {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid upload ID");
+	});
+
+	it("rejects POST complete with invalid uploadId format", async () => {
+		const res = await app.request("/api/v1/notes/upload/invalid%20id!/complete", {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid upload ID");
+	});
+
+	it("returns 500 when chunksReceived is corrupted in DB", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("test-chunk");
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const { uploads: uploadsTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(uploadsTable)
+			.set({ chunksReceived: "not-valid-json" })
+			.where(eq(uploadsTable.id, initJson.uploadId))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe("Corrupted upload session");
+	});
+
+	it("returns 500 when metadata is corrupted in DB", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("test-chunk");
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const { uploads: uploadsTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(uploadsTable)
+			.set({ metadata: "not-valid-json" })
+			.where(eq(uploadsTable.id, initJson.uploadId))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe("Corrupted upload session");
+	});
 });
 
 describe("GET /api/v1/notes/:id/stream", () => {
@@ -1585,7 +1678,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for expired note ${id}`),
+			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
 			"stream chunk fail string",
 		);
 		consoleSpy.mockRestore();
@@ -1628,7 +1721,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for expired note ${id}`),
+			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
 			"stream chunk error obj",
 		);
 		consoleSpy.mockRestore();
@@ -1806,7 +1899,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for burned note ${id}`),
+			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
 			"chunk cleanup failure",
 		);
 		consoleSpy.mockRestore();
@@ -1839,7 +1932,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for burned note ${id}`),
+			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
 			"string delete error",
 		);
 		consoleSpy.mockRestore();
