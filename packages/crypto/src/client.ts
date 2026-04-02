@@ -1,6 +1,7 @@
 export type { DecryptChunkResult } from "./decrypt.js";
 export {
 	decodePayloadBytes,
+	decodeRawBytes,
 	decryptChunk,
 	decryptPayload,
 	decryptRaw,

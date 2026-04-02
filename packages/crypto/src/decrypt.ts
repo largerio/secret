@@ -61,6 +61,10 @@ export function decryptChunk(
 	};
 }
 
+export function decodeRawBytes(data: Uint8Array): unknown {
+	return decode(data);
+}
+
 export function decodePayloadBytes(data: Uint8Array): NotePayload {
 	const decoded = decode(data);
 	if (!isNotePayload(decoded)) {

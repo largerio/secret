@@ -1,3 +1,4 @@
+import type { NotePayload } from "@secret/shared";
 import { testVectors } from "@secret/shared";
 import { describe, expect, test } from "vitest";
 import {
@@ -147,9 +148,15 @@ describe("SDK crypto", () => {
 	test("encryptNoteChunked splits large payloads into multiple chunks", async () => {
 		await ensureInit();
 
-		const largeText = "x".repeat(500);
-		const encrypted = await encryptNoteChunked({ text: largeText }, 64);
+		const fileData = new Uint8Array(500);
+		fileData.fill(42);
+		const payload: NotePayload = {
+			text: "hello",
+			files: [{ name: "big.bin", type: "application/octet-stream", size: 500, data: fileData }],
+		};
+		const encrypted = await encryptNoteChunked(payload, 64);
 
+		// Header chunk + ceil(500/64) = 8 data chunks = 9 total
 		expect(encrypted.chunks.length).toBeGreaterThan(1);
 
 		const decrypted = await decryptNoteChunked(
@@ -158,7 +165,12 @@ describe("SDK crypto", () => {
 			encrypted.keyFragment,
 		);
 
-		expect(decrypted.text).toBe(largeText);
+		expect(decrypted.text).toBe("hello");
+		expect(decrypted.files).toHaveLength(1);
+		const file = decrypted.files?.[0];
+		expect(file?.name).toBe("big.bin");
+		expect(file?.size).toBe(500);
+		expect(new Uint8Array(file?.data as ArrayLike<number>)).toEqual(fileData);
 	});
 
 	test("encryptNoteChunked handles empty payload", async () => {
