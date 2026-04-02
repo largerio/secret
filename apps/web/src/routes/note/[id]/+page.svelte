@@ -128,13 +128,12 @@ async function handleDecrypt() {
 
 		status = { state: "decrypted", payload, previewUrls };
 	} catch (e) {
-		const message = e instanceof Error ? e.message : t("error_decryption");
+		const raw = e instanceof Error ? e.message : "";
+		const isWrongPassword =
+			raw.includes("wrong") || raw.includes("ciphertext") || raw.includes("decrypt");
 		status = {
 			state: "error",
-			message:
-				message.includes("wrong") || message.includes("ciphertext")
-					? t("error_wrong_password")
-					: message,
+			message: isWrongPassword ? t("error_wrong_password") : t("error_decryption"),
 		};
 	}
 }
@@ -325,7 +324,7 @@ function isPdf(type: string): boolean {
 									src={status.previewUrls[i]}
 									class="h-96 w-full"
 									title={file.name}
-									sandbox="allow-same-origin"
+									sandbox=""
 								></iframe>
 							{/if}
 
