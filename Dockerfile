@@ -1,7 +1,7 @@
 # Stage 1: Build
 FROM node:25-alpine AS builder
 
-RUN corepack enable pnpm
+RUN npm install -g pnpm
 
 WORKDIR /build
 
@@ -43,7 +43,7 @@ RUN apk add --no-cache curl && adduser -D -u 1001 appuser
 
 WORKDIR /app
 
-RUN corepack enable pnpm
+RUN npm install -g pnpm
 
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/

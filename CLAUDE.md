@@ -104,7 +104,7 @@ Monorepo with pnpm workspaces:
 
 ## Testing
 
-269 tests across 18 files. 100% backend coverage enforced (statements, branches, functions, lines). Frontend (`apps/web/src/`) is excluded from coverage thresholds.
+422 tests across 19 files. 100% backend coverage enforced (statements, branches, functions, lines). Frontend (`apps/web/src/`) is excluded from coverage thresholds.
 
 Run `pnpm test` before committing. New features must include tests.
 

@@ -2,7 +2,7 @@
 
 [![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-24-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-25-green.svg)](https://nodejs.org/)
 
 **[secret.larger.io](https://secret.larger.io)** — Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
@@ -136,7 +136,7 @@ Set `client_max_body_size` to match `MAX_FILE_SIZE`.
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 269 tests, 100% backend coverage
+pnpm test         # 422 tests, 100% backend coverage
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
