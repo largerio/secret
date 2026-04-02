@@ -2,8 +2,15 @@ import { encode } from "@msgpack/msgpack";
 import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it } from "vitest";
-import { decryptChunk, decryptPayload, decryptRaw, initStreamDecrypt } from "../decrypt.js";
 import {
+	decodePayloadBytes,
+	decryptChunk,
+	decryptPayload,
+	decryptRaw,
+	initStreamDecrypt,
+} from "../decrypt.js";
+import {
+	encodePayload,
 	encryptChunk,
 	encryptPayload,
 	encryptRaw,
@@ -292,5 +299,47 @@ describe("secretstream (chunked encryption)", () => {
 		}
 
 		expect(reassembled).toEqual(original);
+	});
+});
+
+describe("encodePayload / decodePayloadBytes", () => {
+	it("roundtrips a text-only payload", () => {
+		const payload: NotePayload = { text: "encode-decode test" };
+		const encoded = encodePayload(payload);
+		const decoded = decodePayloadBytes(encoded);
+		expect(decoded.text).toBe("encode-decode test");
+	});
+
+	it("roundtrips a payload with files", () => {
+		const payload: NotePayload = {
+			text: "with files",
+			files: [
+				{
+					name: "f.bin",
+					type: "application/octet-stream",
+					size: 3,
+					data: new Uint8Array([1, 2, 3]),
+				},
+			],
+		};
+		const encoded = encodePayload(payload);
+		const decoded = decodePayloadBytes(encoded);
+		expect(decoded.text).toBe("with files");
+		expect(decoded.files).toHaveLength(1);
+		expect(decoded.files?.[0]?.name).toBe("f.bin");
+	});
+
+	it("throws on invalid payload structure (text as number)", () => {
+		const invalid = encode({ text: 999 });
+		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
+	it("throws on non-object payload", () => {
+		const invalid = encode("just a string");
+		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow(
+			"Invalid payload structure after decryption",
+		);
 	});
 });
