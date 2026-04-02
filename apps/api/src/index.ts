@@ -76,6 +76,21 @@ if (STORAGE_BACKEND !== "local" && STORAGE_BACKEND !== "s3") {
 	process.exit(1);
 }
 
+if (Number.isNaN(CHUNK_SIZE) || CHUNK_SIZE <= 0) {
+	console.error("ERROR: CHUNK_SIZE must be a positive number");
+	process.exit(1);
+}
+
+if (Number.isNaN(MAX_CHUNKED_FILE_SIZE) || MAX_CHUNKED_FILE_SIZE <= 0) {
+	console.error("ERROR: MAX_CHUNKED_FILE_SIZE must be a positive number");
+	process.exit(1);
+}
+
+if (CHUNK_SIZE > MAX_CHUNKED_FILE_SIZE) {
+	console.error("ERROR: CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE");
+	process.exit(1);
+}
+
 if (STORAGE_BACKEND === "s3" && (!S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY)) {
 	console.error(
 		"ERROR: S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required when STORAGE_BACKEND=s3",

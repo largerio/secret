@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { serverDecrypt, serverEncrypt } from "@secret/crypto";
+import { SECRETSTREAM_ABYTES, serverDecrypt, serverEncrypt } from "@secret/crypto";
 import {
 	chunkedUploadInitSchema,
 	createNoteMultipartSchema,
@@ -529,7 +529,7 @@ export function createNotesRoutes() {
 		}
 
 		const chunkSize = c.get("chunkSize");
-		const maxChunkBytes = chunkSize + 17; // SECRETSTREAM_ABYTES overhead
+		const maxChunkBytes = chunkSize + SECRETSTREAM_ABYTES;
 		if (rawBody.byteLength > maxChunkBytes) {
 			return c.json({ error: "Chunk too large" }, 413);
 		}
@@ -591,18 +591,7 @@ export function createNotesRoutes() {
 			return c.json({ error: `Missing chunks: [${missing.join(", ")}]` }, 400);
 		}
 
-		// Check if note already exists (double-complete protection)
-		const existing = db
-			.select({ id: notes.id })
-			.from(notes)
-			.where(eq(notes.id, session.noteId))
-			.get();
-		if (existing !== undefined) {
-			return c.json({ error: "Upload already completed" }, 409);
-		}
-
-		// Parse metadata and create note
-		const meta = JSON.parse(session.metadata) as {
+		let meta: {
 			streamHeader: string;
 			clientNonce: string;
 			hasPassword: boolean;
@@ -611,34 +600,56 @@ export function createNotesRoutes() {
 			fileCount: number;
 			salt?: string;
 		};
+		try {
+			meta = JSON.parse(session.metadata) as typeof meta;
+		} catch {
+			return c.json({ error: "Corrupted upload session" }, 500);
+		}
 
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + meta.expiresIn * 1000);
 
-		db.insert(notes)
-			.values({
-				id: session.noteId,
-				encryptedData: Buffer.alloc(0),
-				serverNonce: "",
-				clientNonce: meta.clientNonce,
-				hasPassword: meta.hasPassword,
-				salt: meta.salt ?? null,
-				deleteToken: session.deleteToken,
-				burnAfterRead: meta.maxReads === 1,
-				fileCount: meta.fileCount,
-				filePath: null,
-				expiresAt,
-				maxReads: meta.maxReads,
-				createdAt: now,
-				chunkCount: session.chunkCount,
-				streamHeader: meta.streamHeader,
-			})
-			.run();
+		// Transaction: check duplicate + insert note + delete session atomically
+		const result = db.transaction((tx) => {
+			const existing = tx
+				.select({ id: notes.id })
+				.from(notes)
+				.where(eq(notes.id, session.noteId))
+				.get();
+			if (existing !== undefined) {
+				return { error: "Upload already completed" as const };
+			}
 
-		// Remove upload session
-		db.delete(uploads)
-			.where(eq(uploads.id, uploadId as string))
-			.run();
+			tx.insert(notes)
+				.values({
+					id: session.noteId,
+					encryptedData: Buffer.alloc(0),
+					serverNonce: "",
+					clientNonce: meta.clientNonce,
+					hasPassword: meta.hasPassword,
+					salt: meta.salt ?? null,
+					deleteToken: session.deleteToken,
+					burnAfterRead: meta.maxReads === 1,
+					fileCount: meta.fileCount,
+					filePath: null,
+					expiresAt,
+					maxReads: meta.maxReads,
+					createdAt: now,
+					chunkCount: session.chunkCount,
+					streamHeader: meta.streamHeader,
+				})
+				.run();
+
+			tx.delete(uploads)
+				.where(eq(uploads.id, uploadId as string))
+				.run();
+
+			return { success: true as const };
+		});
+
+		if ("error" in result) {
+			return c.json({ error: result.error }, 409);
+		}
 
 		return c.json(
 			{
