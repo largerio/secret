@@ -212,6 +212,46 @@ describe("SDK crypto", () => {
 		expect(decrypted.files?.[0]?.name).toBe("test.txt");
 	});
 
+	test("decryptNoteChunked throws when given an empty chunks array", async () => {
+		await ensureInit();
+
+		const encrypted = await encryptNoteChunked({ text: "dummy" }, 64);
+
+		await expect(decryptNoteChunked([], encrypted.header, encrypted.keyFragment)).rejects.toThrow(
+			"No chunks to decrypt",
+		);
+	});
+
+	test("decryptNoteChunked returns files with empty data for zero-byte files", async () => {
+		await ensureInit();
+
+		const payload: NotePayload = {
+			text: "note with empty files",
+			files: [
+				{ name: "empty.txt", type: "text/plain", size: 0, data: new Uint8Array(0) },
+				{ name: "empty2.bin", type: "application/octet-stream", size: 0, data: new Uint8Array(0) },
+			],
+		};
+
+		const encrypted = await encryptNoteChunked(payload, 64);
+
+		// With zero-byte files, only the header chunk is produced
+		expect(encrypted.chunks).toHaveLength(1);
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.text).toBe("note with empty files");
+		expect(decrypted.files).toHaveLength(2);
+		expect(decrypted.files?.[0]?.name).toBe("empty.txt");
+		expect(decrypted.files?.[0]?.data).toEqual(new Uint8Array(0));
+		expect(decrypted.files?.[1]?.name).toBe("empty2.bin");
+		expect(decrypted.files?.[1]?.data).toEqual(new Uint8Array(0));
+	});
+
 	test("is compatible with test vectors", async () => {
 		await ensureInit();
 

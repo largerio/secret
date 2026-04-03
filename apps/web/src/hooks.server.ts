@@ -1,10 +1,14 @@
 import type { Handle } from "@sveltejs/kit";
+import { parseAcceptLanguage } from "$lib/i18n/index.svelte";
 
 const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
 
 const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
 
 export const handle: Handle = async ({ event, resolve }) => {
+	const acceptLang = event.request.headers.get("accept-language") ?? "";
+	event.locals.locale = parseAcceptLanguage(acceptLang);
+
 	if (PROXY_PATHS.some((p) => event.url.pathname.startsWith(p))) {
 		const target = `${API_TARGET}${event.url.pathname}${event.url.search}`;
 		const res = await fetch(target, {
@@ -28,5 +32,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		});
 	}
 
-	return resolve(event);
+	return resolve(event, {
+		transformPageChunk: ({ html }) => html.replace("%lang%", event.locals.locale),
+	});
 };

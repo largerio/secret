@@ -19,6 +19,17 @@ import {
 } from "@secret/crypto/client";
 import type { ContentMode, NotePayload } from "@secret/shared";
 
+function concatBytes(arrays: Uint8Array[]): Uint8Array {
+	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
+	const result = new Uint8Array(totalLen);
+	let offset = 0;
+	for (const arr of arrays) {
+		result.set(arr, offset);
+		offset += arr.length;
+	}
+	return result;
+}
+
 let initPromise: Promise<void> | undefined;
 
 export async function ensureInit(): Promise<void> {
@@ -172,15 +183,11 @@ export async function encryptNoteChunked(
 
 		// Stream file data chunk by chunk (never hold more than chunkSize in memory)
 		if (payload.files && hasMoreData) {
-			const allFiles = payload.files;
-			for (let fi = 0; fi < allFiles.length; fi++) {
-				const file = allFiles[fi];
-				if (!file) continue;
-				const data = file.data;
-				for (let offset = 0; offset < data.length; offset += chunkSize) {
-					const end = Math.min(offset + chunkSize, data.length);
-					const slice = data.subarray(offset, end);
-					const isLastChunkOfLastFile = fi === allFiles.length - 1 && end >= data.length;
+			for (const [fi, file] of payload.files.entries()) {
+				for (let offset = 0; offset < file.data.length; offset += chunkSize) {
+					const end = Math.min(offset + chunkSize, file.data.length);
+					const slice = file.data.subarray(offset, end);
+					const isLastChunkOfLastFile = fi === payload.files.length - 1 && end >= file.data.length;
 					chunks.push(cryptoEncryptChunk(state, slice, isLastChunkOfLastFile));
 				}
 			}
@@ -264,45 +271,21 @@ export async function decryptNoteChunked(
 			);
 		}
 
-		// Decrypt remaining chunks and distribute bytes to files
-		const fileDataBuffers: Uint8Array[][] = fileMeta.map(() => []);
-		let currentFileIndex = 0;
-		let currentFileRemaining = fileMeta[0]?.size ?? 0;
-
-		for (let i = 1; i < encryptedChunks.length; i++) {
-			const chunk = encryptedChunks[i];
-			if (!chunk) break;
+		// Decrypt remaining chunks and concatenate all file bytes
+		const dataChunks: Uint8Array[] = [];
+		for (const chunk of encryptedChunks.slice(1)) {
 			const { decrypted } = cryptoDecryptChunk(state, chunk);
-
-			// Distribute decrypted bytes across files
-			let offset = 0;
-			while (offset < decrypted.length && currentFileIndex < fileMeta.length) {
-				const take = Math.min(decrypted.length - offset, currentFileRemaining);
-				const buffers = fileDataBuffers[currentFileIndex];
-				if (buffers) {
-					buffers.push(decrypted.subarray(offset, offset + take));
-				}
-				offset += take;
-				currentFileRemaining -= take;
-
-				if (currentFileRemaining <= 0) {
-					currentFileIndex++;
-					currentFileRemaining = fileMeta[currentFileIndex]?.size ?? 0;
-				}
-			}
+			dataChunks.push(decrypted);
 		}
 
-		// Assemble files from buffers
-		const files = fileMeta.map((meta, idx) => {
-			const buffers = fileDataBuffers[idx] ?? [];
-			const totalLen = buffers.reduce((sum, b) => sum + b.length, 0);
-			const assembled = new Uint8Array(totalLen);
-			let off = 0;
-			for (const buf of buffers) {
-				assembled.set(buf, off);
-				off += buf.length;
-			}
-			return { name: meta.name, type: meta.type, size: meta.size, data: assembled };
+		const totalData = concatBytes(dataChunks);
+
+		// Distribute bytes to files based on metadata sizes
+		let byteOffset = 0;
+		const files = fileMeta.map((meta) => {
+			const data = totalData.subarray(byteOffset, byteOffset + meta.size);
+			byteOffset += meta.size;
+			return { name: meta.name, type: meta.type, size: meta.size, data };
 		});
 
 		return buildPayload(headerData, files);

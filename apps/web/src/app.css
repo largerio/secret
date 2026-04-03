@@ -11,6 +11,11 @@
 	color-scheme: dark;
 }
 
+button,
+[role="button"] {
+	cursor: pointer;
+}
+
 body {
 	font-family:
 		system-ui,

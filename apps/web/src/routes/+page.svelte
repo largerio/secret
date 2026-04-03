@@ -52,7 +52,8 @@ async function handleSubmit() {
 	try {
 		const capToken = await solveCap();
 		const client = await getClient();
-		const parsedMaxReads = maxReads ? parseInt(maxReads, 10) : 1;
+		const parsed = parseInt(String(maxReads), 10);
+		const parsedMaxReads = Number.isNaN(parsed) ? 1 : parsed;
 
 		const noteFiles = await Promise.all(
 			files.map(async (file) => {

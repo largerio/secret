@@ -446,14 +446,14 @@ describe("GET /api/v1/notes/:id/exists", () => {
 		expect(res.status).toBe(200);
 	});
 
-	it("returns 404 for a non-existent note", async () => {
+	it("returns exists false for a non-existent note", async () => {
 		const res = await app.request("/api/v1/notes/nonexistent1/exists");
-		expect(res.status).toBe(404);
+		expect(res.status).toBe(200);
 		const json = await res.json();
-		expect(json.error).toBe("Note not found");
+		expect(json.exists).toBe(false);
 	});
 
-	it("returns 404 for an expired note", async () => {
+	it("returns exists false for an expired note", async () => {
 		const { id } = await createTestNote({ expiresIn: 300 });
 
 		// Manually expire the note by updating the DB
@@ -465,9 +465,9 @@ describe("GET /api/v1/notes/:id/exists", () => {
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}/exists`);
-		expect(res.status).toBe(404);
+		expect(res.status).toBe(200);
 		const json = await res.json();
-		expect(json.error).toBe("Note not found");
+		expect(json.exists).toBe(false);
 	});
 
 	it("returns 400 for invalid note ID format", async () => {
@@ -1234,6 +1234,23 @@ describe("Chunked upload flow", () => {
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error).toBe("Chunk hash mismatch");
+	});
+
+	it("handles chunk upload when session is deleted mid-upload", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("test");
+
+		// Delete the upload session from DB before uploading a chunk
+		const { uploads: up } = await import("../db/schema.js");
+		const { eq: e } = await import("drizzle-orm");
+		db.delete(up).where(e(up.id, initJson.uploadId)).run();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		expect(res.status).toBe(404);
 	});
 
 	it("rejects chunk with out-of-range index", async () => {
@@ -2021,7 +2038,9 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 
 		// Note should be gone
 		const getRes = await app.request(`/api/v1/notes/${id}/exists`);
-		expect(getRes.status).toBe(404);
+		expect(getRes.status).toBe(200);
+		const existsJson = await getRes.json();
+		expect(existsJson.exists).toBe(false);
 	});
 
 	it("logs error when storage.deleteChunks fails during delete", async () => {

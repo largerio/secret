@@ -179,6 +179,24 @@ describe("encryptPayload / decryptPayload", () => {
 		);
 	});
 
+	it("throws when file in payload has non-number size", () => {
+		const key = generateKey();
+		const invalidPayload = encode({
+			files: [{ name: "f.txt", type: "text/plain", size: "not-a-number" }],
+		});
+		const nonce = generateNonce();
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			invalidPayload,
+			null,
+			null,
+			nonce,
+			key,
+		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
+			"Invalid payload structure after decryption",
+		);
+	});
+
 	it("produces different ciphertexts for the same plaintext", () => {
 		const key = generateKey();
 		const payload: NotePayload = { text: "same" };

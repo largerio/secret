@@ -1,6 +1,7 @@
 import type { CreateNoteResponse, ReadNoteResponse } from "@secret/shared";
 import { SecretApiError } from "./errors.js";
 import type { NoteInfo } from "./types.js";
+import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
 
 const UINT32_SIZE = 4;
 const MAX_REASONABLE_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB sanity limit
@@ -80,26 +81,22 @@ export async function postJson(
 	return handleResponse<CreateNoteResponse>(res);
 }
 
-export function postFormData(
+export async function postFormData(
 	config: HttpClientConfig,
 	path: string,
 	formData: FormData,
 	onProgress?: (progress: number) => void,
 	capToken?: string,
 ): Promise<CreateNoteResponse> {
-	if (onProgress && typeof XMLHttpRequest !== "undefined") {
-		return postFormDataXhr(config, path, formData, onProgress, capToken);
+	if (onProgress && isXhrAvailable()) {
+		return postFormDataXhr(
+			`${config.baseUrl}${path}`,
+			authHeaders(config.apiKey, capToken),
+			formData,
+			onProgress,
+		);
 	}
 
-	return postFormDataFetch(config, path, formData, capToken);
-}
-
-async function postFormDataFetch(
-	config: HttpClientConfig,
-	path: string,
-	formData: FormData,
-	capToken?: string,
-): Promise<CreateNoteResponse> {
 	const res = await config.fetch(`${config.baseUrl}${path}`, {
 		method: "POST",
 		headers: authHeaders(config.apiKey, capToken),
@@ -107,48 +104,6 @@ async function postFormDataFetch(
 	});
 
 	return handleResponse<CreateNoteResponse>(res);
-}
-
-function postFormDataXhr(
-	config: HttpClientConfig,
-	path: string,
-	formData: FormData,
-	onProgress: (progress: number) => void,
-	capToken?: string,
-): Promise<CreateNoteResponse> {
-	return new Promise((resolve, reject) => {
-		const xhr = new XMLHttpRequest();
-		xhr.open("POST", `${config.baseUrl}${path}`);
-
-		const headers = authHeaders(config.apiKey, capToken);
-		for (const [name, value] of Object.entries(headers)) {
-			xhr.setRequestHeader(name, value);
-		}
-
-		xhr.upload.addEventListener("progress", (e) => {
-			if (e.lengthComputable) {
-				onProgress(e.loaded / e.total);
-			}
-		});
-
-		xhr.addEventListener("load", () => {
-			try {
-				const data = JSON.parse(xhr.responseText) as Record<string, unknown>;
-				if (xhr.status >= 200 && xhr.status < 300) {
-					resolve(data as unknown as CreateNoteResponse);
-				} else {
-					reject(new SecretApiError(extractErrorMessage(data, xhr.status), xhr.status));
-				}
-			} catch {
-				reject(new SecretApiError("Invalid JSON response", xhr.status));
-			}
-		});
-
-		xhr.addEventListener("error", () => reject(new SecretApiError("Network error", 0)));
-		xhr.addEventListener("abort", () => reject(new SecretApiError("Upload cancelled", 0)));
-
-		xhr.send(formData);
-	});
 }
 
 export async function getJson<T>(
@@ -276,7 +231,14 @@ export async function checkNote(config: HttpClientConfig, id: string): Promise<N
 	});
 
 	if (res.status === 404) {
-		return { exists: false, hasPassword: false, fileCount: 0, expiresAt: "", maxReads: 1 };
+		return {
+			exists: false,
+			hasPassword: false,
+			fileCount: 0,
+			expiresAt: "",
+			maxReads: 1,
+			chunked: false,
+		};
 	}
 
 	if (!res.ok) {

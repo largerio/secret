@@ -752,6 +752,46 @@ describe("SecretClient", () => {
 		expect(initMeta["maxReads"]).toBe(10);
 	});
 
+	// --- chunked hint tests ---
+
+	test("readNote with chunked: true goes directly to stream endpoint", async () => {
+		const http = await getHttpMocks();
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "headerB64",
+			chunkCount: 1,
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-06-01",
+			expiresAt: "2099-06-01",
+			chunks: [new Uint8Array([10])],
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.readNote("streamNote123", "keyFrag", { chunked: true });
+
+		expect(http.getNoteStream).toHaveBeenCalled();
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
+		expect(http.getNote).not.toHaveBeenCalled();
+	});
+
+	test("readNote with chunked: false skips stream and uses raw endpoint", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockResolvedValue({
+			data: new Uint8Array([1, 2, 3]),
+			clientNonce: "nonce",
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-06-01",
+			expiresAt: "2099-06-01",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.readNote("rawNote1234567", "keyFrag", { chunked: false });
+
+		expect(http.getNoteStream).not.toHaveBeenCalled();
+		expect(http.getNoteRaw).toHaveBeenCalled();
+	});
+
 	// --- Stream read (readNoteStream) tests ---
 
 	test("readNote uses stream endpoint when it succeeds", async () => {

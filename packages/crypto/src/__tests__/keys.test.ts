@@ -17,6 +17,38 @@ beforeAll(async () => {
 	await initSodium();
 });
 
+describe("initSodium guards", () => {
+	it("throws when SECRETSTREAM_ABYTES has unexpected value", async () => {
+		const original = sodium.crypto_secretstream_xchacha20poly1305_ABYTES;
+		Object.defineProperty(sodium, "crypto_secretstream_xchacha20poly1305_ABYTES", {
+			value: 999,
+			writable: true,
+			configurable: true,
+		});
+		await expect(initSodium()).rejects.toThrow("Unexpected SECRETSTREAM_ABYTES");
+		Object.defineProperty(sodium, "crypto_secretstream_xchacha20poly1305_ABYTES", {
+			value: original,
+			writable: true,
+			configurable: true,
+		});
+	});
+
+	it("throws when SECRETSTREAM_HEADERBYTES has unexpected value", async () => {
+		const original = sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES;
+		Object.defineProperty(sodium, "crypto_secretstream_xchacha20poly1305_HEADERBYTES", {
+			value: 999,
+			writable: true,
+			configurable: true,
+		});
+		await expect(initSodium()).rejects.toThrow("Unexpected SECRETSTREAM_HEADERBYTES");
+		Object.defineProperty(sodium, "crypto_secretstream_xchacha20poly1305_HEADERBYTES", {
+			value: original,
+			writable: true,
+			configurable: true,
+		});
+	});
+});
+
 describe("generateKey", () => {
 	it("generates a 32-byte key", () => {
 		const key = generateKey();

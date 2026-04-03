@@ -5,29 +5,34 @@ import { marked } from "marked";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
-import SkeletonLoader from "$lib/components/SkeletonLoader.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
 import { formatSize } from "$lib/utils/format";
 
+interface NoteInfo {
+	hasPassword: boolean;
+	maxReads: number;
+	fileCount: number;
+	expiresAt: string;
+	chunked: boolean;
+}
+
 type NoteStatus =
-	| { state: "loading" }
 	| { state: "not_found" }
-	| {
-			state: "ready";
-			hasPassword: boolean;
-			maxReads: number;
-			fileCount: number;
-			expiresAt: string;
-	  }
+	| { state: "ready"; info: NoteInfo }
 	| { state: "downloading"; progress: number }
 	| { state: "decrypting" }
 	| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
 	| { state: "error"; message: string };
 
-let status = $state<NoteStatus>({ state: "loading" });
+const { data } = $props();
+
+const noteInfo: NoteInfo | null = data.noteInfo;
+let status = $state<NoteStatus>(
+	noteInfo ? { state: "ready", info: noteInfo } : { state: "not_found" },
+);
 let password = $state("");
 let keyFragment = $state("");
 let copied = $state(false);
@@ -46,7 +51,10 @@ async function copyText(text: string) {
 
 onMount(() => {
 	keyFragment = window.location.hash.slice(1);
-	checkNote();
+
+	if (!keyFragment) {
+		status = { state: "not_found" };
+	}
 
 	return () => {
 		if (status.state === "decrypted") {
@@ -57,42 +65,18 @@ onMount(() => {
 	};
 });
 
-async function checkNote() {
-	const id = page.params["id"];
-	if (!id || !keyFragment) {
-		status = { state: "not_found" };
-		return;
-	}
-
-	try {
-		const client = await getClient();
-		const result = await client.checkNote(id);
-		if (!result.exists) {
-			status = { state: "not_found" };
-		} else {
-			status = {
-				state: "ready",
-				hasPassword: result.hasPassword,
-				maxReads: result.maxReads,
-				fileCount: result.fileCount,
-				expiresAt: result.expiresAt,
-			};
-		}
-	} catch {
-		status = { state: "error", message: t("error_check_note") };
-	}
-}
-
 async function handleDecrypt() {
 	const id = page.params["id"];
-	if (!id) return;
+	if (!id || status.state !== "ready") return;
 
+	const chunked = status.info.chunked;
 	status = { state: "downloading", progress: 0 };
 
 	try {
 		const client = await getClient();
 		const result = await client.readNote(id, keyFragment, {
 			...(password ? { password } : {}),
+			chunked,
 			onDownloadProgress: (p) => {
 				if (status.state === "downloading") {
 					status = { state: "downloading", progress: p * 100 };
@@ -188,12 +172,7 @@ function isPdf(type: string): boolean {
 </svelte:head>
 
 <div class="space-y-6">
-	{#if status.state === "loading"}
-		<div class="flex items-center justify-center py-12" transition:fade={{ duration: 200 }}>
-			<SkeletonLoader label={t("loading")} />
-		</div>
-
-	{:else if status.state === "not_found"}
+	{#if status.state === "not_found"}
 		<div class="rounded-xl border border-slate-700 bg-slate-900 p-8 text-center">
 			<h1 class="text-xl font-semibold text-slate-300">{t("not_found_title")}</h1>
 			<p class="mt-2 text-slate-500">{t("not_found_description")}</p>
@@ -207,20 +186,20 @@ function isPdf(type: string): boolean {
 			<h1 class="text-xl font-semibold">{t("view_title")}</h1>
 			<p class="text-sm text-slate-400">{t("view_description")}</p>
 
-			{#if status.maxReads === 1}
+			{#if status.info.maxReads === 1}
 				<div class="rounded-lg border border-amber-800/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300" role="alert">
 					{t("view_burn_warning")}
 				</div>
 			{/if}
 
 			<p class="text-xs text-slate-500">
-				{t("expires")} {new Date(status.expiresAt).toLocaleString()}
-				{#if status.fileCount > 0}
-					&bull; {t("files_count", { count: status.fileCount })}
+				{t("expires")} {new Date(status.info.expiresAt).toLocaleString()}
+				{#if status.info.fileCount > 0}
+					&bull; {t("files_count", { count: status.info.fileCount })}
 				{/if}
 			</p>
 
-			{#if status.hasPassword}
+			{#if status.info.hasPassword}
 				<div>
 					<label for="decrypt-password" class="mb-1 block text-sm font-medium text-slate-300">{t("view_password_label")}</label>
 					<input
@@ -244,7 +223,7 @@ function isPdf(type: string): boolean {
 		</div>
 
 	{:else if status.state === "downloading" || status.state === "decrypting"}
-		<div class="flex flex-col items-center justify-center gap-6 py-12" role="status" transition:fade={{ duration: 200 }}>
+		<div class="flex flex-col items-center justify-center gap-6 py-12" role="status">
 			<div class="w-72">
 				<StepProgress
 					steps={[
@@ -347,7 +326,7 @@ function isPdf(type: string): boolean {
 		</div>
 
 	{:else if status.state === "error"}
-		<div class="rounded-xl border border-red-800/50 bg-red-900/20 p-6 text-center">
+		<div class="rounded-xl border border-red-800/50 bg-red-900/20 p-6 text-center" in:fade={{ duration: 200 }}>
 			<h1 class="text-lg font-semibold text-red-300">{t("error_title")}</h1>
 			<p class="mt-2 text-sm text-red-400">{status.message}</p>
 			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
