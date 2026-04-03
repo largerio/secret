@@ -96,5 +96,6 @@
 	"seo_keywords": "notes chiffrées, partage de fichiers sécurisé, chiffrement zero-knowledge, partage de mots de passe, destruction après lecture, chiffrement de bout en bout, auto-hébergé, vie privée, partage de secrets",
 	"manage_title": "Gérer la note",
 	"manage_description": "Vous pouvez supprimer cette note avec le bouton ci-dessous.",
-	"manage_invalid_token": "Aucun token de suppression trouvé. Le lien est peut-être incomplet."
+	"manage_invalid_token": "Aucun token de suppression trouvé. Le lien est peut-être incomplet.",
+	"back_home": "Retour à l'accueil"
 }

@@ -96,5 +96,6 @@
 	"seo_keywords": "verschlüsselte Notizen, sicheres Dateiteilen, Zero-Knowledge-Verschlüsselung, Passwörter teilen, nach Lesen vernichten, Ende-zu-Ende-Verschlüsselung, selbst gehostet, Datenschutz, Geheimnisse teilen",
 	"manage_title": "Notiz verwalten",
 	"manage_description": "Du kannst diese Notiz mit dem Button unten löschen.",
-	"manage_invalid_token": "Kein Lösch-Token gefunden. Der Link ist möglicherweise unvollständig."
+	"manage_invalid_token": "Kein Lösch-Token gefunden. Der Link ist möglicherweise unvollständig.",
+	"back_home": "Zurück zur Startseite"
 }

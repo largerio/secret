@@ -1,7 +1,6 @@
 import type { Handle } from "@sveltejs/kit";
 import { parseAcceptLanguage } from "$lib/i18n/index.svelte";
-
-const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
+import { API_TARGET } from "$lib/server/env";
 
 const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
 

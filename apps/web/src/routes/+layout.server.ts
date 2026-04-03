@@ -6,8 +6,7 @@ import {
 	MAX_FILES_PER_NOTE,
 } from "@secret/shared";
 import type { ServerLoad } from "@sveltejs/kit";
-
-const env = process.env;
+import { env } from "$env/dynamic/private";
 
 export const load: ServerLoad = ({ url, locals }) => {
 	const config: ServerConfig = {

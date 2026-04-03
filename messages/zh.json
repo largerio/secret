@@ -96,5 +96,6 @@
 	"seo_keywords": "加密笔记, 安全文件分享, 零知识加密, 密码分享, 阅后即焚, 端到端加密, 自托管, 隐私, 秘密分享",
 	"manage_title": "管理笔记",
 	"manage_description": "您可以使用下方按钮删除此笔记。",
-	"manage_invalid_token": "未找到删除令牌。链接可能不完整。"
+	"manage_invalid_token": "未找到删除令牌。链接可能不完整。",
+	"back_home": "返回首页"
 }
