@@ -10,6 +10,13 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 			return;
 		}
 
+		// Chunked upload session routes are authenticated by uploadId (init validates auth)
+		const path = c.req.path;
+		if (path.includes("/upload/") && (path.includes("/chunks/") || path.endsWith("/complete"))) {
+			await next();
+			return;
+		}
+
 		const authHeader = c.req.header("authorization");
 		if (authHeader) {
 			const key = authHeader.replace(/^Bearer\s+/i, "");
