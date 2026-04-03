@@ -91,5 +91,8 @@
 	"md_preview_empty": "Rien à prévisualiser",
 	"seo_title": "Secret — Partage sécurisé de notes et fichiers chiffrés zero-knowledge",
 	"seo_description": "Partagez mots de passe, notes et fichiers en toute sécurité avec un chiffrement de bout en bout. Vos données sont chiffrées dans le navigateur — le serveur ne voit jamais votre contenu. Gratuit, open-source, sans compte requis.",
-	"seo_keywords": "notes chiffrées, partage de fichiers sécurisé, chiffrement zero-knowledge, partage de mots de passe, destruction après lecture, chiffrement de bout en bout, auto-hébergé, vie privée, partage de secrets"
+	"seo_keywords": "notes chiffrées, partage de fichiers sécurisé, chiffrement zero-knowledge, partage de mots de passe, destruction après lecture, chiffrement de bout en bout, auto-hébergé, vie privée, partage de secrets",
+	"manage_title": "Gérer la note",
+	"manage_description": "Vous pouvez supprimer cette note avec le bouton ci-dessous.",
+	"manage_invalid_token": "Aucun token de suppression trouvé. Le lien est peut-être incomplet."
 }

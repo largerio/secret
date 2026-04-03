@@ -33,6 +33,7 @@ const noteInfo: NoteInfo | null = data.noteInfo;
 let status = $state<NoteStatus>(
 	noteInfo ? { state: "ready", info: noteInfo } : { state: "not_found" },
 );
+let mounted = $state(false);
 let password = $state("");
 let keyFragment = $state("");
 let copied = $state(false);
@@ -51,6 +52,7 @@ async function copyText(text: string) {
 
 onMount(() => {
 	keyFragment = window.location.hash.slice(1);
+	mounted = true;
 
 	if (!keyFragment) {
 		status = { state: "not_found" };
@@ -216,9 +218,14 @@ function isPdf(type: string): boolean {
 
 			<button
 				onclick={handleDecrypt}
-				class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark transition-colors"
+				disabled={!mounted}
+				class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 transition-colors"
 			>
-				{t("decrypt_button")}
+				{#if !mounted}
+					<i class="fa-solid fa-spinner fa-spin"></i> {t("loading")}
+				{:else}
+					{t("decrypt_button")}
+				{/if}
 			</button>
 		</div>
 

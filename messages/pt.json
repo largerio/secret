@@ -91,5 +91,8 @@
 	"md_preview_empty": "Nada para pré-visualizar",
 	"seo_title": "Secret — Partilha segura de notas e ficheiros cifrados zero-knowledge",
 	"seo_description": "Partilhe palavras-passe, notas e ficheiros em segurança com cifragem de ponta a ponta. Os seus dados são cifrados no navegador — o servidor nunca vê o seu conteúdo. Gratuito, código aberto, sem conta necessária.",
-	"seo_keywords": "notas cifradas, partilha segura de ficheiros, cifragem zero-knowledge, partilha de palavras-passe, destruir após leitura, cifragem ponta a ponta, auto-alojado, privacidade, partilha de segredos"
+	"seo_keywords": "notas cifradas, partilha segura de ficheiros, cifragem zero-knowledge, partilha de palavras-passe, destruir após leitura, cifragem ponta a ponta, auto-alojado, privacidade, partilha de segredos",
+	"manage_title": "Gerir nota",
+	"manage_description": "Pode eliminar esta nota usando o botão abaixo.",
+	"manage_invalid_token": "Nenhum token de eliminação encontrado. O link pode estar incompleto."
 }

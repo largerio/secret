@@ -5,11 +5,17 @@ import type { ProgressInfo, UploadPhase } from "@secret/sdk-js";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
+import { onMount } from "svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
 import { solveCap } from "$lib/utils/cap";
 import { formatSize } from "$lib/utils/format";
+
+let mounted = $state(false);
+onMount(() => {
+	mounted = true;
+});
 
 let contentMode = $state<ContentMode>("text");
 let text = $state("");
@@ -20,12 +26,10 @@ let maxReads = $state("1");
 let isSubmitting = $state(false);
 let error = $state("");
 let shareUrl = $state("");
-let noteId = $state("");
-let deleteToken = $state("");
 let qrCodeUrl = $state("");
+let manageUrl = $state("");
 let copied = $state(false);
-let isDeleting = $state(false);
-let isDeleted = $state(false);
+let manageCopied = $state(false);
 let isDragging = $state(false);
 let uploadProgress = $state<number | null>(null);
 let uploadPhase = $state<UploadPhase>("encrypting");
@@ -88,8 +92,7 @@ async function handleSubmit() {
 
 		const url = `${window.location.origin}/note/${result.id}#${result.keyFragment}`;
 		shareUrl = url;
-		noteId = result.id;
-		deleteToken = result.deleteToken;
+		manageUrl = `${window.location.origin}/note/${result.id}/manage#${result.deleteToken}`;
 		const { toDataURL } = await import("qrcode");
 		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
 	} catch (e) {
@@ -138,19 +141,15 @@ async function copyToClipboard() {
 	}
 }
 
-async function handleDelete() {
-	if (!confirm(t("delete_confirm"))) return;
-
-	isDeleting = true;
+async function copyManageUrl() {
 	try {
-		const capToken = await solveCap();
-		const client = await getClient();
-		await client.deleteNote(noteId, deleteToken, capToken);
-		isDeleted = true;
-	} catch (e) {
-		error = e instanceof Error ? e.message : t("error_generic");
-	} finally {
-		isDeleting = false;
+		await navigator.clipboard.writeText(manageUrl);
+		manageCopied = true;
+		setTimeout(() => {
+			manageCopied = false;
+		}, 2000);
+	} catch {
+		error = t("error_clipboard");
 	}
 }
 
@@ -162,11 +161,9 @@ function reset() {
 	expiresIn = 86400;
 	maxReads = "1";
 	shareUrl = "";
-	noteId = "";
-	deleteToken = "";
+	manageUrl = "";
 	qrCodeUrl = "";
 	error = "";
-	isDeleted = false;
 	uploadPhase = "encrypting";
 	uploadChunkLabel = "";
 }
@@ -242,12 +239,37 @@ function reset() {
 						/>
 					</div>
 				{/if}
+
+				{#if manageUrl}
+					<details class="group">
+						<summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-400 transition-colors">
+							<i class="fa-solid fa-gear"></i> {t("delete_label")}
+						</summary>
+						<div class="mt-2 space-y-2">
+							<div class="flex gap-2">
+								<input
+									id="manage-url"
+									type="text"
+									readonly
+									value={manageUrl}
+									class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-400"
+								/>
+								<button
+									onclick={copyManageUrl}
+									class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-700 transition-colors"
+									aria-label={t("copy_button")}
+								>
+									<i class="fa-regular fa-copy"></i> {manageCopied ? t("delete_copied") : t("copy_button")}
+								</button>
+							</div>
+							<p class="text-xs text-slate-600">
+								{t("delete_warning")}
+							</p>
+						</div>
+					</details>
+				{/if}
 			</div>
 		</div>
-
-		{#if isDeleted}
-			<p class="text-sm text-green-400" role="status"><i class="fa-solid fa-check"></i> {t("note_deleted")}</p>
-		{/if}
 
 		<button
 			onclick={reset}
@@ -255,16 +277,6 @@ function reset() {
 		>
 			<i class="fa-solid fa-plus"></i> {t("create_another")}
 		</button>
-
-		{#if deleteToken && !isDeleted}
-			<button
-				onclick={handleDelete}
-				disabled={isDeleting}
-				class="w-full rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2.5 text-sm font-medium text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
-			>
-				<i class="fa-solid fa-trash"></i> {isDeleting ? "..." : t("delete_button")}
-			</button>
-		{/if}
 	</div>
 {:else}
 	<form
@@ -452,10 +464,12 @@ function reset() {
 
 		<button
 			type="submit"
-			disabled={isSubmitting}
-			class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+			disabled={!mounted || isSubmitting}
+			class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 transition-colors"
 		>
-			{#if isSubmitting}
+			{#if !mounted}
+				<i class="fa-solid fa-spinner fa-spin"></i> {t("loading")}
+			{:else if isSubmitting}
 				<i class="fa-solid fa-spinner fa-spin"></i> {t("submitting")}
 			{:else}
 				<i class="fa-solid fa-lock"></i> {t("submit_button")}

@@ -91,5 +91,8 @@
 	"md_preview_empty": "Niente da visualizzare",
 	"seo_title": "Secret — Condivisione sicura di note e file cifrati zero-knowledge",
 	"seo_description": "Condividi password, note e file in sicurezza con crittografia end-to-end. I tuoi dati vengono cifrati nel browser — il server non vede mai il tuo contenuto. Gratuito, open source, nessun account richiesto.",
-	"seo_keywords": "note cifrate, condivisione file sicura, crittografia zero-knowledge, condivisione password, distruggi dopo lettura, crittografia end-to-end, self-hosted, privacy, condivisione segreti"
+	"seo_keywords": "note cifrate, condivisione file sicura, crittografia zero-knowledge, condivisione password, distruggi dopo lettura, crittografia end-to-end, self-hosted, privacy, condivisione segreti",
+	"manage_title": "Gestisci nota",
+	"manage_description": "Puoi eliminare questa nota usando il pulsante qui sotto.",
+	"manage_invalid_token": "Nessun token di eliminazione trovato. Il link potrebbe essere incompleto."
 }
