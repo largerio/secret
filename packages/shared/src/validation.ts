@@ -65,6 +65,7 @@ export const noteExistsResponseSchema = z.object({
 	fileCount: z.number().int(),
 	expiresAt: z.string(),
 	maxReads: z.number().int(),
+	chunked: z.boolean(),
 });
 
 export const noteNotFoundResponseSchema = z.object({

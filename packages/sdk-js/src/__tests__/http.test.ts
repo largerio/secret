@@ -115,6 +115,17 @@ describe("postJson", () => {
 		expect(err.status).toBe(500);
 	});
 
+	test("throws SecretApiError with HTTP status fallback when error field is not a string", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(422, { error: 12345 })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(postJson(config, "/notes", {}));
+		expect(err.message).toBe("HTTP 422");
+		expect(err.status).toBe(422);
+	});
+
 	test("throws SecretApiError with fallback when response is not JSON", async () => {
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(new Response("not json", { status: 502 })),
@@ -184,239 +195,27 @@ describe("postFormData", () => {
 		const formData = new FormData();
 		await expect(postFormData(config, "/notes/upload", formData)).rejects.toThrow("File too large");
 	});
-});
 
-describe("postFormData with XMLHttpRequest", () => {
-	function createMockXhr() {
-		const listeners: Record<string, Array<(e: unknown) => void>> = {};
-		const uploadListeners: Record<string, Array<(e: unknown) => void>> = {};
+	test("delegates to XHR module when onProgress provided and XHR available", async () => {
+		const xhrModule = await import("../xhr.js");
+		const isAvailableSpy = vi.spyOn(xhrModule, "isXhrAvailable").mockReturnValue(true);
+		const xhrSpy = vi
+			.spyOn(xhrModule, "postFormDataXhr")
+			.mockResolvedValue({ id: "xhr1", expiresAt: "2099-01-01", deleteToken: "tok" });
 
-		const xhr = {
-			open: vi.fn(),
-			send: vi.fn(),
-			setRequestHeader: vi.fn(),
-			status: 200,
-			responseText: "",
-			upload: {
-				addEventListener: vi.fn((event: string, handler: (e: unknown) => void) => {
-					uploadListeners[event] = uploadListeners[event] ?? [];
-					uploadListeners[event]?.push(handler);
-				}),
-			},
-			addEventListener: vi.fn((event: string, handler: (e: unknown) => void) => {
-				listeners[event] = listeners[event] ?? [];
-				listeners[event]?.push(handler);
-			}),
-		};
+		const fetchMock = vi.fn<typeof fetch>();
+		const config = createConfig(fetchMock);
+		const formData = new FormData();
+		const onProgress = vi.fn();
 
-		function triggerEvent(event: string, data?: unknown) {
-			for (const handler of listeners[event] ?? []) {
-				handler(data);
-			}
-		}
+		const result = await postFormData(config, "/notes/upload", formData, onProgress);
 
-		function triggerUploadEvent(event: string, data?: unknown) {
-			for (const handler of uploadListeners[event] ?? []) {
-				handler(data);
-			}
-		}
+		expect(result.id).toBe("xhr1");
+		expect(xhrSpy).toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 
-		return { xhr, triggerEvent, triggerUploadEvent };
-	}
-
-	function installXhr(xhrInstance: ReturnType<typeof createMockXhr>["xhr"]) {
-		(globalThis as Record<string, unknown>)["XMLHttpRequest"] = function MockXMLHttpRequest() {
-			return xhrInstance;
-		};
-	}
-
-	function removeXhr() {
-		delete (globalThis as Record<string, unknown>)["XMLHttpRequest"];
-	}
-
-	test("uses XHR when onProgress is provided and XMLHttpRequest exists", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>(), "xhr-key");
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			const responseBody = { id: "xhr1", expiresAt: "2099-01-01", deleteToken: "tok" };
-			xhr.status = 200;
-			xhr.responseText = JSON.stringify(responseBody);
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-
-			triggerEvent("load");
-
-			const result = await promise;
-
-			expect(result).toEqual(responseBody);
-			expect(xhr.open).toHaveBeenCalledWith("POST", "https://api.example.com/notes/upload");
-			expect(xhr.setRequestHeader).toHaveBeenCalledWith("Authorization", "Bearer xhr-key");
-			expect(xhr.send).toHaveBeenCalledWith(formData);
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("does not set Authorization header when no apiKey", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			xhr.status = 200;
-			xhr.responseText = JSON.stringify({ id: "x", expiresAt: "", deleteToken: "" });
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("load");
-			await promise;
-
-			expect(xhr.setRequestHeader).not.toHaveBeenCalled();
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("reports upload progress when lengthComputable", async () => {
-		const { xhr, triggerEvent, triggerUploadEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			xhr.status = 200;
-			xhr.responseText = JSON.stringify({ id: "x", expiresAt: "", deleteToken: "" });
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-
-			triggerUploadEvent("progress", { lengthComputable: true, loaded: 50, total: 100 });
-			triggerUploadEvent("progress", { lengthComputable: false, loaded: 60, total: 0 });
-			triggerEvent("load");
-
-			await promise;
-
-			expect(onProgress).toHaveBeenCalledTimes(1);
-			expect(onProgress).toHaveBeenCalledWith(0.5);
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("rejects with SecretApiError on non-2xx status", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			xhr.status = 400;
-			xhr.responseText = JSON.stringify({ error: "Bad request" });
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("load");
-
-			const err = await catchApiError(promise);
-			expect(err.message).toBe("Bad request");
-			expect(err.status).toBe(400);
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("rejects with fallback HTTP status when no error field in non-2xx response", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			xhr.status = 500;
-			xhr.responseText = JSON.stringify({ detail: "Internal error" });
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("load");
-
-			const err = await catchApiError(promise);
-			expect(err.message).toBe("HTTP 500");
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("rejects with 'Invalid response' when response is not valid JSON", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			xhr.status = 200;
-			xhr.responseText = "not json";
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("load");
-
-			const err = await catchApiError(promise);
-			expect(err.message).toBe("Invalid JSON response");
-			expect(err.status).toBe(200);
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("rejects with 'Network error' on XHR error event", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("error");
-
-			const err = await catchApiError(promise);
-			expect(err.message).toBe("Network error");
-			expect(err.status).toBe(0);
-		} finally {
-			removeXhr();
-		}
-	});
-
-	test("rejects with 'Upload cancelled' on XHR abort event", async () => {
-		const { xhr, triggerEvent } = createMockXhr();
-		installXhr(xhr);
-
-		try {
-			const config = createConfig(vi.fn<typeof fetch>());
-			const formData = new FormData();
-			const onProgress = vi.fn();
-
-			const promise = postFormData(config, "/notes/upload", formData, onProgress);
-			triggerEvent("abort");
-
-			const err = await catchApiError(promise);
-			expect(err.message).toBe("Upload cancelled");
-			expect(err.status).toBe(0);
-		} finally {
-			removeXhr();
-		}
+		isAvailableSpy.mockRestore();
+		xhrSpy.mockRestore();
 	});
 });
 
@@ -658,6 +457,7 @@ describe("checkNote", () => {
 			fileCount: 0,
 			expiresAt: "",
 			maxReads: 1,
+			chunked: false,
 		});
 	});
 
@@ -670,6 +470,17 @@ describe("checkNote", () => {
 		const err = await catchApiError(checkNote(config, "noteId123456"));
 		expect(err.status).toBe(500);
 		expect(err.message).toBe("Internal error");
+	});
+
+	test("throws with HTTP fallback when error response is not JSON", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response("not json", { status: 502 })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(checkNote(config, "noteId123456"));
+		expect(err.status).toBe(502);
+		expect(err.message).toBe("HTTP 502");
 	});
 
 	test("includes Authorization header when apiKey is set", async () => {
@@ -738,6 +549,31 @@ describe("getNoteRaw", () => {
 		const result = await getNoteRaw(config, "noteId123456");
 
 		expect(result.salt).toBe("mySalt123");
+	});
+
+	test("defaults to 0 when X-File-Count header is negative", async () => {
+		const bodyBytes = new Uint8Array([10]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(bodyBytes, { ...defaultHeaders, "X-File-Count": "-5" })),
+		);
+		const config = createConfig(fetchMock);
+
+		const result = await getNoteRaw(config, "noteId123456");
+		expect(result.fileCount).toBe(0);
+	});
+
+	test("throws SecretApiError on invalid base64 nonce", async () => {
+		const bodyBytes = new Uint8Array([10]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				rawResponse(bodyBytes, { ...defaultHeaders, "X-Client-Nonce": "!!!invalid!!!" }),
+			),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
+		expect(err.message).toBe("Invalid base64 encoding in response");
+		expect(err.status).toBe(502);
 	});
 
 	test("throws SecretApiError on error response", async () => {
@@ -832,6 +668,22 @@ describe("getNoteRaw", () => {
 
 		expect(result.encryptedBytes).toEqual(bodyBytes);
 		expect(onProgress).not.toHaveBeenCalled();
+	});
+
+	test("throws SecretApiError when X-Client-Nonce contains invalid base64", async () => {
+		const bodyBytes = new Uint8Array([1, 2, 3]);
+		const headersWithBadNonce: Record<string, string> = {
+			...defaultHeaders,
+			"X-Client-Nonce": "!!!invalid-base64!!!",
+		};
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(bodyBytes, headersWithBadNonce)),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
+		expect(err.message).toBe("Invalid base64 encoding in response");
+		expect(err.status).toBe(502);
 	});
 });
 

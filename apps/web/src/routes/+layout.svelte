@@ -1,10 +1,9 @@
 <script lang="ts">
 import "../app.css";
-import { onMount } from "svelte";
-import { getConfig, setConfig } from "$lib/config.svelte";
-import { detectLocale, getLocale, setLocale, t } from "$lib/i18n/index.svelte";
+import { getConfig } from "$lib/config.svelte";
+import { getLocale, t } from "$lib/i18n/index.svelte";
 
-const { data, children } = $props();
+const { children } = $props();
 
 const repoUrl = "https://github.com/largerio/secret";
 
@@ -21,26 +20,22 @@ const localeToOg: Record<string, string> = {
 	ko: "ko_KR",
 };
 
-$effect(() => {
-	setConfig(data.config);
-});
-
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
 const appUrl = $derived(config.appUrl || "https://secret.larger.io");
-
-onMount(() => {
-	setLocale(detectLocale());
-
-	if (config.primaryColor && config.primaryColor !== "#6366f1") {
-		document.documentElement.style.setProperty("--app-primary-color", config.primaryColor);
-	}
-
-	document.documentElement.lang = getLocale();
-});
+const customColor = $derived(
+	config.primaryColor &&
+		/^#[\da-f]{3,8}$/i.test(config.primaryColor) &&
+		config.primaryColor !== "#6366f1"
+		? config.primaryColor
+		: "",
+);
 </script>
 
 <svelte:head>
+	{#if customColor}
+		{@html `<style>:root{--app-primary-color:${customColor}}</style>`}
+	{/if}
 	<meta property="og:site_name" content={config.appName} />
 	<meta property="og:type" content="website" />
 	<meta property="og:locale" content={localeToOg[locale] ?? "en_US"} />

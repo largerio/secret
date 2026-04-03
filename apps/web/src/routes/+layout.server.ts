@@ -9,7 +9,7 @@ import type { ServerLoad } from "@sveltejs/kit";
 
 const env = process.env;
 
-export const load: ServerLoad = ({ url }) => {
+export const load: ServerLoad = ({ url, locals }) => {
 	const config: ServerConfig = {
 		appName: env["APP_NAME"] ?? "Secret",
 		appDescription: env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing",
@@ -23,5 +23,5 @@ export const load: ServerLoad = ({ url }) => {
 		maxChunkedFileSize: Number(env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE)),
 	};
 
-	return { config };
+	return { config, locale: locals.locale };
 };

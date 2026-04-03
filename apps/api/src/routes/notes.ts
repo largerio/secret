@@ -9,6 +9,7 @@ import {
 	deleteNoteResponseSchema,
 	NOTE_ID_LENGTH,
 	noteExistsResponseSchema,
+	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
@@ -97,8 +98,12 @@ const existsRoute = createRoute({
 	},
 	responses: {
 		200: {
-			content: { "application/json": { schema: noteExistsResponseSchema } },
-			description: "Note exists",
+			content: {
+				"application/json": {
+					schema: z.union([noteExistsResponseSchema, noteNotFoundResponseSchema]),
+				},
+			},
+			description: "Note existence check result",
 		},
 	},
 });
@@ -270,13 +275,14 @@ export function createNotesRoutes() {
 				fileCount: notes.fileCount,
 				expiresAt: notes.expiresAt,
 				maxReads: notes.maxReads,
+				chunkCount: notes.chunkCount,
 			})
 			.from(notes)
 			.where(eq(notes.id, id))
 			.get();
 
 		if (note === undefined || note.expiresAt < new Date()) {
-			httpError(404, "Note not found");
+			return c.json({ exists: false as const });
 		}
 
 		return c.json({
@@ -285,6 +291,7 @@ export function createNotesRoutes() {
 			fileCount: note.fileCount,
 			expiresAt: note.expiresAt.toISOString(),
 			maxReads: note.maxReads ?? 0,
+			chunked: (note.chunkCount ?? 0) > 0,
 		});
 	});
 
@@ -552,23 +559,15 @@ export function createNotesRoutes() {
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
-		// Update received chunks atomically
-		db.transaction((tx) => {
-			const current = tx
-				.select({ chunksReceived: uploads.chunksReceived })
-				.from(uploads)
+		// Update received chunks
+		const received = JSON.parse(session.chunksReceived) as number[];
+		if (!received.includes(index)) {
+			received.push(index);
+			db.update(uploads)
+				.set({ chunksReceived: JSON.stringify(received) })
 				.where(eq(uploads.id, uploadId as string))
-				.get();
-			if (!current) return;
-			const received = JSON.parse(current.chunksReceived) as number[];
-			if (!received.includes(index)) {
-				received.push(index);
-				tx.update(uploads)
-					.set({ chunksReceived: JSON.stringify(received) })
-					.where(eq(uploads.id, uploadId as string))
-					.run();
-			}
-		});
+				.run();
+		}
 
 		return c.json({ received: true as const });
 	});

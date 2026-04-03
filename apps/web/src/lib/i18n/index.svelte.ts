@@ -37,6 +37,21 @@ export function getLocale(): Locale {
 	return currentLocale;
 }
 
+export function parseAcceptLanguage(header: string): Locale {
+	const langs = header
+		.split(",")
+		.map((part) => {
+			const [lang = "", q] = part.trim().split(";q=");
+			return { lang: lang.slice(0, 2).toLowerCase(), q: q ? Number(q) : 1 };
+		})
+		.sort((a, b) => b.q - a.q);
+
+	for (const { lang } of langs) {
+		if (supportedLocales.has(lang)) return lang as Locale;
+	}
+	return "en";
+}
+
 export function detectLocale(): Locale {
 	if (typeof navigator === "undefined") return "en";
 	const lang = navigator.language.slice(0, 2).toLowerCase();

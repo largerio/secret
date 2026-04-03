@@ -222,29 +222,40 @@ export class SecretClient {
 	): Promise<ReadNoteResult> {
 		options?.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 
-		// Try stream endpoint first (handles chunked notes)
+		if (options?.chunked === true) {
+			return this.readNoteStream(id, keyFragment, options);
+		}
+
+		if (options?.chunked === false) {
+			return this.readNoteStandard(id, keyFragment, options);
+		}
+
+		// No hint — try stream first, fall back to raw then legacy
 		try {
-			const result = await this.readNoteStream(id, keyFragment, options);
-			return result;
+			return await this.readNoteStream(id, keyFragment, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
-			// Only fall through on 400 (not a chunked note)
 			if (!(err instanceof SecretApiError) || err.status !== 400) {
 				throw err;
 			}
 		}
 
-		// Try raw endpoint (handles standard non-chunked notes)
+		return this.readNoteStandard(id, keyFragment, options);
+	}
+
+	private async readNoteStandard(
+		id: string,
+		keyFragment: string,
+		options?: ReadNoteOptions,
+	): Promise<ReadNoteResult> {
 		try {
-			const result = await this.readNoteRaw(id, keyFragment, options);
-			return result;
+			return await this.readNoteRaw(id, keyFragment, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
-			// Only fall through to legacy on 400/404 (endpoint not found on older servers)
 			if (err instanceof SecretApiError && (err.status === 400 || err.status === 404)) {
 				return this.readNoteLegacy(id, keyFragment, options);
 			}

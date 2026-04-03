@@ -59,6 +59,8 @@ export interface ReadNoteOptions {
 	readonly onDownloadProgress?: (progress: number) => void;
 	/** Structured progress callback with phase info. */
 	readonly onProgress?: (info: ProgressInfo) => void;
+	/** Hint from checkNote: true = chunked (stream), false = standard (raw). Skips trial-and-error. */
+	readonly chunked?: boolean;
 }
 
 export interface ReadNoteResult {
@@ -74,4 +76,5 @@ export interface NoteInfo {
 	readonly fileCount: number;
 	readonly expiresAt: string;
 	readonly maxReads: number;
+	readonly chunked: boolean;
 }
