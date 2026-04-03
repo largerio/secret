@@ -7,6 +7,8 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -14,6 +16,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -80,6 +84,7 @@ jobs:
     needs: docker
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions: {}
     environment: production
     steps:
       - name: Deploy
