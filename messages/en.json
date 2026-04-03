@@ -91,5 +91,8 @@
 	"md_preview_empty": "Nothing to preview",
 	"seo_title": "Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing",
 	"seo_description": "Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser — the server never sees your content. Free, open-source, no account required.",
-	"seo_keywords": "encrypted notes, secure file sharing, zero-knowledge encryption, password sharing, burn after reading, end-to-end encryption, self-hosted, privacy, secret sharing, encrypted messaging"
+	"seo_keywords": "encrypted notes, secure file sharing, zero-knowledge encryption, password sharing, burn after reading, end-to-end encryption, self-hosted, privacy, secret sharing, encrypted messaging",
+	"manage_title": "Manage note",
+	"manage_description": "You can delete this note using the button below.",
+	"manage_invalid_token": "No delete token found. The link may be incomplete."
 }
