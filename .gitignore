@@ -6,8 +6,7 @@ data/
 *.db
 *.db-wal
 *.db-shm
-.env
-.env.local
+.env*
 .DS_Store
 coverage/
 *.tgz

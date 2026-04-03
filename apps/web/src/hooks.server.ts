@@ -11,12 +11,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	if (PROXY_PATHS.some((p) => event.url.pathname.startsWith(p))) {
 		const target = `${API_TARGET}${event.url.pathname}${event.url.search}`;
+		const hasBody = event.request.method !== "GET" && event.request.method !== "HEAD";
 		const res = await fetch(target, {
 			method: event.request.method,
 			headers: event.request.headers,
-			body: event.request.body,
-			duplex: "half",
-		} as RequestInit);
+			body: hasBody ? await event.request.arrayBuffer() : null,
+		});
 
 		const headers = new Headers(res.headers);
 		// Node.js fetch auto-decompresses responses, so the body is plain text

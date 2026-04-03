@@ -16,6 +16,15 @@ services:
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
       - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-dev-key-change-me-in-production-32ch}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-false}
+      - CHUNK_SIZE=${CHUNK_SIZE:-4194304}
+      - MAX_CHUNKED_FILE_SIZE=${MAX_CHUNKED_FILE_SIZE:-524288000}
     command: sh -c "pnpm install && pnpm dev"
     tty: true
 
