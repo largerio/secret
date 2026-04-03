@@ -16,6 +16,7 @@ services:
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
       - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-dev-key-change-me-in-production-32ch}
+      - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-105906176}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - S3_BUCKET=${S3_BUCKET:-}
       - S3_REGION=${S3_REGION:-us-east-1}
