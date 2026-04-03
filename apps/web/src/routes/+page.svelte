@@ -36,8 +36,10 @@ let uploadPhase = $state<UploadPhase>("encrypting");
 let uploadChunkLabel = $state("");
 
 const config = $derived(getConfig());
-const maxFileSize = $derived(config.maxFileSize);
+const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
+const maxTotalSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxFilesPerNote = $derived(config.maxFilesPerNote);
+let fileError = $state("");
 
 async function handleSubmit() {
 	if (!text && files.length === 0) {
@@ -120,9 +122,22 @@ function handleFileInput(event: Event) {
 }
 
 function addFiles(newFiles: File[]) {
-	const validFiles = newFiles.filter((f) => f.size <= maxFileSize);
+	fileError = "";
+	const oversized = newFiles.filter((f) => f.size > maxFileSize);
+	if (oversized.length > 0) {
+		fileError = t("error_file_too_large", { size: formatSize(maxFileSize) });
+		return;
+	}
+
 	const remaining = maxFilesPerNote - files.length;
-	files = [...files, ...validFiles.slice(0, remaining)];
+	const candidates = [...files, ...newFiles.slice(0, remaining)];
+	const totalSize = candidates.reduce((sum, f) => sum + f.size, 0);
+	if (totalSize > maxTotalSize) {
+		fileError = t("error_total_too_large", { size: formatSize(maxTotalSize) });
+		return;
+	}
+
+	files = candidates;
 }
 
 function removeFile(index: number) {
@@ -374,8 +389,11 @@ function reset() {
 					{t("files_drop")}
 				</p>
 				<p class="mt-1 text-xs text-slate-500">
-					{t("files_limit", { count: maxFilesPerNote, size: formatSize(maxFileSize) })}
+					{t("files_limit", { count: maxFilesPerNote, size: formatSize(maxTotalSize) })}
 				</p>
+				{#if fileError}
+					<p class="mt-1 text-xs text-red-400">{fileError}</p>
+				{/if}
 			</div>
 
 			{#if files.length > 0}
