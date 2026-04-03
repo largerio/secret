@@ -96,5 +96,6 @@
 	"seo_keywords": "encrypted notes, secure file sharing, zero-knowledge encryption, password sharing, burn after reading, end-to-end encryption, self-hosted, privacy, secret sharing, encrypted messaging",
 	"manage_title": "Manage note",
 	"manage_description": "You can delete this note using the button below.",
-	"manage_invalid_token": "No delete token found. The link may be incomplete."
+	"manage_invalid_token": "No delete token found. The link may be incomplete.",
+	"back_home": "Back to home"
 }

@@ -29,9 +29,8 @@ type NoteStatus =
 
 const { data } = $props();
 
-const noteInfo: NoteInfo | null = data.noteInfo;
 let status = $state<NoteStatus>(
-	noteInfo ? { state: "ready", info: noteInfo } : { state: "not_found" },
+	data.noteInfo ? { state: "ready", info: data.noteInfo } : { state: "not_found" },
 );
 let mounted = $state(false);
 let password = $state("");

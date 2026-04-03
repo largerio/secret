@@ -5,7 +5,6 @@ import type { ProgressInfo, UploadPhase } from "@secret/sdk-js";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
-import { onMount } from "svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
@@ -13,7 +12,7 @@ import { solveCap } from "$lib/utils/cap";
 import { formatSize } from "$lib/utils/format";
 
 let mounted = $state(false);
-onMount(() => {
+$effect(() => {
 	mounted = true;
 });
 

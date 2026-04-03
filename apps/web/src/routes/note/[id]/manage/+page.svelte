@@ -1,5 +1,4 @@
 <script lang="ts">
-import { onMount } from "svelte";
 import { page } from "$app/state";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
@@ -14,7 +13,7 @@ let isDeleting = $state(false);
 let isDeleted = $state(false);
 let error = $state("");
 
-onMount(() => {
+$effect(() => {
 	deleteToken = window.location.hash.slice(1);
 	mounted = true;
 });

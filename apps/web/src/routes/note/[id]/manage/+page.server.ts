@@ -1,6 +1,5 @@
 import type { ServerLoad } from "@sveltejs/kit";
-
-const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
+import { API_TARGET } from "$lib/server/env";
 
 export const load: ServerLoad = async ({ params }) => {
 	const id = params["id"];
