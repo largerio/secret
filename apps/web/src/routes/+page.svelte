@@ -829,7 +829,13 @@ const readsText = $derived(
 							<div>
 								<div style:color="var(--text)" style:font-size="14px">
 									{t("files_drop_1")}
-									<span style:color="var(--accent)">{t("files_drop_2")}</span>
+									<span
+										style:color="var(--accent)"
+										style:font-weight="500"
+										style:text-decoration="underline"
+										style:text-underline-offset="3px"
+										>{t("files_drop_2")}</span
+									>
 								</div>
 								<div
 									class="mono"

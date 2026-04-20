@@ -1,14 +1,19 @@
 export type ThemeMode = "dark" | "light";
 
-const STORAGE_KEY = "secret_theme";
+const COOKIE_NAME = "secret_theme";
+const MAX_AGE = 60 * 60 * 24 * 365;
 
 let mode = $state<ThemeMode>("dark");
 
-export function initTheme(): void {
-	if (typeof document === "undefined") return;
-	const current = document.documentElement.dataset.mode;
-	mode = current === "light" ? "light" : "dark";
-	document.body.dataset.mode = mode;
+export function initTheme(initial?: ThemeMode): void {
+	if (initial === "light" || initial === "dark") {
+		mode = initial;
+		return;
+	}
+	if (typeof document !== "undefined") {
+		const current = document.documentElement.dataset.mode;
+		mode = current === "light" ? "light" : "dark";
+	}
 }
 
 export function getMode(): ThemeMode {
@@ -19,14 +24,7 @@ export function setMode(next: ThemeMode): void {
 	mode = next;
 	if (typeof document !== "undefined") {
 		document.documentElement.dataset.mode = next;
-		document.body.dataset.mode = next;
-	}
-	if (typeof localStorage !== "undefined") {
-		try {
-			localStorage.setItem(STORAGE_KEY, next);
-		} catch {
-			/* ignore */
-		}
+		document.cookie = `${COOKIE_NAME}=${next}; path=/; max-age=${MAX_AGE}; samesite=lax`;
 	}
 }
 

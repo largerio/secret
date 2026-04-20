@@ -1,12 +1,20 @@
 import type { Handle } from "@sveltejs/kit";
-import { parseAcceptLanguage } from "$lib/i18n/index.svelte";
+import { parseAcceptLanguage, type Locale } from "$lib/i18n/index.svelte";
 import { API_TARGET } from "$lib/server/env";
 
 const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
+const SUPPORTED_LOCALES: Locale[] = ["en", "fr", "es", "de", "pt", "it", "ja", "zh", "ru", "ko"];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const acceptLang = event.request.headers.get("accept-language") ?? "";
-	event.locals.locale = parseAcceptLanguage(acceptLang);
+	const cookieLang = event.cookies.get("secret_lang");
+	event.locals.locale =
+		cookieLang && SUPPORTED_LOCALES.includes(cookieLang as Locale)
+			? (cookieLang as Locale)
+			: parseAcceptLanguage(acceptLang);
+
+	const cookieTheme = event.cookies.get("secret_theme");
+	event.locals.theme = cookieTheme === "light" ? "light" : "dark";
 
 	if (PROXY_PATHS.some((p) => event.url.pathname.startsWith(p))) {
 		const target = `${API_TARGET}${event.url.pathname}${event.url.search}`;
@@ -32,6 +40,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	return resolve(event, {
-		transformPageChunk: ({ html }) => html.replace("%lang%", event.locals.locale),
+		transformPageChunk: ({ html }) =>
+			html
+				.replace("%lang%", event.locals.locale)
+				.replace("%theme%", event.locals.theme),
 	});
 };

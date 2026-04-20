@@ -26,11 +26,14 @@ const STEPS: { n: 1 | 2 | 3 | 4; key: "step_1" | "step_2" | "step_3" | "step_4" 
 	{#each STEPS as s (s.n)}
 		<span
 			class="uppercase"
-			style:color={step === s.n ? "var(--accent)" : "var(--muted-2)"}
+			style:color={step === s.n
+				? "var(--accent)"
+				: step > s.n
+					? "var(--muted)"
+					: "var(--muted-2)"}
 			style:padding="3px 6px"
 			style:border-radius="4px"
 			style:letter-spacing="0.1em"
-			style:opacity={step === s.n ? "1" : step > s.n ? "0.7" : "0.4"}
 		>
 			{s.n} · {t(s.key)}
 		</span>

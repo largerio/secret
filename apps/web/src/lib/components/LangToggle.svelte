@@ -24,10 +24,8 @@ const currentLabel = $derived(LANGS.find((l) => l.code === current)?.code.toUppe
 function pick(l: Locale) {
 	setLocale(l);
 	open = false;
-	try {
-		localStorage.setItem("secret_lang", l);
-	} catch {
-		/* ignore */
+	if (typeof document !== "undefined") {
+		document.cookie = `secret_lang=${l}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
 	}
 }
 

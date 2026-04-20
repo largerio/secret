@@ -1,13 +1,11 @@
 <script lang="ts">
 import "../app.css";
-import { onMount } from "svelte";
 import Icon from "$lib/components/Icon.svelte";
 import LangToggle from "$lib/components/LangToggle.svelte";
 import StepIndicator from "$lib/components/StepIndicator.svelte";
 import ThemeToggle from "$lib/components/ThemeToggle.svelte";
 import { getConfig } from "$lib/config.svelte";
-import { getLocale, setLocale, t, type Locale } from "$lib/i18n/index.svelte";
-import { initTheme } from "$lib/theme.svelte";
+import { getLocale, t } from "$lib/i18n/index.svelte";
 
 const { children } = $props();
 
@@ -26,23 +24,9 @@ const localeToOg: Record<string, string> = {
 	ko: "ko_KR",
 };
 
-const SUPPORTED: Locale[] = ["en", "fr", "es", "de", "pt", "it", "ja", "zh", "ru", "ko"];
-
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
 const appUrl = $derived(config.appUrl || "https://secret.larger.io");
-
-onMount(() => {
-	initTheme();
-	try {
-		const stored = localStorage.getItem("secret_lang");
-		if (stored && SUPPORTED.includes(stored as Locale)) {
-			setLocale(stored as Locale);
-		}
-	} catch {
-		/* ignore */
-	}
-});
 </script>
 
 <svelte:head>

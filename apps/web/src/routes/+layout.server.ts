@@ -22,5 +22,5 @@ export const load: ServerLoad = ({ url, locals }) => {
 		maxChunkedFileSize: Number(env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE)),
 	};
 
-	return { config, locale: locals.locale };
+	return { config, locale: locals.locale, theme: locals.theme };
 };
