@@ -2,6 +2,8 @@ import {
 	DeleteObjectCommand,
 	DeleteObjectsCommand,
 	GetObjectCommand,
+	type GetObjectCommandOutput,
+	NoSuchKey,
 	PutObjectCommand,
 	S3Client,
 } from "@aws-sdk/client-s3";
@@ -16,6 +18,19 @@ export interface S3Config {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
 	readonly forcePathStyle: boolean;
+}
+
+function isNotFoundError(err: unknown): boolean {
+	if (err instanceof NoSuchKey) return true;
+	if (err && typeof err === "object") {
+		const e = err as {
+			name?: unknown;
+			$metadata?: { httpStatusCode?: unknown };
+		};
+		if (e.name === "NoSuchKey" || e.name === "NotFound") return true;
+		if (e.$metadata?.httpStatusCode === 404) return true;
+	}
+	return false;
 }
 
 async function streamToBuffer(body: { transformToWebStream(): ReadableStream }): Promise<Buffer> {
@@ -68,12 +83,18 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async read(storageKey: string): Promise<Buffer> {
-		const response = await this.client.send(
-			new GetObjectCommand({
-				Bucket: this.bucket,
-				Key: storageKey,
-			}),
-		);
+		let response: GetObjectCommandOutput;
+		try {
+			response = await this.client.send(
+				new GetObjectCommand({
+					Bucket: this.bucket,
+					Key: storageKey,
+				}),
+			);
+		} catch (err) {
+			if (isNotFoundError(err)) throw new StorageNotFoundError();
+			throw err;
+		}
 
 		if (!response.Body) {
 			throw new StorageNotFoundError("Empty response from S3");
@@ -113,12 +134,18 @@ export class S3Storage implements StorageBackend {
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
-		const response = await this.client.send(
-			new GetObjectCommand({
-				Bucket: this.bucket,
-				Key: key,
-			}),
-		);
+		let response: GetObjectCommandOutput;
+		try {
+			response = await this.client.send(
+				new GetObjectCommand({
+					Bucket: this.bucket,
+					Key: key,
+				}),
+			);
+		} catch (err) {
+			if (isNotFoundError(err)) throw new StorageNotFoundError();
+			throw err;
+		}
 
 		if (!response.Body) {
 			throw new StorageNotFoundError("Empty response from S3");
