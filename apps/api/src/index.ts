@@ -12,11 +12,11 @@ import {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
-import { HTTPException } from "hono/http-exception";
 import { startCleanupJob } from "./cleanup.js";
 import type { AppDatabase } from "./db/index.js";
 import { createDatabase } from "./db/index.js";
 import { createWriteAuth } from "./middleware/auth.js";
+import { createErrorHandler } from "./middleware/errorHandler.js";
 import { buildTrustedBlockList, createRateLimit } from "./middleware/rateLimit.js";
 import {
 	createCors,
@@ -146,14 +146,7 @@ interface AppEnv {
 
 const app = new Hono<AppEnv>();
 
-app.onError((err, c) => {
-	if (err instanceof HTTPException) {
-		return c.json({ error: err.message }, err.status);
-	}
-	const errorId = crypto.randomUUID();
-	console.error(`[error] ${errorId}:`, err);
-	return c.json({ error: "Internal server error", errorId }, 500);
-});
+app.onError(createErrorHandler({ debug: env["DEBUG"] === "1" || env["DEBUG"] === "true" }));
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
