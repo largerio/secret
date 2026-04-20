@@ -21,6 +21,7 @@ import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
+import { StorageNotFoundError } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
 
@@ -360,9 +361,12 @@ export function createNotesRoutes() {
 			} else {
 				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 			}
-		} catch {
+		} catch (err) {
 			if (result.shouldDelete) {
 				await cleanupNoteStorage(storage, id, note);
+			}
+			if (err instanceof StorageNotFoundError) {
+				httpError(404, "Note payload missing");
 			}
 			httpError(500, "Failed to decrypt note");
 		}

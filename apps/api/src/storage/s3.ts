@@ -6,6 +6,7 @@ import {
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
+import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 export interface S3Config {
@@ -50,7 +51,7 @@ export class S3Storage implements StorageBackend {
 
 	async save(noteId: string, data: Buffer): Promise<string> {
 		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new Error("Invalid note ID for storage key");
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
 		}
 		const key = `notes/${noteId}`;
 		const upload = new Upload({
@@ -75,7 +76,7 @@ export class S3Storage implements StorageBackend {
 		);
 
 		if (!response.Body) {
-			throw new Error("Empty response from S3");
+			throw new StorageNotFoundError("Empty response from S3");
 		}
 
 		return streamToBuffer(response.Body);
@@ -96,7 +97,7 @@ export class S3Storage implements StorageBackend {
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
 		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new Error("Invalid note ID for storage key");
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
 		}
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		await this.client.send(
@@ -120,7 +121,7 @@ export class S3Storage implements StorageBackend {
 		);
 
 		if (!response.Body) {
-			throw new Error("Empty response from S3");
+			throw new StorageNotFoundError("Empty response from S3");
 		}
 
 		return streamToBuffer(response.Body);

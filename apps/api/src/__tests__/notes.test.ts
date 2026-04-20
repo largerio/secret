@@ -649,6 +649,22 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(json.error).toBe("Failed to decrypt note");
 	});
 
+	it("returns 404 when the stored file has been removed from disk", async () => {
+		const { id } = await createTestNote({ fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const note = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		const filePath = note?.filePath ?? "";
+		expect(filePath).toBeTruthy();
+
+		const { unlink } = await import("node:fs/promises");
+		await unlink(filePath);
+
+		const res = await app.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Note payload missing");
+	});
+
 	it("cleans up storage when decryption fails on burn-after-read file note", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
 
