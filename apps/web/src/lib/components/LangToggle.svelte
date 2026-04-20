@@ -25,6 +25,7 @@ function pick(l: Locale) {
 	setLocale(l);
 	open = false;
 	if (typeof document !== "undefined") {
+		// biome-ignore lint/suspicious/noDocumentCookie: CookieStore API not universally supported
 		document.cookie = `secret_lang=${l}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
 	}
 }

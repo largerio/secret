@@ -11,7 +11,7 @@ export function initTheme(initial?: ThemeMode): void {
 		return;
 	}
 	if (typeof document !== "undefined") {
-		const current = document.documentElement.dataset.mode;
+		const current = document.documentElement.dataset["mode"];
 		mode = current === "light" ? "light" : "dark";
 	}
 }
@@ -23,7 +23,8 @@ export function getMode(): ThemeMode {
 export function setMode(next: ThemeMode): void {
 	mode = next;
 	if (typeof document !== "undefined") {
-		document.documentElement.dataset.mode = next;
+		document.documentElement.dataset["mode"] = next;
+		// biome-ignore lint/suspicious/noDocumentCookie: CookieStore API not universally supported
 		document.cookie = `${COOKIE_NAME}=${next}; path=/; max-age=${MAX_AGE}; samesite=lax`;
 	}
 }

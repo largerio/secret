@@ -58,7 +58,9 @@ const needsPassword = $derived.by(() => {
 	return false;
 });
 
-const showPwInput = $derived(status.state === "ready" && needsPassword && (!isBurn || burnAccepted));
+const showPwInput = $derived(
+	status.state === "ready" && needsPassword && (!isBurn || burnAccepted),
+);
 const showPrimaryCta = $derived(status.state === "ready" && (!isBurn || burnAccepted));
 
 async function copyText(text: string) {

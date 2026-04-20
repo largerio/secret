@@ -62,9 +62,10 @@ const pwStrength = $derived.by(() => {
 	const keys = ["str_vweak", "str_weak", "str_ok", "str_strong", "str_exc"] as const;
 	const colors = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#10b981"];
 	const idx = Math.min(s - 1, 4);
+	const key = idx >= 0 ? keys[idx] : undefined;
 	return {
 		score: s,
-		label: idx >= 0 ? t(keys[idx]) : "",
+		label: key ? t(key) : "",
 		color: idx >= 0 ? (colors[idx] ?? "#ef4444") : "#ef4444",
 	};
 });
@@ -233,7 +234,12 @@ function reset() {
 	uploadChunkLabel = "";
 }
 
-const TABS: { id: ContentMode; labelKey: "content_mode_text" | "content_mode_markdown" | "content_mode_secret"; subKey: "tab_text_sub" | "tab_markdown_sub" | "tab_secret_sub"; icon: "text" | "md" | "key" }[] = [
+const TABS: {
+	id: ContentMode;
+	labelKey: "content_mode_text" | "content_mode_markdown" | "content_mode_secret";
+	subKey: "tab_text_sub" | "tab_markdown_sub" | "tab_secret_sub";
+	icon: "text" | "md" | "key";
+}[] = [
 	{ id: "text", labelKey: "content_mode_text", subKey: "tab_text_sub", icon: "text" },
 	{ id: "markdown", labelKey: "content_mode_markdown", subKey: "tab_markdown_sub", icon: "md" },
 	{ id: "secret", labelKey: "content_mode_secret", subKey: "tab_secret_sub", icon: "key" },

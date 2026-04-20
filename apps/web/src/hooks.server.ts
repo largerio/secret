@@ -1,5 +1,5 @@
 import type { Handle } from "@sveltejs/kit";
-import { parseAcceptLanguage, type Locale } from "$lib/i18n/index.svelte";
+import { type Locale, parseAcceptLanguage } from "$lib/i18n/index.svelte";
 import { API_TARGET } from "$lib/server/env";
 
 const PROXY_PATHS = ["/api", "/robots.txt", "/sitemap.xml"];
@@ -41,8 +41,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	return resolve(event, {
 		transformPageChunk: ({ html }) =>
-			html
-				.replace("%lang%", event.locals.locale)
-				.replace("%theme%", event.locals.theme),
+			html.replace("%lang%", event.locals.locale).replace("%theme%", event.locals.theme),
 	});
 };
