@@ -1507,28 +1507,42 @@ describe("Chunked upload flow", () => {
 		expect((await res.json()).error).toBe("Invalid upload ID");
 	});
 
-	it("returns 500 when chunksReceived is corrupted in DB", async () => {
-		const { json: initJson } = await initUpload({ chunkCount: 1 });
-		const chunk = chunkData("test-chunk");
-		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
-			body: chunk as BodyInit,
-		});
+	it("deduplicates concurrent uploads of the same chunk", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 3 });
+		const chunk = chunkData("concurrent-chunk");
+		const headers = {
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Hash": sha256hex(chunk),
+		};
+		const results = await Promise.all([
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/1`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/2`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+		]);
+		expect(results.every((r) => r.status === 200)).toBe(true);
 
-		const { uploads: uploadsTable } = await import("../db/schema.js");
+		const { uploadChunks: table } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(uploadsTable)
-			.set({ chunksReceived: "not-valid-json" })
-			.where(eq(uploadsTable.id, initJson.uploadId))
-			.run();
-
-		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
-			method: "POST",
-			headers: authHeaders(),
-		});
-		expect(res.status).toBe(500);
-		expect((await res.json()).error).toBe("Corrupted upload session");
+		const rows = db.select().from(table).where(eq(table.uploadId, initJson.uploadId)).all();
+		expect(rows).toHaveLength(3);
+		expect(rows.map((r) => r.chunkIndex).sort()).toEqual([0, 1, 2]);
 	});
 
 	it("returns 500 when metadata is corrupted in DB", async () => {

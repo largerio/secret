@@ -18,7 +18,7 @@ import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
-import { notes, uploads } from "../db/schema.js";
+import { notes, uploadChunks, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
@@ -492,7 +492,6 @@ export function createNotesRoutes() {
 				id: uploadId,
 				metadata,
 				chunkCount: data.chunkCount,
-				chunksReceived: "[]",
 				noteId,
 				deleteToken,
 				createdAt: now,
@@ -559,15 +558,10 @@ export function createNotesRoutes() {
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
-		// Update received chunks
-		const received = JSON.parse(session.chunksReceived) as number[];
-		if (!received.includes(index)) {
-			received.push(index);
-			db.update(uploads)
-				.set({ chunksReceived: JSON.stringify(received) })
-				.where(eq(uploads.id, uploadId as string))
-				.run();
-		}
+		db.insert(uploadChunks)
+			.values({ uploadId: uploadId as string, chunkIndex: index })
+			.onConflictDoNothing()
+			.run();
 
 		return c.json({ received: true as const });
 	});
@@ -589,20 +583,18 @@ export function createNotesRoutes() {
 			return c.json({ error: "Upload session not found or expired" }, 404);
 		}
 
-		let received: number[];
-		try {
-			received = JSON.parse(session.chunksReceived) as number[];
-		} catch {
-			return c.json({ error: "Corrupted upload session" }, 500);
-		}
-		const missing: number[] = [];
-		for (let i = 0; i < session.chunkCount; i++) {
-			if (!received.includes(i)) {
-				missing.push(i);
-			}
-		}
+		const rows = db
+			.select({ chunkIndex: uploadChunks.chunkIndex })
+			.from(uploadChunks)
+			.where(eq(uploadChunks.uploadId, uploadId as string))
+			.all();
 
-		if (missing.length > 0) {
+		if (rows.length < session.chunkCount) {
+			const received = new Set(rows.map((r) => r.chunkIndex));
+			const missing: number[] = [];
+			for (let i = 0; i < session.chunkCount; i++) {
+				if (!received.has(i)) missing.push(i);
+			}
 			return c.json({ error: `Missing chunks: [${missing.join(", ")}]` }, 400);
 		}
 

@@ -60,6 +60,15 @@ export function createDatabase(dbPath: string): {
 		)
 	`);
 
+	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS upload_chunks (
+			upload_id TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL,
+			PRIMARY KEY (upload_id, chunk_index),
+			FOREIGN KEY (upload_id) REFERENCES uploads (id) ON DELETE CASCADE
+		)
+	`);
+
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes (expires_at)`);
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_delete_token ON notes (delete_token)`);
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_uploads_expires_at ON uploads (expires_at)`);
