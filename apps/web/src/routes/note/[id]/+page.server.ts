@@ -1,29 +1,23 @@
 import type { ServerLoad } from "@sveltejs/kit";
-import { API_TARGET } from "$lib/server/env";
+import { getServerClient } from "$lib/server/client";
 
 export const load: ServerLoad = async ({ params }) => {
 	const id = params["id"];
+	if (!id) return { noteInfo: null };
 
 	try {
-		const res = await fetch(`${API_TARGET}/api/v1/notes/${id}/exists`);
+		const client = await getServerClient();
+		const info = await client.checkNote(id);
 
-		if (!res.ok) {
-			return { noteInfo: null };
-		}
-
-		const data = await res.json();
-
-		if (!data.exists) {
-			return { noteInfo: null };
-		}
+		if (!info.exists) return { noteInfo: null };
 
 		return {
 			noteInfo: {
-				hasPassword: data.hasPassword as boolean,
-				maxReads: data.maxReads as number,
-				fileCount: data.fileCount as number,
-				expiresAt: data.expiresAt as string,
-				chunked: data.chunked as boolean,
+				hasPassword: info.hasPassword,
+				maxReads: info.maxReads,
+				fileCount: info.fileCount,
+				expiresAt: info.expiresAt,
+				chunked: info.chunked,
 			},
 		};
 	} catch {

@@ -21,7 +21,7 @@ describe("sanitizeError", () => {
 
 	it("omits stack when it is undefined", () => {
 		const err = new Error("no stack");
-		err.stack = undefined;
+		Object.defineProperty(err, "stack", { value: undefined });
 		expect(sanitizeError(err)).toEqual({ name: "Error", message: "no stack" });
 	});
 });

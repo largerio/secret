@@ -1,18 +1,14 @@
 import type { ServerLoad } from "@sveltejs/kit";
-import { API_TARGET } from "$lib/server/env";
+import { getServerClient } from "$lib/server/client";
 
 export const load: ServerLoad = async ({ params }) => {
 	const id = params["id"];
+	if (!id) return { noteExists: false };
 
 	try {
-		const res = await fetch(`${API_TARGET}/api/v1/notes/${id}/exists`);
-
-		if (!res.ok) {
-			return { noteExists: false };
-		}
-
-		const data = await res.json();
-		return { noteExists: data.exists === true };
+		const client = await getServerClient();
+		const info = await client.checkNote(id);
+		return { noteExists: info.exists };
 	} catch {
 		return { noteExists: false };
 	}
