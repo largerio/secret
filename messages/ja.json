@@ -97,5 +97,10 @@
 	"manage_title": "ノートを管理",
 	"manage_description": "下のボタンでこのノートを削除できます。",
 	"manage_invalid_token": "削除トークンが見つかりません。リンクが不完全な可能性があります。",
-	"back_home": "ホームに戻る"
+	"back_home": "ホームに戻る",
+	"enc_badge": "E2E 暗号化 · AES-256-GCM",
+	"theme_toggle": "テーマを切り替え",
+	"theme_dark": "ダーク",
+	"theme_light": "ライト",
+	"lang_toggle": "言語"
 }

@@ -97,5 +97,10 @@
 	"manage_title": "管理笔记",
 	"manage_description": "您可以使用下方按钮删除此笔记。",
 	"manage_invalid_token": "未找到删除令牌。链接可能不完整。",
-	"back_home": "返回首页"
+	"back_home": "返回首页",
+	"enc_badge": "端到端加密 · AES-256-GCM",
+	"theme_toggle": "切换主题",
+	"theme_dark": "深色",
+	"theme_light": "浅色",
+	"lang_toggle": "语言"
 }

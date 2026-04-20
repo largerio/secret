@@ -97,5 +97,10 @@
 	"manage_title": "Manage note",
 	"manage_description": "You can delete this note using the button below.",
 	"manage_invalid_token": "No delete token found. The link may be incomplete.",
-	"back_home": "Back to home"
+	"back_home": "Back to home",
+	"enc_badge": "E2E ENCRYPTED · AES-256-GCM",
+	"theme_toggle": "Toggle theme",
+	"theme_dark": "Dark",
+	"theme_light": "Light",
+	"lang_toggle": "Language"
 }

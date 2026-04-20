@@ -97,5 +97,10 @@
 	"manage_title": "Управление заметкой",
 	"manage_description": "Вы можете удалить эту заметку с помощью кнопки ниже.",
 	"manage_invalid_token": "Токен удаления не найден. Ссылка может быть неполной.",
-	"back_home": "На главную"
+	"back_home": "На главную",
+	"enc_badge": "E2E ШИФРОВАНИЕ · AES-256-GCM",
+	"theme_toggle": "Сменить тему",
+	"theme_dark": "Тёмная",
+	"theme_light": "Светлая",
+	"lang_toggle": "Язык"
 }

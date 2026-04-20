@@ -97,5 +97,10 @@
 	"manage_title": "Gestionar nota",
 	"manage_description": "Puedes eliminar esta nota usando el botón de abajo.",
 	"manage_invalid_token": "No se encontró token de eliminación. El enlace puede estar incompleto.",
-	"back_home": "Volver al inicio"
+	"back_home": "Volver al inicio",
+	"enc_badge": "CIFRADO E2E · AES-256-GCM",
+	"theme_toggle": "Cambiar tema",
+	"theme_dark": "Oscuro",
+	"theme_light": "Claro",
+	"lang_toggle": "Idioma"
 }
