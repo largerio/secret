@@ -102,5 +102,9 @@
 	"theme_toggle": "切换主题",
 	"theme_dark": "深色",
 	"theme_light": "浅色",
-	"lang_toggle": "语言"
+	"lang_toggle": "语言",
+	"step_1": "创建",
+	"step_2": "分享",
+	"step_3": "解锁",
+	"step_4": "显示"
 }

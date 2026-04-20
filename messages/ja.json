@@ -102,5 +102,9 @@
 	"theme_toggle": "テーマを切り替え",
 	"theme_dark": "ダーク",
 	"theme_light": "ライト",
-	"lang_toggle": "言語"
+	"lang_toggle": "言語",
+	"step_1": "作成",
+	"step_2": "共有",
+	"step_3": "解除",
+	"step_4": "表示"
 }

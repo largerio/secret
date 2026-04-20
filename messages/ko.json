@@ -102,5 +102,9 @@
 	"theme_toggle": "테마 전환",
 	"theme_dark": "다크",
 	"theme_light": "라이트",
-	"lang_toggle": "언어"
+	"lang_toggle": "언어",
+	"step_1": "생성",
+	"step_2": "공유",
+	"step_3": "잠금 해제",
+	"step_4": "공개"
 }

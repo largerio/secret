@@ -102,5 +102,9 @@
 	"theme_toggle": "Cambia tema",
 	"theme_dark": "Scuro",
 	"theme_light": "Chiaro",
-	"lang_toggle": "Lingua"
+	"lang_toggle": "Lingua",
+	"step_1": "Crea",
+	"step_2": "Condividi",
+	"step_3": "Sblocca",
+	"step_4": "Rivela"
 }

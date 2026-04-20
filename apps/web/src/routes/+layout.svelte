@@ -3,6 +3,7 @@ import "../app.css";
 import { onMount } from "svelte";
 import Icon from "$lib/components/Icon.svelte";
 import LangToggle from "$lib/components/LangToggle.svelte";
+import StepIndicator from "$lib/components/StepIndicator.svelte";
 import ThemeToggle from "$lib/components/ThemeToggle.svelte";
 import { getConfig } from "$lib/config.svelte";
 import { getLocale, setLocale, t, type Locale } from "$lib/i18n/index.svelte";
@@ -141,6 +142,8 @@ onMount(() => {
 			</div>
 		</nav>
 	</header>
+
+	<StepIndicator />
 
 	<main id="main-content" class="relative z-[1] mx-auto w-full max-w-[720px] flex-1 px-4 py-10 sm:px-8 sm:py-14">
 		{@render children()}

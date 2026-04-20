@@ -102,5 +102,9 @@
 	"theme_toggle": "Design wechseln",
 	"theme_dark": "Dunkel",
 	"theme_light": "Hell",
-	"lang_toggle": "Sprache"
+	"lang_toggle": "Sprache",
+	"step_1": "Erstellen",
+	"step_2": "Teilen",
+	"step_3": "Entsperren",
+	"step_4": "Anzeigen"
 }

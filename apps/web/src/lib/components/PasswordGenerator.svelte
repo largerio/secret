@@ -1,4 +1,5 @@
 <script lang="ts">
+import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
 
 interface Props {
@@ -8,7 +9,7 @@ interface Props {
 
 let { value = $bindable(""), onchange }: Props = $props();
 
-let length = $state(32);
+let length = $state(20);
 let uppercase = $state(true);
 let lowercase = $state(true);
 let digits = $state(true);
@@ -52,95 +53,160 @@ function generate(): void {
 	onchange?.(result);
 }
 
+$effect(() => {
+	const _ = length + +uppercase + +lowercase + +digits + +symbols;
+	void _;
+	generate();
+});
+
 async function copyPassword(): Promise<void> {
 	try {
 		await navigator.clipboard.writeText(value);
 		copied = true;
 		setTimeout(() => {
 			copied = false;
-		}, 2000);
+		}, 1400);
 	} catch {
-		// Silently fail
+		/* silent */
 	}
+}
+
+function charColor(ch: string): string {
+	if (/[A-Z]/.test(ch)) return "var(--text)";
+	if (/[a-z]/.test(ch)) return "var(--muted)";
+	if (/[0-9]/.test(ch)) return "#eab308";
+	return "var(--accent)";
 }
 </script>
 
-<div class="space-y-3">
-	<div class="flex flex-col gap-2 sm:flex-row">
-		<input
-			type="text"
-			bind:value={value}
-			placeholder="••••••••"
-			class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 break-all sm:flex-1"
-		/>
-		<div class="flex gap-2">
+<div
+	class="rounded-2xl border"
+	style:background="var(--bg-2)"
+	style:border-color="var(--line)"
+	style:padding="20px"
+>
+	<div
+		class="mono mb-3 inline-flex items-center gap-1.5 uppercase"
+		style:color="var(--muted)"
+		style:font-size="11px"
+		style:letter-spacing="0.12em"
+	>
+		<Icon name="key" size={11} />
+		<span>{t("generate_password")}</span>
+	</div>
+
+	<div
+		class="mb-3.5 break-all rounded-xl border"
+		style:background="var(--bg-3)"
+		style:border-color="var(--line)"
+		style:padding="20px 18px"
+		style:font-family="var(--font-mono)"
+		style:font-size="18px"
+		style:letter-spacing="0.02em"
+		style:line-height="1.5"
+		style:min-height="60px"
+	>
+		{#if value}
+			{#each value.split("") as ch, i (i)}
+				<span style:color={charColor(ch)}>{ch}</span>
+			{/each}
+		{:else}
+			<span style:color="var(--muted-2)">—</span>
+		{/if}
+	</div>
+
+	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+		<div class="flex flex-1 items-center gap-3">
+			<span
+				class="mono uppercase"
+				style:color="var(--muted)"
+				style:font-size="11px"
+				style:letter-spacing="0.08em"
+				style:min-width="56px">{t("password_length")}</span
+			>
+			<input
+				type="range"
+				min="8"
+				max="64"
+				bind:value={length}
+				class="flex-1 cursor-pointer"
+				style:accent-color="var(--accent)"
+			/>
+			<span
+				class="mono tabular-nums"
+				style:color="var(--text)"
+				style:font-size="13px"
+				style:min-width="24px"
+				style:text-align="right">{length}</span
+			>
+		</div>
+		<div class="flex gap-1.5">
+			<button
+				type="button"
+				onclick={generate}
+				class="inline-flex items-center gap-1.5 rounded-lg border transition-colors"
+				style:background="var(--bg-3)"
+				style:border-color="var(--line)"
+				style:color="var(--text)"
+				style:padding="8px 12px"
+				style:font-size="12px"
+			>
+				<Icon name="dice" size={13} />
+				<span>{t("regenerate")}</span>
+			</button>
 			<button
 				type="button"
 				onclick={copyPassword}
 				disabled={!value}
-				class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50 transition-colors sm:flex-none"
+				class="inline-flex items-center gap-1.5 rounded-lg border transition-colors disabled:opacity-50"
+				style:background="var(--accent)"
+				style:border-color="transparent"
+				style:color="var(--accent-ink)"
+				style:padding="8px 14px"
+				style:font-size="12px"
 			>
-				<i class="fa-regular fa-copy"></i> {copied ? t("password_copied") : t("copy_button")}
-			</button>
-			<button
-				type="button"
-				onclick={generate}
-				class="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors sm:flex-none"
-			>
-				<i class="fa-solid fa-arrows-rotate"></i> {t("generate_password")}
+				{#if copied}
+					<Icon name="check" size={13} />
+					<span>{t("password_copied")}</span>
+				{:else}
+					<Icon name="copy" size={13} />
+					<span>{t("copy_button")}</span>
+				{/if}
 			</button>
 		</div>
 	</div>
 
-	<div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
-		<label class="flex items-center gap-2 text-sm text-slate-300">
-			<span class="text-slate-400">{t("password_length")}</span>
-			<input
-				type="range"
-				bind:value={length}
-				min="8"
-				max="128"
-				class="h-1.5 flex-1 cursor-pointer accent-primary sm:w-24 sm:flex-none"
-			/>
-			<span class="w-8 text-center font-mono text-xs text-slate-400">{length}</span>
-		</label>
-
-		<div class="flex flex-wrap gap-x-4 gap-y-1">
-			<label class="flex items-center gap-1.5 text-sm text-slate-300">
-				<input
-					type="checkbox"
-					bind:checked={uppercase}
-					class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
-				/>
-				{t("password_uppercase")}
-			</label>
-
-			<label class="flex items-center gap-1.5 text-sm text-slate-300">
-				<input
-					type="checkbox"
-					bind:checked={lowercase}
-					class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
-				/>
-				{t("password_lowercase")}
-			</label>
-
-			<label class="flex items-center gap-1.5 text-sm text-slate-300">
-				<input
-					type="checkbox"
-					bind:checked={digits}
-					class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
-				/>
-				{t("password_digits")}
-			</label>
-
-			<label class="flex items-center gap-1.5 text-sm text-slate-300">
-				<input
-					type="checkbox"
-					bind:checked={symbols}
-					class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary"
-				/>
-				{t("password_symbols")}
-			</label>
-		</div>
+	<div class="flex flex-wrap gap-2">
+		{#each [{ k: "upper", label: t("password_uppercase") }, { k: "lower", label: t("password_lowercase") }, { k: "digits", label: t("password_digits") }, { k: "symbols", label: t("password_symbols") }] as o (o.k)}
+			{@const on = o.k === "upper" ? uppercase : o.k === "lower" ? lowercase : o.k === "digits" ? digits : symbols}
+			<button
+				type="button"
+				onclick={() => {
+					if (o.k === "upper") uppercase = !uppercase;
+					else if (o.k === "lower") lowercase = !lowercase;
+					else if (o.k === "digits") digits = !digits;
+					else symbols = !symbols;
+				}}
+				class="mono inline-flex items-center gap-1.5 rounded-lg border transition-all"
+				style:background={on ? "var(--accent-soft)" : "var(--bg-3)"}
+				style:border-color={on ? "var(--accent)" : "var(--line)"}
+				style:color={on ? "var(--text)" : "var(--muted)"}
+				style:padding="8px 14px"
+				style:font-size="12px"
+			>
+				<span
+					class="inline-grid place-items-center rounded"
+					style:width="10px"
+					style:height="10px"
+					style:background={on ? "var(--accent)" : "transparent"}
+					style:border={on ? "1px solid var(--accent)" : "1px solid var(--line-2)"}
+				>
+					{#if on}
+						<Icon name="check" size={8} />
+					{/if}
+				</span>
+				<span>{o.label}</span>
+			</button>
+		{/each}
 	</div>
 </div>

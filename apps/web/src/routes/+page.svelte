@@ -2,12 +2,15 @@
 import type { ContentMode } from "@secret/shared";
 import { EXPIRATION_OPTIONS, MAX_TEXT_SIZE } from "@secret/shared";
 import type { ProgressInfo, UploadPhase } from "@secret/sdk-js";
+import EncryptionBadge from "$lib/components/EncryptionBadge.svelte";
+import Icon from "$lib/components/Icon.svelte";
 import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
 import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { setStep } from "$lib/steps.svelte";
 import { solveCap } from "$lib/utils/cap";
 import { formatSize } from "$lib/utils/format";
 
@@ -16,10 +19,15 @@ $effect(() => {
 	mounted = true;
 });
 
+$effect(() => {
+	setStep(shareUrl ? 2 : 1);
+});
+
 let contentMode = $state<ContentMode>("text");
 let text = $state("");
 let files = $state<File[]>([]);
 let password = $state("");
+let showPassword = $state(false);
 let expiresIn = $state(86400);
 let maxReads = $state("1");
 let isSubmitting = $state(false);
@@ -33,12 +41,31 @@ let isDragging = $state(false);
 let uploadProgress = $state<number | null>(null);
 let uploadPhase = $state<UploadPhase>("encrypting");
 let uploadChunkLabel = $state("");
+let fileInputEl: HTMLInputElement | undefined = $state();
 
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxTotalSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxFilesPerNote = $derived(config.maxFilesPerNote);
 let fileError = $state("");
+
+const pwStrength = $derived.by(() => {
+	if (!password) return { score: 0, label: "", color: "var(--muted-2)" };
+	let s = 0;
+	if (password.length >= 8) s++;
+	if (password.length >= 14) s++;
+	if (/[A-Z]/.test(password) && /[a-z]/.test(password)) s++;
+	if (/\d/.test(password)) s++;
+	if (/[^\w\s]/.test(password)) s++;
+	const keys = ["str_vweak", "str_weak", "str_ok", "str_strong", "str_exc"] as const;
+	const colors = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#10b981"];
+	const idx = Math.min(s - 1, 4);
+	return {
+		score: s,
+		label: idx >= 0 ? t(keys[idx]) : "",
+		color: idx >= 0 ? (colors[idx] ?? "#ef4444") : "#ef4444",
+	};
+});
 
 async function handleSubmit() {
 	if (!text && files.length === 0) {
@@ -167,6 +194,16 @@ async function copyManageUrl() {
 	}
 }
 
+function generatePwField() {
+	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+	const arr = new Uint32Array(20);
+	crypto.getRandomValues(arr);
+	let pw = "";
+	for (let i = 0; i < 20; i++) pw += chars[(arr[i] ?? 0) % chars.length];
+	password = pw;
+	showPassword = true;
+}
+
 function reset() {
 	contentMode = "text";
 	text = "";
@@ -181,6 +218,21 @@ function reset() {
 	uploadPhase = "encrypting";
 	uploadChunkLabel = "";
 }
+
+const TABS: { id: ContentMode; labelKey: "content_mode_text" | "content_mode_markdown" | "content_mode_secret"; subKey: "tab_text_sub" | "tab_markdown_sub" | "tab_secret_sub"; icon: "text" | "md" | "key" }[] = [
+	{ id: "text", labelKey: "content_mode_text", subKey: "tab_text_sub", icon: "text" },
+	{ id: "markdown", labelKey: "content_mode_markdown", subKey: "tab_markdown_sub", icon: "md" },
+	{ id: "secret", labelKey: "content_mode_secret", subKey: "tab_secret_sub", icon: "key" },
+];
+
+const READS = [
+	{ value: "1", key: "reads_1" as const },
+	{ value: "3", key: "reads_3" as const },
+	{ value: "10", key: "reads_10" as const },
+	{ value: "100", key: "reads_100" as const },
+];
+
+const canSubmit = $derived(!!(text.trim() || files.length > 0));
 </script>
 
 <svelte:head>
@@ -215,14 +267,28 @@ function reset() {
 </svelte:head>
 
 {#if shareUrl}
+	<!-- TODO(redesign): editorial success screen — step 3 -->
 	<div class="space-y-6">
-		<div class="rounded-xl border border-green-800/50 bg-green-900/20 p-6">
-			<h2 class="mb-4 text-lg font-semibold text-green-300">{t("success_title")}</h2>
+		<div
+			class="rounded-2xl border"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+			style:padding="24px"
+		>
+			<h2
+				class="serif mb-4"
+				style:font-size="28px"
+				style:color="var(--text)">{t("success_title")}</h2
+			>
 
 			<div class="space-y-4">
 				<div>
-					<label for="share-url" class="mb-1 block text-sm text-slate-400"
-						>{t("share_label")}</label
+					<label
+						for="share-url"
+						class="mono mb-1 block uppercase"
+						style:font-size="11px"
+						style:letter-spacing="0.08em"
+						style:color="var(--muted)">{t("share_label")}</label
 					>
 					<div class="flex gap-2">
 						<input
@@ -230,14 +296,20 @@ function reset() {
 							type="text"
 							readonly
 							value={shareUrl}
-							class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+							class="flex-1 rounded-lg border px-3 py-2 text-sm"
+							style:background="var(--bg-2)"
+							style:border-color="var(--line)"
+							style:color="var(--text)"
 						/>
 						<button
 							onclick={copyToClipboard}
-							class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors"
+							class="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+							style:background="var(--accent)"
+							style:color="var(--accent-ink)"
 							aria-label={t("copy_button")}
 						>
-							<i class="fa-regular fa-copy"></i> {copied ? t("copied") : t("copy_button")}
+							<Icon name={copied ? "check" : "copy"} size={14} />
+							{copied ? t("copied") : t("copy_button")}
 						</button>
 					</div>
 				</div>
@@ -256,9 +328,12 @@ function reset() {
 
 				{#if manageUrl}
 					<details class="group">
-						<summary class="cursor-pointer text-xs text-slate-500 hover:text-slate-400 transition-colors">
-							<i class="fa-solid fa-gear"></i> {t("delete_label")}
-						</summary>
+						<summary
+							class="mono cursor-pointer uppercase transition-colors"
+							style:font-size="11px"
+							style:letter-spacing="0.08em"
+							style:color="var(--muted-2)">{t("delete_label")}</summary
+						>
 						<div class="mt-2 space-y-2">
 							<div class="flex gap-2">
 								<input
@@ -266,17 +341,23 @@ function reset() {
 									type="text"
 									readonly
 									value={manageUrl}
-									class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-400"
+									class="flex-1 rounded-lg border px-3 py-2 text-xs"
+									style:background="var(--bg-2)"
+									style:border-color="var(--line)"
+									style:color="var(--muted)"
 								/>
 								<button
 									onclick={copyManageUrl}
-									class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-700 transition-colors"
+									class="rounded-lg border px-3 py-2 text-xs transition-colors"
+									style:background="var(--bg-2)"
+									style:border-color="var(--line)"
+									style:color="var(--muted)"
 									aria-label={t("copy_button")}
 								>
-									<i class="fa-regular fa-copy"></i> {manageCopied ? t("delete_copied") : t("copy_button")}
+									{manageCopied ? t("delete_copied") : t("copy_button")}
 								</button>
 							</div>
-							<p class="text-xs text-slate-600">
+							<p style:font-size="11px" style:color="var(--muted-2)">
 								{t("delete_warning")}
 							</p>
 						</div>
@@ -287,9 +368,12 @@ function reset() {
 
 		<button
 			onclick={reset}
-			class="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-medium text-white hover:bg-slate-700 transition-colors"
+			class="w-full rounded-lg border px-4 py-3 text-sm font-medium transition-colors"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+			style:color="var(--text)"
 		>
-			<i class="fa-solid fa-plus"></i> {t("create_another")}
+			+ {t("create_another")}
 		</button>
 	</div>
 {:else}
@@ -298,174 +382,391 @@ function reset() {
 			e.preventDefault();
 			handleSubmit();
 		}}
-		class="space-y-6"
 	>
-		<h1 class="text-2xl font-bold">{t("create_title")}</h1>
-		<p class="text-slate-400">{t("create_description")}</p>
+		<div class="mb-10">
+			<EncryptionBadge />
+			<h1
+				class="serif"
+				style:font-size="clamp(36px, 6vw, 48px)"
+				style:margin="20px 0 20px"
+				style:line-height="1.25"
+				style:letter-spacing="-0.02em"
+				style:font-weight="400"
+				style:padding-bottom="4px"
+			>
+				{t("create_hero_1")}<br />
+				<em style:color="var(--accent)">{t("create_hero_2")}</em>
+			</h1>
+			<p style:color="var(--muted)" style:font-size="16px" style:max-width="560px" style:margin="0">
+				{t("create_hero_sub")}
+			</p>
+		</div>
 
 		{#if error}
 			<div
-				class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300"
+				class="mb-6 rounded-xl border px-4 py-3 text-sm"
+				style:background="var(--accent-soft)"
+				style:border-color="var(--accent-ring)"
+				style:color="var(--text)"
 				role="alert"
 			>
 				{error}
 			</div>
 		{/if}
 
-		<ul class="flex w-full rounded-lg border border-slate-700 bg-slate-800 text-xs font-medium sm:text-sm">
-			<li class="flex-1 border-r border-slate-700">
-				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'text' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
-					<input type="radio" name="content-mode" value="text" bind:group={contentMode} class="sr-only" />
-					<i class="fa-solid fa-align-left"></i>
-					{t("content_mode_text")}
-				</label>
-			</li>
-			<li class="flex-1 border-r border-slate-700">
-				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'markdown' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
-					<input type="radio" name="content-mode" value="markdown" bind:group={contentMode} class="sr-only" />
-					<i class="fa-brands fa-markdown"></i>
-					{t("content_mode_markdown")}
-				</label>
-			</li>
-			<li class="flex-1">
-				<label class="flex w-full cursor-pointer items-center justify-center gap-1.5 px-2 py-2.5 sm:gap-2 sm:px-3 {contentMode === 'secret' ? 'text-primary' : 'text-slate-400 hover:text-slate-200'}">
-					<input type="radio" name="content-mode" value="secret" bind:group={contentMode} class="sr-only" />
-					<i class="fa-solid fa-key"></i>
-					{t("content_mode_secret")}
-				</label>
-			</li>
-		</ul>
+		<!-- Segmented tabs -->
+		<div
+			role="tablist"
+			class="mb-6 grid gap-1.5 rounded-2xl border"
+			style:grid-template-columns="repeat(3, 1fr)"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+			style:padding="6px"
+		>
+			{#each TABS as tab (tab.id)}
+				{@const active = contentMode === tab.id}
+				<button
+					type="button"
+					role="tab"
+					aria-selected={active}
+					onclick={() => (contentMode = tab.id)}
+					class="flex flex-col items-start gap-1 rounded-xl border-0 transition-all"
+					style:background={active ? "var(--bg-3)" : "transparent"}
+					style:color={active ? "var(--text)" : "var(--muted)"}
+					style:padding="12px 14px"
+				>
+					<span class="flex items-center gap-2" style:font-size="14px" style:font-weight="500">
+						<span style:color={active ? "var(--accent)" : "var(--muted)"}>
+							<Icon name={tab.icon} size={16} />
+						</span>
+						<span>{t(tab.labelKey)}</span>
+					</span>
+					<span class="mono hidden sm:inline" style:font-size="10px" style:color="var(--muted-2)"
+						>{t(tab.subKey)}</span
+					>
+				</button>
+			{/each}
+		</div>
 
-		<div>
+		<!-- Editor -->
+		<div class="mb-6">
 			{#if contentMode === "secret"}
 				<PasswordGenerator bind:value={text} />
 			{:else if contentMode === "markdown"}
-				<MarkdownEditor bind:value={text} maxlength={MAX_TEXT_SIZE} placeholder={t("text_placeholder")} />
+				<div class="relative">
+					<MarkdownEditor
+						bind:value={text}
+						maxlength={MAX_TEXT_SIZE}
+						placeholder={t("text_placeholder_md")}
+					/>
+					<div
+						class="mono pointer-events-none absolute"
+						style:bottom="12px"
+						style:right="14px"
+						style:font-size="10px"
+						style:color="var(--muted-2)"
+					>
+						{text.length.toLocaleString()} / {MAX_TEXT_SIZE.toLocaleString()}
+					</div>
+				</div>
 			{:else}
-				<textarea
-					id="note-text"
-					bind:value={text}
-					placeholder={t("text_placeholder")}
-					rows="6"
-					maxlength={MAX_TEXT_SIZE}
-					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-				></textarea>
-			{/if}
-			{#if contentMode !== "secret"}
-				<p class="mt-1 text-xs text-slate-500">
-					{t("char_count", { count: text.length.toLocaleString(), max: MAX_TEXT_SIZE.toLocaleString() })}
-				</p>
+				<div class="relative">
+					<textarea
+						id="note-text"
+						bind:value={text}
+						placeholder={t("text_placeholder")}
+						rows="8"
+						maxlength={MAX_TEXT_SIZE}
+						class="w-full rounded-xl border outline-none transition-colors"
+						style:background="var(--bg-2)"
+						style:border-color="var(--line)"
+						style:color="var(--text)"
+						style:padding="14px 16px"
+						style:font-size="15px"
+						style:line-height="1.6"
+						style:resize="vertical"
+						style:min-height="180px"
+					></textarea>
+					<div
+						class="mono pointer-events-none absolute"
+						style:bottom="12px"
+						style:right="14px"
+						style:font-size="10px"
+						style:color="var(--muted-2)"
+					>
+						{text.length.toLocaleString()} / {MAX_TEXT_SIZE.toLocaleString()}
+					</div>
+				</div>
 			{/if}
 		</div>
 
-		<div>
-			<label for="file-upload" class="mb-1 block text-sm font-medium text-slate-300"
-				><i class="fa-solid fa-paperclip"></i> {t("files_label")}</label
-			>
-			<div
-				class="relative rounded-lg border-2 border-dashed p-6 text-center transition-colors {isDragging
-					? 'border-primary bg-primary/10'
-					: 'border-slate-700 hover:border-slate-600'}"
-				ondragover={(e) => {
-					e.preventDefault();
-					isDragging = true;
-				}}
-				ondragleave={() => {
-					isDragging = false;
-				}}
-				ondrop={handleDrop}
-				role="group"
-				aria-label={t("files_drop")}
-			>
-				<input
-					id="file-upload"
-					type="file"
-					multiple
-					onchange={handleFileInput}
-					class="absolute inset-0 cursor-pointer opacity-0"
-				/>
-				<p class="text-sm text-slate-400">
-					{t("files_drop")}
-				</p>
-				<p class="mt-1 text-xs text-slate-500">
-					{t("files_limit", { count: maxFilesPerNote, size: formatSize(maxTotalSize) })}
-				</p>
+		<!-- Files dropzone -->
+		{#if contentMode !== "secret"}
+			<div class="mb-8">
+				<label
+					class="mono mb-2 flex items-center gap-1.5 uppercase"
+					style:font-size="11px"
+					style:letter-spacing="0.08em"
+					style:color="var(--muted)"
+				>
+					<Icon name="paperclip" size={12} />
+					<span>{t("files_label")}</span>
+				</label>
+				<button
+					type="button"
+					onclick={() => fileInputEl?.click()}
+					ondragover={(e) => {
+						e.preventDefault();
+						isDragging = true;
+					}}
+					ondragleave={() => {
+						isDragging = false;
+					}}
+					ondrop={handleDrop}
+					class="w-full rounded-xl text-left transition-all"
+					style:background={isDragging ? "var(--accent-soft)" : "var(--bg-2)"}
+					style:border={`1px dashed ${isDragging ? "var(--accent)" : "var(--line-2)"}`}
+					style:padding="20px"
+					aria-label={t("files_drop")}
+				>
+					<input
+						id="file-upload"
+						bind:this={fileInputEl}
+						type="file"
+						multiple
+						onchange={handleFileInput}
+						class="hidden"
+					/>
+					{#if files.length === 0}
+						<div class="flex items-center justify-between gap-4">
+							<div>
+								<div style:color="var(--text)" style:font-size="14px">
+									{t("files_drop_1")}
+									<span style:color="var(--accent)">{t("files_drop_2")}</span>
+								</div>
+								<div
+									class="mono"
+									style:color="var(--muted-2)"
+									style:font-size="11px"
+									style:margin-top="4px"
+								>
+									{t("files_limit", {
+										count: maxFilesPerNote,
+										size: formatSize(maxTotalSize),
+									})}
+								</div>
+							</div>
+							<Icon name="paperclip" size={20} class="opacity-60" />
+						</div>
+					{:else}
+						<div class="flex flex-col gap-2">
+							{#each files as f, i (f.name + i)}
+								<div
+									class="flex items-center gap-2.5 rounded-lg"
+									style:background="var(--bg-3)"
+									style:padding="8px 10px"
+								>
+									<Icon name="file" size={14} class="shrink-0" />
+									<span
+										class="flex-1 truncate"
+										style:font-size="13px"
+										style:color="var(--text)"
+									>
+										{f.name}
+									</span>
+									<span class="mono" style:font-size="11px" style:color="var(--muted-2)">
+										{formatSize(f.size)}
+									</span>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											removeFile(i);
+										}}
+										class="border-0 bg-transparent p-1"
+										style:color="var(--muted)"
+										aria-label={t("remove_file", { name: f.name })}
+									>
+										<Icon name="x" size={14} />
+									</button>
+								</div>
+							{/each}
+							<div
+								class="mono"
+								style:font-size="11px"
+								style:color="var(--muted-2)"
+								style:padding-left="4px"
+								style:margin-top="4px"
+							>
+								{t("files_add_more")} ({files.length}/{maxFilesPerNote})
+							</div>
+						</div>
+					{/if}
+				</button>
 				{#if fileError}
-					<p class="mt-1 text-xs text-red-400">{fileError}</p>
+					<p class="mt-2" style:font-size="12px" style:color="var(--accent)">{fileError}</p>
 				{/if}
 			</div>
+		{/if}
 
-			{#if files.length > 0}
-				<ul class="mt-3 space-y-2" aria-label={t("attached_files")}>
-					{#each files as file, i}
-						<li
-							class="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800 px-3 py-2"
+		<!-- Security settings -->
+		<div
+			class="mb-6 rounded-2xl border"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+			style:padding="24px"
+		>
+			<div
+				class="mono mb-4 inline-flex items-center gap-1.5 uppercase"
+				style:font-size="11px"
+				style:letter-spacing="0.12em"
+				style:color="var(--muted)"
+			>
+				<Icon name="shield" size={11} />
+				<span>{t("security_settings")}</span>
+			</div>
+
+			<div class="flex flex-col gap-5">
+				<div class="flex flex-col gap-2">
+					<label
+						for="password"
+						class="mono flex items-center gap-1.5 uppercase"
+						style:font-size="11px"
+						style:letter-spacing="0.08em"
+						style:color="var(--muted)"
+					>
+						<Icon name="lock" size={12} />
+						<span>{t("password_add_label")}</span>
+					</label>
+					<div class="relative">
+						<input
+							id="password"
+							type={showPassword ? "text" : "password"}
+							bind:value={password}
+							placeholder={t("password_add_placeholder")}
+							autocomplete="off"
+							class="w-full rounded-xl border outline-none transition-colors"
+							style:background="var(--bg-2)"
+							style:border-color="var(--line)"
+							style:color="var(--text)"
+							style:padding="12px 88px 12px 14px"
+							style:font-size="14px"
+						/>
+						<div
+							class="absolute flex gap-0.5"
+							style:right="8px"
+							style:top="50%"
+							style:transform="translateY(-50%)"
 						>
-							<span class="truncate text-sm text-slate-300"
-								>{file.name} ({formatSize(file.size)})</span
-							>
 							<button
 								type="button"
-								onclick={() => removeFile(i)}
-								class="ml-2 text-slate-500 hover:text-red-400"
-								aria-label={t("remove_file", { name: file.name })}
+								onclick={generatePwField}
+								class="inline-flex items-center justify-center rounded-md border-0 bg-transparent"
+								style:color="var(--muted)"
+								style:padding="6px 8px"
+								title="Generate"
 							>
-								&times;
+								<Icon name="dice" size={14} />
 							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
+							<button
+								type="button"
+								onclick={() => (showPassword = !showPassword)}
+								class="inline-flex items-center justify-center rounded-md border-0 bg-transparent"
+								style:color="var(--muted)"
+								style:padding="6px 8px"
+								title={showPassword ? t("theme_light") : t("theme_dark")}
+							>
+								<Icon name={showPassword ? "eye-off" : "eye"} size={14} />
+							</button>
+						</div>
+					</div>
+					{#if password}
+						<div class="flex items-center gap-2.5" style:margin-top="4px">
+							<div
+								class="flex-1 overflow-hidden rounded-full"
+								style:height="4px"
+								style:background="var(--bg-3)"
+							>
+								<div
+									class="h-full transition-all"
+									style:width="{(pwStrength.score / 5) * 100}%"
+									style:background={pwStrength.color}
+								></div>
+							</div>
+							<span
+								class="mono"
+								style:font-size="10px"
+								style:color={pwStrength.color}
+								style:min-width="70px"
+								style:text-align="right">{pwStrength.label}</span
+							>
+						</div>
+					{/if}
+					<span class="mono" style:font-size="11px" style:color="var(--muted-2)">
+						{t("password_add_hint")}
+					</span>
+				</div>
 
-		<div class="grid grid-cols-1 gap-4 md:grid-cols-3 md:items-end">
-			<div>
-				<label for="password" class="mb-1 block text-sm font-medium text-slate-300"
-					><i class="fa-solid fa-shield-halved"></i> {t("password_label")}</label
-				>
-				<input
-					id="password"
-					type="password"
-					bind:value={password}
-					placeholder={t("password_placeholder")}
-					autocomplete="off"
-					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-				/>
-			</div>
+				<div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
+					<div class="flex flex-col gap-2">
+						<label
+							for="expires"
+							class="mono flex items-center gap-1.5 uppercase"
+							style:font-size="11px"
+							style:letter-spacing="0.08em"
+							style:color="var(--muted)"
+						>
+							<Icon name="clock" size={12} />
+							<span>{t("expires_label")}</span>
+						</label>
+						<select
+							id="expires"
+							bind:value={expiresIn}
+							class="w-full rounded-xl border outline-none transition-colors"
+							style:background="var(--bg-2)"
+							style:border-color="var(--line)"
+							style:color="var(--text)"
+							style:padding="12px 14px"
+							style:font-size="14px"
+						>
+							{#each EXPIRATION_OPTIONS as option (option.value)}
+								<option value={option.value}>{t(option.labelKey)}</option>
+							{/each}
+						</select>
+					</div>
 
-			<div>
-				<label for="expires" class="mb-1 block text-sm font-medium text-slate-300"
-					><i class="fa-regular fa-clock"></i> {t("expires_label")}</label
-				>
-				<select
-					id="expires"
-					bind:value={expiresIn}
-					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-				>
-					{#each EXPIRATION_OPTIONS as option}
-						<option value={option.value}>{t(option.labelKey)}</option>
-					{/each}
-				</select>
-			</div>
-
-			<div>
-				<label for="max-reads" class="mb-1 block text-sm font-medium text-slate-300"
-					><i class="fa-solid fa-eye"></i> {t("max_reads_label")}</label
-				>
-				<input
-					id="max-reads"
-					type="number"
-					bind:value={maxReads}
-					placeholder={t("max_reads_placeholder")}
-					min="0"
-					max="1000"
-					class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-				/>
+					<div class="flex flex-col gap-2">
+						<label
+							for="max-reads"
+							class="mono flex items-center gap-1.5 uppercase"
+							style:font-size="11px"
+							style:letter-spacing="0.08em"
+							style:color="var(--muted)"
+						>
+							<Icon name="eye" size={12} />
+							<span>{t("max_reads_label")}</span>
+						</label>
+						<select
+							id="max-reads"
+							bind:value={maxReads}
+							class="w-full rounded-xl border outline-none transition-colors"
+							style:background="var(--bg-2)"
+							style:border-color="var(--line)"
+							style:color="var(--text)"
+							style:padding="12px 14px"
+							style:font-size="14px"
+						>
+							{#each READS as r (r.value)}
+								<option value={r.value}>{t(r.key)}</option>
+							{/each}
+						</select>
+					</div>
+				</div>
 			</div>
 		</div>
 
 		{#if isSubmitting}
-			<div class="py-2">
+			<div class="mb-4">
 				<StepProgress
 					steps={[
 						{ key: "encrypting", label: t("step_encrypting"), icon: "fa-solid fa-shield-halved" },
@@ -481,16 +782,32 @@ function reset() {
 
 		<button
 			type="submit"
-			disabled={!mounted || isSubmitting}
-			class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 transition-colors"
+			disabled={!mounted || isSubmitting || !canSubmit}
+			class="inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+			style:background="var(--accent)"
+			style:color="var(--accent-ink)"
+			style:padding="16px 24px"
+			style:font-size="15px"
+			style:font-weight="500"
 		>
-			{#if !mounted}
-				<i class="fa-solid fa-spinner fa-spin"></i> {t("loading")}
-			{:else if isSubmitting}
-				<i class="fa-solid fa-spinner fa-spin"></i> {t("submitting")}
+			{#if isSubmitting}
+				<span class="spinner"></span>
+				<span>{t("submit_encrypting")}</span>
 			{:else}
-				<i class="fa-solid fa-lock"></i> {t("submit_button")}
+				<Icon name="lock" size={16} />
+				<span>{t("submit_encrypt")}</span>
+				<Icon name="arrow-right" size={15} class="opacity-80" />
 			{/if}
 		</button>
+
+		<p
+			class="mono mt-6 text-center"
+			style:font-size="11px"
+			style:color="var(--muted-2)"
+			style:line-height="1.7"
+		>
+			{t("disclaimer_1")} <code style:color="var(--muted)">#</code><br />
+			{t("disclaimer_2")}
+		</p>
 	</form>
 {/if}

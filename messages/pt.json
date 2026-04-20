@@ -102,5 +102,9 @@
 	"theme_toggle": "Mudar tema",
 	"theme_dark": "Escuro",
 	"theme_light": "Claro",
-	"lang_toggle": "Idioma"
+	"lang_toggle": "Idioma",
+	"step_1": "Criar",
+	"step_2": "Partilhar",
+	"step_3": "Desbloquear",
+	"step_4": "Revelar"
 }
