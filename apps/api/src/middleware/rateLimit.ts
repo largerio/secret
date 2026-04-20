@@ -53,20 +53,18 @@ export function buildTrustedBlockList(cidrs: ReadonlyArray<string>): BlockList {
 	return list;
 }
 
-function getPeerIp(c: Context): string | null {
+function getPeerIp(c: Context): { readonly ip: string; readonly type: IpType } | null {
 	const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
 	const remote = env?.incoming?.socket?.remoteAddress;
 	if (!remote) return null;
-	const normalized = normalizeIp(remote);
-	return normalized?.ip ?? null;
+	return normalizeIp(remote);
 }
 
 function resolveClientIp(c: Context, trusted: BlockList): string {
 	const peer = getPeerIp(c);
 	if (peer === null) return "unknown";
 
-	const peerNormalized = normalizeIp(peer);
-	if (peerNormalized && trusted.check(peerNormalized.ip, peerNormalized.type)) {
+	if (trusted.check(peer.ip, peer.type)) {
 		const forwarded = c.req.header("x-forwarded-for");
 		const firstForwarded = forwarded?.split(",")[0]?.trim();
 		if (firstForwarded) return firstForwarded;
@@ -74,7 +72,7 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 		if (realIp) return realIp;
 	}
 
-	return peer;
+	return peer.ip;
 }
 
 export function createRateLimit(options: RateLimitOptions): RateLimitResult {

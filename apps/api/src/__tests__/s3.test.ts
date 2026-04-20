@@ -33,7 +33,8 @@ vi.mock("@aws-sdk/client-s3", () => {
 	};
 });
 
-const { NoSuchKey: MockNoSuchKey } = await import("@aws-sdk/client-s3");
+const { NoSuchKey } = await import("@aws-sdk/client-s3");
+const MockNoSuchKey = NoSuchKey as unknown as new () => Error;
 
 vi.mock("@aws-sdk/lib-storage", () => ({
 	Upload: class MockUpload {

@@ -367,8 +367,9 @@ export function createNotesRoutes() {
 			}
 			if (err instanceof StorageNotFoundError) {
 				httpError(404, "Note payload missing");
+			} else {
+				httpError(500, "Failed to decrypt note");
 			}
-			httpError(500, "Failed to decrypt note");
 		}
 
 		if (result.shouldDelete) {

@@ -47,6 +47,10 @@ export function createDatabase(dbPath: string): {
 		/* column already exists */
 	}
 
+	// chunks_received is legacy: pre-#26 uploads stored the received chunk list
+	// as a JSON string here. New code uses the upload_chunks table instead, but
+	// the column is kept to stay compatible with databases provisioned before
+	// the migration. It can be dropped once all deployments have rolled over.
 	sqlite.exec(`
 		CREATE TABLE IF NOT EXISTS uploads (
 			id TEXT PRIMARY KEY,
