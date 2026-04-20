@@ -745,11 +745,27 @@ export function createNotesRoutes() {
 		const IV_LENGTH = 12;
 		const AUTH_TAG_LENGTH = 16;
 
+		// Pre-flight the first chunk so a missing payload maps to a 404 before
+		// we commit to streaming a 200. Once headers are sent, any subsequent
+		// error can only break the stream mid-flight.
+		let firstChunk: Buffer;
+		try {
+			firstChunk = await storage.readChunk(id, 0);
+		} catch (err) {
+			if (result.shouldDelete) {
+				await cleanupNoteStorage(storage, id, { chunkCount });
+			}
+			if (err instanceof StorageNotFoundError) {
+				return c.json({ error: "Chunk payload missing" }, 404);
+			}
+			throw err;
+		}
+
 		const stream = new ReadableStream({
 			async start(controller) {
 				try {
 					for (let i = 0; i < chunkCount; i++) {
-						const storedData = await storage.readChunk(id, i);
+						const storedData = i === 0 ? firstChunk : await storage.readChunk(id, i);
 						const iv = storedData.subarray(0, IV_LENGTH);
 						const encrypted = storedData.subarray(IV_LENGTH);
 

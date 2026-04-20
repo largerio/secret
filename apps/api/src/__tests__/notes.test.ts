@@ -1985,7 +1985,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		consoleSpy.mockRestore();
 	});
 
-	it("handles readChunk throwing an error during stream", async () => {
+	it("returns 500 when readChunk fails pre-flight with a non-404 error", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
 
@@ -2000,12 +2000,27 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const errorApp = createAppWithCustomStorage(db, errorStorage);
 
 		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
-		expect(res.status).toBe(200); // Headers sent before stream
-		try {
-			await res.arrayBuffer();
-		} catch {
-			// Expected — stream errored
-		}
+		expect(res.status).toBe(500);
+	});
+
+	it("returns 404 when chunk 0 is missing (StorageNotFoundError)", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		const { StorageNotFoundError } = await import("../storage/errors.js");
+		const missingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.reject(new StorageNotFoundError()),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const missingApp = createAppWithCustomStorage(db, missingStorage);
+
+		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: "Chunk payload missing" });
 	});
 });
 
