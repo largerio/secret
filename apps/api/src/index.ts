@@ -18,7 +18,11 @@ import type { AppDatabase } from "./db/index.js";
 import { createDatabase } from "./db/index.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { buildTrustedBlockList, createRateLimit } from "./middleware/rateLimit.js";
-import { createCors, createSecurityHeaders } from "./middleware/security.js";
+import {
+	createCors,
+	createDocsSecurityHeaders,
+	createSecurityHeaders,
+} from "./middleware/security.js";
 import { createCapRoutes } from "./routes/cap.js";
 import { createNotesRoutes } from "./routes/notes.js";
 import type { StorageBackend, StorageType } from "./storage/index.js";
@@ -153,13 +157,8 @@ app.onError((err, c) => {
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
-app.use("*", async (c, next) => {
-	if (c.req.path === "/api/v1/docs") {
-		await next();
-		return;
-	}
-	return createSecurityHeaders()(c, next);
-});
+app.use("/api/v1/docs", createDocsSecurityHeaders());
+app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
 app.use("*", createCors([APP_URL]));
 app.use("*", compress());
 
@@ -268,13 +267,6 @@ v1.doc31("/openapi.json", {
 	},
 });
 
-v1.get("/docs", async (c, next) => {
-	c.header(
-		"Content-Security-Policy",
-		"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://api.scalar.com; img-src 'self' data: https://cdn.jsdelivr.net; font-src *; frame-ancestors 'none'",
-	);
-	await next();
-});
 v1.get(
 	"/docs",
 	Scalar({
