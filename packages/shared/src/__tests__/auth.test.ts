@@ -26,6 +26,16 @@ describe("verifyApiKey", () => {
 		expect(verifyApiKey("a", ["aa", "bbb"])).toBe(false);
 	});
 
+	it("rejects a candidate longer than all known keys", () => {
+		expect(verifyApiKey("longer", ["aa", "bbb"])).toBe(false);
+	});
+
+	it("rejects a candidate that shares a prefix with a known key", () => {
+		// The candidate's first bytes match "secret" but overall length differs.
+		expect(verifyApiKey("secretX", ["secret"])).toBe(false);
+		expect(verifyApiKey("secre", ["secret"])).toBe(false);
+	});
+
 	it("does not short-circuit on the first match (timing-safe)", () => {
 		// When the match is key[0], later keys are still compared. We can't
 		// assert the absence of a timing leak, but we can assert every known
