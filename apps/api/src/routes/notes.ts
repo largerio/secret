@@ -15,6 +15,7 @@ import {
 	UPLOAD_SESSION_TTL,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
+import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
@@ -61,8 +62,20 @@ interface NotesEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		uploadId: string;
 	};
 }
+
+const UPLOAD_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+const validateUploadId: MiddlewareHandler<NotesEnv> = async (c, next) => {
+	const id = c.req.param("uploadId");
+	if (!id || !UPLOAD_ID_RE.test(id)) {
+		return c.json({ error: "Invalid upload ID" }, 400);
+	}
+	c.set("uploadId", id);
+	await next();
+};
 
 const noteIdParam = z
 	.string()
@@ -502,11 +515,11 @@ export function createNotesRoutes() {
 		return c.json({ uploadId, expiresAt: expiresAt.toISOString() }, 201);
 	});
 
+	app.use("/upload/:uploadId/chunks/*", validateUploadId);
+	app.use("/upload/:uploadId/complete", validateUploadId);
+
 	app.put("/upload/:uploadId/chunks/:index", async (c) => {
-		const uploadId = c.req.param("uploadId");
-		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
-			return c.json({ error: "Invalid upload ID" }, 400);
-		}
+		const uploadId = c.get("uploadId");
 		const indexStr = c.req.param("index");
 		const index = parseInt(indexStr as string, 10);
 
@@ -515,11 +528,7 @@ export function createNotesRoutes() {
 		}
 
 		const db = c.get("db");
-		const session = db
-			.select()
-			.from(uploads)
-			.where(eq(uploads.id, uploadId as string))
-			.get();
+		const session = db.select().from(uploads).where(eq(uploads.id, uploadId)).get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
 			return c.json({ error: "Upload session not found or expired" }, 404);
@@ -559,7 +568,7 @@ export function createNotesRoutes() {
 		await storage.saveChunk(session.noteId, index, storedData);
 
 		db.insert(uploadChunks)
-			.values({ uploadId: uploadId as string, chunkIndex: index })
+			.values({ uploadId: uploadId, chunkIndex: index })
 			.onConflictDoNothing()
 			.run();
 
@@ -567,17 +576,10 @@ export function createNotesRoutes() {
 	});
 
 	app.post("/upload/:uploadId/complete", async (c) => {
-		const uploadId = c.req.param("uploadId");
-		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
-			return c.json({ error: "Invalid upload ID" }, 400);
-		}
+		const uploadId = c.get("uploadId");
 
 		const db = c.get("db");
-		const session = db
-			.select()
-			.from(uploads)
-			.where(eq(uploads.id, uploadId as string))
-			.get();
+		const session = db.select().from(uploads).where(eq(uploads.id, uploadId)).get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
 			return c.json({ error: "Upload session not found or expired" }, 404);
@@ -586,7 +588,7 @@ export function createNotesRoutes() {
 		const rows = db
 			.select({ chunkIndex: uploadChunks.chunkIndex })
 			.from(uploadChunks)
-			.where(eq(uploadChunks.uploadId, uploadId as string))
+			.where(eq(uploadChunks.uploadId, uploadId))
 			.all();
 
 		if (rows.length < session.chunkCount) {
@@ -647,9 +649,7 @@ export function createNotesRoutes() {
 				})
 				.run();
 
-			tx.delete(uploads)
-				.where(eq(uploads.id, uploadId as string))
-				.run();
+			tx.delete(uploads).where(eq(uploads.id, uploadId)).run();
 
 			return { success: true as const };
 		});
