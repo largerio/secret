@@ -4,25 +4,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createErrorHandler, sanitizeError } from "../middleware/errorHandler.js";
 
 describe("sanitizeError", () => {
-	it("extracts name/message/stack from Error", () => {
-		const err = new TypeError("boom");
+	it("returns only the error name for Error instances", () => {
+		const err = new TypeError("boom with /etc/secret");
+		expect(sanitizeError(err)).toEqual({ name: "TypeError" });
+	});
+
+	it("does not leak message, stack, or extra properties", () => {
+		const err = new Error("sensitive: /etc/passwd") as Error & { cause?: string };
+		err.cause = "sensitive-cause";
 		const payload = sanitizeError(err);
-		expect(payload.name).toBe("TypeError");
-		expect(payload.message).toBe("boom");
-		expect(payload.stack).toBeDefined();
-		expect(payload.raw).toBeUndefined();
+		expect(payload).not.toHaveProperty("message");
+		expect(payload).not.toHaveProperty("stack");
+		expect(payload).not.toHaveProperty("cause");
 	});
 
-	it("falls back to String() for non-Error values", () => {
-		expect(sanitizeError("oops")).toEqual({ raw: "oops" });
-		expect(sanitizeError(42)).toEqual({ raw: "42" });
-		expect(sanitizeError(null)).toEqual({ raw: "null" });
-	});
-
-	it("omits stack when it is undefined", () => {
-		const err = new Error("no stack");
-		Object.defineProperty(err, "stack", { value: undefined });
-		expect(sanitizeError(err)).toEqual({ name: "Error", message: "no stack" });
+	it("reports only the type for non-Error values", () => {
+		expect(sanitizeError("oops")).toEqual({ raw: "string" });
+		expect(sanitizeError(42)).toEqual({ raw: "number" });
+		expect(sanitizeError(null)).toEqual({ raw: "object" });
 	});
 });
 
@@ -63,11 +62,7 @@ describe("createErrorHandler", () => {
 
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		const [, payload] = consoleSpy.mock.calls[0] ?? [];
-		expect(payload).toMatchObject({
-			name: "Error",
-			message: "leak: /etc/secret",
-		});
-		expect(payload).not.toHaveProperty("cause");
+		expect(payload).toEqual({ name: "Error" });
 	});
 
 	it("logs the full error object when debug is enabled", async () => {

@@ -8,20 +8,19 @@ export interface ErrorHandlerOptions {
 
 export interface ErrorLogPayload {
 	readonly name?: string;
-	readonly message?: string;
-	readonly stack?: string;
 	readonly raw?: string;
 }
 
+// Strips every field that can carry sensitive context: err.message (often
+// contains user input or internal paths), err.stack (file paths), err.cause
+// and any other enumerable property. Operators correlate issues via the
+// errorId returned to the client — for raw error inspection, run the API with
+// DEBUG=true.
 export function sanitizeError(err: unknown): ErrorLogPayload {
 	if (err instanceof Error) {
-		return {
-			name: err.name,
-			message: err.message,
-			...(err.stack !== undefined ? { stack: err.stack } : {}),
-		};
+		return { name: err.name };
 	}
-	return { raw: String(err) };
+	return { raw: typeof err === "string" ? "string" : typeof err };
 }
 
 export function createErrorHandler(
