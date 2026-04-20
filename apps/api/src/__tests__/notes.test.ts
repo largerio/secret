@@ -649,6 +649,22 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(json.error).toBe("Failed to decrypt note");
 	});
 
+	it("returns 404 when the stored file has been removed from disk", async () => {
+		const { id } = await createTestNote({ fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const note = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		const filePath = note?.filePath ?? "";
+		expect(filePath).toBeTruthy();
+
+		const { unlink } = await import("node:fs/promises");
+		await unlink(filePath);
+
+		const res = await app.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Note payload missing");
+	});
+
 	it("cleans up storage when decryption fails on burn-after-read file note", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
 
@@ -1507,28 +1523,42 @@ describe("Chunked upload flow", () => {
 		expect((await res.json()).error).toBe("Invalid upload ID");
 	});
 
-	it("returns 500 when chunksReceived is corrupted in DB", async () => {
-		const { json: initJson } = await initUpload({ chunkCount: 1 });
-		const chunk = chunkData("test-chunk");
-		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
-			body: chunk as BodyInit,
-		});
+	it("deduplicates concurrent uploads of the same chunk", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 3 });
+		const chunk = chunkData("concurrent-chunk");
+		const headers = {
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Hash": sha256hex(chunk),
+		};
+		const results = await Promise.all([
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/1`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+			app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/2`, {
+				method: "PUT",
+				headers,
+				body: chunk as BodyInit,
+			}),
+		]);
+		expect(results.every((r) => r.status === 200)).toBe(true);
 
-		const { uploads: uploadsTable } = await import("../db/schema.js");
+		const { uploadChunks: table } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(uploadsTable)
-			.set({ chunksReceived: "not-valid-json" })
-			.where(eq(uploadsTable.id, initJson.uploadId))
-			.run();
-
-		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
-			method: "POST",
-			headers: authHeaders(),
-		});
-		expect(res.status).toBe(500);
-		expect((await res.json()).error).toBe("Corrupted upload session");
+		const rows = db.select().from(table).where(eq(table.uploadId, initJson.uploadId)).all();
+		expect(rows).toHaveLength(3);
+		expect(rows.map((r) => r.chunkIndex).sort()).toEqual([0, 1, 2]);
 	});
 
 	it("returns 500 when metadata is corrupted in DB", async () => {
@@ -1955,7 +1985,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		consoleSpy.mockRestore();
 	});
 
-	it("handles readChunk throwing an error during stream", async () => {
+	it("returns 500 when readChunk fails pre-flight with a non-404 error", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
 
@@ -1970,12 +2000,27 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const errorApp = createAppWithCustomStorage(db, errorStorage);
 
 		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
-		expect(res.status).toBe(200); // Headers sent before stream
-		try {
-			await res.arrayBuffer();
-		} catch {
-			// Expected — stream errored
-		}
+		expect(res.status).toBe(500);
+	});
+
+	it("returns 404 when chunk 0 is missing (StorageNotFoundError)", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		const { StorageNotFoundError } = await import("../storage/errors.js");
+		const missingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.reject(new StorageNotFoundError()),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const missingApp = createAppWithCustomStorage(db, missingStorage);
+
+		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: "Chunk payload missing" });
 	});
 });
 

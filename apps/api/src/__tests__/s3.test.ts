@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StorageNotFoundError } from "../storage/errors.js";
 import { S3Storage } from "../storage/s3.js";
 
 const mockSend = vi.fn();
 const mockDone = vi.fn().mockResolvedValue({});
 
 vi.mock("@aws-sdk/client-s3", () => {
+	class MockNoSuchKey extends Error {
+		readonly $metadata = { httpStatusCode: 404 };
+		constructor() {
+			super("NoSuchKey");
+			this.name = "NoSuchKey";
+		}
+	}
 	return {
 		S3Client: class MockS3Client {
 			send = mockSend;
@@ -21,8 +29,12 @@ vi.mock("@aws-sdk/client-s3", () => {
 		DeleteObjectsCommand: class MockDeleteObjectsCommand {
 			constructor(public params: unknown) {}
 		},
+		NoSuchKey: MockNoSuchKey,
 	};
 });
+
+const { NoSuchKey } = await import("@aws-sdk/client-s3");
+const MockNoSuchKey = NoSuchKey as unknown as new () => Error;
 
 vi.mock("@aws-sdk/lib-storage", () => ({
 	Upload: class MockUpload {
@@ -94,6 +106,45 @@ describe("S3Storage", () => {
 
 			await expect(storage.read("notes/note123")).rejects.toThrow("Empty response from S3");
 		});
+
+		it("maps NoSuchKey into StorageNotFoundError", async () => {
+			mockSend.mockRejectedValueOnce(new MockNoSuchKey());
+			await expect(storage.read("notes/missing")).rejects.toBeInstanceOf(StorageNotFoundError);
+		});
+
+		it("maps any 404 S3 response into StorageNotFoundError", async () => {
+			const err = Object.assign(new Error("NotFound"), {
+				name: "NotFound",
+				$metadata: { httpStatusCode: 404 },
+			});
+			mockSend.mockRejectedValueOnce(err);
+			await expect(storage.read("notes/missing")).rejects.toBeInstanceOf(StorageNotFoundError);
+		});
+
+		it("re-throws non-404 S3 errors as-is", async () => {
+			const err = Object.assign(new Error("AccessDenied"), {
+				name: "AccessDenied",
+				$metadata: { httpStatusCode: 403 },
+			});
+			mockSend.mockRejectedValueOnce(err);
+			await expect(storage.read("notes/forbidden")).rejects.not.toBeInstanceOf(
+				StorageNotFoundError,
+			);
+		});
+
+		it("maps a 404 even when the error name is generic", async () => {
+			const err = Object.assign(new Error("boom"), {
+				name: "UnknownError",
+				$metadata: { httpStatusCode: 404 },
+			});
+			mockSend.mockRejectedValueOnce(err);
+			await expect(storage.read("notes/missing")).rejects.toBeInstanceOf(StorageNotFoundError);
+		});
+
+		it("re-throws primitive rejections as-is", async () => {
+			mockSend.mockRejectedValueOnce("plain-string");
+			await expect(storage.read("notes/x")).rejects.toBe("plain-string");
+		});
 	});
 
 	describe("delete", () => {
@@ -158,6 +209,22 @@ describe("S3Storage", () => {
 		it("throws when response body is empty", async () => {
 			mockSend.mockResolvedValueOnce({ Body: null });
 			await expect(storage.readChunk("note123", 0)).rejects.toThrow("Empty response from S3");
+		});
+
+		it("maps NoSuchKey into StorageNotFoundError", async () => {
+			mockSend.mockRejectedValueOnce(new MockNoSuchKey());
+			await expect(storage.readChunk("note123", 0)).rejects.toBeInstanceOf(StorageNotFoundError);
+		});
+
+		it("re-throws non-404 S3 errors as-is", async () => {
+			const err = Object.assign(new Error("Throttled"), {
+				name: "SlowDown",
+				$metadata: { httpStatusCode: 503 },
+			});
+			mockSend.mockRejectedValueOnce(err);
+			await expect(storage.readChunk("note123", 0)).rejects.not.toBeInstanceOf(
+				StorageNotFoundError,
+			);
 		});
 	});
 

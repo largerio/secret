@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
+import { StorageInvalidKeyError, StorageNotFoundError } from "../storage/errors.js";
 import { LocalStorage } from "../storage/local.js";
 
 const TEST_DIR = "./data/fs-test";
@@ -113,5 +114,40 @@ describe("LocalStorage", () => {
 	it("deleteChunks does not throw for missing chunks", async () => {
 		const storage = new LocalStorage(storageDir);
 		await expect(storage.deleteChunks("nonexistent-note", 3)).resolves.not.toThrow();
+	});
+
+	it("read throws StorageNotFoundError for missing files", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.read(`${storageDir}/does-not-exist`)).rejects.toBeInstanceOf(
+			StorageNotFoundError,
+		);
+	});
+
+	it("readChunk throws StorageNotFoundError for missing chunks", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.readChunk("never-saved", 0)).rejects.toBeInstanceOf(StorageNotFoundError);
+	});
+
+	it("path traversal raises StorageInvalidKeyError", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.read("/etc/passwd")).rejects.toBeInstanceOf(StorageInvalidKeyError);
+	});
+
+	it("read re-throws non-ENOENT filesystem errors", async () => {
+		const storage = new LocalStorage(storageDir);
+		// Reading the storage root (a directory) raises EISDIR, not ENOENT —
+		// it must propagate as-is, not get masked as StorageNotFoundError.
+		await expect(storage.read(storageDir)).rejects.not.toBeInstanceOf(StorageNotFoundError);
+	});
+
+	it("readChunk re-throws non-ENOENT filesystem errors", async () => {
+		const storage = new LocalStorage(storageDir);
+		await storage.saveChunk("eisdir-note", 0, Buffer.from("anchor"));
+		// Make chunk index 1 a directory so readFile returns EISDIR.
+		const { mkdir } = await import("node:fs/promises");
+		await mkdir(`${storageDir}/eisdir-note/chunk_1`, { recursive: true });
+		await expect(storage.readChunk("eisdir-note", 1)).rejects.not.toBeInstanceOf(
+			StorageNotFoundError,
+		);
 	});
 });

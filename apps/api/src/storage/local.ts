@@ -1,7 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
 import type { StorageBackend } from "./interface.js";
+
+function isNodeError(err: unknown): err is NodeJS.ErrnoException {
+	return err instanceof Error && typeof (err as NodeJS.ErrnoException).code === "string";
+}
 
 export class LocalStorage implements StorageBackend {
 	private readonly filesPath: string;
@@ -14,7 +19,7 @@ export class LocalStorage implements StorageBackend {
 	private assertSafePath(filePath: string): string {
 		const resolved = resolve(filePath);
 		if (resolved !== this.filesPath && !resolved.startsWith(`${this.filesPath}/`)) {
-			throw new Error("Path traversal detected");
+			throw new StorageInvalidKeyError("Path traversal detected");
 		}
 		return resolved;
 	}
@@ -27,7 +32,14 @@ export class LocalStorage implements StorageBackend {
 
 	async read(storageKey: string): Promise<Buffer> {
 		const safePath = this.assertSafePath(storageKey);
-		return readFile(safePath);
+		try {
+			return await readFile(safePath);
+		} catch (err) {
+			if (isNodeError(err) && err.code === "ENOENT") {
+				throw new StorageNotFoundError();
+			}
+			throw err;
+		}
 	}
 
 	async delete(storageKey: string): Promise<void> {
@@ -51,7 +63,14 @@ export class LocalStorage implements StorageBackend {
 		const filePath = this.assertSafePath(
 			join(this.filesPath, noteId, `chunk_${String(chunkIndex)}`),
 		);
-		return readFile(filePath);
+		try {
+			return await readFile(filePath);
+		} catch (err) {
+			if (isNodeError(err) && err.code === "ENOENT") {
+				throw new StorageNotFoundError();
+			}
+			throw err;
+		}
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {

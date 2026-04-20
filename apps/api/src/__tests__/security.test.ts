@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { createCors, createSecurityHeaders } from "../middleware/security.js";
+import {
+	createCors,
+	createDocsSecurityHeaders,
+	createSecurityHeaders,
+} from "../middleware/security.js";
 
 describe("createSecurityHeaders", () => {
 	it("adds security headers to responses", async () => {
@@ -28,6 +32,47 @@ describe("createSecurityHeaders", () => {
 		expect(csp).toContain("default-src 'none'");
 		expect(csp).toContain("script-src 'self'");
 		expect(csp).toContain("frame-ancestors 'none'");
+	});
+
+	it("skips configured paths", async () => {
+		const app = new Hono();
+		app.use("*", createSecurityHeaders({ skipPaths: ["/skip"] }));
+		app.get("/skip", (c) => c.json({ ok: true }));
+		app.get("/keep", (c) => c.json({ ok: true }));
+
+		const skipped = await app.request("/skip");
+		expect(skipped.headers.get("content-security-policy")).toBeNull();
+
+		const kept = await app.request("/keep");
+		expect(kept.headers.get("content-security-policy")).toBeDefined();
+	});
+});
+
+describe("createDocsSecurityHeaders", () => {
+	it("sets a Scalar-compatible CSP that still blocks framing", async () => {
+		const app = new Hono();
+		app.use("/docs", createDocsSecurityHeaders());
+		app.get("/docs", (c) => c.text("ok"));
+
+		const res = await app.request("/docs");
+		const csp = res.headers.get("content-security-policy");
+		expect(csp).toContain("default-src 'none'");
+		expect(csp).toContain("cdn.jsdelivr.net");
+		expect(csp).toContain("frame-ancestors 'none'");
+		expect(res.headers.get("x-frame-options")).toBe("DENY");
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+	});
+
+	it("preserves docs CSP when stacked with a strict middleware that skips /docs", async () => {
+		const app = new Hono();
+		app.use("/docs", createDocsSecurityHeaders());
+		app.use("*", createSecurityHeaders({ skipPaths: ["/docs"] }));
+		app.get("/docs", (c) => c.text("ok"));
+
+		const res = await app.request("/docs");
+		const csp = res.headers.get("content-security-policy");
+		expect(csp).toContain("cdn.jsdelivr.net");
 	});
 });
 

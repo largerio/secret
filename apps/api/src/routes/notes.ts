@@ -15,11 +15,13 @@ import {
 	UPLOAD_SESSION_TTL,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
+import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
-import { notes, uploads } from "../db/schema.js";
+import { notes, uploadChunks, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
+import { StorageNotFoundError } from "../storage/index.js";
 
 const DELETE_TOKEN_LENGTH = 32;
 
@@ -61,8 +63,20 @@ interface NotesEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		uploadId: string;
 	};
 }
+
+const UPLOAD_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+const validateUploadId: MiddlewareHandler<NotesEnv> = async (c, next) => {
+	const id = c.req.param("uploadId");
+	if (!id || !UPLOAD_ID_RE.test(id)) {
+		return c.json({ error: "Invalid upload ID" }, 400);
+	}
+	c.set("uploadId", id);
+	await next();
+};
 
 const noteIdParam = z
 	.string()
@@ -347,11 +361,15 @@ export function createNotesRoutes() {
 			} else {
 				clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 			}
-		} catch {
+		} catch (err) {
 			if (result.shouldDelete) {
 				await cleanupNoteStorage(storage, id, note);
 			}
-			httpError(500, "Failed to decrypt note");
+			if (err instanceof StorageNotFoundError) {
+				httpError(404, "Note payload missing");
+			} else {
+				httpError(500, "Failed to decrypt note");
+			}
 		}
 
 		if (result.shouldDelete) {
@@ -492,7 +510,6 @@ export function createNotesRoutes() {
 				id: uploadId,
 				metadata,
 				chunkCount: data.chunkCount,
-				chunksReceived: "[]",
 				noteId,
 				deleteToken,
 				createdAt: now,
@@ -503,11 +520,11 @@ export function createNotesRoutes() {
 		return c.json({ uploadId, expiresAt: expiresAt.toISOString() }, 201);
 	});
 
+	app.use("/upload/:uploadId/chunks/*", validateUploadId);
+	app.use("/upload/:uploadId/complete", validateUploadId);
+
 	app.put("/upload/:uploadId/chunks/:index", async (c) => {
-		const uploadId = c.req.param("uploadId");
-		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
-			return c.json({ error: "Invalid upload ID" }, 400);
-		}
+		const uploadId = c.get("uploadId");
 		const indexStr = c.req.param("index");
 		const index = parseInt(indexStr as string, 10);
 
@@ -516,11 +533,7 @@ export function createNotesRoutes() {
 		}
 
 		const db = c.get("db");
-		const session = db
-			.select()
-			.from(uploads)
-			.where(eq(uploads.id, uploadId as string))
-			.get();
+		const session = db.select().from(uploads).where(eq(uploads.id, uploadId)).get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
 			return c.json({ error: "Upload session not found or expired" }, 404);
@@ -559,50 +572,36 @@ export function createNotesRoutes() {
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
-		// Update received chunks
-		const received = JSON.parse(session.chunksReceived) as number[];
-		if (!received.includes(index)) {
-			received.push(index);
-			db.update(uploads)
-				.set({ chunksReceived: JSON.stringify(received) })
-				.where(eq(uploads.id, uploadId as string))
-				.run();
-		}
+		db.insert(uploadChunks)
+			.values({ uploadId: uploadId, chunkIndex: index })
+			.onConflictDoNothing()
+			.run();
 
 		return c.json({ received: true as const });
 	});
 
 	app.post("/upload/:uploadId/complete", async (c) => {
-		const uploadId = c.req.param("uploadId");
-		if (!uploadId || !/^[A-Za-z0-9_-]+$/.test(uploadId)) {
-			return c.json({ error: "Invalid upload ID" }, 400);
-		}
+		const uploadId = c.get("uploadId");
 
 		const db = c.get("db");
-		const session = db
-			.select()
-			.from(uploads)
-			.where(eq(uploads.id, uploadId as string))
-			.get();
+		const session = db.select().from(uploads).where(eq(uploads.id, uploadId)).get();
 
 		if (session === undefined || session.expiresAt < new Date()) {
 			return c.json({ error: "Upload session not found or expired" }, 404);
 		}
 
-		let received: number[];
-		try {
-			received = JSON.parse(session.chunksReceived) as number[];
-		} catch {
-			return c.json({ error: "Corrupted upload session" }, 500);
-		}
-		const missing: number[] = [];
-		for (let i = 0; i < session.chunkCount; i++) {
-			if (!received.includes(i)) {
-				missing.push(i);
-			}
-		}
+		const rows = db
+			.select({ chunkIndex: uploadChunks.chunkIndex })
+			.from(uploadChunks)
+			.where(eq(uploadChunks.uploadId, uploadId))
+			.all();
 
-		if (missing.length > 0) {
+		if (rows.length < session.chunkCount) {
+			const received = new Set(rows.map((r) => r.chunkIndex));
+			const missing: number[] = [];
+			for (let i = 0; i < session.chunkCount; i++) {
+				if (!received.has(i)) missing.push(i);
+			}
 			return c.json({ error: `Missing chunks: [${missing.join(", ")}]` }, 400);
 		}
 
@@ -655,9 +654,7 @@ export function createNotesRoutes() {
 				})
 				.run();
 
-			tx.delete(uploads)
-				.where(eq(uploads.id, uploadId as string))
-				.run();
+			tx.delete(uploads).where(eq(uploads.id, uploadId)).run();
 
 			return { success: true as const };
 		});
@@ -748,11 +745,27 @@ export function createNotesRoutes() {
 		const IV_LENGTH = 12;
 		const AUTH_TAG_LENGTH = 16;
 
+		// Pre-flight the first chunk so a missing payload maps to a 404 before
+		// we commit to streaming a 200. Once headers are sent, any subsequent
+		// error can only break the stream mid-flight.
+		let firstChunk: Buffer;
+		try {
+			firstChunk = await storage.readChunk(id, 0);
+		} catch (err) {
+			if (result.shouldDelete) {
+				await cleanupNoteStorage(storage, id, { chunkCount });
+			}
+			if (err instanceof StorageNotFoundError) {
+				return c.json({ error: "Chunk payload missing" }, 404);
+			}
+			throw err;
+		}
+
 		const stream = new ReadableStream({
 			async start(controller) {
 				try {
 					for (let i = 0; i < chunkCount; i++) {
-						const storedData = await storage.readChunk(id, i);
+						const storedData = i === 0 ? firstChunk : await storage.readChunk(id, i);
 						const iv = storedData.subarray(0, IV_LENGTH);
 						const encrypted = storedData.subarray(IV_LENGTH);
 

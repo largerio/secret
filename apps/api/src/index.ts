@@ -12,13 +12,17 @@ import {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
-import { HTTPException } from "hono/http-exception";
 import { startCleanupJob } from "./cleanup.js";
 import type { AppDatabase } from "./db/index.js";
 import { createDatabase } from "./db/index.js";
 import { createWriteAuth } from "./middleware/auth.js";
-import { createRateLimit } from "./middleware/rateLimit.js";
-import { createCors, createSecurityHeaders } from "./middleware/security.js";
+import { createErrorHandler } from "./middleware/errorHandler.js";
+import { buildTrustedBlockList, createRateLimit } from "./middleware/rateLimit.js";
+import {
+	createCors,
+	createDocsSecurityHeaders,
+	createSecurityHeaders,
+} from "./middleware/security.js";
 import { createCapRoutes } from "./routes/cap.js";
 import { createNotesRoutes } from "./routes/notes.js";
 import type { StorageBackend, StorageType } from "./storage/index.js";
@@ -52,6 +56,10 @@ const CHUNK_SIZE = Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE));
 const MAX_CHUNKED_FILE_SIZE = Number(
 	env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
 );
+const TRUSTED_PROXIES = (env["TRUSTED_PROXIES"] ?? "")
+	.split(",")
+	.map((v) => v.trim())
+	.filter((v) => v.length > 0);
 
 if (!SERVER_KEY_ENV) {
 	console.error("ERROR: SERVER_ENCRYPTION_KEY is required.");
@@ -88,6 +96,15 @@ if (Number.isNaN(MAX_CHUNKED_FILE_SIZE) || MAX_CHUNKED_FILE_SIZE <= 0) {
 
 if (CHUNK_SIZE > MAX_CHUNKED_FILE_SIZE) {
 	console.error("ERROR: CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE");
+	process.exit(1);
+}
+
+try {
+	buildTrustedBlockList(TRUSTED_PROXIES);
+} catch (err) {
+	console.error(
+		`ERROR: TRUSTED_PROXIES contains an invalid entry: ${err instanceof Error ? err.message : String(err)}`,
+	);
 	process.exit(1);
 }
 
@@ -129,24 +146,12 @@ interface AppEnv {
 
 const app = new Hono<AppEnv>();
 
-app.onError((err, c) => {
-	if (err instanceof HTTPException) {
-		return c.json({ error: err.message }, err.status);
-	}
-	const errorId = crypto.randomUUID();
-	console.error(`[error] ${errorId}:`, err);
-	return c.json({ error: "Internal server error", errorId }, 500);
-});
+app.onError(createErrorHandler({ debug: env["DEBUG"] === "1" || env["DEBUG"] === "true" }));
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
-app.use("*", async (c, next) => {
-	if (c.req.path === "/api/v1/docs") {
-		await next();
-		return;
-	}
-	return createSecurityHeaders()(c, next);
-});
+app.use("/api/v1/docs", createDocsSecurityHeaders());
+app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
 app.use("*", createCors([APP_URL]));
 app.use("*", compress());
 
@@ -168,10 +173,26 @@ app.use(
 	}),
 );
 
-const notesRateLimit = createRateLimit({ windowMs: 60_000, max: 30 });
-const notesDetailRateLimit = createRateLimit({ windowMs: 60_000, max: 60 });
-const existsRateLimit = createRateLimit({ windowMs: 60_000, max: 20 });
-const chunksRateLimit = createRateLimit({ windowMs: 60_000, max: 200 });
+const notesRateLimit = createRateLimit({
+	windowMs: 60_000,
+	max: 30,
+	trustedProxies: TRUSTED_PROXIES,
+});
+const notesDetailRateLimit = createRateLimit({
+	windowMs: 60_000,
+	max: 60,
+	trustedProxies: TRUSTED_PROXIES,
+});
+const existsRateLimit = createRateLimit({
+	windowMs: 60_000,
+	max: 20,
+	trustedProxies: TRUSTED_PROXIES,
+});
+const chunksRateLimit = createRateLimit({
+	windowMs: 60_000,
+	max: 200,
+	trustedProxies: TRUSTED_PROXIES,
+});
 app.use("/api/v1/notes", notesRateLimit.middleware);
 app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
 app.use("/api/v1/notes/upload/*/chunks/*", chunksRateLimit.middleware);
@@ -239,13 +260,6 @@ v1.doc31("/openapi.json", {
 	},
 });
 
-v1.get("/docs", async (c, next) => {
-	c.header(
-		"Content-Security-Policy",
-		"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://api.scalar.com; img-src 'self' data: https://cdn.jsdelivr.net; font-src *; frame-ancestors 'none'",
-	);
-	await next();
-});
 v1.get(
 	"/docs",
 	Scalar({

@@ -2,10 +2,13 @@ import {
 	DeleteObjectCommand,
 	DeleteObjectsCommand,
 	GetObjectCommand,
+	type GetObjectCommandOutput,
+	NoSuchKey,
 	PutObjectCommand,
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
+import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 export interface S3Config {
@@ -15,6 +18,19 @@ export interface S3Config {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
 	readonly forcePathStyle: boolean;
+}
+
+function isNotFoundError(err: unknown): boolean {
+	if (err instanceof NoSuchKey) return true;
+	if (err && typeof err === "object") {
+		const e = err as {
+			name?: unknown;
+			$metadata?: { httpStatusCode?: unknown };
+		};
+		if (e.name === "NoSuchKey" || e.name === "NotFound") return true;
+		if (e.$metadata?.httpStatusCode === 404) return true;
+	}
+	return false;
 }
 
 async function streamToBuffer(body: { transformToWebStream(): ReadableStream }): Promise<Buffer> {
@@ -50,7 +66,7 @@ export class S3Storage implements StorageBackend {
 
 	async save(noteId: string, data: Buffer): Promise<string> {
 		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new Error("Invalid note ID for storage key");
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
 		}
 		const key = `notes/${noteId}`;
 		const upload = new Upload({
@@ -67,15 +83,21 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async read(storageKey: string): Promise<Buffer> {
-		const response = await this.client.send(
-			new GetObjectCommand({
-				Bucket: this.bucket,
-				Key: storageKey,
-			}),
-		);
+		let response: GetObjectCommandOutput;
+		try {
+			response = await this.client.send(
+				new GetObjectCommand({
+					Bucket: this.bucket,
+					Key: storageKey,
+				}),
+			);
+		} catch (err) {
+			if (isNotFoundError(err)) throw new StorageNotFoundError();
+			throw err;
+		}
 
 		if (!response.Body) {
-			throw new Error("Empty response from S3");
+			throw new StorageNotFoundError("Empty response from S3");
 		}
 
 		return streamToBuffer(response.Body);
@@ -96,7 +118,7 @@ export class S3Storage implements StorageBackend {
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
 		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new Error("Invalid note ID for storage key");
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
 		}
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		await this.client.send(
@@ -112,15 +134,21 @@ export class S3Storage implements StorageBackend {
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
-		const response = await this.client.send(
-			new GetObjectCommand({
-				Bucket: this.bucket,
-				Key: key,
-			}),
-		);
+		let response: GetObjectCommandOutput;
+		try {
+			response = await this.client.send(
+				new GetObjectCommand({
+					Bucket: this.bucket,
+					Key: key,
+				}),
+			);
+		} catch (err) {
+			if (isNotFoundError(err)) throw new StorageNotFoundError();
+			throw err;
+		}
 
 		if (!response.Body) {
-			throw new Error("Empty response from S3");
+			throw new StorageNotFoundError("Empty response from S3");
 		}
 
 		return streamToBuffer(response.Body);
