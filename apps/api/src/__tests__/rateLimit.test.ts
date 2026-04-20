@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { createRateLimit } from "../middleware/rateLimit.js";
+import { buildTrustedBlockList, createRateLimit } from "../middleware/rateLimit.js";
+
+function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
+	return { incoming: { socket: { remoteAddress } } };
+}
 
 describe("createRateLimit", () => {
 	it("allows requests under the limit", async () => {
@@ -9,7 +13,7 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		const res = await app.request("/test");
+		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res.status).toBe(200);
 		rl.cleanup();
 	});
@@ -20,9 +24,9 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		await app.request("/test");
-		await app.request("/test");
-		const res = await app.request("/test");
+		await app.request("/test", {}, mockEnv("1.1.1.1"));
+		await app.request("/test", {}, mockEnv("1.1.1.1"));
+		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res.status).toBe(429);
 		const json = await res.json();
 		expect(json.error).toBe("Too many requests");
@@ -35,55 +39,173 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		await app.request("/test");
-		const blocked = await app.request("/test");
+		await app.request("/test", {}, mockEnv("1.1.1.1"));
+		const blocked = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(blocked.status).toBe(429);
 
 		await new Promise((resolve) => setTimeout(resolve, 150));
-		const res = await app.request("/test");
+		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res.status).toBe(200);
 		rl.cleanup();
 	});
 
-	it("tracks different IPs separately", async () => {
+	it("tracks different peer IPs separately", async () => {
 		const app = new Hono();
 		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		const res1 = await app.request("/test", { headers: { "X-Forwarded-For": "1.1.1.1" } });
+		const res1 = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res1.status).toBe(200);
 
-		const res2 = await app.request("/test", { headers: { "X-Forwarded-For": "2.2.2.2" } });
+		const res2 = await app.request("/test", {}, mockEnv("2.2.2.2"));
 		expect(res2.status).toBe(200);
 
-		const res3 = await app.request("/test", { headers: { "X-Forwarded-For": "1.1.1.1" } });
+		const res3 = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res3.status).toBe(429);
 
 		rl.cleanup();
 	});
 
-	it("uses first IP from X-Forwarded-For", async () => {
+	it("ignores X-Forwarded-For when peer is not a trusted proxy", async () => {
 		const app = new Hono();
 		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		await app.request("/test", { headers: { "X-Forwarded-For": "1.1.1.1, 2.2.2.2" } });
-		const res = await app.request("/test", { headers: { "X-Forwarded-For": "1.1.1.1, 3.3.3.3" } });
+		await app.request("/test", { headers: { "X-Forwarded-For": "1.1.1.1" } }, mockEnv("9.9.9.9"));
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "2.2.2.2" } },
+			mockEnv("9.9.9.9"),
+		);
 		expect(res.status).toBe(429);
 
 		rl.cleanup();
 	});
 
-	it("falls back to X-Real-IP when X-Forwarded-For is absent", async () => {
+	it("uses first IP from X-Forwarded-For when peer is trusted", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["10.0.0.0/8"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "1.1.1.1, 2.2.2.2" } },
+			mockEnv("10.0.0.5"),
+		);
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "1.1.1.1, 3.3.3.3" } },
+			mockEnv("10.0.0.6"),
+		);
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("falls back to X-Real-IP when X-Forwarded-For is absent and peer is trusted", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["127.0.0.1/32"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request("/test", { headers: { "X-Real-IP": "10.0.0.1" } }, mockEnv("127.0.0.1"));
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Real-IP": "10.0.0.1" } },
+			mockEnv("127.0.0.1"),
+		);
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("falls back to peer IP when trusted proxy sends no forwarded headers", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["127.0.0.1/32"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request("/test", {}, mockEnv("127.0.0.1"));
+		const res = await app.request("/test", {}, mockEnv("127.0.0.1"));
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("bucket is shared when peer IP is missing (falls back to 'unknown')", async () => {
 		const app = new Hono();
 		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		await app.request("/test", { headers: { "X-Real-IP": "10.0.0.1" } });
-		const res = await app.request("/test", { headers: { "X-Real-IP": "10.0.0.1" } });
+		await app.request("/test");
+		const res = await app.request("/test");
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("treats invalid peer addresses as 'unknown'", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request("/test", {}, mockEnv("not-an-ip"));
+		const res = await app.request("/test", {}, mockEnv("::ffff:not-valid"));
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("handles IPv4-mapped IPv6 peer addresses", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request("/test", {}, mockEnv("::ffff:1.2.3.4"));
+		const res = await app.request("/test", {}, mockEnv("1.2.3.4"));
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("supports IPv6 trusted proxies", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["2001:db8::/32"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "5.5.5.5" } },
+			mockEnv("2001:db8::1"),
+		);
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "5.5.5.5" } },
+			mockEnv("2001:db8::2"),
+		);
 		expect(res.status).toBe(429);
 
 		rl.cleanup();
@@ -101,8 +223,8 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		await app.request("/test");
-		const res = await app.request("/test");
+		await app.request("/test", {}, mockEnv("1.1.1.1"));
+		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res.status).toBe(429);
 		const json = await res.json();
 		expect(json).toEqual({ error: "Too many requests" });
@@ -116,14 +238,9 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		// Make a request to populate the store
-		await app.request("/test", { headers: { "X-Forwarded-For": "9.9.9.9" } });
-
-		// Wait for the window to expire and the cleanup interval to fire
+		await app.request("/test", {}, mockEnv("9.9.9.9"));
 		await new Promise((resolve) => setTimeout(resolve, 120));
-
-		// After cleanup, a new request from the same IP should work (entry was cleaned up)
-		const res = await app.request("/test", { headers: { "X-Forwarded-For": "9.9.9.9" } });
+		const res = await app.request("/test", {}, mockEnv("9.9.9.9"));
 		expect(res.status).toBe(200);
 
 		rl.cleanup();
@@ -135,20 +252,11 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		// First request expires quickly
-		await app.request("/test", { headers: { "X-Forwarded-For": "8.8.8.8" } });
-
-		// Wait for first entry to expire
+		await app.request("/test", {}, mockEnv("8.8.8.8"));
 		await new Promise((resolve) => setTimeout(resolve, 70));
-
-		// Second request is still fresh
-		await app.request("/test", { headers: { "X-Forwarded-For": "7.7.7.7" } });
-
-		// Wait for cleanup interval to fire (covers both branches: expired + non-expired)
+		await app.request("/test", {}, mockEnv("7.7.7.7"));
 		await new Promise((resolve) => setTimeout(resolve, 60));
-
-		// 8.8.8.8 was cleaned up, 7.7.7.7 still has an entry
-		const res = await app.request("/test", { headers: { "X-Forwarded-For": "8.8.8.8" } });
+		const res = await app.request("/test", {}, mockEnv("8.8.8.8"));
 		expect(res.status).toBe(200);
 
 		rl.cleanup();
@@ -160,22 +268,16 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		// Fill the store with 10,000 unique IPs
 		for (let i = 0; i < 10_000; i++) {
 			const ip = `${(i >> 24) & 255}.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
-			await app.request("/test", { headers: { "X-Forwarded-For": ip } });
+			await app.request("/test", {}, mockEnv(ip));
 		}
 
-		// Mock Date.now to return a time after entries have expired
-		// This makes the middleware see entries as expired without triggering the cleanup interval
 		const originalNow = Date.now;
 		Date.now = () => originalNow() + 120_000;
 
 		try {
-			// A new IP should succeed because an expired entry is evicted
-			const res = await app.request("/test", {
-				headers: { "X-Forwarded-For": "255.255.255.255" },
-			});
+			const res = await app.request("/test", {}, mockEnv("255.255.255.255"));
 			expect(res.status).toBe(200);
 		} finally {
 			Date.now = originalNow;
@@ -190,20 +292,58 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
-		// Fill the store with 10,000 unique IPs
 		for (let i = 0; i < 10_000; i++) {
 			const ip = `${(i >> 24) & 255}.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
-			await app.request("/test", { headers: { "X-Forwarded-For": ip } });
+			await app.request("/test", {}, mockEnv(ip));
 		}
 
-		// A new IP should be rejected because the store is full
-		const res = await app.request("/test", { headers: { "X-Forwarded-For": "255.255.255.255" } });
+		const res = await app.request("/test", {}, mockEnv("255.255.255.255"));
 		expect(res.status).toBe(429);
 
-		// An existing IP should still work (it already has an entry)
-		const res2 = await app.request("/test", { headers: { "X-Forwarded-For": "0.0.0.0" } });
+		const res2 = await app.request("/test", {}, mockEnv("0.0.0.0"));
 		expect(res2.status).toBe(200);
 
 		rl.cleanup();
+	});
+});
+
+describe("buildTrustedBlockList", () => {
+	it("returns empty list for no CIDRs", () => {
+		const list = buildTrustedBlockList([]);
+		expect(list.check("1.2.3.4", "ipv4")).toBe(false);
+	});
+
+	it("accepts exact IPv4 addresses", () => {
+		const list = buildTrustedBlockList(["127.0.0.1"]);
+		expect(list.check("127.0.0.1", "ipv4")).toBe(true);
+		expect(list.check("127.0.0.2", "ipv4")).toBe(false);
+	});
+
+	it("accepts IPv4 subnets", () => {
+		const list = buildTrustedBlockList(["10.0.0.0/8"]);
+		expect(list.check("10.1.2.3", "ipv4")).toBe(true);
+		expect(list.check("11.0.0.1", "ipv4")).toBe(false);
+	});
+
+	it("accepts IPv6 subnets", () => {
+		const list = buildTrustedBlockList(["2001:db8::/32"]);
+		expect(list.check("2001:db8::1", "ipv6")).toBe(true);
+		expect(list.check("2001:db9::1", "ipv6")).toBe(false);
+	});
+
+	it("ignores empty entries", () => {
+		expect(() => buildTrustedBlockList(["", "  ", "1.1.1.1"])).not.toThrow();
+	});
+
+	it("throws on invalid address", () => {
+		expect(() => buildTrustedBlockList(["not-an-ip"])).toThrow(/Invalid trusted proxy address/);
+	});
+
+	it("throws on invalid prefix", () => {
+		expect(() => buildTrustedBlockList(["10.0.0.0/abc"])).toThrow(/Invalid trusted proxy prefix/);
+	});
+
+	it("throws on missing address", () => {
+		expect(() => buildTrustedBlockList(["/24"])).toThrow(/Invalid trusted proxy entry/);
 	});
 });
