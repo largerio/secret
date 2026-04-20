@@ -8,7 +8,7 @@ import { page } from "$app/state";
 import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
-import { t } from "$lib/i18n/index.svelte";
+import { formatDateTime, t } from "$lib/i18n/index.svelte";
 import { formatSize } from "$lib/utils/format";
 
 interface NoteInfo {
@@ -194,7 +194,7 @@ function isPdf(type: string): boolean {
 			{/if}
 
 			<p class="text-xs text-slate-500">
-				{t("expires")} {new Date(status.info.expiresAt).toLocaleString()}
+				{t("expires")} {formatDateTime(status.info.expiresAt)}
 				{#if status.info.fileCount > 0}
 					&bull; {t("files_count", { count: status.info.fileCount })}
 				{/if}

@@ -66,3 +66,10 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
 		msg,
 	);
 }
+
+export function formatDateTime(value: Date | number | string): string {
+	return new Date(value).toLocaleString(currentLocale, {
+		dateStyle: "medium",
+		timeStyle: "short",
+	});
+}
