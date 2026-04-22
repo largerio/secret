@@ -60,6 +60,7 @@
 			"!!**/dist",
 			"!!**/.svelte-kit",
 			"!!**/.pnpm-store",
+			"!!**/.claude",
 			"!!**/data"
 		]
 	}
