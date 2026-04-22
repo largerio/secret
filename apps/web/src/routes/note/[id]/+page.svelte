@@ -5,10 +5,12 @@ import { marked } from "marked";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
+import Icon from "$lib/components/Icon.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { formatDateTime, t } from "$lib/i18n/index.svelte";
+import { setStep } from "$lib/steps.svelte";
 import { formatSize } from "$lib/utils/format";
 
 interface NoteInfo {
@@ -36,6 +38,30 @@ let mounted = $state(false);
 let password = $state("");
 let keyFragment = $state("");
 let copied = $state(false);
+let wrongPassword = $state(false);
+let burnAccepted = $state(false);
+let pwShake = $state(false);
+let pwInputEl: HTMLInputElement | undefined = $state();
+
+$effect(() => {
+	if (status.state === "decrypted") setStep(4);
+	else setStep(3);
+});
+
+const isBurn = $derived.by(() => {
+	if (status.state === "ready") return status.info.maxReads === 1;
+	return false;
+});
+
+const needsPassword = $derived.by(() => {
+	if (status.state === "ready") return status.info.hasPassword;
+	return false;
+});
+
+const showPwInput = $derived(
+	status.state === "ready" && needsPassword && (!isBurn || burnAccepted),
+);
+const showPrimaryCta = $derived(status.state === "ready" && (!isBurn || burnAccepted));
 
 async function copyText(text: string) {
 	try {
@@ -72,6 +98,7 @@ async function handleDecrypt() {
 
 	const chunked = status.info.chunked;
 	status = { state: "downloading", progress: 0 };
+	wrongPassword = false;
 
 	try {
 		const client = await getClient();
@@ -116,10 +143,20 @@ async function handleDecrypt() {
 		const raw = e instanceof Error ? e.message : "";
 		const isWrongPassword =
 			raw.includes("wrong") || raw.includes("ciphertext") || raw.includes("decrypt");
-		status = {
-			state: "error",
-			message: isWrongPassword ? t("error_wrong_password") : t("error_decryption"),
-		};
+		if (isWrongPassword && data.noteInfo) {
+			wrongPassword = true;
+			pwShake = true;
+			status = { state: "ready", info: data.noteInfo };
+			setTimeout(() => {
+				pwShake = false;
+				pwInputEl?.focus();
+			}, 450);
+		} else {
+			status = {
+				state: "error",
+				message: isWrongPassword ? t("error_wrong_password") : t("error_decryption"),
+			};
+		}
 	}
 }
 
@@ -128,8 +165,8 @@ function renderMarkdown(text: string): string {
 	return DOMPurify.sanitize(raw);
 }
 
-function downloadFile(name: string, type: string, data: Uint8Array) {
-	const blob = new Blob([data] as BlobPart[], { type });
+function downloadFile(name: string, type: string, d: Uint8Array) {
+	const blob = new Blob([d] as BlobPart[], { type });
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
@@ -146,19 +183,15 @@ function isPreviewable(type: string): boolean {
 		type === "application/pdf"
 	);
 }
-
 function isImage(type: string): boolean {
 	return type.startsWith("image/");
 }
-
 function isVideo(type: string): boolean {
 	return type.startsWith("video/");
 }
-
 function isAudio(type: string): boolean {
 	return type.startsWith("audio/");
 }
-
 function isPdf(type: string): boolean {
 	return type === "application/pdf";
 }
@@ -172,172 +205,423 @@ function isPdf(type: string): boolean {
 	<meta property="og:description" content={t("view_description")} />
 </svelte:head>
 
-<div class="space-y-6">
-	{#if status.state === "not_found"}
-		<div class="rounded-xl border border-slate-700 bg-slate-900 p-8 text-center">
-			<h1 class="text-xl font-semibold text-slate-300">{t("not_found_title")}</h1>
-			<p class="mt-2 text-slate-500">{t("not_found_description")}</p>
-			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				{t("new_note")}
-			</a>
+{#if status.state === "not_found"}
+	<section
+		class="rounded-2xl border"
+		style:background="var(--bg-2)"
+		style:border-color="var(--line)"
+		style:padding="40px 32px"
+		style:text-align="center"
+	>
+		<h1 class="serif" style:font-size="32px" style:margin="0 0 12px">
+			{t("not_found_title")}
+		</h1>
+		<p style:color="var(--muted)" style:margin="0 0 24px">{t("not_found_description")}</p>
+		<a
+			href="/"
+			class="inline-flex items-center gap-2 rounded-lg transition-colors"
+			style:background="var(--accent)"
+			style:color="var(--accent-ink)"
+			style:padding="12px 18px"
+			style:font-size="14px"
+		>
+			<Icon name="lock" size={14} />
+			<span>{t("new_note")}</span>
+		</a>
+	</section>
+{:else if status.state === "ready"}
+	<section>
+		<div class="mb-8 flex flex-col items-start">
+			<span
+				class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
+				style:font-size="11px"
+				style:letter-spacing="0.12em"
+				style:color="var(--muted)"
+			>
+				<Icon name="lock" size={11} />
+				<span>{t("app_description")}</span>
+			</span>
+			<h1
+				class="serif"
+				style:font-size="clamp(32px, 5vw, 44px)"
+				style:margin="4px 0 20px"
+				style:line-height="1.3"
+				style:letter-spacing="-0.02em"
+				style:font-weight="400"
+				style:padding-bottom="8px"
+			>
+				{t("un_hero_1")}
+				<em style:color="var(--accent)">{t("un_hero_2")}</em>
+			</h1>
+			<p style:color="var(--muted)" style:font-size="15px" style:margin="0">
+				{t("un_hero_sub")}
+			</p>
 		</div>
 
-	{:else if status.state === "ready"}
-		<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 space-y-4">
-			<h1 class="text-xl font-semibold">{t("view_title")}</h1>
-			<p class="text-sm text-slate-400">{t("view_description")}</p>
-
-			{#if status.info.maxReads === 1}
-				<div class="rounded-lg border border-amber-800/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-300" role="alert">
-					{t("view_burn_warning")}
+		{#if isBurn && !burnAccepted}
+			<div
+				class="mb-6 rounded-2xl border"
+				style:background="var(--accent-soft)"
+				style:border-color="var(--accent-ring)"
+				style:padding="20px 24px"
+			>
+				<div
+					class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
+					style:font-size="11px"
+					style:letter-spacing="0.12em"
+					style:color="var(--accent)"
+				>
+					<Icon name="flame" size={12} />
+					<span>{t("un_burn_title")}</span>
 				</div>
-			{/if}
+				<p style:color="var(--text)" style:font-size="14px" style:margin="0 0 16px" style:line-height="1.5">
+					{t("un_burn_body")}
+				</p>
+				<button
+					type="button"
+					onclick={() => (burnAccepted = true)}
+					class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all"
+					style:background="var(--accent)"
+					style:color="var(--accent-ink)"
+					style:padding="10px 16px"
+					style:font-size="13px"
+					style:font-weight="500"
+				>
+					<Icon name="flame" size={13} />
+					<span>{t("un_burn_cta")}</span>
+				</button>
+			</div>
+		{/if}
 
-			<p class="text-xs text-slate-500">
-				{t("expires")} {formatDateTime(status.info.expiresAt)}
-				{#if status.info.fileCount > 0}
-					&bull; {t("files_count", { count: status.info.fileCount })}
+		{#if showPwInput}
+			<div
+				class="mb-4 rounded-2xl border"
+				style:background="var(--bg-2)"
+				style:border-color="var(--line)"
+				style:padding="20px 24px"
+				style:animation={pwShake ? "shake 0.4s" : "none"}
+			>
+				<div
+					class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
+					style:font-size="11px"
+					style:letter-spacing="0.12em"
+					style:color="var(--muted)"
+				>
+					<Icon name="key" size={12} />
+					<span>{t("un_pw_eyebrow")}</span>
+				</div>
+				<p style:color="var(--muted)" style:font-size="13px" style:margin="0 0 12px">
+					{t("un_pw_hint")}
+				</p>
+				<input
+					bind:this={pwInputEl}
+					id="decrypt-password"
+					type="password"
+					bind:value={password}
+					placeholder={t("un_pw_placeholder")}
+					autocomplete="off"
+					autofocus
+					onkeydown={(e) => {
+						if (e.key === "Enter") handleDecrypt();
+					}}
+					class="w-full rounded-xl border outline-none transition-colors"
+					style:background="var(--bg-2)"
+					style:border-color={wrongPassword ? "var(--accent)" : "var(--line)"}
+					style:color="var(--text)"
+					style:padding="12px 14px"
+					style:font-family="var(--font-mono)"
+					style:font-size="14px"
+				/>
+				{#if wrongPassword}
+					<div
+						class="mono mt-2 inline-flex items-center gap-1.5"
+						style:font-size="12px"
+						style:color="var(--accent)"
+					>
+						<Icon name="warn" size={12} />
+						<span>{t("error_wrong_password")}</span>
+					</div>
 				{/if}
-			</p>
+			</div>
+		{/if}
 
-			{#if status.info.hasPassword}
-				<div>
-					<label for="decrypt-password" class="mb-1 block text-sm font-medium text-slate-300">{t("view_password_label")}</label>
-					<input
-						id="decrypt-password"
-						type="password"
-						bind:value={password}
-						placeholder={t("view_password_placeholder")}
-						autocomplete="off"
-						class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-						onkeydown={(e) => { if (e.key === "Enter") handleDecrypt(); }}
-					/>
-				</div>
-			{/if}
-
+		{#if showPrimaryCta}
 			<button
+				type="button"
 				onclick={handleDecrypt}
 				disabled={!mounted}
-				class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50 transition-colors"
+				class="mb-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+				style:background="var(--accent)"
+				style:color="var(--accent-ink)"
+				style:padding="16px 24px"
+				style:font-size="15px"
+				style:font-weight="500"
 			>
-				{#if !mounted}
-					<i class="fa-solid fa-spinner fa-spin"></i> {t("loading")}
-				{:else}
-					{t("decrypt_button")}
-				{/if}
+				<Icon name="unlock" size={16} />
+				<span>{t("un_cta")}</span>
 			</button>
+		{/if}
+
+		<ul
+			class="mono m-0 flex list-none flex-col gap-2 p-0"
+			style:color="var(--muted-2)"
+			style:font-size="11px"
+			style:line-height="1.6"
+		>
+			<li class="flex items-center gap-2">
+				<Icon name="shield" size={12} />
+				<span>{t("un_info_local")}</span>
+			</li>
+			{#if isBurn}
+				<li class="flex items-center gap-2">
+					<Icon name="flame" size={12} />
+					<span>{t("un_info_burn")}</span>
+				</li>
+			{/if}
+			<li class="flex items-center gap-2">
+				<Icon name="clock" size={12} />
+				<span>{t("un_info_expiry", { date: formatDateTime(status.info.expiresAt) })}</span>
+			</li>
+			{#if status.info.fileCount > 0}
+				<li class="flex items-center gap-2">
+					<Icon name="paperclip" size={12} />
+					<span>{t("files_count", { count: status.info.fileCount })}</span>
+				</li>
+			{/if}
+		</ul>
+	</section>
+{:else if status.state === "downloading" || status.state === "decrypting"}
+	<section
+		class="flex flex-col items-center justify-center gap-6"
+		style:padding="48px 0"
+		role="status"
+	>
+		<div class="w-72 max-w-full">
+			<StepProgress
+				steps={[
+					{ key: "downloading", label: t("downloading"), icon: "fa-solid fa-cloud-arrow-down" },
+					{ key: "decrypting", label: t("decrypting"), icon: "fa-solid fa-lock-open" },
+					{ key: "done", label: t("done"), icon: "fa-solid fa-check" },
+				]}
+				currentStep={status.state === "downloading" ? 0 : 1}
+				progress={status.state === "downloading" ? status.progress : 100}
+			/>
+		</div>
+	</section>
+{:else if status.state === "decrypted"}
+	<section class="space-y-6" in:fade={{ duration: 200 }}>
+		<div class="flex flex-col items-start">
+			<span
+				class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
+				style:font-size="11px"
+				style:letter-spacing="0.12em"
+				style:color="var(--accent)"
+			>
+				<Icon name="unlock" size={11} />
+				<span>{t("rv_eyebrow")}</span>
+			</span>
+			<h1
+				class="serif"
+				style:font-size="clamp(28px, 4vw, 36px)"
+				style:margin="4px 0 12px"
+				style:line-height="1.3"
+				style:letter-spacing="-0.02em"
+				style:font-weight="400"
+			>
+				{t("rv_title")}
+			</h1>
 		</div>
 
-	{:else if status.state === "downloading" || status.state === "decrypting"}
-		<div class="flex flex-col items-center justify-center gap-6 py-12" role="status">
-			<div class="w-72">
-				<StepProgress
-					steps={[
-						{ key: "downloading", label: t("downloading"), icon: "fa-solid fa-cloud-arrow-down" },
-						{ key: "decrypting", label: t("decrypting"), icon: "fa-solid fa-lock-open" },
-						{ key: "done", label: t("done"), icon: "fa-solid fa-check" },
-					]}
-					currentStep={status.state === "downloading" ? 0 : 1}
-					progress={status.state === "downloading" ? status.progress : 100}
-				/>
-			</div>
-		</div>
-
-	{:else if status.state === "decrypted"}
-		<div class="space-y-6" in:fade={{ duration: 200 }}>
-			{#if status.payload.text}
-				<div class="rounded-xl border border-slate-700 bg-slate-900 p-6" in:fly={{ y: 20, duration: 300 }}>
-					<div class="mb-3 flex items-center justify-between">
-						<h2 class="text-sm font-medium text-slate-400">{t("text_content")}</h2>
-						<button
-							onclick={() => copyText(status.state === "decrypted" ? status.payload.text ?? "" : "")}
-							class="rounded-md px-2 py-1 text-sm text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-							aria-label={t("copy_button")}
-						>
-							{#if copied}
-								<i class="fa-solid fa-check text-green-400"></i>
-							{:else}
-								<i class="fa-regular fa-copy"></i>
-							{/if}
-						</button>
-					</div>
-					{#if status.payload.contentMode === "markdown" || !status.payload.contentMode}
+		{#if status.payload.text}
+			<div
+				class="overflow-hidden rounded-2xl border"
+				style:background="var(--bg-2)"
+				style:border-color="var(--line)"
+				in:fly={{ y: 20, duration: 300 }}
+			>
+				<div
+					class="flex items-center justify-between border-b"
+					style:padding="12px 16px"
+					style:border-color="var(--line)"
+				>
+					<span
+						class="mono uppercase"
+						style:font-size="11px"
+						style:letter-spacing="0.1em"
+						style:color="var(--muted)"
+					>
+						{t("text_content")}
+					</span>
+					<button
+						type="button"
+						onclick={() =>
+							copyText(status.state === "decrypted" ? (status.payload.text ?? "") : "")}
+						class="inline-flex items-center gap-1.5 rounded-md border-0 bg-transparent transition-colors"
+						style:color={copied ? "var(--accent)" : "var(--muted)"}
+						style:padding="4px 8px"
+						style:font-size="12px"
+						aria-label={t("copy_button")}
+					>
+						<Icon name={copied ? "check" : "copy"} size={13} />
+						<span>{copied ? t("copied") : t("rv_copy")}</span>
+					</button>
+				</div>
+				<div style:padding="18px 20px">
+					{#if status.payload.contentMode === "markdown"}
 						<div class="prose prose-invert prose-sm max-w-none">
 							{@html renderMarkdown(status.payload.text)}
 						</div>
 					{:else if status.payload.contentMode === "secret"}
-						<code class="block rounded-lg bg-slate-800 px-4 py-3 font-mono text-sm text-white break-all select-all">{status.payload.text}</code>
+						<code
+							class="block select-all break-all rounded-lg"
+							style:background="var(--bg-3)"
+							style:padding="14px 16px"
+							style:font-family="var(--font-mono)"
+							style:font-size="14px"
+							style:color="var(--text)"
+							style:line-height="1.5">{status.payload.text}</code
+						>
 					{:else}
-						<pre class="whitespace-pre-wrap text-sm text-slate-200">{status.payload.text}</pre>
+						<pre
+							class="whitespace-pre-wrap"
+							style:font-family="inherit"
+							style:color="var(--text)"
+							style:font-size="15px"
+							style:line-height="1.7"
+							style:margin="0">{status.payload.text}</pre>
 					{/if}
 				</div>
-			{/if}
+			</div>
+		{/if}
 
-			{#if status.payload.files && status.payload.files.length > 0}
-				<div class="space-y-4">
-					<h2 class="text-sm font-medium text-slate-400">
-						{t("files_count", { count: status.payload.files.length })}
-					</h2>
-
-					{#each status.payload.files as file, i}
-						<div class="rounded-xl border border-slate-700 bg-slate-900 overflow-hidden" in:fly={{ y: 20, duration: 300, delay: Math.min(150 * i, 600) }}>
+		{#if status.payload.files && status.payload.files.length > 0}
+			<div>
+				<div
+					class="mono mb-3 inline-flex items-center gap-1.5 uppercase"
+					style:font-size="11px"
+					style:letter-spacing="0.12em"
+					style:color="var(--muted)"
+				>
+					<Icon name="paperclip" size={11} />
+					<span>{t("rv_files")} ({status.payload.files.length})</span>
+				</div>
+				<ul class="m-0 flex list-none flex-col gap-3 p-0">
+					{#each status.payload.files as file, i (file.name + i)}
+						<li
+							class="overflow-hidden rounded-2xl border"
+							style:background="var(--bg-2)"
+							style:border-color="var(--line)"
+							in:fly={{ y: 20, duration: 300, delay: Math.min(150 * i, 600) }}
+						>
 							{#if isImage(file.type) && status.previewUrls[i]}
 								<img
 									src={status.previewUrls[i]}
 									alt={file.name}
-									class="max-h-96 w-full object-contain bg-slate-800"
+									class="max-h-96 w-full object-contain"
+									style:background="var(--bg-3)"
 								/>
 							{:else if isVideo(file.type) && status.previewUrls[i]}
 								<video
 									controls
-									class="max-h-96 w-full bg-slate-800"
+									class="max-h-96 w-full"
+									style:background="var(--bg-3)"
 									aria-label={file.name}
 								>
 									<source src={status.previewUrls[i]} type={file.type} />
 									<track kind="captions" />
 								</video>
 							{:else if isAudio(file.type) && status.previewUrls[i]}
-								<audio
-									controls
-									class="w-full p-4"
-									aria-label={file.name}
-								>
+								<audio controls class="w-full" style:padding="16px" aria-label={file.name}>
 									<source src={status.previewUrls[i]} type={file.type} />
 								</audio>
 							{:else if isPdf(file.type) && status.previewUrls[i]}
-								<iframe
-									src={status.previewUrls[i]}
-									class="h-96 w-full"
-									title={file.name}
-									sandbox=""
+								<iframe src={status.previewUrls[i]} class="h-96 w-full" title={file.name} sandbox=""
 								></iframe>
 							{/if}
-
-							<div class="flex items-center justify-between p-4">
-								<div>
-									<p class="font-medium text-slate-200">{file.name}</p>
-									<p class="text-xs text-slate-500">{file.type} &bull; {formatSize(file.size)}</p>
+							<div class="flex items-center gap-3" style:padding="14px 16px">
+								<Icon name="file" size={16} class="shrink-0" />
+								<div class="min-w-0 flex-1">
+									<p
+										class="mb-0.5 truncate"
+										style:font-family="var(--font-mono)"
+										style:font-size="13px"
+										style:color="var(--text)"
+									>
+										{file.name}
+									</p>
+									<p class="mono" style:font-size="11px" style:color="var(--muted-2)">
+										{file.type} · {formatSize(file.size)}
+									</p>
 								</div>
 								<button
-									onclick={() => downloadFile(file.name, file.type, new Uint8Array(file.data as ArrayLike<number>))}
-									class="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
+									type="button"
+									onclick={() =>
+										downloadFile(
+											file.name,
+											file.type,
+											new Uint8Array(file.data as ArrayLike<number>),
+										)}
+									class="inline-flex items-center gap-1.5 rounded-lg border transition-colors"
+									style:background="var(--bg-3)"
+									style:border-color="var(--line)"
+									style:color="var(--text)"
+									style:padding="8px 12px"
+									style:font-size="12px"
 								>
-									{t("download")}
+									<Icon name="download" size={13} />
+									<span>{t("rv_download")}</span>
 								</button>
 							</div>
-						</div>
+						</li>
 					{/each}
-				</div>
-			{/if}
-		</div>
+				</ul>
+			</div>
+		{/if}
 
-	{:else if status.state === "error"}
-		<div class="rounded-xl border border-red-800/50 bg-red-900/20 p-6 text-center" in:fade={{ duration: 200 }}>
-			<h1 class="text-lg font-semibold text-red-300">{t("error_title")}</h1>
-			<p class="mt-2 text-sm text-red-400">{status.message}</p>
-			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				{t("new_note")}
+		<div class="flex gap-2">
+			<a
+				href="/"
+				class="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border transition-colors"
+				style:background="var(--bg-2)"
+				style:border-color="var(--line)"
+				style:color="var(--text)"
+				style:padding="14px"
+				style:font-size="14px"
+			>
+				<Icon name="lock" size={14} />
+				<span>{t("rv_gone_cta")}</span>
 			</a>
 		</div>
-	{/if}
-</div>
+	</section>
+{:else if status.state === "error"}
+	<section
+		class="rounded-2xl border"
+		style:background="var(--accent-soft)"
+		style:border-color="var(--accent-ring)"
+		style:padding="32px"
+		style:text-align="center"
+		in:fade={{ duration: 200 }}
+	>
+		<div
+			class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
+			style:font-size="11px"
+			style:letter-spacing="0.12em"
+			style:color="var(--accent)"
+		>
+			<Icon name="warn" size={12} />
+			<span>{t("error_title")}</span>
+		</div>
+		<h1 class="serif" style:font-size="28px" style:margin="4px 0 10px">{status.message}</h1>
+		<a
+			href="/"
+			class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
+			style:background="var(--accent)"
+			style:color="var(--accent-ink)"
+			style:padding="12px 18px"
+			style:font-size="14px"
+		>
+			<Icon name="lock" size={14} />
+			<span>{t("new_note")}</span>
+		</a>
+	</section>
+{/if}

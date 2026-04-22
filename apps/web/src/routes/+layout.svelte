@@ -1,5 +1,9 @@
 <script lang="ts">
 import "../app.css";
+import Icon from "$lib/components/Icon.svelte";
+import LangToggle from "$lib/components/LangToggle.svelte";
+import StepIndicator from "$lib/components/StepIndicator.svelte";
+import ThemeToggle from "$lib/components/ThemeToggle.svelte";
 import { getConfig } from "$lib/config.svelte";
 import { getLocale, t } from "$lib/i18n/index.svelte";
 
@@ -23,19 +27,9 @@ const localeToOg: Record<string, string> = {
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
 const appUrl = $derived(config.appUrl || "https://secret.larger.io");
-const customColor = $derived(
-	config.primaryColor &&
-		/^#[\da-f]{3,8}$/i.test(config.primaryColor) &&
-		config.primaryColor !== "#6366f1"
-		? config.primaryColor
-		: "",
-);
 </script>
 
 <svelte:head>
-	{#if customColor}
-		{@html `<style>:root{--app-primary-color:${customColor}}</style>`}
-	{/if}
 	<meta property="og:site_name" content={config.appName} />
 	<meta property="og:type" content="website" />
 	<meta property="og:locale" content={localeToOg[locale] ?? "en_US"} />
@@ -56,43 +50,109 @@ const customColor = $derived(
 	<link rel="alternate" hreflang="x-default" href={appUrl} />
 </svelte:head>
 
-<div class="flex min-h-screen flex-col">
+<div class="relative z-[1] flex min-h-screen flex-col">
 	<a
 		href="#main-content"
-		class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-primary focus:px-4 focus:py-2 focus:text-white"
+		class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:px-4 focus:py-2"
+		style:background="var(--accent)"
+		style:color="var(--accent-ink)"
 	>
 		{t("skip_to_content")}
 	</a>
 
-	<header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
-		<nav class="mx-auto flex max-w-3xl items-center justify-between px-4 py-4" aria-label="Main navigation">
-			<a href="/" class="flex items-center gap-2 text-xl font-bold text-white hover:text-primary-light transition-colors">
-				<i class="fa-solid fa-lock" aria-hidden="true"></i>
-				{config.appName}
+	<header
+		class="sticky top-0 z-10 border-b"
+		style:background="color-mix(in srgb, var(--bg) 85%, transparent)"
+		style:backdrop-filter="blur(18px)"
+		style:border-color="var(--line)"
+	>
+		<nav
+			class="mx-auto flex max-w-[1100px] items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-4"
+			aria-label="Main navigation"
+		>
+			<a
+				href="/"
+				class="flex items-center gap-2.5 no-underline"
+				style:color="var(--text)"
+			>
+				<span
+					class="grid place-items-center rounded-lg"
+					style:width="28px"
+					style:height="28px"
+					style:background="var(--accent)"
+					style:color="var(--accent-ink)"
+				>
+					<Icon name="lock" size={15} />
+				</span>
+				<span class="flex items-baseline gap-1.5">
+					<span class="serif" style:font-size="22px" style:letter-spacing="-0.02em"
+						>{config.appName.toLowerCase()}</span
+					>
+					<span class="mono hidden sm:inline" style:color="var(--muted-2)" style:font-size="11px"
+						>.larger.io</span
+					>
+				</span>
 			</a>
+			<div class="flex items-center gap-1.5 sm:gap-2">
+				<LangToggle />
+				<ThemeToggle />
+				<a
+					href={repoUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="hidden items-center gap-2 rounded-lg border px-3 py-1.5 text-xs no-underline transition-colors sm:inline-flex"
+					style:background="transparent"
+					style:border-color="transparent"
+					style:color="var(--muted)"
+					aria-label={t("github")}
+				>
+					<Icon name="github" size={15} />
+					<span>{t("github")}</span>
+				</a>
+				<a
+					href={repoUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="inline-flex items-center justify-center rounded-full border sm:hidden"
+					style:background="var(--bg-2)"
+					style:border-color="var(--line)"
+					style:color="var(--muted)"
+					style:width="32px"
+					style:height="32px"
+					aria-label={t("github")}
+				>
+					<Icon name="github" size={14} />
+				</a>
+			</div>
+		</nav>
+	</header>
+
+	<StepIndicator />
+
+	<main id="main-content" class="relative z-[1] mx-auto w-full max-w-[720px] flex-1 px-4 py-10 sm:px-8 sm:py-14">
+		{@render children()}
+	</main>
+
+	<footer class="border-t" style:background="var(--bg-2)" style:border-color="var(--line)">
+		<div
+			class="mx-auto max-w-[1100px] px-4 py-5 text-center sm:px-8"
+			style:color="var(--muted-2)"
+			style:font-size="12px"
+		>
+			{#if config.footerText}
+				<span>{config.footerText}</span>
+				<span style:margin="0 8px">·</span>
+			{/if}
+			<span>{t("footer_powered")}</span>
 			<a
 				href={repoUrl}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="text-sm text-slate-400 hover:text-white transition-colors"
-				aria-label={t("github")}
+				class="underline-offset-2 hover:underline"
+				style:color="var(--muted)">{config.appName}</a
 			>
-				<i class="fa-brands fa-github"></i> {t("github")}
-			</a>
-		</nav>
-	</header>
-
-	<main id="main-content" class="mx-auto w-full max-w-3xl flex-1 px-4 py-8">
-		{@render children()}
-	</main>
-
-	<footer class="border-t border-slate-800 bg-slate-900/50">
-		<div class="mx-auto max-w-3xl px-4 py-4 text-center text-sm text-slate-500">
-			{#if config.footerText}
-				{config.footerText} &mdash;
-			{/if}
-			{t("footer_powered")} <a href={repoUrl} target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:text-white transition-colors">{config.appName}</a>
-			&mdash; {t("footer_tagline")}
+			<span style:margin="0 8px">·</span>
+			<span>{t("footer_tagline")}</span>
 		</div>
 	</footer>
 </div>

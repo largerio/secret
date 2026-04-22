@@ -1,4 +1,5 @@
 <script lang="ts">
+import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
 
 interface Props {
@@ -34,15 +35,13 @@ $effect(() => {
 	return () => clearTimeout(timer);
 });
 
-function wrapSelection(before: string, after: string, placeholder: string) {
+function wrapSelection(before: string, after: string, placeholderText: string) {
 	if (!textarea) return;
-
 	const start = textarea.selectionStart;
 	const end = textarea.selectionEnd;
 	const selected = value.slice(start, end);
-	const text = selected || placeholder;
+	const text = selected || placeholderText;
 	const wrapped = `${before}${text}${after}`;
-
 	value = value.slice(0, start) + wrapped + value.slice(end);
 
 	requestAnimationFrame(() => {
@@ -60,18 +59,14 @@ function wrapSelection(before: string, after: string, placeholder: string) {
 
 function insertHeading() {
 	if (!textarea) return;
-
 	const start = textarea.selectionStart;
 	const end = textarea.selectionEnd;
 	const selected = value.slice(start, end);
 	const text = selected || "heading";
 	const prefix = "## ";
-
 	const lineStart = value.lastIndexOf("\n", start - 1) + 1;
 	const insertion = `${prefix}${text}`;
-
 	value = value.slice(0, lineStart) + insertion + value.slice(end);
-
 	requestAnimationFrame(() => {
 		if (!textarea) return;
 		textarea.focus();
@@ -83,22 +78,17 @@ function insertHeading() {
 function insertBold() {
 	wrapSelection("**", "**", "bold text");
 }
-
 function insertItalic() {
 	wrapSelection("_", "_", "italic text");
 }
-
 function insertLink() {
 	if (!textarea) return;
-
 	const start = textarea.selectionStart;
 	const end = textarea.selectionEnd;
 	const selected = value.slice(start, end);
 	const text = selected || "link text";
 	const wrapped = `[${text}](url)`;
-
 	value = value.slice(0, start) + wrapped + value.slice(end);
-
 	requestAnimationFrame(() => {
 		if (!textarea) return;
 		textarea.focus();
@@ -107,33 +97,26 @@ function insertLink() {
 		textarea.selectionEnd = urlStart + 3;
 	});
 }
-
 function insertCode() {
 	if (!textarea) return;
-
 	const start = textarea.selectionStart;
 	const end = textarea.selectionEnd;
 	const selected = value.slice(start, end);
-
 	if (selected.includes("\n")) {
 		wrapSelection("```\n", "\n```", "code");
 	} else {
 		wrapSelection("`", "`", "code");
 	}
 }
-
 function insertList() {
 	if (!textarea) return;
-
 	const start = textarea.selectionStart;
 	const end = textarea.selectionEnd;
 	const selected = value.slice(start, end);
-
 	if (selected) {
 		const lines = selected.split("\n");
 		const listed = lines.map((line) => `- ${line}`).join("\n");
 		value = value.slice(0, start) + listed + value.slice(end);
-
 		requestAnimationFrame(() => {
 			if (!textarea) return;
 			textarea.focus();
@@ -143,7 +126,6 @@ function insertList() {
 	} else {
 		const text = "- list item";
 		value = value.slice(0, start) + text + value.slice(end);
-
 		requestAnimationFrame(() => {
 			if (!textarea) return;
 			textarea.focus();
@@ -152,51 +134,60 @@ function insertList() {
 		});
 	}
 }
+
+const toolbarBtnStyle =
+	"display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;transition:all 0.15s";
 </script>
 
-<div class="rounded-lg border border-slate-700">
-	<div class="flex items-center justify-between border-b border-slate-700">
+<div
+	class="overflow-hidden rounded-xl border"
+	style:background="var(--bg-2)"
+	style:border-color="var(--line)"
+>
+	<div
+		class="flex items-center justify-between border-b"
+		style:border-color="var(--line)"
+	>
 		<div class="flex">
-			<button
-				type="button"
-				onclick={() => { activeTab = "write"; }}
-				class="px-4 py-2 text-sm font-medium transition-colors {activeTab === 'write'
-					? 'border-b-2 border-primary text-primary'
-					: 'text-slate-400 hover:text-slate-200'}"
-			>
-				<i class="fa-solid fa-pen"></i> {t("md_write")}
-			</button>
-			<button
-				type="button"
-				onclick={() => { activeTab = "preview"; }}
-				class="px-4 py-2 text-sm font-medium transition-colors {activeTab === 'preview'
-					? 'border-b-2 border-primary text-primary'
-					: 'text-slate-400 hover:text-slate-200'}"
-			>
-				<i class="fa-solid fa-eye"></i> {t("md_preview")}
-			</button>
+			{#each [{ id: "write" as const, label: t("md_write") }, { id: "preview" as const, label: t("md_preview") }] as tab (tab.id)}
+				<button
+					type="button"
+					onclick={() => (activeTab = tab.id)}
+					class="mono uppercase transition-colors"
+					style:padding="10px 14px"
+					style:font-size="11px"
+					style:letter-spacing="0.08em"
+					style:background="transparent"
+					style:border="0"
+					style:border-bottom={activeTab === tab.id
+						? "2px solid var(--accent)"
+						: "2px solid transparent"}
+					style:color={activeTab === tab.id ? "var(--text)" : "var(--muted)"}
+				>
+					{tab.label}
+				</button>
+			{/each}
 		</div>
-
 		{#if activeTab === "write"}
-			<div class="flex gap-1 pr-2">
-				<button type="button" onclick={insertHeading} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="Heading">
-					<i class="fa-solid fa-heading"></i>
-				</button>
-				<button type="button" onclick={insertBold} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="Bold">
-					<i class="fa-solid fa-bold"></i>
-				</button>
-				<button type="button" onclick={insertItalic} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="Italic">
-					<i class="fa-solid fa-italic"></i>
-				</button>
-				<button type="button" onclick={insertLink} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="Link">
-					<i class="fa-solid fa-link"></i>
-				</button>
-				<button type="button" onclick={insertCode} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="Code">
-					<i class="fa-solid fa-code"></i>
-				</button>
-				<button type="button" onclick={insertList} class="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600 transition-colors" title="List">
-					<i class="fa-solid fa-list-ul"></i>
-				</button>
+			<div class="flex pr-2">
+				<button type="button" onclick={insertHeading} style={toolbarBtnStyle} title="Heading"
+					><span class="mono" style:font-size="12px" style:font-weight="600">H</span></button
+				>
+				<button type="button" onclick={insertBold} style={toolbarBtnStyle} title="Bold"
+					><span style:font-weight="700" style:font-size="13px">B</span></button
+				>
+				<button type="button" onclick={insertItalic} style={toolbarBtnStyle} title="Italic"
+					><span style:font-style="italic" style:font-size="13px" class="serif">I</span></button
+				>
+				<button type="button" onclick={insertLink} style={toolbarBtnStyle} title="Link"
+					><Icon name="external" size={13} /></button
+				>
+				<button type="button" onclick={insertCode} style={toolbarBtnStyle} title="Code"
+					><span class="mono" style:font-size="11px">{"</>"}</span></button
+				>
+				<button type="button" onclick={insertList} style={toolbarBtnStyle} title="List"
+					><span class="mono" style:font-size="13px">•</span></button
+				>
 			</div>
 		{/if}
 	</div>
@@ -207,17 +198,31 @@ function insertList() {
 			bind:value
 			{placeholder}
 			{maxlength}
-			rows="6"
-			class="w-full rounded-b-lg border-0 bg-slate-800 px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-0"
+			rows="8"
+			class="w-full resize-y border-0 outline-none"
+			style:background="var(--bg-2)"
+			style:color="var(--text)"
+			style:padding="14px 16px"
+			style:font-family="var(--font-mono)"
+			style:font-size="13px"
+			style:line-height="1.6"
+			style:min-height="180px"
 		></textarea>
 	{:else}
-		<div class="min-h-[10rem] rounded-b-lg bg-slate-800 px-3 py-2">
+		<div
+			style:background="var(--bg-2)"
+			style:color="var(--text)"
+			style:padding="14px 16px"
+			style:min-height="180px"
+		>
 			{#if renderedHtml}
 				<div class="prose prose-invert prose-sm max-w-none">
 					{@html renderedHtml}
 				</div>
 			{:else}
-				<p class="py-4 text-center text-sm text-slate-500">{t("md_preview_empty")}</p>
+				<p class="py-4 text-center" style:color="var(--muted-2)" style:font-size="13px">
+					{t("md_preview_empty")}
+				</p>
 			{/if}
 		</div>
 	{/if}

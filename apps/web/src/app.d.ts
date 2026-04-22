@@ -1,4 +1,5 @@
 import type { Locale } from "$lib/i18n/index.svelte";
+import type { ThemeMode } from "$lib/theme.svelte";
 
 declare global {
 	namespace App {
@@ -7,6 +8,7 @@ declare global {
 		}
 		interface Locals {
 			locale: Locale;
+			theme: ThemeMode;
 		}
 	}
 }

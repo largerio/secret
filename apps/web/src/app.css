@@ -1,14 +1,107 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* ---------- Design tokens — Editorial direction ---------- */
 @theme {
-	--color-primary: var(--app-primary-color, #6366f1);
-	--color-primary-light: var(--app-primary-light, #818cf8);
-	--color-primary-dark: var(--app-primary-dark, #4f46e5);
+	--font-sans:
+		"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--font-serif: "Instrument Serif", Georgia, serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--color-bg: var(--bg);
+	--color-bg-2: var(--bg-2);
+	--color-bg-3: var(--bg-3);
+	--color-line: var(--line);
+	--color-line-2: var(--line-2);
+	--color-text: var(--text);
+	--color-muted: var(--muted);
+	--color-muted-2: var(--muted-2);
+	--color-accent: var(--accent);
+	--color-accent-ink: var(--accent-ink);
+
+	--color-primary: var(--accent);
+	--color-primary-light: var(--accent);
+	--color-primary-dark: var(--accent);
 }
 
-:root {
+:root,
+:root[data-mode="dark"] {
+	--bg: #0e0f13;
+	--bg-2: #16181e;
+	--bg-3: #1d2028;
+	--line: #2e3340;
+	--line-2: #3b4152;
+	--text: #ecedf1;
+	--muted: #a7adbd;
+	--muted-2: #838a9e;
+	--accent: oklch(0.68 0.2 25);
+	--accent-ink: #ffffff;
+	--accent-soft: oklch(0.68 0.2 25 / 0.16);
+	--accent-ring: oklch(0.68 0.2 25 / 0.4);
+	--success: oklch(0.72 0.16 160);
+	--warn: oklch(0.78 0.14 75);
+	--danger: oklch(0.65 0.22 25);
 	color-scheme: dark;
+}
+
+:root[data-mode="light"] {
+	--bg: #f6f4ef;
+	--bg-2: #ffffff;
+	--bg-3: #eeeae0;
+	--line: #d8d2c4;
+	--line-2: #bfb9a9;
+	--text: #14140f;
+	--muted: #4e4b42;
+	--muted-2: #70695e;
+	--accent: oklch(0.58 0.22 25);
+	--accent-ink: #ffffff;
+	--accent-soft: oklch(0.58 0.22 25 / 0.10);
+	--accent-ring: oklch(0.58 0.22 25 / 0.30);
+	color-scheme: light;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: var(--font-sans);
+	background: var(--bg);
+	color: var(--text);
+	font-size: 15px;
+	line-height: 1.55;
+	-webkit-font-smoothing: antialiased;
+	letter-spacing: -0.005em;
+	min-height: 100vh;
+}
+
+.serif {
+	font-family: var(--font-serif);
+	font-weight: 400;
+	letter-spacing: -0.01em;
+}
+
+.mono {
+	font-family: var(--font-mono);
+	font-size: 0.82em;
+	letter-spacing: 0;
+}
+
+/* Subtle ambient noise layer for depth */
+body::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	background-image: radial-gradient(circle at 20% 10%, var(--accent-soft), transparent 50%);
+	opacity: 0.5;
+	z-index: 0;
 }
 
 button:not(:disabled),
@@ -16,14 +109,62 @@ button:not(:disabled),
 	cursor: pointer;
 }
 
-body {
-	font-family:
-		system-ui,
-		-apple-system,
-		BlinkMacSystemFont,
-		"Segoe UI",
-		Roboto,
-		sans-serif;
+*:focus-visible {
+	outline: 2px solid var(--accent-ring);
+	outline-offset: 2px;
+	border-radius: 6px;
+}
+
+::placeholder {
+	color: var(--muted-2);
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--line);
+	border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--line-2);
+}
+
+@keyframes shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	25% {
+		transform: translateX(-4px);
+	}
+	75% {
+		transform: translateX(4px);
+	}
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes toastIn {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 8px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
 }
 
 @keyframes shimmer {
@@ -38,12 +179,22 @@ body {
 .progress-shimmer {
 	background: linear-gradient(
 		90deg,
-		var(--color-primary) 0%,
-		var(--color-primary-light) 50%,
-		var(--color-primary) 100%
+		var(--accent) 0%,
+		color-mix(in srgb, var(--accent) 60%, var(--bg-3)) 50%,
+		var(--accent) 100%
 	);
 	background-size: 200% 100%;
 	animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.spinner {
+	width: 14px;
+	height: 14px;
+	border: 2px solid currentColor;
+	border-top-color: transparent;
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+	display: inline-block;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -54,5 +205,8 @@ body {
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
 		scroll-behavior: auto !important;
+	}
+	body::before {
+		display: none;
 	}
 }
