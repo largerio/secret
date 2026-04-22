@@ -11,10 +11,15 @@ const config = {
 			directives: {
 				"default-src": ["none"],
 				"script-src": ["self", "wasm-unsafe-eval"],
-				"style-src": ["self", "unsafe-inline", "https://cdnjs.cloudflare.com"],
+				"style-src": [
+					"self",
+					"unsafe-inline",
+					"https://cdnjs.cloudflare.com",
+					"https://fonts.googleapis.com",
+				],
 				"img-src": ["self", "data:", "blob:"],
 				"connect-src": ["self"],
-				"font-src": ["self", "https://cdnjs.cloudflare.com"],
+				"font-src": ["self", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com"],
 				"worker-src": ["self", "blob:"],
 				"media-src": ["self", "blob:"],
 				"frame-src": ["blob:"],
