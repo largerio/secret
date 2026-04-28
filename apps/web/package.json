@@ -10,25 +10,25 @@
 	},
 	"dependencies": {
 		"@cap.js/wasm": "^0.0.6",
-		"@cap.js/widget": "^0.1.45",
+		"@cap.js/widget": "^0.1.46",
 		"@secret/sdk-js": "workspace:*",
 		"@secret/shared": "workspace:*",
-		"isomorphic-dompurify": "^3.9.0",
+		"isomorphic-dompurify": "^3.10.0",
 		"marked": "^18.0.2",
 		"qrcode": "^1.5.4"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.2.12",
-		"@sveltejs/kit": "^2.57.1",
+		"@sveltejs/kit": "^2.58.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4.2.4",
 		"@types/node": "^25.6.0",
 		"@types/qrcode": "^1.5.6",
-		"svelte": "^5.55.4",
+		"svelte": "^5.55.5",
 		"svelte-check": "^4.4.6",
 		"tailwindcss": "^4.2.4",
 		"typescript": "^6.0.3",
-		"vite": "^8.0.9"
+		"vite": "^8.0.10"
 	}
 }
