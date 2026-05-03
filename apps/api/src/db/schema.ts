@@ -37,3 +37,17 @@ export const uploadChunks = sqliteTable(
 	},
 	(t) => [primaryKey({ columns: [t.uploadId, t.chunkIndex] })],
 );
+
+// Records storage objects we failed to delete during note expiration / consume
+// flows. The cleanup job drains this table on each tick so that orphaned
+// chunks/files are eventually removed even if the original deletion attempt
+// failed (transient S3 outage, missing file at boot, etc.).
+export const pendingDeletions = sqliteTable("pending_deletions", {
+	id: integer("id").primaryKey({ autoIncrement: true }),
+	noteId: text("note_id").notNull(),
+	filePath: text("file_path"),
+	chunkCount: integer("chunk_count"),
+	attempts: integer("attempts").notNull().default(0),
+	nextRetryAt: integer("next_retry_at", { mode: "timestamp" }).notNull(),
+	createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});

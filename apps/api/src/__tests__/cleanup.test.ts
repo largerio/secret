@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startCleanupJob } from "../cleanup.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
-import { notes, uploads } from "../db/schema.js";
+import { notes, pendingDeletions, uploads } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 
@@ -148,7 +148,9 @@ describe("startCleanupJob", () => {
 		const remaining = db.select().from(notes).all();
 		expect(remaining).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete file for note faildelete01"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete storage for note faildelete01, scheduling retry:",
+			),
 			"disk error",
 		);
 		consoleSpy.mockRestore();
@@ -207,7 +209,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete file for note failstring01"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete storage for note failstring01, scheduling retry:",
+			),
 			"string-error",
 		);
 		consoleSpy.mockRestore();
@@ -252,7 +256,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete chunks for note chunkstr001"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete storage for note chunkstr001, scheduling retry:",
+			),
 			"string chunk error",
 		);
 		consoleSpy.mockRestore();
@@ -276,7 +282,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete chunks for note chunkfail01"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete storage for note chunkfail01, scheduling retry:",
+			),
 			"chunk delete failed",
 		);
 		consoleSpy.mockRestore();
@@ -341,7 +349,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete chunks for upload session upload000002"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete chunks for upload session upload000002, scheduling retry:",
+			),
 			"upload chunk error",
 		);
 		consoleSpy.mockRestore();
@@ -375,8 +385,37 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] Failed to delete chunks for upload session upload000003"),
+			expect.stringContaining(
+				"[cleanup] Failed to delete chunks for upload session upload000003, scheduling retry:",
+			),
 			"string-upload-error",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("drains pending_deletions on each tick", async () => {
+		const filePath = `${TEST_FILES_PATH}/drain-me`;
+		writeFileSync(filePath, "data");
+
+		db.insert(pendingDeletions)
+			.values({
+				noteId: "drainnote1",
+				filePath,
+				chunkCount: null,
+				attempts: 0,
+				nextRetryAt: new Date(Date.now() - 1000),
+				createdAt: new Date(),
+			})
+			.run();
+
+		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const timer = startCleanupJob(db, storage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("[cleanup] pending deletions drained="),
 		);
 		consoleSpy.mockRestore();
 	});

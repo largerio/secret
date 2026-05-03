@@ -662,7 +662,7 @@ describe("GET /api/v1/notes/:id", () => {
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
-		expect((await res.json()).error).toBe("Note payload missing");
+		expect((await res.json()).error).toBe("Note not found");
 	});
 
 	it("cleans up storage when decryption fails on burn-after-read file note", async () => {
@@ -1297,7 +1297,7 @@ describe("Chunked upload flow", () => {
 			headers: authHeaders(),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toContain("Missing chunks");
+		expect((await res.json()).error).toBe("Upload incomplete");
 	});
 
 	it("rejects chunk for non-existent upload session", async () => {
@@ -1725,8 +1725,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
-			"stream chunk fail string",
+			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1768,8 +1767,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
-			"stream chunk error obj",
+			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1946,8 +1944,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
-			"chunk cleanup failure",
+			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1979,8 +1976,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
-			"string delete error",
+			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -2020,7 +2016,56 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Chunk payload missing" });
+		expect(await res.json()).toEqual({ error: "Note not found" });
+	});
+
+	it("schedules cleanup when burn-after-read note has missing chunk 0", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const { StorageNotFoundError } = await import("../storage/errors.js");
+		const missingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.reject(new StorageNotFoundError()),
+			deleteChunks: vi.fn().mockResolvedValue(undefined),
+		};
+		const missingApp = createAppWithCustomStorage(db, missingStorage);
+
+		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(404);
+		expect(missingStorage.deleteChunks).toHaveBeenCalledWith(id, expect.any(Number));
+	});
+
+	it("aborts the stream when chunk decryption throws inside the loop", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		// Return a buffer that passes the IV+tag length check but fails AES-GCM
+		// authentication, exercising the catch in the ReadableStream start().
+		const garbage = Buffer.alloc(64);
+		const corruptStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: () => Promise.resolve(garbage),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
+
+		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		await expect(res.arrayBuffer()).rejects.toThrow();
 	});
 });
 
@@ -2132,8 +2177,7 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 		expect(json.deleted).toBe(true);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`[notes] Failed to delete chunks for note ${id}`),
-			"chunk delete failure",
+			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
 		);
 		consoleSpy.mockRestore();
 	});

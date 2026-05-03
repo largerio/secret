@@ -20,6 +20,7 @@ import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
+import { deleteOrSchedule } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { StorageNotFoundError } from "../storage/index.js";
 
@@ -35,25 +36,16 @@ function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never 
 }
 
 async function cleanupNoteStorage(
+	db: AppDatabase,
 	storage: StorageBackend,
 	id: string,
 	note: { chunkCount?: number | null; filePath?: string | null },
 ): Promise<void> {
-	if (note.chunkCount && note.chunkCount > 0) {
-		await storage.deleteChunks(id, note.chunkCount).catch((err: unknown) => {
-			console.error(
-				`[notes] Failed to delete chunks for note ${id}:`,
-				err instanceof Error ? err.message : err,
-			);
-		});
-	} else if (note.filePath) {
-		await storage.delete(note.filePath).catch((err: unknown) => {
-			console.error(
-				`[notes] Failed to delete file for note ${id}:`,
-				err instanceof Error ? err.message : err,
-			);
-		});
-	}
+	await deleteOrSchedule(db, storage, {
+		noteId: id,
+		filePath: note.filePath ?? null,
+		chunkCount: note.chunkCount ?? null,
+	});
 }
 
 interface NotesEnv {
@@ -346,7 +338,7 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			await cleanupNoteStorage(storage, id, result);
+			await cleanupNoteStorage(db, storage, id, result);
 			httpError(result.status as 404, result.error);
 		}
 
@@ -363,17 +355,17 @@ export function createNotesRoutes() {
 			}
 		} catch (err) {
 			if (result.shouldDelete) {
-				await cleanupNoteStorage(storage, id, note);
+				await cleanupNoteStorage(db, storage, id, note);
 			}
 			if (err instanceof StorageNotFoundError) {
-				httpError(404, "Note payload missing");
+				httpError(404, "Note not found");
 			} else {
 				httpError(500, "Failed to decrypt note");
 			}
 		}
 
 		if (result.shouldDelete) {
-			await cleanupNoteStorage(storage, id, note);
+			await cleanupNoteStorage(db, storage, id, note);
 		}
 
 		return { clientBlob, note };
@@ -465,7 +457,7 @@ export function createNotesRoutes() {
 			httpError(result.status as 403, result.error);
 		}
 
-		await cleanupNoteStorage(storage, id, result.note);
+		await cleanupNoteStorage(db, storage, id, result.note);
 
 		return c.json({ deleted: true as const });
 	});
@@ -597,12 +589,7 @@ export function createNotesRoutes() {
 			.all();
 
 		if (rows.length < session.chunkCount) {
-			const received = new Set(rows.map((r) => r.chunkIndex));
-			const missing: number[] = [];
-			for (let i = 0; i < session.chunkCount; i++) {
-				if (!received.has(i)) missing.push(i);
-			}
-			return c.json({ error: `Missing chunks: [${missing.join(", ")}]` }, 400);
+			return c.json({ error: "Upload incomplete" }, 400);
 		}
 
 		let meta: {
@@ -721,7 +708,7 @@ export function createNotesRoutes() {
 
 		if ("error" in result) {
 			if ("expiredChunkCount" in result && result.expiredChunkCount) {
-				await cleanupNoteStorage(storage, id, { chunkCount: result.expiredChunkCount });
+				await cleanupNoteStorage(db, storage, id, { chunkCount: result.expiredChunkCount });
 			}
 			httpError(result.status as 404, result.error);
 		}
@@ -753,10 +740,10 @@ export function createNotesRoutes() {
 			firstChunk = await storage.readChunk(id, 0);
 		} catch (err) {
 			if (result.shouldDelete) {
-				await cleanupNoteStorage(storage, id, { chunkCount });
+				await cleanupNoteStorage(db, storage, id, { chunkCount });
 			}
 			if (err instanceof StorageNotFoundError) {
-				return c.json({ error: "Chunk payload missing" }, 404);
+				return c.json({ error: "Note not found" }, 404);
 			}
 			throw err;
 		}
@@ -789,7 +776,7 @@ export function createNotesRoutes() {
 					controller.error(err);
 				} finally {
 					if (result.shouldDelete) {
-						await cleanupNoteStorage(storage, id, { chunkCount });
+						await cleanupNoteStorage(db, storage, id, { chunkCount });
 					}
 				}
 			},
