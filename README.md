@@ -40,7 +40,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
-- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko)
+- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); add a new locale by dropping a JSON file in [`messages/`](messages/)
 - **Self-hostable** — Single Docker container, customizable branding
 
 ## Comparison
@@ -68,7 +68,8 @@ git clone https://github.com/largerio/secret.git
 cd secret
 cp .env.example .env
 
-# Generate a server encryption key (REQUIRED)
+# Generate a server encryption key (REQUIRED) — pick one
+openssl rand -base64 32
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 # Paste the output into .env as SERVER_ENCRYPTION_KEY
 
@@ -192,7 +193,7 @@ server {
 }
 ```
 
-Set `client_max_body_size` to match `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used).
+Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
 
 ## Development
 
