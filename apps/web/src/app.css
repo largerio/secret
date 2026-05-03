@@ -197,6 +197,15 @@ button:not(:disabled),
 	display: inline-block;
 }
 
+/* Prevent iOS Safari auto-zoom on focus: font-size must be >= 16px */
+@media (max-width: 640px) {
+	input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+	textarea,
+	select {
+		font-size: 16px !important;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
