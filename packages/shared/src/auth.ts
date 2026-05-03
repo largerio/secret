@@ -23,3 +23,25 @@ export function verifyApiKey(candidate: string, knownKeys: ReadonlyArray<string>
 
 	return matched;
 }
+
+// Same contract as verifyApiKey but works against pre-computed Buffers, so
+// callers can hoist the Buffer.from() conversions out of the request hot path.
+export function verifyApiKeyBuffers(
+	candidate: string,
+	knownBuffers: ReadonlyArray<Buffer>,
+): boolean {
+	const candidateBuf = Buffer.from(candidate);
+	let matched = false;
+
+	for (const knownBuf of knownBuffers) {
+		const padded = Buffer.alloc(knownBuf.length);
+		candidateBuf.copy(padded);
+		const bytesMatch = timingSafeEqual(padded, knownBuf);
+		const lengthsMatch = candidateBuf.length === knownBuf.length;
+		if (bytesMatch && lengthsMatch) {
+			matched = true;
+		}
+	}
+
+	return matched;
+}

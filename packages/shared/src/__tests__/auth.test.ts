@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { verifyApiKey } from "../auth.js";
+import { verifyApiKey, verifyApiKeyBuffers } from "../auth.js";
 
 describe("verifyApiKey", () => {
 	it("returns false when no keys are configured", () => {
@@ -43,5 +43,43 @@ describe("verifyApiKey", () => {
 		// placed at any position.
 		expect(verifyApiKey("match", ["match", "other"])).toBe(true);
 		expect(verifyApiKey("match", ["other", "match"])).toBe(true);
+	});
+});
+
+describe("verifyApiKeyBuffers", () => {
+	const buffers = (...keys: string[]) => keys.map((k) => Buffer.from(k));
+
+	it("returns false when no keys are configured", () => {
+		expect(verifyApiKeyBuffers("anything", [])).toBe(false);
+	});
+
+	it("accepts a matching key", () => {
+		expect(verifyApiKeyBuffers("secret", buffers("secret"))).toBe(true);
+	});
+
+	it("rejects a non-matching key", () => {
+		expect(verifyApiKeyBuffers("wrong", buffers("secret"))).toBe(false);
+	});
+
+	it("accepts any key from a configured list", () => {
+		const known = buffers("k1", "k2", "k3");
+		expect(verifyApiKeyBuffers("k1", known)).toBe(true);
+		expect(verifyApiKeyBuffers("k2", known)).toBe(true);
+		expect(verifyApiKeyBuffers("k3", known)).toBe(true);
+		expect(verifyApiKeyBuffers("k4", known)).toBe(false);
+	});
+
+	it("rejects candidates with mismatching length", () => {
+		expect(verifyApiKeyBuffers("secretX", buffers("secret"))).toBe(false);
+		expect(verifyApiKeyBuffers("secre", buffers("secret"))).toBe(false);
+	});
+
+	it("matches the behavior of verifyApiKey for equivalent inputs", () => {
+		const candidates = ["a", "ab", "abc", "abcd", "wrong"];
+		const known = ["abc", "xyz"];
+		const knownBufs = buffers(...known);
+		for (const c of candidates) {
+			expect(verifyApiKeyBuffers(c, knownBufs)).toBe(verifyApiKey(c, known));
+		}
 	});
 });
