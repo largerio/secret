@@ -1,8 +1,10 @@
-import { verifyApiKey } from "@secret/shared/auth";
+import { verifyApiKeyBuffers } from "@secret/shared/auth";
 import type { MiddlewareHandler } from "hono";
 import { cap } from "../routes/cap.js";
 
 export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandler {
+	const apiKeyBuffers: ReadonlyArray<Buffer> = apiKeys.map((k) => Buffer.from(k));
+
 	return async (c, next) => {
 		const method = c.req.method;
 		if (method !== "POST" && method !== "DELETE") {
@@ -20,7 +22,7 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 		const authHeader = c.req.header("authorization");
 		if (authHeader) {
 			const key = authHeader.replace(/^Bearer\s+/i, "");
-			if (verifyApiKey(key, apiKeys)) {
+			if (verifyApiKeyBuffers(key, apiKeyBuffers)) {
 				await next();
 				return;
 			}
@@ -33,7 +35,8 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 			return c.json({ error: "PoW token required" }, 401);
 		}
 
-		const { success } = await cap.validateToken(capToken);
+		// keepToken: false makes the PoW token single-use (replay protection).
+		const { success } = await cap.validateToken(capToken, { keepToken: false });
 		if (!success) {
 			return c.json({ error: "Invalid PoW token" }, 401);
 		}
