@@ -109,7 +109,7 @@ describe("deleteOrSchedule", () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.noteId).toBe("fail0001");
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note fail0001, scheduling retry",
+			"[deletions] Storage delete failed for note fail0001, scheduling retry: boom",
 		);
 		consoleSpy.mockRestore();
 	});
@@ -221,6 +221,33 @@ describe("drainPendingDeletions", () => {
 		expect(rows[0]?.nextRetryAt.getTime()).toBeGreaterThan(Date.now());
 	});
 
+	it("handles non-Error rejections from storage during drain", async () => {
+		const failingStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn().mockRejectedValue("plain string failure"),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
+		};
+
+		db.insert(pendingDeletions)
+			.values({
+				noteId: "stringfail",
+				filePath: "/tmp/x",
+				chunkCount: null,
+				attempts: 0,
+				nextRetryAt: new Date(Date.now() - 1000),
+				createdAt: new Date(),
+			})
+			.run();
+
+		const result = await drainPendingDeletions(db, failingStorage);
+		expect(result).toEqual({ drained: 0, failed: 1 });
+		const rows = db.select().from(pendingDeletions).all();
+		expect(rows[0]?.attempts).toBe(1);
+	});
+
 	it("gives up after MAX_ATTEMPTS and removes the row", async () => {
 		const failingStorage: StorageBackend = {
 			save: vi.fn(),
@@ -247,9 +274,26 @@ describe("drainPendingDeletions", () => {
 		expect(result).toEqual({ drained: 0, failed: 1 });
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Giving up on note giveup001 after 6 attempts",
+			"[deletions] Giving up on note giveup001 after 6 attempts: permafail",
 		);
 		consoleSpy.mockRestore();
+	});
+
+	it("removes malformed rows (no filePath and no chunks) without retrying", async () => {
+		db.insert(pendingDeletions)
+			.values({
+				noteId: "malformed1",
+				filePath: null,
+				chunkCount: null,
+				attempts: 0,
+				nextRetryAt: new Date(Date.now() - 1000),
+				createdAt: new Date(),
+			})
+			.run();
+
+		const result = await drainPendingDeletions(db, storage);
+		expect(result).toEqual({ drained: 0, failed: 0 });
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 	});
 
 	it("drains chunked deletions as well", async () => {

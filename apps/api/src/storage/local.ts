@@ -1,17 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
+import {
+	assertChunkCount,
+	assertChunkIndex,
+	StorageInvalidKeyError,
+	StorageNotFoundError,
+} from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
 	return err instanceof Error && typeof (err as NodeJS.ErrnoException).code === "string";
-}
-
-function assertChunkIndex(index: number): void {
-	if (!Number.isInteger(index) || index < 0) {
-		throw new StorageInvalidKeyError("Invalid chunk index");
-	}
 }
 
 export class LocalStorage implements StorageBackend {
@@ -82,9 +81,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
-		if (!Number.isInteger(chunkCount) || chunkCount < 0) {
-			throw new StorageInvalidKeyError("Invalid chunk count");
-		}
+		assertChunkCount(chunkCount);
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
 		for (let i = 0; i < chunkCount; i++) {
 			try {

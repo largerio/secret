@@ -35,19 +35,6 @@ function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never 
 	throw new HTTPException(status, { message });
 }
 
-async function cleanupNoteStorage(
-	db: AppDatabase,
-	storage: StorageBackend,
-	id: string,
-	note: { chunkCount?: number | null; filePath?: string | null },
-): Promise<void> {
-	await deleteOrSchedule(db, storage, {
-		noteId: id,
-		filePath: note.filePath ?? null,
-		chunkCount: note.chunkCount ?? null,
-	});
-}
-
 interface NotesEnv {
 	Variables: {
 		db: AppDatabase;
@@ -338,7 +325,7 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			await cleanupNoteStorage(db, storage, id, result);
+			await deleteOrSchedule(db, storage, { noteId: id, ...result });
 			httpError(result.status as 404, result.error);
 		}
 
@@ -355,7 +342,7 @@ export function createNotesRoutes() {
 			}
 		} catch (err) {
 			if (result.shouldDelete) {
-				await cleanupNoteStorage(db, storage, id, note);
+				await deleteOrSchedule(db, storage, { noteId: id, ...note });
 			}
 			if (err instanceof StorageNotFoundError) {
 				httpError(404, "Note not found");
@@ -365,7 +352,7 @@ export function createNotesRoutes() {
 		}
 
 		if (result.shouldDelete) {
-			await cleanupNoteStorage(db, storage, id, note);
+			await deleteOrSchedule(db, storage, { noteId: id, ...note });
 		}
 
 		return { clientBlob, note };
@@ -457,7 +444,7 @@ export function createNotesRoutes() {
 			httpError(result.status as 403, result.error);
 		}
 
-		await cleanupNoteStorage(db, storage, id, result.note);
+		await deleteOrSchedule(db, storage, { noteId: id, ...result.note });
 
 		return c.json({ deleted: true as const });
 	});
@@ -708,7 +695,10 @@ export function createNotesRoutes() {
 
 		if ("error" in result) {
 			if ("expiredChunkCount" in result && result.expiredChunkCount) {
-				await cleanupNoteStorage(db, storage, id, { chunkCount: result.expiredChunkCount });
+				await deleteOrSchedule(db, storage, {
+					noteId: id,
+					chunkCount: result.expiredChunkCount,
+				});
 			}
 			httpError(result.status as 404, result.error);
 		}
@@ -740,7 +730,7 @@ export function createNotesRoutes() {
 			firstChunk = await storage.readChunk(id, 0);
 		} catch (err) {
 			if (result.shouldDelete) {
-				await cleanupNoteStorage(db, storage, id, { chunkCount });
+				await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
 			}
 			if (err instanceof StorageNotFoundError) {
 				return c.json({ error: "Note not found" }, 404);
@@ -776,7 +766,7 @@ export function createNotesRoutes() {
 					controller.error(err);
 				} finally {
 					if (result.shouldDelete) {
-						await cleanupNoteStorage(db, storage, id, { chunkCount });
+						await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
 					}
 				}
 			},

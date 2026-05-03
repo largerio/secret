@@ -8,7 +8,12 @@ import {
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
+import {
+	assertChunkCount,
+	assertChunkIndex,
+	StorageInvalidKeyError,
+	StorageNotFoundError,
+} from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 export interface S3Config {
@@ -20,9 +25,11 @@ export interface S3Config {
 	readonly forcePathStyle: boolean;
 }
 
-function assertChunkIndex(index: number): void {
-	if (!Number.isInteger(index) || index < 0) {
-		throw new StorageInvalidKeyError("Invalid chunk index");
+const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+function assertNoteId(noteId: string): void {
+	if (!NOTE_ID_RE.test(noteId)) {
+		throw new StorageInvalidKeyError("Invalid note ID for storage key");
 	}
 }
 
@@ -71,9 +78,7 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
+		assertNoteId(noteId);
 		const key = `notes/${noteId}`;
 		const upload = new Upload({
 			client: this.client,
@@ -123,9 +128,7 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
+		assertNoteId(noteId);
 		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		await this.client.send(
@@ -140,9 +143,7 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
+		assertNoteId(noteId);
 		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		let response: GetObjectCommandOutput;
@@ -166,12 +167,8 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
-		if (!Number.isInteger(chunkCount) || chunkCount < 0) {
-			throw new StorageInvalidKeyError("Invalid chunk count");
-		}
+		assertNoteId(noteId);
+		assertChunkCount(chunkCount);
 		const objects = Array.from({ length: chunkCount }, (_, i) => ({
 			Key: `notes/${noteId}/chunk_${String(i)}`,
 		}));

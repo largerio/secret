@@ -1,40 +1,58 @@
 import { eq, lte } from "drizzle-orm";
+import { runWithConcurrency } from "./concurrency.js";
 import type { AppDatabase } from "./db/index.js";
 import { pendingDeletions } from "./db/schema.js";
 import type { StorageBackend } from "./storage/index.js";
 
-const RETRY_BACKOFF_MS = [
-	30_000, // 30s (also used for the first scheduling)
-	2 * 60_000, // 2m
-	10 * 60_000, // 10m
-	60 * 60_000, // 1h
-	6 * 60 * 60_000, // 6h
-	24 * 60 * 60_000, // 24h
-] as const;
-const INITIAL_BACKOFF_MS: number = RETRY_BACKOFF_MS[0];
+const RETRY_BACKOFF_MS: readonly number[] = [
+	30_000, // 30s (also the initial delay before the first retry)
+	2 * 60_000,
+	10 * 60_000,
+	60 * 60_000,
+	6 * 60 * 60_000,
+	24 * 60 * 60_000,
+];
+const INITIAL_BACKOFF_MS = RETRY_BACKOFF_MS[0] as number;
 const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length;
+const DRAIN_BATCH_LIMIT = 1000;
 
-interface DeletionTarget {
+export type DeletionTarget =
+	| { readonly noteId: string; readonly kind: "file"; readonly filePath: string }
+	| { readonly noteId: string; readonly kind: "chunks"; readonly chunkCount: number };
+
+interface DbDeletionShape {
 	readonly noteId: string;
 	readonly filePath?: string | null;
 	readonly chunkCount?: number | null;
 }
 
-function isEmptyTarget(target: DeletionTarget): boolean {
-	const hasChunks =
-		target.chunkCount !== undefined && target.chunkCount !== null && target.chunkCount > 0;
-	const hasFile = target.filePath !== undefined && target.filePath !== null;
-	return !hasChunks && !hasFile;
+// Narrow a (filePath, chunkCount) DB-shaped row into the discriminated target.
+// Returns undefined if the row carries no work — callers treat this as a no-op.
+export function toDeletionTarget(row: DbDeletionShape): DeletionTarget | undefined {
+	if (row.chunkCount && row.chunkCount > 0) {
+		return { noteId: row.noteId, kind: "chunks", chunkCount: row.chunkCount };
+	}
+	if (row.filePath) {
+		return { noteId: row.noteId, kind: "file", filePath: row.filePath };
+	}
+	return undefined;
 }
 
-export function schedulePendingDeletion(db: AppDatabase, target: DeletionTarget): void {
-	if (isEmptyTarget(target)) return;
+async function tryDelete(storage: StorageBackend, target: DeletionTarget): Promise<void> {
+	if (target.kind === "chunks") {
+		await storage.deleteChunks(target.noteId, target.chunkCount);
+	} else {
+		await storage.delete(target.filePath);
+	}
+}
+
+function scheduleRow(db: AppDatabase, target: DeletionTarget): void {
 	const now = new Date();
 	db.insert(pendingDeletions)
 		.values({
 			noteId: target.noteId,
-			filePath: target.filePath ?? null,
-			chunkCount: target.chunkCount ?? null,
+			filePath: target.kind === "file" ? target.filePath : null,
+			chunkCount: target.kind === "chunks" ? target.chunkCount : null,
 			attempts: 0,
 			nextRetryAt: new Date(now.getTime() + INITIAL_BACKOFF_MS),
 			createdAt: now,
@@ -42,53 +60,30 @@ export function schedulePendingDeletion(db: AppDatabase, target: DeletionTarget)
 		.run();
 }
 
-// Caller guarantees either chunkCount > 0 or filePath is set (enforced via
-// isEmptyTarget at the entry points).
-async function tryDelete(storage: StorageBackend, target: DeletionTarget): Promise<boolean> {
-	try {
-		if (target.chunkCount && target.chunkCount > 0) {
-			await storage.deleteChunks(target.noteId, target.chunkCount);
-		} else {
-			await storage.delete(target.filePath as string);
-		}
-		return true;
-	} catch {
-		return false;
-	}
+export function schedulePendingDeletion(db: AppDatabase, row: DbDeletionShape): void {
+	const target = toDeletionTarget(row);
+	if (target) scheduleRow(db, target);
 }
 
-// Best-effort delete with synchronous logging, falling back to a persistent
-// retry queue if the storage call rejects. Routes call this after the DB has
-// already removed the note row, so an unhandled failure would otherwise leak
-// data on disk/S3.
+// Best-effort delete; on failure, persist a row in pending_deletions so the
+// cleanup job can retry. Routes call this AFTER the note row is gone from
+// the DB, so an unhandled rejection would otherwise orphan blobs on disk/S3.
 export async function deleteOrSchedule(
 	db: AppDatabase,
 	storage: StorageBackend,
-	target: DeletionTarget,
+	row: DbDeletionShape,
 ): Promise<void> {
-	if (isEmptyTarget(target)) return;
-	const ok = await tryDelete(storage, target);
-	if (!ok) {
-		console.error(`[deletions] Storage delete failed for note ${target.noteId}, scheduling retry`);
-		schedulePendingDeletion(db, target);
+	const target = toDeletionTarget(row);
+	if (!target) return;
+	try {
+		await tryDelete(storage, target);
+	} catch (err: unknown) {
+		const detail = err instanceof Error ? err.message : String(err);
+		console.error(
+			`[deletions] Storage delete failed for note ${target.noteId}, scheduling retry: ${detail}`,
+		);
+		scheduleRow(db, target);
 	}
-}
-
-export async function runWithConcurrency<T>(
-	items: ReadonlyArray<T>,
-	limit: number,
-	worker: (item: T) => Promise<void>,
-): Promise<void> {
-	let cursor = 0;
-	const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) {
-			// noUncheckedIndexedAccess gives us T | undefined here; cursor is bounded
-			// by items.length so the value is always defined.
-			const item = items[cursor++] as T;
-			await worker(item);
-		}
-	});
-	await Promise.all(runners);
 }
 
 export async function drainPendingDeletions(
@@ -96,11 +91,11 @@ export async function drainPendingDeletions(
 	storage: StorageBackend,
 	concurrency = 8,
 ): Promise<{ drained: number; failed: number }> {
-	const now = new Date();
 	const due = db
 		.select()
 		.from(pendingDeletions)
-		.where(lte(pendingDeletions.nextRetryAt, now))
+		.where(lte(pendingDeletions.nextRetryAt, new Date()))
+		.limit(DRAIN_BATCH_LIMIT)
 		.all();
 
 	if (due.length === 0) return { drained: 0, failed: 0 };
@@ -109,36 +104,37 @@ export async function drainPendingDeletions(
 	let failed = 0;
 
 	await runWithConcurrency(due, concurrency, async (row) => {
-		const ok = await tryDelete(storage, {
-			noteId: row.noteId,
-			filePath: row.filePath,
-			chunkCount: row.chunkCount,
-		});
+		const target = toDeletionTarget(row);
+		if (!target) {
+			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+			return;
+		}
 
-		if (ok) {
+		try {
+			await tryDelete(storage, target);
 			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
 			drained++;
 			return;
-		}
+		} catch (err: unknown) {
+			const detail = err instanceof Error ? err.message : String(err);
+			const nextAttempts = row.attempts + 1;
 
-		const nextAttempts = row.attempts + 1;
-		if (nextAttempts >= MAX_ATTEMPTS) {
-			console.error(
-				`[deletions] Giving up on note ${row.noteId} after ${String(nextAttempts)} attempts`,
-			);
-			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+			if (nextAttempts >= MAX_ATTEMPTS) {
+				console.error(
+					`[deletions] Giving up on note ${row.noteId} after ${String(nextAttempts)} attempts: ${detail}`,
+				);
+				db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+				failed++;
+				return;
+			}
+
+			const backoff = RETRY_BACKOFF_MS[nextAttempts] as number;
+			db.update(pendingDeletions)
+				.set({ attempts: nextAttempts, nextRetryAt: new Date(Date.now() + backoff) })
+				.where(eq(pendingDeletions.id, row.id))
+				.run();
 			failed++;
-			return;
 		}
-
-		// nextAttempts < MAX_ATTEMPTS guarantees the index is in range.
-		const backoff = RETRY_BACKOFF_MS[nextAttempts] as number;
-		const nextRetryAt = new Date(Date.now() + backoff);
-		db.update(pendingDeletions)
-			.set({ attempts: nextAttempts, nextRetryAt })
-			.where(eq(pendingDeletions.id, row.id))
-			.run();
-		failed++;
 	});
 
 	return { drained, failed };

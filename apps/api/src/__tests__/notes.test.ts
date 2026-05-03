@@ -1725,7 +1725,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: stream chunk fail string`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1767,7 +1767,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: stream chunk error obj`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1944,7 +1944,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk cleanup failure`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1976,7 +1976,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: string delete error`,
 		);
 		consoleSpy.mockRestore();
 	});
@@ -2177,7 +2177,7 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 		expect(json.deleted).toBe(true);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry`,
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk delete failure`,
 		);
 		consoleSpy.mockRestore();
 	});

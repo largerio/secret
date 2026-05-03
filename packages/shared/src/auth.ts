@@ -6,26 +6,6 @@ import { timingSafeEqual } from "node:crypto";
 // known key's length and then combine the byte-equality with a length check.
 // The time spent per key depends only on the known key's length, which is not
 // a secret to the attacker (keys are fixed at deploy time).
-export function verifyApiKey(candidate: string, knownKeys: ReadonlyArray<string>): boolean {
-	const candidateBuf = Buffer.from(candidate);
-	let matched = false;
-
-	for (const known of knownKeys) {
-		const knownBuf = Buffer.from(known);
-		const padded = Buffer.alloc(knownBuf.length);
-		candidateBuf.copy(padded);
-		const bytesMatch = timingSafeEqual(padded, knownBuf);
-		const lengthsMatch = candidateBuf.length === knownBuf.length;
-		if (bytesMatch && lengthsMatch) {
-			matched = true;
-		}
-	}
-
-	return matched;
-}
-
-// Same contract as verifyApiKey but works against pre-computed Buffers, so
-// callers can hoist the Buffer.from() conversions out of the request hot path.
 export function verifyApiKeyBuffers(
 	candidate: string,
 	knownBuffers: ReadonlyArray<Buffer>,
@@ -44,4 +24,11 @@ export function verifyApiKeyBuffers(
 	}
 
 	return matched;
+}
+
+export function verifyApiKey(candidate: string, knownKeys: ReadonlyArray<string>): boolean {
+	return verifyApiKeyBuffers(
+		candidate,
+		knownKeys.map((k) => Buffer.from(k)),
+	);
 }
