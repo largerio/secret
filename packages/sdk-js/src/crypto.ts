@@ -8,6 +8,7 @@ import {
 	encryptPayload,
 	fromBase64,
 	generateKey,
+	generateNonce,
 	generateSalt,
 	initSodium,
 	initStreamDecrypt,
@@ -129,6 +130,7 @@ export async function decryptNoteBytes(
 
 export interface ChunkedEncryptResult {
 	readonly header: string;
+	readonly clientNonce: string;
 	readonly chunks: Uint8Array[];
 	readonly keyFragment: string;
 	readonly salt?: string;
@@ -197,6 +199,7 @@ export async function encryptNoteChunked(
 
 		return {
 			header: toBase64(header),
+			clientNonce: toBase64(generateNonce()),
 			chunks,
 			keyFragment,
 			...(salt ? { salt: toBase64(salt) } : {}),

@@ -155,7 +155,7 @@ export class SecretClient {
 			this.httpConfig,
 			{
 				streamHeader: encrypted.header,
-				clientNonce: encrypted.header, // reuse header as nonce for metadata consistency
+				clientNonce: encrypted.clientNonce,
 				chunkCount: totalChunks,
 				hasPassword: !!options.password,
 				expiresIn: options.expiresIn ?? DEFAULT_EXPIRY_SECONDS,
