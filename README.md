@@ -47,17 +47,19 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 
 | Feature                | Secret              | PrivateBin          | OneTimeSecret       | Yopass              |
 |------------------------|---------------------|---------------------|---------------------|---------------------|
-| Zero-knowledge         | Yes                 | Yes                 | Partial             | Yes                 |
-| Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | AES-256-CBC         | AES-256-GCM         |
+| Zero-knowledge         | Yes                 | Yes                 | No (server-side)    | Yes                 |
+| Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | —                   | OpenPGP             |
 | Server-side encryption | Yes (AES-256-GCM)   | No                  | Yes                 | No                  |
-| File attachments       | Up to 10, 500 MB    | Single, limited     | No                  | Single, limited     |
-| File previews          | Image/PDF/AV        | Image only          | No                  | No                  |
-| Burn after read        | Yes                 | Yes                 | Yes                 | Yes                 |
-| Read limits (N reads)  | Yes                 | Yes                 | No                  | No                  |
-| Password protection    | Argon2id            | PBKDF2              | None                | None                |
-| Official SDK           | Yes (JS/TS)         | No                  | Yes (multi-lang)    | No                  |
+| File attachments       | Up to 10, 500 MB    | Single, opt-in      | No                  | Single, streaming   |
+| File previews          | Image/PDF/AV        | Image/PDF/media     | No                  | No                  |
+| Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
+| Read limits (N reads)  | Yes                 | No                  | No                  | No                  |
+| Password protection    | Yes (Argon2id)      | Yes (PBKDF2)        | Yes (passphrase)    | Yes                 |
+| Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
+
+> Comparison reflects publicly documented features at the time of writing. See each project's docs for the latest details.
 
 ## Quick Start
 
