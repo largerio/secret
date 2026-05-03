@@ -5,9 +5,27 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 
-**[secret.larger.io](https://secret.larger.io)** — Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
+Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
+
+> **Live demo:** [secret.larger.io](https://secret.larger.io)
+
+## Table of Contents
+
+- [Features](#features)
+- [Comparison](#comparison)
+- [Quick Start](#quick-start)
+- [SDK](#sdk)
+- [How It Works](#how-it-works)
+- [Configuration](#configuration)
+  - [S3 Storage (optional)](#s3-storage-optional)
+- [Updating](#updating)
+- [Reverse Proxy](#reverse-proxy)
+- [Development](#development)
+- [Security](#security)
+- [License](#license)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -24,6 +42,22 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko)
 - **Self-hostable** — Single Docker container, customizable branding
+
+## Comparison
+
+| Feature                | Secret              | PrivateBin          | OneTimeSecret       | Yopass              |
+|------------------------|---------------------|---------------------|---------------------|---------------------|
+| Zero-knowledge         | Yes                 | Yes                 | Partial             | Yes                 |
+| Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | AES-256-CBC         | AES-256-GCM         |
+| Server-side encryption | Yes (AES-256-GCM)   | No                  | Yes                 | No                  |
+| File attachments       | Up to 10, 500 MB    | Single, limited     | No                  | Single, limited     |
+| File previews          | Image/PDF/AV        | Image only          | No                  | No                  |
+| Burn after read        | Yes                 | Yes                 | Yes                 | Yes                 |
+| Read limits (N reads)  | Yes                 | Yes                 | No                  | No                  |
+| Password protection    | Argon2id            | PBKDF2              | None                | None                |
+| Official SDK           | Yes (JS/TS)         | No                  | Yes (multi-lang)    | No                  |
+| Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
+| Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
 
 ## Quick Start
 
@@ -70,14 +104,14 @@ console.log(payload.text); // "Hello, World!"
 ## How It Works
 
 ```
-Browser                                  Server
-┌──────────────────────┐            ┌──────────────────┐
-│ 1. Generate key      │            │                  │
-│ 2. Encrypt (XChaCha) │──blob──►   │ 3. Encrypt (AES) │
-│                      │            │ 4. Store          │
-│ URL: /note/id#key    │            │                  │
-│        └─ never sent │            │ Never sees key   │
-└──────────────────────┘            └──────────────────┘
+Browser                                   Server
+┌──────────────────────┐             ┌──────────────────┐
+│ 1. Generate key      │             │                  │
+│ 2. Encrypt (XChaCha) │──ciphertext►│ 3. Encrypt (AES) │
+│                      │             │ 4. Store         │
+│ URL: /note/id#key    │             │                  │
+│        └─ never sent │             │ Never sees key   │
+└──────────────────────┘             └──────────────────┘
 ```
 
 The encryption key lives in the URL fragment (`#key`), which browsers never send to the server.
