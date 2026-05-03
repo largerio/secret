@@ -5,9 +5,27 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 
-**[secret.larger.io](https://secret.larger.io)** — Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
+Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
+
+> **Live demo:** [secret.larger.io](https://secret.larger.io)
+
+## Table of Contents
+
+- [Features](#features)
+- [Comparison](#comparison)
+- [Quick Start](#quick-start)
+- [SDK](#sdk)
+- [How It Works](#how-it-works)
+- [Configuration](#configuration)
+  - [S3 Storage (optional)](#s3-storage-optional)
+- [Updating](#updating)
+- [Reverse Proxy](#reverse-proxy)
+- [Development](#development)
+- [Security](#security)
+- [License](#license)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -22,8 +40,26 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
-- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko)
+- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); add a new locale by dropping a JSON file in [`messages/`](messages/)
 - **Self-hostable** — Single Docker container, customizable branding
+
+## Comparison
+
+| Feature                | Secret              | PrivateBin          | OneTimeSecret       | Yopass              |
+|------------------------|---------------------|---------------------|---------------------|---------------------|
+| Zero-knowledge         | Yes                 | Yes                 | No (server-side)    | Yes                 |
+| Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | —                   | OpenPGP             |
+| Server-side encryption | Yes (AES-256-GCM)   | No                  | Yes                 | No                  |
+| File attachments       | Up to 10, 500 MB    | Single, opt-in      | No                  | Single, streaming   |
+| File previews          | Image/PDF/AV        | Image/PDF/media     | No                  | No                  |
+| Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
+| Read limits (N reads)  | Yes                 | No                  | No                  | No                  |
+| Password protection    | Yes (Argon2id)      | Yes (PBKDF2)        | Yes (passphrase)    | Yes                 |
+| Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
+| Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
+| Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
+
+> Comparison reflects publicly documented features at the time of writing. See each project's docs for the latest details.
 
 ## Quick Start
 
@@ -32,7 +68,8 @@ git clone https://github.com/largerio/secret.git
 cd secret
 cp .env.example .env
 
-# Generate a server encryption key (REQUIRED)
+# Generate a server encryption key (REQUIRED) — pick one
+openssl rand -base64 32
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 # Paste the output into .env as SERVER_ENCRYPTION_KEY
 
@@ -70,14 +107,14 @@ console.log(payload.text); // "Hello, World!"
 ## How It Works
 
 ```
-Browser                                  Server
-┌──────────────────────┐            ┌──────────────────┐
-│ 1. Generate key      │            │                  │
-│ 2. Encrypt (XChaCha) │──blob──►   │ 3. Encrypt (AES) │
-│                      │            │ 4. Store          │
-│ URL: /note/id#key    │            │                  │
-│        └─ never sent │            │ Never sees key   │
-└──────────────────────┘            └──────────────────┘
+Browser                                   Server
+┌──────────────────────┐             ┌──────────────────┐
+│ 1. Generate key      │             │                  │
+│ 2. Encrypt (XChaCha) │──ciphertext►│ 3. Encrypt (AES) │
+│                      │             │ 4. Store         │
+│ URL: /note/id#key    │             │                  │
+│        └─ never sent │             │ Never sees key   │
+└──────────────────────┘             └──────────────────┘
 ```
 
 The encryption key lives in the URL fragment (`#key`), which browsers never send to the server.
@@ -156,7 +193,7 @@ server {
 }
 ```
 
-Set `client_max_body_size` to match `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used).
+Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
 
 ## Development
 
