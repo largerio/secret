@@ -8,6 +8,12 @@ function isNodeError(err: unknown): err is NodeJS.ErrnoException {
 	return err instanceof Error && typeof (err as NodeJS.ErrnoException).code === "string";
 }
 
+function assertChunkIndex(index: number): void {
+	if (!Number.isInteger(index) || index < 0) {
+		throw new StorageInvalidKeyError("Invalid chunk index");
+	}
+}
+
 export class LocalStorage implements StorageBackend {
 	private readonly filesPath: string;
 
@@ -52,6 +58,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
+		assertChunkIndex(chunkIndex);
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
 		await mkdir(dirPath, { recursive: true, mode: 0o700 });
 		const filePath = this.assertSafePath(join(dirPath, `chunk_${String(chunkIndex)}`));
@@ -60,6 +67,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
+		assertChunkIndex(chunkIndex);
 		const filePath = this.assertSafePath(
 			join(this.filesPath, noteId, `chunk_${String(chunkIndex)}`),
 		);
@@ -74,6 +82,9 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
+		if (!Number.isInteger(chunkCount) || chunkCount < 0) {
+			throw new StorageInvalidKeyError("Invalid chunk count");
+		}
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
 		for (let i = 0; i < chunkCount; i++) {
 			try {

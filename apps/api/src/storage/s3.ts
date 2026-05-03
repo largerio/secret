@@ -20,6 +20,12 @@ export interface S3Config {
 	readonly forcePathStyle: boolean;
 }
 
+function assertChunkIndex(index: number): void {
+	if (!Number.isInteger(index) || index < 0) {
+		throw new StorageInvalidKeyError("Invalid chunk index");
+	}
+}
+
 function isNotFoundError(err: unknown): boolean {
 	if (err instanceof NoSuchKey) return true;
 	if (err && typeof err === "object") {
@@ -120,6 +126,7 @@ export class S3Storage implements StorageBackend {
 		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
 			throw new StorageInvalidKeyError("Invalid note ID for storage key");
 		}
+		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		await this.client.send(
 			new PutObjectCommand({
@@ -133,6 +140,10 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
+		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
+		}
+		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		let response: GetObjectCommandOutput;
 		try {
@@ -155,6 +166,12 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
+		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
+			throw new StorageInvalidKeyError("Invalid note ID for storage key");
+		}
+		if (!Number.isInteger(chunkCount) || chunkCount < 0) {
+			throw new StorageInvalidKeyError("Invalid chunk count");
+		}
 		const objects = Array.from({ length: chunkCount }, (_, i) => ({
 			Key: `notes/${noteId}/chunk_${String(i)}`,
 		}));
