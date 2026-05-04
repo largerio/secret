@@ -28,7 +28,7 @@ interface DbDeletionShape {
 
 // Narrow a (filePath, chunkCount) DB-shaped row into the discriminated target.
 // Returns undefined if the row carries no work — callers treat this as a no-op.
-export function toDeletionTarget(row: DbDeletionShape): DeletionTarget | undefined {
+function toDeletionTarget(row: DbDeletionShape): DeletionTarget | undefined {
 	if (row.chunkCount && row.chunkCount > 0) {
 		return { noteId: row.noteId, kind: "chunks", chunkCount: row.chunkCount };
 	}
