@@ -39,13 +39,13 @@ importers:
         version: 4.0.5
       '@hono/node-server':
         specifier: ^2.0.1
-        version: 2.0.1(hono@4.12.16)
+        version: 2.0.1(hono@4.12.18)
       '@hono/zod-openapi':
         specifier: ^1.3.0
-        version: 1.3.0(hono@4.12.16)(zod@4.4.3)
+        version: 1.3.0(hono@4.12.18)(zod@4.4.3)
       '@scalar/hono-api-reference':
         specifier: ^0.10.14
-        version: 0.10.14(hono@4.12.16)
+        version: 0.10.14(hono@4.12.18)
       '@secret/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -59,8 +59,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)
       hono:
-        specifier: ^4.12.16
-        version: 4.12.16
+        specifier: ^4.12.18
+        version: 4.12.18
       nanoid:
         specifier: ^5.1.11
         version: 5.1.11
@@ -1949,8 +1949,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.16:
-    resolution: {integrity: sha512-jN0ZewiNAWSe5khM3EyCmBb250+b40wWbwNILNfEvq84VREWwOIkuUsFONk/3i3nqkz7Oe1PcpM2mwQEK2L9Kg==}
+  hono@4.12.18:
+    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
@@ -3374,21 +3374,21 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
-  '@hono/node-server@2.0.1(hono@4.12.16)':
+  '@hono/node-server@2.0.1(hono@4.12.18)':
     dependencies:
-      hono: 4.12.16
+      hono: 4.12.18
 
-  '@hono/zod-openapi@1.3.0(hono@4.12.16)(zod@4.4.3)':
+  '@hono/zod-openapi@1.3.0(hono@4.12.18)(zod@4.4.3)':
     dependencies:
       '@asteasolutions/zod-to-openapi': 8.5.0(zod@4.4.3)
-      '@hono/zod-validator': 0.7.6(hono@4.12.16)(zod@4.4.3)
-      hono: 4.12.16
+      '@hono/zod-validator': 0.7.6(hono@4.12.18)(zod@4.4.3)
+      hono: 4.12.18
       openapi3-ts: 4.5.0
       zod: 4.4.3
 
-  '@hono/zod-validator@0.7.6(hono@4.12.16)(zod@4.4.3)':
+  '@hono/zod-validator@0.7.6(hono@4.12.18)(zod@4.4.3)':
     dependencies:
-      hono: 4.12.16
+      hono: 4.12.18
       zod: 4.4.3
 
   '@jridgewell/gen-mapping@0.3.13':
@@ -3593,10 +3593,10 @@ snapshots:
 
   '@scalar/helpers@0.6.0': {}
 
-  '@scalar/hono-api-reference@0.10.14(hono@4.12.16)':
+  '@scalar/hono-api-reference@0.10.14(hono@4.12.18)':
     dependencies:
       '@scalar/client-side-rendering': 0.1.7
-      hono: 4.12.16
+      hono: 4.12.18
 
   '@scalar/types@0.9.6':
     dependencies:
@@ -4421,7 +4421,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.16: {}
+  hono@4.12.18: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:
