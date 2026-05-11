@@ -19,7 +19,7 @@
 		"@secret/shared": "workspace:*",
 		"better-sqlite3": "^12.9.0",
 		"drizzle-orm": "^0.45.2",
-		"hono": "^4.12.16",
+		"hono": "^4.12.18",
 		"nanoid": "^5.1.11",
 		"zod": "^4.4.3"
 	},
