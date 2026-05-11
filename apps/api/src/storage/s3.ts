@@ -8,7 +8,12 @@ import {
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
+import {
+	assertChunkCount,
+	assertChunkIndex,
+	StorageInvalidKeyError,
+	StorageNotFoundError,
+} from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 export interface S3Config {
@@ -18,6 +23,14 @@ export interface S3Config {
 	readonly accessKeyId: string;
 	readonly secretAccessKey: string;
 	readonly forcePathStyle: boolean;
+}
+
+const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+function assertNoteId(noteId: string): void {
+	if (!NOTE_ID_RE.test(noteId)) {
+		throw new StorageInvalidKeyError("Invalid note ID for storage key");
+	}
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -65,9 +78,7 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
+		assertNoteId(noteId);
 		const key = `notes/${noteId}`;
 		const upload = new Upload({
 			client: this.client,
@@ -117,9 +128,8 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
-		if (!/^[A-Za-z0-9_-]+$/.test(noteId)) {
-			throw new StorageInvalidKeyError("Invalid note ID for storage key");
-		}
+		assertNoteId(noteId);
+		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		await this.client.send(
 			new PutObjectCommand({
@@ -133,6 +143,8 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
+		assertNoteId(noteId);
+		assertChunkIndex(chunkIndex);
 		const key = `notes/${noteId}/chunk_${String(chunkIndex)}`;
 		let response: GetObjectCommandOutput;
 		try {
@@ -155,6 +167,8 @@ export class S3Storage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
+		assertNoteId(noteId);
+		assertChunkCount(chunkCount);
 		const objects = Array.from({ length: chunkCount }, (_, i) => ({
 			Key: `notes/${noteId}/chunk_${String(i)}`,
 		}));

@@ -1,7 +1,5 @@
 <script lang="ts">
 import type { NotePayload } from "@secret/shared";
-import DOMPurify from "isomorphic-dompurify";
-import { marked } from "marked";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
@@ -42,6 +40,28 @@ let wrongPassword = $state(false);
 let burnAccepted = $state(false);
 let pwShake = $state(false);
 let pwInputEl: HTMLInputElement | undefined = $state();
+let renderedMarkdown = $state("");
+
+$effect(() => {
+	if (status.state !== "decrypted" || status.payload.contentMode !== "markdown") {
+		renderedMarkdown = "";
+		return;
+	}
+	const text = status.payload.text ?? "";
+	let cancelled = false;
+	(async () => {
+		const [{ marked }, DOMPurify] = await Promise.all([
+			import("marked"),
+			import("isomorphic-dompurify"),
+		]);
+		if (cancelled) return;
+		const raw = marked.parse(text, { async: false }) as string;
+		renderedMarkdown = DOMPurify.default.sanitize(raw);
+	})();
+	return () => {
+		cancelled = true;
+	};
+});
 
 $effect(() => {
 	if (status.state === "decrypted") setStep(4);
@@ -158,11 +178,6 @@ async function handleDecrypt() {
 			};
 		}
 	}
-}
-
-function renderMarkdown(text: string): string {
-	const raw = marked.parse(text, { async: false }) as string;
-	return DOMPurify.sanitize(raw);
 }
 
 function downloadFile(name: string, type: string, d: Uint8Array) {
@@ -469,7 +484,7 @@ function isPdf(type: string): boolean {
 				<div style:padding="18px 20px">
 					{#if status.payload.contentMode === "markdown"}
 						<div class="prose prose-invert prose-sm max-w-none">
-							{@html renderMarkdown(status.payload.text)}
+							{@html renderedMarkdown}
 						</div>
 					{:else if status.payload.contentMode === "secret"}
 						<code

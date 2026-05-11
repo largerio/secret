@@ -37,7 +37,7 @@ export function decryptPayload(
 	);
 	const decoded = decode(decrypted);
 	if (!isNotePayload(decoded)) {
-		throw new Error("Invalid payload structure after decryption");
+		throw new Error("Decryption failed");
 	}
 	return decoded;
 }
@@ -66,7 +66,7 @@ export function decryptChunk(
 ): DecryptChunkResult {
 	const result = sodium.crypto_secretstream_xchacha20poly1305_pull(state, encryptedChunk, null);
 	if (!result) {
-		throw new Error("Failed to decrypt chunk: invalid or corrupted data");
+		throw new Error("Decryption failed");
 	}
 	return {
 		decrypted: result.message,
@@ -81,7 +81,7 @@ export function decodeRawBytes(data: Uint8Array): unknown {
 export function decodePayloadBytes(data: Uint8Array): NotePayload {
 	const decoded = decode(data);
 	if (!isNotePayload(decoded)) {
-		throw new Error("Invalid payload structure after decryption");
+		throw new Error("Decryption failed");
 	}
 	return decoded;
 }

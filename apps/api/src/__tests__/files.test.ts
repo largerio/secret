@@ -150,4 +150,24 @@ describe("LocalStorage", () => {
 			StorageNotFoundError,
 		);
 	});
+
+	it("rejects negative chunk index in saveChunk/readChunk", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.saveChunk("note1", -1, Buffer.from("x"))).rejects.toBeInstanceOf(
+			StorageInvalidKeyError,
+		);
+		await expect(storage.readChunk("note1", -1)).rejects.toBeInstanceOf(StorageInvalidKeyError);
+	});
+
+	it("rejects non-integer chunk index", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.saveChunk("note1", 1.5, Buffer.from("x"))).rejects.toBeInstanceOf(
+			StorageInvalidKeyError,
+		);
+	});
+
+	it("rejects negative chunk count in deleteChunks", async () => {
+		const storage = new LocalStorage(storageDir);
+		await expect(storage.deleteChunks("note1", -1)).rejects.toBeInstanceOf(StorageInvalidKeyError);
+	});
 });

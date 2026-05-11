@@ -73,9 +73,24 @@ export function createDatabase(dbPath: string): {
 		)
 	`);
 
+	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS pending_deletions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			note_id TEXT NOT NULL,
+			file_path TEXT,
+			chunk_count INTEGER,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_retry_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		)
+	`);
+
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_expires_at ON notes (expires_at)`);
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notes_delete_token ON notes (delete_token)`);
 	sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_uploads_expires_at ON uploads (expires_at)`);
+	sqlite.exec(
+		`CREATE INDEX IF NOT EXISTS idx_pending_deletions_next_retry ON pending_deletions (next_retry_at)`,
+	);
 
 	const db = drizzle(sqlite, { schema });
 	return { db, sqlite };

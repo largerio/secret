@@ -1,7 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { StorageInvalidKeyError, StorageNotFoundError } from "./errors.js";
+import {
+	assertChunkCount,
+	assertChunkIndex,
+	StorageInvalidKeyError,
+	StorageNotFoundError,
+} from "./errors.js";
 import type { StorageBackend } from "./interface.js";
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
@@ -52,6 +57,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
+		assertChunkIndex(chunkIndex);
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
 		await mkdir(dirPath, { recursive: true, mode: 0o700 });
 		const filePath = this.assertSafePath(join(dirPath, `chunk_${String(chunkIndex)}`));
@@ -60,6 +66,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async readChunk(noteId: string, chunkIndex: number): Promise<Buffer> {
+		assertChunkIndex(chunkIndex);
 		const filePath = this.assertSafePath(
 			join(this.filesPath, noteId, `chunk_${String(chunkIndex)}`),
 		);
@@ -74,6 +81,7 @@ export class LocalStorage implements StorageBackend {
 	}
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
+		assertChunkCount(chunkCount);
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
 		for (let i = 0; i < chunkCount; i++) {
 			try {

@@ -94,9 +94,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when decoded payload has files as non-array", () => {
@@ -110,9 +108,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when decoded value is not an object", () => {
@@ -126,9 +122,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when decoded payload has invalid contentMode", () => {
@@ -142,9 +136,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when file in payload is null", () => {
@@ -158,9 +150,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when file in payload has non-string name", () => {
@@ -174,9 +164,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("throws when file in payload has non-number size", () => {
@@ -192,9 +180,7 @@ describe("encryptPayload / decryptPayload", () => {
 			nonce,
 			key,
 		);
-		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decryptPayload(ciphertext, nonce, key)).toThrow("Decryption failed");
 	});
 
 	it("produces different ciphertexts for the same plaintext", () => {
@@ -398,16 +384,12 @@ describe("encodePayload / decodePayloadBytes", () => {
 
 	it("throws on invalid payload structure (text as number)", () => {
 		const invalid = encode({ text: 999 });
-		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow("Decryption failed");
 	});
 
 	it("throws on non-object payload", () => {
 		const invalid = encode("just a string");
-		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow(
-			"Invalid payload structure after decryption",
-		);
+		expect(() => decodePayloadBytes(new Uint8Array(invalid))).toThrow("Decryption failed");
 	});
 });
 

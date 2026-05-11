@@ -20,3 +20,15 @@ export class StorageNotFoundError extends StorageError {
 		this.name = "StorageNotFoundError";
 	}
 }
+
+export function assertChunkIndex(index: number): void {
+	if (!Number.isInteger(index) || index < 0) {
+		throw new StorageInvalidKeyError("Invalid chunk index");
+	}
+}
+
+export function assertChunkCount(count: number): void {
+	if (!Number.isInteger(count) || count < 0) {
+		throw new StorageInvalidKeyError("Invalid chunk count");
+	}
+}

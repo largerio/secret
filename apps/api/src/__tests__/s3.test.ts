@@ -180,6 +180,15 @@ describe("S3Storage", () => {
 				"Invalid note ID for storage key",
 			);
 		});
+
+		it("rejects negative or non-integer chunk index", async () => {
+			await expect(storage.saveChunk("note123", -1, Buffer.from("x"))).rejects.toThrow(
+				"Invalid chunk index",
+			);
+			await expect(storage.saveChunk("note123", 1.5, Buffer.from("x"))).rejects.toThrow(
+				"Invalid chunk index",
+			);
+		});
 	});
 
 	describe("readChunk", () => {
@@ -226,6 +235,17 @@ describe("S3Storage", () => {
 				StorageNotFoundError,
 			);
 		});
+
+		it("rejects invalid note ID before issuing the GetObject", async () => {
+			await expect(storage.readChunk("../bad", 0)).rejects.toThrow(
+				"Invalid note ID for storage key",
+			);
+			expect(mockSend).not.toHaveBeenCalled();
+		});
+
+		it("rejects negative chunk index", async () => {
+			await expect(storage.readChunk("note123", -1)).rejects.toThrow("Invalid chunk index");
+		});
 	});
 
 	describe("deleteChunks", () => {
@@ -248,6 +268,13 @@ describe("S3Storage", () => {
 		it("does not throw when batch delete fails", async () => {
 			mockSend.mockRejectedValue(new Error("S3 error"));
 			await expect(storage.deleteChunks("note123", 2)).resolves.not.toThrow();
+		});
+
+		it("rejects invalid note ID and chunk count", async () => {
+			await expect(storage.deleteChunks("../bad", 1)).rejects.toThrow(
+				"Invalid note ID for storage key",
+			);
+			await expect(storage.deleteChunks("note123", -1)).rejects.toThrow("Invalid chunk count");
 		});
 	});
 });
