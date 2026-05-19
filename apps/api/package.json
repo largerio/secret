@@ -9,23 +9,23 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "^3.1045.0",
-		"@aws-sdk/lib-storage": "^3.1045.0",
+		"@aws-sdk/client-s3": "^3.1050.0",
+		"@aws-sdk/lib-storage": "^3.1050.0",
 		"@cap.js/server": "^4.0.5",
-		"@hono/node-server": "^2.0.2",
+		"@hono/node-server": "^2.0.3",
 		"@hono/zod-openapi": "^1.4.0",
-		"@scalar/hono-api-reference": "^0.10.14",
+		"@scalar/hono-api-reference": "^0.10.16",
 		"@secret/crypto": "workspace:*",
 		"@secret/shared": "workspace:*",
-		"better-sqlite3": "^12.9.0",
+		"better-sqlite3": "^12.10.0",
 		"drizzle-orm": "^0.45.2",
-		"hono": "^4.12.18",
+		"hono": "^4.12.21",
 		"nanoid": "^5.1.11",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
 		"drizzle-kit": "^0.31.10",
-		"tsx": "^4.21.0"
+		"tsx": "^4.22.3"
 	}
 }
