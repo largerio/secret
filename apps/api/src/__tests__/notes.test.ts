@@ -1672,6 +1672,17 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(json.error).toBe("Note is not a chunked note");
 	});
 
+	it("does not consume a read when non-chunked note hits stream endpoint", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+
+		const streamRes = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(streamRes.status).toBe(400);
+
+		// readCount was not incremented, so the JSON endpoint should still succeed.
+		const jsonRes = await app.request(`/api/v1/notes/${id}`);
+		expect(jsonRes.status).toBe(200);
+	});
+
 	it("returns 404 for expired chunked note on stream", async () => {
 		const { id } = await createChunkedNote();
 

@@ -288,11 +288,21 @@ export function createNotesRoutes() {
 		});
 	});
 
-	async function consumeNote(
+	// Runs the shared consume-a-note transaction: enforces existence, expiry,
+	// and max-reads atomically, schedules storage cleanup for expired rows,
+	// and throws HTTPException for caller-observable errors. Returns the
+	// live note plus a flag indicating whether the row was deleted because
+	// readCount reached maxReads (callers finalize storage cleanup after
+	// reading their payload).
+	//
+	// When `requireChunked` is true, returns 400 before incrementing the
+	// read counter if the note has no chunk data — used by the streaming
+	// endpoint so a shape-mismatched request does not burn a read.
+	async function consumeNoteTx(
 		db: AppDatabase,
-		serverKey: Buffer,
 		storage: StorageBackend,
 		id: string,
+		options?: { requireChunked?: boolean },
 	) {
 		const result = db.transaction((tx) => {
 			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
@@ -311,6 +321,10 @@ export function createNotesRoutes() {
 				};
 			}
 
+			if (options?.requireChunked && (!note.chunkCount || !note.streamHeader)) {
+				return { error: "Note is not a chunked note" as const, status: 400 as const };
+			}
+
 			const maxReads = note.maxReads ?? 0;
 			const newReadCount = note.readCount + 1;
 			const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
@@ -325,10 +339,22 @@ export function createNotesRoutes() {
 		});
 
 		if ("error" in result) {
-			await deleteOrSchedule(db, storage, { noteId: id, ...result });
-			httpError(result.status as 404, result.error);
+			const filePath = "filePath" in result ? result.filePath : null;
+			const chunkCount = "chunkCount" in result ? result.chunkCount : null;
+			await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount });
+			httpError(result.status as 400 | 404, result.error);
 		}
 
+		return result;
+	}
+
+	async function consumeNote(
+		db: AppDatabase,
+		serverKey: Buffer,
+		storage: StorageBackend,
+		id: string,
+	) {
+		const result = await consumeNoteTx(db, storage, id);
 		const { note } = result;
 		const serverIv = Buffer.from(note.serverNonce, "base64");
 
@@ -659,50 +685,7 @@ export function createNotesRoutes() {
 		const serverKey = c.get("serverKey");
 		const storage = c.get("storage");
 
-		// Consume note (same pattern: check expiry, increment/delete readCount)
-		const result = db.transaction((tx) => {
-			const note = tx.select().from(notes).where(eq(notes.id, id)).get();
-
-			if (note === undefined) {
-				return { error: "Note not found" as const, status: 404 as const };
-			}
-
-			if (note.expiresAt < new Date()) {
-				tx.delete(notes).where(eq(notes.id, id)).run();
-				return {
-					error: "Note has expired" as const,
-					status: 404 as const,
-					expiredChunkCount: note.chunkCount,
-				};
-			}
-
-			if (!note.chunkCount || !note.streamHeader) {
-				return { error: "Note is not a chunked note" as const, status: 400 as const };
-			}
-
-			const maxReads = note.maxReads ?? 0;
-			const newReadCount = note.readCount + 1;
-			const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
-
-			if (shouldDelete) {
-				tx.delete(notes).where(eq(notes.id, id)).run();
-			} else {
-				tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
-			}
-
-			return { note, shouldDelete };
-		});
-
-		if ("error" in result) {
-			if ("expiredChunkCount" in result && result.expiredChunkCount) {
-				await deleteOrSchedule(db, storage, {
-					noteId: id,
-					chunkCount: result.expiredChunkCount,
-				});
-			}
-			httpError(result.status as 404, result.error);
-		}
-
+		const result = await consumeNoteTx(db, storage, id, { requireChunked: true });
 		const { note } = result;
 		const chunkCount = note.chunkCount as number;
 
