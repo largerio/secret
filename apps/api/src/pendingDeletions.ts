@@ -78,7 +78,7 @@ export async function deleteOrSchedule(
 	try {
 		await tryDelete(storage, target);
 	} catch (err: unknown) {
-		const detail = err instanceof Error ? err.message : String(err);
+		const detail = Error.isError(err) ? err.message : String(err);
 		console.error(
 			`[deletions] Storage delete failed for note ${target.noteId}, scheduling retry: ${detail}`,
 		);
@@ -116,7 +116,7 @@ export async function drainPendingDeletions(
 			drained++;
 			return;
 		} catch (err: unknown) {
-			const detail = err instanceof Error ? err.message : String(err);
+			const detail = Error.isError(err) ? err.message : String(err);
 			const nextAttempts = row.attempts + 1;
 
 			if (nextAttempts >= MAX_ATTEMPTS) {

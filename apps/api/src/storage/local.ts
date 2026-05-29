@@ -10,7 +10,7 @@ import {
 import type { StorageBackend } from "./interface.js";
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
-	return err instanceof Error && typeof (err as NodeJS.ErrnoException).code === "string";
+	return Error.isError(err) && typeof (err as NodeJS.ErrnoException).code === "string";
 }
 
 export class LocalStorage implements StorageBackend {

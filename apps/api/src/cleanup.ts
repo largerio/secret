@@ -78,7 +78,7 @@ export function startCleanupJob(
 				);
 			}
 		} catch (err: unknown) {
-			console.error("[cleanup] Cleanup job failed:", err instanceof Error ? err.message : err);
+			console.error("[cleanup] Cleanup job failed:", Error.isError(err) ? err.message : err);
 		}
 	}, intervalMs);
 }
