@@ -103,7 +103,7 @@ try {
 	buildTrustedBlockList(TRUSTED_PROXIES);
 } catch (err) {
 	console.error(
-		`ERROR: TRUSTED_PROXIES contains an invalid entry: ${err instanceof Error ? err.message : String(err)}`,
+		`ERROR: TRUSTED_PROXIES contains an invalid entry: ${Error.isError(err) ? err.message : String(err)}`,
 	);
 	process.exit(1);
 }
