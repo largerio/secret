@@ -1,0 +1,16 @@
+# Git hooks managed by lefthook (https://lefthook.dev).
+# Run `pnpm prepare` (or `lefthook install`) once to enable them locally.
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,js,svelte,json}"
+      run: pnpm biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+
+# Typecheck is whole-project (TS cannot cheaply check only staged files),
+# so it runs on push rather than on every commit to keep commit latency low.
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm typecheck

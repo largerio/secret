@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { createWriteAuth } from "../middleware/auth.js";
-import { createNotesRoutes } from "../routes/notes.js";
+import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 

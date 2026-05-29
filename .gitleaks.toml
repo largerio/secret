@@ -1,0 +1,14 @@
+title = "Secret gitleaks config"
+
+# Keep the full default ruleset; only add an allowlist below.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional test fixtures and example values — random crypto keys/nonces, sample API/delete tokens, and lockfile integrity hashes are not real secrets."
+paths = [
+  '''__tests__''',
+  '''packages/shared/src/test-vectors/vectors\.json''',
+  '''\.env\.example$''',
+  '''pnpm-lock\.yaml$''',
+]

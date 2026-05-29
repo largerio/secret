@@ -58,6 +58,8 @@
 			"**/*.json",
 			"!!**/node_modules",
 			"!!**/dist",
+			"!!**/build",
+			"!!**/coverage",
 			"!!**/.svelte-kit",
 			"!!**/.pnpm-store",
 			"!!**/.claude",
