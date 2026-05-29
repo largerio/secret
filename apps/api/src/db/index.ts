@@ -1,20 +1,19 @@
-import type BetterSqlite3 from "better-sqlite3";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import * as schema from "./schema.js";
 
 export function createDatabase(dbPath: string): {
 	db: ReturnType<typeof drizzle>;
-	sqlite: BetterSqlite3.Database;
+	sqlite: DatabaseSync;
 } {
-	const sqlite = new Database(dbPath);
+	const sqlite = new DatabaseSync(dbPath);
 
-	sqlite.pragma("journal_mode = WAL");
-	sqlite.pragma("synchronous = NORMAL");
-	sqlite.pragma("foreign_keys = ON");
-	sqlite.pragma("secure_delete = ON");
-	sqlite.pragma("temp_store = MEMORY");
-	sqlite.pragma("cache_size = -8000");
+	sqlite.exec("PRAGMA journal_mode = WAL");
+	sqlite.exec("PRAGMA synchronous = NORMAL");
+	sqlite.exec("PRAGMA foreign_keys = ON");
+	sqlite.exec("PRAGMA secure_delete = ON");
+	sqlite.exec("PRAGMA temp_store = MEMORY");
+	sqlite.exec("PRAGMA cache_size = -8000");
 
 	sqlite.exec(`
 		CREATE TABLE IF NOT EXISTS notes (
@@ -92,7 +91,7 @@ export function createDatabase(dbPath: string): {
 		`CREATE INDEX IF NOT EXISTS idx_pending_deletions_next_retry ON pending_deletions (next_retry_at)`,
 	);
 
-	const db = drizzle(sqlite, { schema });
+	const db = drizzle({ client: sqlite, schema });
 	return { db, sqlite };
 }
 
