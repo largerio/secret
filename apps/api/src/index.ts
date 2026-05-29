@@ -24,7 +24,7 @@ import {
 	createSecurityHeaders,
 } from "./middleware/security.js";
 import { createCapRoutes } from "./routes/cap.js";
-import { createNotesRoutes } from "./routes/notes.js";
+import { createNotesRoutes } from "./routes/notes/index.js";
 import type { StorageBackend, StorageType } from "./storage/index.js";
 import { createStorageBackend } from "./storage/index.js";
 
