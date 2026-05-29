@@ -17,15 +17,14 @@
 		"@scalar/hono-api-reference": "^0.10.14",
 		"@secret/crypto": "workspace:*",
 		"@secret/shared": "workspace:*",
-		"better-sqlite3": "^12.9.0",
-		"drizzle-orm": "^0.45.2",
+		"drizzle-orm": "1.0.0-rc.3",
 		"hono": "^4.12.18",
 		"nanoid": "^5.1.11",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.13",
-		"drizzle-kit": "^0.31.10",
+		"@types/node": "^25.6.2",
+		"drizzle-kit": "1.0.0-rc.3",
 		"tsx": "^4.21.0"
 	}
 }
