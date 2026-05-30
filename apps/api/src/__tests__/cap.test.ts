@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createCapRoutes } from "../routes/cap.js";
+import { describe, expect, it, vi } from "vitest";
+import { type CapChallengeConfig, createCapRoutes, DEFAULT_CAP_CONFIG } from "../routes/cap.js";
 
 const app = createCapRoutes();
 
@@ -35,6 +35,31 @@ describe("POST /challenge", () => {
 		expect(json.challenge.d).toBe(4);
 		expect(json.token).toBeDefined();
 		expect(json.expires).toBeDefined();
+	});
+
+	it("defaults reproduce the historical challenge configuration", () => {
+		expect(DEFAULT_CAP_CONFIG).toEqual({
+			challengeCount: 50,
+			challengeSize: 32,
+			challengeDifficulty: 4,
+			expiresMs: 600_000,
+		});
+	});
+
+	it("forwards a custom challenge configuration to createChallenge", async () => {
+		const config: CapChallengeConfig = {
+			challengeCount: 12,
+			challengeSize: 16,
+			challengeDifficulty: 5,
+			expiresMs: 120_000,
+		};
+		const createChallenge = vi.fn(async () => ({ challenge: {}, token: "t", expires: 0 }));
+		// biome-ignore lint/suspicious/noExplicitAny: test mock
+		const configuredApp = createCapRoutes({ createChallenge } as any, config);
+
+		const res = await configuredApp.request("/challenge", { method: "POST" });
+		expect(res.status).toBe(200);
+		expect(createChallenge).toHaveBeenCalledWith(config);
 	});
 });
 

@@ -3,7 +3,11 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
 import { parseServerKey } from "@secret/crypto";
 import {
+	CAP_CHALLENGE_EXPIRES_MS,
+	CAP_CHALLENGE_SIZE,
 	CLEANUP_INTERVAL_MS,
+	DEFAULT_CAP_CHALLENGE_COUNT,
+	DEFAULT_CAP_DIFFICULTY,
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
@@ -36,6 +40,10 @@ const FILES_PATH = env["FILES_PATH"] ?? "./data/files";
 const SERVER_KEY_ENV = env["SERVER_ENCRYPTION_KEY"];
 const APP_URL = env["APP_URL"] ?? `http://localhost:${String(PORT)}`;
 const CLEANUP_MS = Number(env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
+const CAP_DIFFICULTY = Number(env["CAP_DIFFICULTY"] ?? String(DEFAULT_CAP_DIFFICULTY));
+const CAP_CHALLENGE_COUNT = Number(
+	env["CAP_CHALLENGE_COUNT"] ?? String(DEFAULT_CAP_CHALLENGE_COUNT),
+);
 
 const API_KEYS = Object.entries(env)
 	.filter(([key]) => /^API_KEY(_\d+)?$/.test(key))
@@ -76,6 +84,16 @@ if (Number.isNaN(PORT) || PORT <= 0) {
 
 if (Number.isNaN(CLEANUP_MS) || CLEANUP_MS <= 0) {
 	console.error("ERROR: CLEANUP_INTERVAL_MS must be a positive number");
+	process.exit(1);
+}
+
+if (!Number.isInteger(CAP_DIFFICULTY) || CAP_DIFFICULTY < 1 || CAP_DIFFICULTY > 6) {
+	console.error("ERROR: CAP_DIFFICULTY must be an integer between 1 and 6");
+	process.exit(1);
+}
+
+if (!Number.isInteger(CAP_CHALLENGE_COUNT) || CAP_CHALLENGE_COUNT < 1) {
+	console.error("ERROR: CAP_CHALLENGE_COUNT must be a positive integer");
 	process.exit(1);
 }
 
@@ -233,7 +251,15 @@ app.get("/sitemap.xml", (c) => {
 
 // --- Cap (internal, not versioned, not documented) ---
 
-app.route("/api/cap", createCapRoutes());
+app.route(
+	"/api/cap",
+	createCapRoutes(undefined, {
+		challengeCount: CAP_CHALLENGE_COUNT,
+		challengeSize: CAP_CHALLENGE_SIZE,
+		challengeDifficulty: CAP_DIFFICULTY,
+		expiresMs: CAP_CHALLENGE_EXPIRES_MS,
+	}),
+);
 
 // --- Versioned API (v1) ---
 
