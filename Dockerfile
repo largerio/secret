@@ -1,7 +1,13 @@
 # Stage 1: Build
-FROM node:26-alpine AS builder
+# Base image pinned by digest for reproducibility + integrity.
+# Refresh manually with: docker buildx imagetools inspect node:26-alpine
+# (or query the registry) and update the digest in BOTH stages.
+FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS builder
 
-RUN npm install -g pnpm
+# Enable corepack; the pnpm version is resolved from package.json
+# "packageManager", so Dependabot's npm updates keep it in sync (single source).
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 WORKDIR /build
 
@@ -37,13 +43,14 @@ RUN node -e " \
   }"
 
 # Stage 2: Production
-FROM node:26-alpine AS production
+FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS production
 
-RUN apk add --no-cache curl && adduser -D -u 1001 appuser
+RUN adduser -D -u 1001 appuser
 
 WORKDIR /app
 
-RUN npm install -g pnpm
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/
@@ -52,7 +59,10 @@ COPY --from=builder /build/packages/sdk-js/package.json packages/sdk-js/
 COPY --from=builder /build/apps/api/package.json apps/api/
 COPY --from=builder /build/apps/web/package.json apps/web/
 
-RUN pnpm install --frozen-lockfile --prod
+# Install prod deps, then strip the pnpm store/caches (runtime never invokes pnpm).
+RUN pnpm install --frozen-lockfile --prod && \
+	pnpm store prune 2>/dev/null || true && \
+	rm -rf ~/.local/share/pnpm ~/.cache /root/.npm 2>/dev/null || true
 
 COPY --from=builder /build/packages/shared/dist packages/shared/dist
 COPY --from=builder /build/packages/crypto/dist packages/crypto/dist
@@ -63,7 +73,7 @@ COPY entrypoint.sh ./
 
 RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
 
-USER appuser
+USER 1001
 
 ENV NODE_ENV=production
 ENV PORT=3001
@@ -73,7 +83,8 @@ ENV FILES_PATH=/app/data/files
 
 EXPOSE 3000
 
+# Node-based healthcheck avoids shipping curl (smaller image, less attack surface).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-	CMD curl -fsS http://localhost:3000/api/health || exit 1
+	CMD node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["sh", "entrypoint.sh"]

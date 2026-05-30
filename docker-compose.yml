@@ -24,6 +24,7 @@ services:
       - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-false}
     restart: unless-stopped
+    init: true
     read_only: true
     tmpfs:
       - /tmp
