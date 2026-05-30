@@ -173,7 +173,7 @@ jobs:
 
             echo "Waiting for health check..."
             for i in $(seq 1 30); do
-              if docker compose exec -T app curl -fsS http://localhost:3000/api/health; then
+              if [ "$(docker compose ps --format '{{.Health}}' app)" = "healthy" ]; then
                 echo "Health check passed"
                 exit 0
               fi
