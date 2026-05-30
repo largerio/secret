@@ -8,13 +8,30 @@ updates:
       dependencies:
         patterns: ["*"]
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+    labels: ["dependencies"]
 
+  # Base image digest in the Dockerfile (node:26-alpine@sha256:...).
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+    labels: ["docker"]
 
+  # Actions pinned by commit SHA in .github/workflows/*.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    labels: ["github-actions"]

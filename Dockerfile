@@ -4,8 +4,10 @@
 # (or query the registry) and update the digest in BOTH stages.
 FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS builder
 
-# Pin pnpm via corepack (version comes from package.json "packageManager").
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Enable corepack; the pnpm version is resolved from package.json
+# "packageManager", so Dependabot's npm updates keep it in sync (single source).
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 WORKDIR /build
 
@@ -47,7 +49,8 @@ RUN adduser -D -u 1001 appuser
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/
