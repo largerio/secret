@@ -1,4 +1,5 @@
 <script lang="ts">
+import { SecretDecryptionError } from "@secret/sdk-js";
 import type { NotePayload } from "@secret/shared";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
@@ -160,10 +161,10 @@ async function handleDecrypt() {
 
 		status = { state: "decrypted", payload, previewUrls };
 	} catch (e) {
-		const raw = e instanceof Error ? e.message : "";
-		const isWrongPassword =
-			raw.includes("wrong") || raw.includes("ciphertext") || raw.includes("decrypt");
-		if (isWrongPassword && data.noteInfo) {
+		// A decryption failure (wrong password/key or corrupted data) surfaces as
+		// a single typed error — we cannot tell which, by design. When the note is
+		// password-protected, offer another attempt; otherwise it's unrecoverable.
+		if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword) {
 			wrongPassword = true;
 			pwShake = true;
 			status = { state: "ready", info: data.noteInfo };
@@ -172,10 +173,7 @@ async function handleDecrypt() {
 				pwInputEl?.focus();
 			}, 450);
 		} else {
-			status = {
-				state: "error",
-				message: isWrongPassword ? t("error_wrong_password") : t("error_decryption"),
-			};
+			status = { state: "error", message: t("error_decryption") };
 		}
 	}
 }
