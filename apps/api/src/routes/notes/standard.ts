@@ -141,6 +141,11 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 		const headers: Record<string, string> = {
 			"Content-Type": "application/octet-stream",
+			// Force a download and forbid MIME sniffing so the still-encrypted blob
+			// is never interpreted/executed in a browser context (defense in depth;
+			// the global security middleware also sets nosniff).
+			"Content-Disposition": "attachment",
+			"X-Content-Type-Options": "nosniff",
 			"Content-Length": String(clientBlob.length),
 			"X-Client-Nonce": sanitizeHeaderValue(note.clientNonce),
 			"X-Has-Password": String(note.hasPassword),
