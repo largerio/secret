@@ -211,6 +211,13 @@ const chunksRateLimit = createRateLimit({
 	max: 200,
 	trustedProxies: TRUSTED_PROXIES,
 });
+// One browser write costs 1 challenge + 1 redeem; 60/min stays generous for
+// multi-tab use while capping free Proof-of-Work challenge generation.
+const capRateLimit = createRateLimit({
+	windowMs: 60_000,
+	max: 60,
+	trustedProxies: TRUSTED_PROXIES,
+});
 app.use("/api/v1/notes", notesRateLimit.middleware);
 app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
 app.use("/api/v1/notes/upload/*/chunks/*", chunksRateLimit.middleware);
@@ -251,6 +258,7 @@ app.get("/sitemap.xml", (c) => {
 
 // --- Cap (internal, not versioned, not documented) ---
 
+app.use("/api/cap/*", capRateLimit.middleware);
 app.route(
 	"/api/cap",
 	createCapRoutes(undefined, {
@@ -311,6 +319,7 @@ function shutdown(): void {
 	notesDetailRateLimit.cleanup();
 	existsRateLimit.cleanup();
 	chunksRateLimit.cleanup();
+	capRateLimit.cleanup();
 	server.close(() => {
 		sqlite.close();
 		process.exit(0);

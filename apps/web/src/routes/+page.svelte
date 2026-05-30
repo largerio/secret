@@ -390,6 +390,7 @@ const readsText = $derived(
 					style:white-space="nowrap"
 					style:text-overflow="ellipsis"
 					title={shareUrl}
+					data-testid="share-url"
 				>
 					{#if shareUrlParts}
 						<span style:color="var(--muted-2)">{shareUrlParts.protocol}</span><span

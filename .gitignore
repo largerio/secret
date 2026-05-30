@@ -12,3 +12,6 @@ coverage/
 *.tgz
 .pnpm-store/
 .idea/
+.e2e-tmp/
+apps/e2e/playwright-report/
+apps/e2e/test-results/

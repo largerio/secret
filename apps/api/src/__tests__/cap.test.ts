@@ -1,5 +1,11 @@
+import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
+import { createRateLimit } from "../middleware/rateLimit.js";
 import { type CapChallengeConfig, createCapRoutes, DEFAULT_CAP_CONFIG } from "../routes/cap.js";
+
+function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
+	return { incoming: { socket: { remoteAddress } } };
+}
 
 const app = createCapRoutes();
 
@@ -103,6 +109,35 @@ describe("POST /redeem", () => {
 		expect(json.success).toBe(true);
 		expect(json.token).toBe("redeemed-token");
 		expect(json.expires).toBeDefined();
+	});
+});
+
+describe("rate limiting", () => {
+	it("returns 429 once the per-IP challenge limit is exceeded", async () => {
+		const max = 3;
+		const rl = createRateLimit({ windowMs: 60_000, max });
+		const rateLimited = new Hono();
+		rateLimited.use("/api/cap/*", rl.middleware);
+		rateLimited.route("/api/cap", createCapRoutes());
+
+		for (let i = 0; i < max; i++) {
+			const ok = await rateLimited.request(
+				"/api/cap/challenge",
+				{ method: "POST" },
+				mockEnv("9.9.9.9"),
+			);
+			expect(ok.status).toBe(200);
+		}
+
+		const blocked = await rateLimited.request(
+			"/api/cap/challenge",
+			{ method: "POST" },
+			mockEnv("9.9.9.9"),
+		);
+		expect(blocked.status).toBe(429);
+		expect(await blocked.json()).toEqual({ error: "Too many requests" });
+
+		rl.cleanup();
 	});
 });
 
