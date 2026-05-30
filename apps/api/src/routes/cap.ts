@@ -1,17 +1,40 @@
 import Cap from "@cap.js/server";
+import {
+	CAP_CHALLENGE_EXPIRES_MS,
+	CAP_CHALLENGE_SIZE,
+	DEFAULT_CAP_CHALLENGE_COUNT,
+	DEFAULT_CAP_DIFFICULTY,
+} from "@secret/shared";
 import { Hono } from "hono";
 
 const cap = new Cap({ noFSState: true });
 
-export function createCapRoutes(capInstance: InstanceType<typeof Cap> = cap) {
+export interface CapChallengeConfig {
+	challengeCount: number;
+	challengeSize: number;
+	challengeDifficulty: number;
+	expiresMs: number;
+}
+
+export const DEFAULT_CAP_CONFIG: CapChallengeConfig = {
+	challengeCount: DEFAULT_CAP_CHALLENGE_COUNT,
+	challengeSize: CAP_CHALLENGE_SIZE,
+	challengeDifficulty: DEFAULT_CAP_DIFFICULTY,
+	expiresMs: CAP_CHALLENGE_EXPIRES_MS,
+};
+
+export function createCapRoutes(
+	capInstance: InstanceType<typeof Cap> = cap,
+	config: CapChallengeConfig = DEFAULT_CAP_CONFIG,
+) {
 	const app = new Hono();
 
 	app.post("/challenge", async (c) => {
 		const challenge = await capInstance.createChallenge({
-			challengeCount: 50,
-			challengeSize: 32,
-			challengeDifficulty: 4,
-			expiresMs: 600_000,
+			challengeCount: config.challengeCount,
+			challengeSize: config.challengeSize,
+			challengeDifficulty: config.challengeDifficulty,
+			expiresMs: config.expiresMs,
 		});
 
 		return c.json(challenge);

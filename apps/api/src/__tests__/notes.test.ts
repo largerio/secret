@@ -867,6 +867,15 @@ describe("GET /api/v1/notes/:id/raw", () => {
 		expect(data.byteLength).toBeGreaterThan(0);
 	});
 
+	it("forces download and forbids MIME sniffing on raw", async () => {
+		const { id } = await createTestNote();
+
+		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Disposition")).toBe("attachment");
+		expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+	});
+
 	it("returns salt header for password-protected notes", async () => {
 		const testSalt = Buffer.from("test-salt-data-16bytes").toString("base64");
 		const { id } = await createTestNote({ hasPassword: true, salt: testSalt });
@@ -1661,6 +1670,15 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		const firstLen = view.getUint32(0);
 		expect(firstLen).toBeGreaterThan(0);
 		expect(firstLen).toBeLessThan(body.byteLength);
+	});
+
+	it("forces download and forbids MIME sniffing on stream", async () => {
+		const { id } = await createChunkedNote();
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Disposition")).toBe("attachment");
+		expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
 	});
 
 	it("returns 400 for non-chunked note on stream endpoint", async () => {

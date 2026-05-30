@@ -233,6 +233,11 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 		const headers: Record<string, string> = {
 			"Content-Type": "application/octet-stream",
+			// Force a download and forbid MIME sniffing so the still-encrypted stream
+			// is never interpreted/executed in a browser context (defense in depth;
+			// the global security middleware also sets nosniff).
+			"Content-Disposition": "attachment",
+			"X-Content-Type-Options": "nosniff",
 			"X-Stream-Header": sanitizeHeaderValue(note.streamHeader as string),
 			"X-Chunk-Count": String(chunkCount),
 			"X-Has-Password": String(note.hasPassword),

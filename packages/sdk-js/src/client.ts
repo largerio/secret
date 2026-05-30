@@ -283,8 +283,10 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch (err) {
-			throw new SecretDecryptionError(err instanceof Error ? err.message : "Decryption failed");
+		} catch {
+			// Uniform error: never reveal whether the password/key was wrong or
+			// the ciphertext was tampered with (avoids a decryption oracle).
+			throw new SecretDecryptionError();
 		}
 
 		options?.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });
@@ -313,8 +315,10 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch (err) {
-			throw new SecretDecryptionError(err instanceof Error ? err.message : "Decryption failed");
+		} catch {
+			// Uniform error: never reveal whether the password/key was wrong or
+			// the ciphertext was tampered with (avoids a decryption oracle).
+			throw new SecretDecryptionError();
 		}
 
 		return {
@@ -349,8 +353,10 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch (err) {
-			throw new SecretDecryptionError(err instanceof Error ? err.message : "Decryption failed");
+		} catch {
+			// Uniform error: never reveal whether the password/key was wrong or
+			// the ciphertext was tampered with (avoids a decryption oracle).
+			throw new SecretDecryptionError();
 		}
 
 		options?.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });

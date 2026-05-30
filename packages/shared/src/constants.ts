@@ -17,3 +17,11 @@ export const DEFAULT_CHUNK_SIZE = 4_194_304; // 4MB per chunk
 export const DEFAULT_MAX_CHUNKED_SIZE = 524_288_000; // 500MB max per note
 export const UPLOAD_SESSION_TTL = 3_600; // 1 hour to complete upload
 export const UPLOAD_ID_LENGTH = 32;
+
+// Proof-of-work (Cap) challenge defaults.
+// DEFAULT_CAP_DIFFICULTY and DEFAULT_CAP_CHALLENGE_COUNT are configurable per
+// instance via the CAP_DIFFICULTY and CAP_CHALLENGE_COUNT env vars.
+export const DEFAULT_CAP_DIFFICULTY = 4;
+export const DEFAULT_CAP_CHALLENGE_COUNT = 50;
+export const CAP_CHALLENGE_SIZE = 32; // bytes per challenge salt
+export const CAP_CHALLENGE_EXPIRES_MS = 600_000; // 10 minutes to solve

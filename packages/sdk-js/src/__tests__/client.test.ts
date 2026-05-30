@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SecretClient } from "../client.js";
 import { SecretApiError, SecretDecryptionError } from "../errors.js";
 
+// The single, cause-hiding message every decryption failure must surface.
+const UNIFORM_DECRYPTION_MESSAGE = "Unable to decrypt: wrong password/key or corrupted data";
+
 vi.mock("../http.js", () => ({
 	postJson: vi.fn(),
 	postFormData: vi.fn(),
@@ -385,7 +388,7 @@ describe("SecretClient", () => {
 		);
 	});
 
-	test("readNote throws SecretDecryptionError on decryption failure (Error instance)", async () => {
+	test("readNote throws a uniform SecretDecryptionError that hides the cause (Error instance)", async () => {
 		const http = await getHttpMocks();
 		http.getNoteRaw.mockResolvedValue({
 			encryptedBytes: new Uint8Array([1]),
@@ -402,12 +405,14 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
-		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
-			"wrong key or corrupted",
-		);
+		// The underlying crypto message must NOT leak to the caller.
+		const err = await client.readNote("noteId123456", "badKey").catch((e) => e);
+		expect(err).toBeInstanceOf(SecretDecryptionError);
+		expect(err.message).toBe(UNIFORM_DECRYPTION_MESSAGE);
+		expect(err.message).not.toContain("wrong key or corrupted");
 	});
 
-	test("readNote throws SecretDecryptionError with fallback message on non-Error throw", async () => {
+	test("readNote uses the same uniform error on a non-Error throw", async () => {
 		const http = await getHttpMocks();
 		http.getNoteRaw.mockResolvedValue({
 			encryptedBytes: new Uint8Array([1]),
@@ -424,7 +429,45 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
-		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
+			UNIFORM_DECRYPTION_MESSAGE,
+		);
+	});
+
+	test("wrong key and tampered ciphertext are indistinguishable to the caller", async () => {
+		const http = await getHttpMocks();
+		const crypto = await getCryptoMocks();
+		const rawResponse = {
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+			salt: "someSalt",
+		};
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		// Scenario A: wrong password/key — libsodium reports an auth failure.
+		http.getNoteRaw.mockResolvedValue(rawResponse);
+		crypto.decryptNoteBytes.mockRejectedValue(
+			new Error("incorrect key pair for the given ciphertext"),
+		);
+		const wrongKeyErr = await client
+			.readNote("noteId123456", "badKey", { password: "nope" })
+			.catch((e) => e);
+
+		// Scenario B: corrupted/tampered ciphertext — a different underlying error.
+		crypto.decryptNoteBytes.mockRejectedValue(new Error("invalid ciphertext: message forged"));
+		const tamperedErr = await client
+			.readNote("noteId123456", "rightKey", { password: "correct" })
+			.catch((e) => e);
+
+		expect(wrongKeyErr).toBeInstanceOf(SecretDecryptionError);
+		expect(tamperedErr).toBeInstanceOf(SecretDecryptionError);
+		// Same type AND same message: the caller cannot tell the two apart.
+		expect(wrongKeyErr.message).toBe(tamperedErr.message);
+		expect(wrongKeyErr.message).toBe(UNIFORM_DECRYPTION_MESSAGE);
 	});
 
 	test("readNote falls back to legacy JSON endpoint when raw returns 404", async () => {
@@ -521,7 +564,7 @@ describe("SecretClient", () => {
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
-			"legacy decrypt failed",
+			UNIFORM_DECRYPTION_MESSAGE,
 		);
 	});
 
@@ -543,7 +586,9 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
-		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
+			UNIFORM_DECRYPTION_MESSAGE,
+		);
 	});
 
 	// --- Chunked upload (createNoteChunked) tests ---
@@ -865,7 +910,7 @@ describe("SecretClient", () => {
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
-			"stream decrypt failed",
+			UNIFORM_DECRYPTION_MESSAGE,
 		);
 	});
 
@@ -887,7 +932,9 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(SecretDecryptionError);
-		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow("Decryption failed");
+		await expect(client.readNote("noteId123456", "badKey")).rejects.toThrow(
+			UNIFORM_DECRYPTION_MESSAGE,
+		);
 	});
 
 	test("readNote stream decryption error does NOT fall back to raw", async () => {
