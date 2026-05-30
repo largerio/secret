@@ -63,7 +63,10 @@
 			"!!**/.svelte-kit",
 			"!!**/.pnpm-store",
 			"!!**/.claude",
-			"!!**/data"
+			"!!**/data",
+			"!!**/.e2e-tmp",
+			"!!**/test-results",
+			"!!**/playwright-report"
 		]
 	}
 }

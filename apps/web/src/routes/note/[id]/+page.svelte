@@ -501,7 +501,8 @@ function isPdf(type: string): boolean {
 							style:color="var(--text)"
 							style:font-size="15px"
 							style:line-height="1.7"
-							style:margin="0">{status.payload.text}</pre>
+							style:margin="0"
+							data-testid="note-text">{status.payload.text}</pre>
 					{/if}
 				</div>
 			</div>
