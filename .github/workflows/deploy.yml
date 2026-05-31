@@ -156,7 +156,7 @@ jobs:
 
       # Scan the pushed image for OS/library CVEs; fail on fixable HIGH/CRITICAL.
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/largerio/secret@${{ steps.build.outputs.digest }}
           format: table
