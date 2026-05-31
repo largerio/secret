@@ -5,10 +5,15 @@ image is published to [`ghcr.io/largerio/secret`](https://ghcr.io/largerio/secre
 and runs as a single container.
 
 - [Quick deploy (VPS / any Docker host)](#quick-deploy-vps--any-docker-host)
+- [One-click & platform deploys](#one-click--platform-deploys)
 - [Synology NAS (DSM 7 / Container Manager)](#synology-nas-dsm-7--container-manager)
 - [Reverse proxy & HTTPS](#reverse-proxy--https)
 - [Backup & restore](#backup--restore)
 - [Updating](#updating)
+
+> **Image architecture:** the official image is multi-arch (`linux/amd64` and
+> `linux/arm64`), so it runs natively on x86 servers as well as ARM hosts —
+> Synology ARM models, Raspberry Pi (64-bit), and Apple Silicon.
 
 ---
 
@@ -39,6 +44,58 @@ Open `http://<your-host>:3000` and you're live.
 
 > ⚠️ **Never change `SERVER_ENCRYPTION_KEY` after the first launch** — all
 > existing notes become permanently unreadable. Back it up somewhere safe.
+
+---
+
+## One-click & platform deploys
+
+### One-liner `docker run`
+
+The fastest way to spin up a test instance — no files at all:
+
+```bash
+# Generate and SAVE the key (without it, notes are unreadable forever)
+KEY=$(openssl rand -base64 32); echo "SERVER_ENCRYPTION_KEY=$KEY"
+
+docker run -d --name secret -p 3000:3000 \
+  -v secret-data:/app/data \
+  -e SERVER_ENCRYPTION_KEY="$KEY" \
+  -e APP_URL=http://localhost:3000 \
+  ghcr.io/largerio/secret:latest
+```
+
+For a real deployment, set `APP_URL` to your public `https://` domain and put a
+reverse proxy in front (see below).
+
+### Coolify
+
+Coolify gives you automatic HTTPS through its built-in proxy.
+
+1. **New Resource** → **Docker Image** → `ghcr.io/largerio/secret:latest`
+   (or **Docker Compose** and paste this repo's `docker-compose.yml`).
+2. **Environment variables:** set `SERVER_ENCRYPTION_KEY` (generate one) and
+   `APP_URL` to the domain Coolify assigns.
+3. **Persistent Storage:** add a volume mounted at **`/app/data`**.
+4. **Ports:** expose `3000`. Coolify provisions the TLS certificate automatically.
+
+### Portainer
+
+1. **Stacks** → **Add stack** → **Web editor**.
+2. Paste this repo's `docker-compose.yml`.
+3. Fill in the environment variables (at least `SERVER_ENCRYPTION_KEY` and
+   `APP_URL`) in the editor, then **Deploy the stack**.
+
+### Railway / Render (PaaS)
+
+Deploy directly from the image `ghcr.io/largerio/secret:latest`. A
+[`render.yaml`](../render.yaml) blueprint is included for one-click Render deploys.
+
+- ⚠️ **Attach a persistent disk/volume mounted at `/app/data`** — PaaS
+  filesystems are ephemeral, so without it every redeploy wipes all notes.
+- Set `APP_URL` to the platform-assigned domain.
+- Set `SERVER_ENCRYPTION_KEY` yourself — it must be 32 random bytes, base64
+  encoded (`openssl rand -base64 32`). A platform's generic "random value"
+  generator won't match this format.
 
 ---
 
