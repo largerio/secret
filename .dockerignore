@@ -9,8 +9,7 @@ coverage
 *.db
 *.db-wal
 *.db-shm
-.env
-.env.local
+.env*
 .DS_Store
 *.tgz
 *.md
