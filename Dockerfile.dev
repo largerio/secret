@@ -1,6 +1,12 @@
-FROM node:26-alpine
+# Base image pinned by digest for reproducibility + integrity.
+# Refresh manually with: docker buildx imagetools inspect node:26-alpine
+# Keep this digest in sync with BOTH stages of the production Dockerfile.
+FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8
 
-RUN npm install -g pnpm
+# Enable corepack (pnpm version comes from package.json "packageManager",
+# single source of truth, matching the production Dockerfile).
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN npm install -g corepack@0.35.0 && corepack enable
 
 WORKDIR /app
 
