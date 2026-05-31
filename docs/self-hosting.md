@@ -39,7 +39,7 @@ docker compose up -d
 ```
 
 The container pulls `ghcr.io/largerio/secret:latest`, creates a persistent
-`secret-data` volume, and serves the app on port `3000`.
+Docker volume for your data, and serves the app on port `3000`.
 Open `http://<your-host>:3000` and you're live.
 
 > ⚠️ **Never change `SERVER_ENCRYPTION_KEY` after the first launch** — all
@@ -146,8 +146,18 @@ DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
 
 ## Backup & restore
 
-Everything lives in the `secret-data` Docker volume: the SQLite database
-(`secret.db` + WAL files) and the encrypted `files/` directory.
+Everything lives in one Docker volume: the SQLite database (`secret.db` + WAL
+files) and the encrypted `files/` directory.
+
+Compose prefixes the volume with the project name (the folder you ran
+`docker compose` from), so the real name is usually `secret_secret-data`.
+Confirm the exact name first:
+
+```bash
+docker volume ls --format '{{.Name}}' | grep secret-data
+```
+
+Use that name in place of `<volume>` below.
 
 ### Back up
 
@@ -155,9 +165,9 @@ Everything lives in the `secret-data` Docker volume: the SQLite database
 # Stop the container first so the API checkpoints the WAL on SIGTERM
 docker compose stop
 
-# Snapshot the volume into a tarball
+# Snapshot the volume into a tarball (tar preserves the uid 1001 ownership)
 docker run --rm \
-  -v secret-data:/data \
+  -v <volume>:/data \
   -v "$PWD":/backup \
   alpine tar czf /backup/secret-backup.tgz -C /data .
 
@@ -170,14 +180,17 @@ data is useless without the key.
 ### Restore
 
 ```bash
-# Recreate the volume from the tarball, then start fresh
-docker volume create secret-data
-docker run --rm \
-  -v secret-data:/data \
-  -v "$PWD":/backup \
-  alpine sh -c "cd /data && tar xzf /backup/secret-backup.tgz"
-
+# Let compose create the container and its volume first…
 docker compose up -d
+docker compose stop
+
+# …then extract the backup into that same <volume>
+docker run --rm \
+  -v <volume>:/data \
+  -v "$PWD":/backup \
+  alpine sh -c "cd /data && rm -rf ./* && tar xzf /backup/secret-backup.tgz"
+
+docker compose start
 ```
 
 Make sure the restored instance uses the **same** `SERVER_ENCRYPTION_KEY` as the
