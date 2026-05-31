@@ -1,28 +1,20 @@
 services:
   app:
-    build: .
+    # Pulls the prebuilt image published by CI — no clone or local build needed.
+    # To build from source instead, comment out `image:` and uncomment `build: .`.
+    image: ghcr.io/largerio/secret:latest
+    # build: .
     ports:
       - "${PORT:-3000}:3000"
     volumes:
       - secret-data:/app/data
+    # All configuration is read from the .env file (copy .env.example → .env).
+    env_file:
+      - .env
     environment:
+      # Force data paths into the persistent volume regardless of .env contents.
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
-      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY}
-      - APP_URL=${APP_URL:-http://localhost:3000}
-      - APP_NAME=${APP_NAME:-Secret}
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10485760}
-      - MAX_FILES_PER_NOTE=${MAX_FILES_PER_NOTE:-10}
-      - DEFAULT_EXPIRY=${DEFAULT_EXPIRY:-86400}
-      - MAX_EXPIRY=${MAX_EXPIRY:-604800}
-      - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-105906176}
-      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
-      - S3_BUCKET=${S3_BUCKET:-}
-      - S3_REGION=${S3_REGION:-us-east-1}
-      - S3_ENDPOINT=${S3_ENDPOINT:-}
-      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
-      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
-      - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-false}
     restart: unless-stopped
     init: true
     read_only: true
