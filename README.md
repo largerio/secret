@@ -20,6 +20,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - [How It Works](#how-it-works)
 - [Configuration](#configuration)
   - [S3 Storage (optional)](#s3-storage-optional)
+- [Self-Hosting (Synology, VPS, backups)](#self-hosting)
 - [Updating](#updating)
 - [Reverse Proxy](#reverse-proxy)
 - [Development](#development)
@@ -63,20 +64,36 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 
 ## Quick Start
 
+**Fastest — prebuilt image (no clone, no build):**
+
+```bash
+mkdir secret && cd secret
+curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
+
+# Generate a server encryption key (REQUIRED) and paste it into .env
+openssl rand -base64 32   # → SERVER_ENCRYPTION_KEY=<output>
+# Set APP_URL to your public URL (or leave http://localhost:3000 for local)
+
+docker compose up -d      # pulls ghcr.io/largerio/secret:latest
+```
+
+**From source (for contributors):**
+
 ```bash
 git clone https://github.com/largerio/secret.git
 cd secret
 cp .env.example .env
+openssl rand -base64 32   # → set SERVER_ENCRYPTION_KEY in .env
 
-# Generate a server encryption key (REQUIRED) — pick one
-openssl rand -base64 32
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# Paste the output into .env as SERVER_ENCRYPTION_KEY
-
+# Uncomment `build: .` (and comment out `image:`) in docker-compose.yml to build locally
 docker compose up -d
 ```
 
 Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
+
+For Synology NAS, VPS, reverse proxy and backup instructions, see the
+[Self-Hosting guide](docs/self-hosting.md).
 
 ## SDK
 
@@ -156,6 +173,16 @@ MAX_FILE_SIZE=104857600           # 100 MB
 ```
 
 Compatible with AWS S3, MinIO, and Cloudflare R2.
+
+## Self-Hosting
+
+Step-by-step deployment guides for common setups are in
+**[docs/self-hosting.md](docs/self-hosting.md)**:
+
+- **VPS / any Docker host** — two-file deploy (`docker-compose.yml` + `.env`), no clone
+- **Synology NAS** — DSM Container Manager walkthrough, with volume/permission notes
+- **Reverse proxy & HTTPS** — including DSM's built-in reverse proxy
+- **Backup & restore** — snapshotting the `secret-data` volume safely
 
 ## Updating
 

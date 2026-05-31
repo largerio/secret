@@ -1,0 +1,22 @@
+# Render blueprint — one-click deploy of a Secret instance.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# After deploying, set the two `sync: false` env vars in the Render dashboard:
+#   - SERVER_ENCRYPTION_KEY : 32 random bytes, base64 (run: openssl rand -base64 32)
+#                             NEVER change it after launch — notes become unreadable.
+#   - APP_URL               : the public URL Render assigns (https://<service>.onrender.com)
+services:
+  - type: web
+    name: secret
+    runtime: image
+    image:
+      url: ghcr.io/largerio/secret:latest
+    envVars:
+      - key: SERVER_ENCRYPTION_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+    disk:
+      name: secret-data
+      mountPath: /app/data
+      sizeGB: 1

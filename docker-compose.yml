@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    # Pulls the prebuilt image published by CI — no clone or local build needed.
+    # To build from source instead, comment out `image:` and uncomment `build: .`.
+    image: ghcr.io/largerio/secret:latest
+    # build: .
     ports:
       - "${PORT:-3000}:3000"
     volumes:
