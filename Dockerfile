@@ -8,7 +8,7 @@ FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b
 # version is resolved from package.json "packageManager", so Dependabot's npm
 # updates keep it in sync (single source of truth).
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN npm install -g corepack@latest && corepack enable
+RUN npm install -g corepack@0.35.0 && corepack enable
 
 WORKDIR /build
 
@@ -51,7 +51,7 @@ RUN adduser -D -u 1001 appuser
 WORKDIR /app
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN npm install -g corepack@latest && corepack enable
+RUN npm install -g corepack@0.35.0 && corepack enable
 
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/
