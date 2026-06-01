@@ -4,13 +4,15 @@ import type { NotePayload } from "@secret/shared";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
+import FileCard from "$lib/components/FileCard.svelte";
 import Icon from "$lib/components/Icon.svelte";
 import StepProgress from "$lib/components/StepProgress.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { formatDateTime, t } from "$lib/i18n/index.svelte";
 import { setStep } from "$lib/steps.svelte";
-import { formatSize } from "$lib/utils/format";
+import { copyWithFeedback } from "$lib/utils/clipboard";
+import { isPreviewable } from "$lib/utils/fileType";
 
 interface NoteInfo {
 	hasPassword: boolean;
@@ -85,15 +87,9 @@ const showPwInput = $derived(
 const showPrimaryCta = $derived(status.state === "ready" && (!isBurn || burnAccepted));
 
 async function copyText(text: string) {
-	try {
-		await navigator.clipboard.writeText(text);
-		copied = true;
-		setTimeout(() => {
-			copied = false;
-		}, 2000);
-	} catch {
-		/* clipboard API unavailable */
-	}
+	await copyWithFeedback(text, (v) => {
+		copied = v;
+	});
 }
 
 onMount(() => {
@@ -176,37 +172,6 @@ async function handleDecrypt() {
 			status = { state: "error", message: t("error_decryption") };
 		}
 	}
-}
-
-function downloadFile(name: string, type: string, d: Uint8Array) {
-	const blob = new Blob([d] as BlobPart[], { type });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement("a");
-	a.href = url;
-	a.download = name;
-	a.click();
-	URL.revokeObjectURL(url);
-}
-
-function isPreviewable(type: string): boolean {
-	return (
-		type.startsWith("image/") ||
-		type.startsWith("video/") ||
-		type.startsWith("audio/") ||
-		type === "application/pdf"
-	);
-}
-function isImage(type: string): boolean {
-	return type.startsWith("image/");
-}
-function isVideo(type: string): boolean {
-	return type.startsWith("video/");
-}
-function isAudio(type: string): boolean {
-	return type.startsWith("audio/");
-}
-function isPdf(type: string): boolean {
-	return type === "application/pdf";
 }
 </script>
 
@@ -467,8 +432,7 @@ function isPdf(type: string): boolean {
 					</span>
 					<button
 						type="button"
-						onclick={() =>
-							copyText(status.state === "decrypted" ? (status.payload.text ?? "") : "")}
+						onclick={() => copyText(status.state === "decrypted" ? (status.payload.text ?? "") : "")}
 						class="inline-flex items-center gap-1.5 rounded-md border-0 bg-transparent transition-colors"
 						style:color={copied ? "var(--accent)" : "var(--muted)"}
 						style:padding="4px 8px"
@@ -521,72 +485,14 @@ function isPdf(type: string): boolean {
 				</div>
 				<ul class="m-0 flex list-none flex-col gap-3 p-0">
 					{#each status.payload.files as file, i (file.name + i)}
-						<li
-							class="overflow-hidden rounded-2xl border"
-							style:background="var(--bg-2)"
-							style:border-color="var(--line)"
-							in:fly={{ y: 20, duration: 300, delay: Math.min(150 * i, 600) }}
-						>
-							{#if isImage(file.type) && status.previewUrls[i]}
-								<img
-									src={status.previewUrls[i]}
-									alt={file.name}
-									class="max-h-96 w-full object-contain"
-									style:background="var(--bg-3)"
-								/>
-							{:else if isVideo(file.type) && status.previewUrls[i]}
-								<video
-									controls
-									class="max-h-96 w-full"
-									style:background="var(--bg-3)"
-									aria-label={file.name}
-								>
-									<source src={status.previewUrls[i]} type={file.type} />
-									<track kind="captions" />
-								</video>
-							{:else if isAudio(file.type) && status.previewUrls[i]}
-								<audio controls class="w-full" style:padding="16px" aria-label={file.name}>
-									<source src={status.previewUrls[i]} type={file.type} />
-								</audio>
-							{:else if isPdf(file.type) && status.previewUrls[i]}
-								<iframe src={status.previewUrls[i]} class="h-96 w-full" title={file.name} sandbox=""
-								></iframe>
-							{/if}
-							<div class="flex items-center gap-3" style:padding="14px 16px">
-								<Icon name="file" size={16} class="shrink-0" />
-								<div class="min-w-0 flex-1">
-									<p
-										class="mb-0.5 truncate"
-										style:font-family="var(--font-mono)"
-										style:font-size="13px"
-										style:color="var(--text)"
-									>
-										{file.name}
-									</p>
-									<p class="mono" style:font-size="11px" style:color="var(--muted-2)">
-										{file.type} · {formatSize(file.size)}
-									</p>
-								</div>
-								<button
-									type="button"
-									onclick={() =>
-										downloadFile(
-											file.name,
-											file.type,
-											new Uint8Array(file.data as ArrayLike<number>),
-										)}
-									class="inline-flex items-center gap-1.5 rounded-lg border transition-colors"
-									style:background="var(--bg-3)"
-									style:border-color="var(--line)"
-									style:color="var(--text)"
-									style:padding="8px 12px"
-									style:font-size="12px"
-								>
-									<Icon name="download" size={13} />
-									<span>{t("rv_download")}</span>
-								</button>
-							</div>
-						</li>
+						<FileCard
+							name={file.name}
+							type={file.type}
+							size={file.size}
+							data={new Uint8Array(file.data as ArrayLike<number>)}
+							previewUrl={status.previewUrls[i] ?? ""}
+							index={i}
+						/>
 					{/each}
 				</ul>
 			</div>
