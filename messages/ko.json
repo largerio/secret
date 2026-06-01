@@ -179,5 +179,14 @@
 	"rv_download": "다운로드",
 	"rv_gone_title": "이 비밀은 더 이상 존재하지 않습니다.",
 	"rv_gone_sub": "서버에서 삭제되었습니다. 다시 돌아갈 수 없습니다.",
-	"rv_gone_cta": "내 비밀 만들기"
+	"rv_gone_cta": "내 비밀 만들기",
+	"show_password": "비밀번호 표시",
+	"hide_password": "비밀번호 숨기기",
+	"generate": "생성",
+	"md_btn_heading": "제목",
+	"md_btn_bold": "굵게",
+	"md_btn_italic": "기울임꼴",
+	"md_btn_link": "링크",
+	"md_btn_code": "코드",
+	"md_btn_list": "목록"
 }

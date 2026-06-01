@@ -179,5 +179,14 @@
 	"rv_download": "Scarica",
 	"rv_gone_title": "Questo segreto non esiste più.",
 	"rv_gone_sub": "È stato eliminato dai nostri server. Non puoi più tornarci.",
-	"rv_gone_cta": "Crea il mio segreto"
+	"rv_gone_cta": "Crea il mio segreto",
+	"show_password": "Mostra password",
+	"hide_password": "Nascondi password",
+	"generate": "Genera",
+	"md_btn_heading": "Intestazione",
+	"md_btn_bold": "Grassetto",
+	"md_btn_italic": "Corsivo",
+	"md_btn_link": "Link",
+	"md_btn_code": "Codice",
+	"md_btn_list": "Elenco"
 }

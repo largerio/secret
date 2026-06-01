@@ -179,5 +179,14 @@
 	"rv_download": "Descargar",
 	"rv_gone_title": "Este secreto ya no existe.",
 	"rv_gone_sub": "Se ha eliminado de nuestros servidores. Ya no podrás volver a él.",
-	"rv_gone_cta": "Crear mi propio secreto"
+	"rv_gone_cta": "Crear mi propio secreto",
+	"show_password": "Mostrar contraseña",
+	"hide_password": "Ocultar contraseña",
+	"generate": "Generar",
+	"md_btn_heading": "Encabezado",
+	"md_btn_bold": "Negrita",
+	"md_btn_italic": "Cursiva",
+	"md_btn_link": "Enlace",
+	"md_btn_code": "Código",
+	"md_btn_list": "Lista"
 }

@@ -179,5 +179,14 @@
 	"rv_download": "ダウンロード",
 	"rv_gone_title": "この秘密はもう存在しません。",
 	"rv_gone_sub": "サーバーから削除されました。もう戻れません。",
-	"rv_gone_cta": "自分の秘密を作成"
+	"rv_gone_cta": "自分の秘密を作成",
+	"show_password": "パスワードを表示",
+	"hide_password": "パスワードを隠す",
+	"generate": "生成",
+	"md_btn_heading": "見出し",
+	"md_btn_bold": "太字",
+	"md_btn_italic": "斜体",
+	"md_btn_link": "リンク",
+	"md_btn_code": "コード",
+	"md_btn_list": "リスト"
 }

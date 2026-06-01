@@ -47,7 +47,6 @@ let fileInputEl: HTMLInputElement | undefined = $state();
 
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
-const maxTotalSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxFilesPerNote = $derived(config.maxFilesPerNote);
 let fileError = $state("");
 
@@ -161,8 +160,8 @@ function addFiles(newFiles: File[]) {
 	const remaining = maxFilesPerNote - files.length;
 	const candidates = [...files, ...newFiles.slice(0, remaining)];
 	const totalSize = candidates.reduce((sum, f) => sum + f.size, 0);
-	if (totalSize > maxTotalSize) {
-		fileError = t("error_total_too_large", { size: formatSize(maxTotalSize) });
+	if (totalSize > maxFileSize) {
+		fileError = t("error_total_too_large", { size: formatSize(maxFileSize) });
 		return;
 	}
 
@@ -852,7 +851,7 @@ const readsText = $derived(
 								>
 									{t("files_limit", {
 										count: maxFilesPerNote,
-										size: formatSize(maxTotalSize),
+										size: formatSize(maxFileSize),
 									})}
 								</div>
 							</div>
@@ -964,7 +963,8 @@ const readsText = $derived(
 								class="inline-flex items-center justify-center rounded-md border-0 bg-transparent"
 								style:color="var(--muted)"
 								style:padding="6px 8px"
-								title="Generate"
+								title={t("generate")}
+								aria-label={t("generate")}
 							>
 								<Icon name="dice" size={14} />
 							</button>
@@ -974,7 +974,8 @@ const readsText = $derived(
 								class="inline-flex items-center justify-center rounded-md border-0 bg-transparent"
 								style:color="var(--muted)"
 								style:padding="6px 8px"
-								title={showPassword ? t("theme_light") : t("theme_dark")}
+								title={showPassword ? t("hide_password") : t("show_password")}
+								aria-label={showPassword ? t("hide_password") : t("show_password")}
 							>
 								<Icon name={showPassword ? "eye-off" : "eye"} size={14} />
 							</button>
