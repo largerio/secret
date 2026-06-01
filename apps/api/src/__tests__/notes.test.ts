@@ -1593,6 +1593,31 @@ describe("Chunked upload flow", () => {
 		expect(res.status).toBe(500);
 		expect((await res.json()).error).toBe("Corrupted upload session");
 	});
+
+	it("returns 500 when metadata is valid JSON but has the wrong shape", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("test-chunk");
+		await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		const { uploads: uploadsTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		// Valid JSON but missing every required metadata field.
+		db.update(uploadsTable)
+			.set({ metadata: JSON.stringify({ unexpected: "shape" }) })
+			.where(eq(uploadsTable.id, initJson.uploadId))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe("Corrupted upload session");
+	});
 });
 
 describe("GET /api/v1/notes/:id/stream", () => {

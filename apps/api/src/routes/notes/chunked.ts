@@ -3,9 +3,11 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import { SECRETSTREAM_ABYTES, serverDecrypt, serverEncrypt } from "@secret/crypto";
 import {
 	chunkedUploadInitSchema,
+	isValidNoteId,
 	NOTE_ID_LENGTH,
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
+	uploadSessionMetadataSchema,
 } from "@secret/shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -149,20 +151,20 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 			return c.json({ error: "Upload incomplete" }, 400);
 		}
 
-		let meta: {
-			streamHeader: string;
-			clientNonce: string;
-			hasPassword: boolean;
-			expiresIn: number;
-			maxReads: number;
-			fileCount: number;
-			salt?: string;
-		};
+		// Re-validate the persisted metadata instead of trusting it blindly:
+		// a corrupted row (bad JSON or missing fields) must not produce a
+		// malformed note.
+		let parsedMetadata: unknown;
 		try {
-			meta = JSON.parse(session.metadata) as typeof meta;
+			parsedMetadata = JSON.parse(session.metadata);
 		} catch {
 			return c.json({ error: "Corrupted upload session" }, 500);
 		}
+		const metaResult = uploadSessionMetadataSchema.safeParse(parsedMetadata);
+		if (!metaResult.success) {
+			return c.json({ error: "Corrupted upload session" }, 500);
+		}
+		const meta = metaResult.data;
 
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + meta.expiresIn * 1000);
@@ -219,7 +221,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 	app.get("/:id/stream", async (c) => {
 		const id = c.req.param("id");
-		if (!id || !/^[A-Za-z0-9_-]+$/.test(id) || id.length !== NOTE_ID_LENGTH) {
+		if (!id || !isValidNoteId(id)) {
 			return c.json({ error: "Invalid note ID" }, 400);
 		}
 

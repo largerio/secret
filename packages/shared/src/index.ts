@@ -43,6 +43,7 @@ export type {
 	ServerConfig,
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
+export type { UploadSessionMetadata } from "./validation.js";
 export {
 	chunkedUploadCompleteResponseSchema,
 	chunkedUploadInitResponseSchema,
@@ -53,8 +54,10 @@ export {
 	createNoteSchema,
 	deleteNoteResponseSchema,
 	errorResponseSchema,
+	isValidNoteId,
 	noteExistsResponseSchema,
 	noteIdSchema,
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
+	uploadSessionMetadataSchema,
 } from "./validation.js";
