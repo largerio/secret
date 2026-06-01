@@ -22,8 +22,20 @@ PORT=3000 ORIGIN="${APP_URL:-http://localhost:3000}" \
 web_pid=$!
 
 # Exit as soon as either process exits, then signal the other and reap both.
-wait -n "$api_pid" "$web_pid"
-status=$?
+# busybox ash has no working `wait -n` (it waits for ALL children), so poll
+# instead: if one process dies the container must exit so Docker's restart
+# policy and orchestrators see the failure instead of a "running" but broken
+# container.
+while kill -0 "$api_pid" 2>/dev/null && kill -0 "$web_pid" 2>/dev/null; do
+	sleep 1
+done
+
+status=0
+if ! kill -0 "$api_pid" 2>/dev/null; then
+	wait "$api_pid" || status=$?
+else
+	wait "$web_pid" || status=$?
+fi
 term
 wait "$api_pid" "$web_pid" 2>/dev/null || true
 exit "$status"
