@@ -78,6 +78,21 @@ openssl rand -base64 32   # → SERVER_ENCRYPTION_KEY=<output>
 docker compose up -d      # pulls ghcr.io/largerio/secret:latest
 ```
 
+Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
+If something doesn't work, run `docker compose logs -f` — see
+[Troubleshooting](docs/self-hosting.md#troubleshooting).
+
+**One-click / platform deploys:**
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
+
+| Platform | How |
+|----------|-----|
+| **Render** | Click the button above ([guide](docs/self-hosting.md#railway--render-paas)) |
+| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:latest` ([guide](docs/self-hosting.md#coolify)) |
+| **Portainer** | Stacks → paste `docker-compose.yml` ([guide](docs/self-hosting.md#portainer)) |
+| **Synology NAS** | Container Manager project ([guide](docs/self-hosting.md#synology-nas-dsm-7--container-manager)) |
+
 **From source (for contributors):**
 
 ```bash
@@ -90,9 +105,7 @@ openssl rand -base64 32   # → set SERVER_ENCRYPTION_KEY in .env
 docker compose up -d
 ```
 
-Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
-
-For Synology NAS, VPS, reverse proxy and backup instructions, see the
+For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, see the
 [Self-Hosting guide](docs/self-hosting.md).
 
 ## SDK
@@ -145,7 +158,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | — | **Required.** AES-256-GCM key (32 bytes, base64) |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
-| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color |
+| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for logo, favicon, footer…) |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note |
 | `MAX_EXPIRY` | `604800` | Max expiry in seconds (default: 7 days, max: 30 days) |
@@ -153,7 +166,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
-| `PORT` | `3000` | Server port |
+| `PORT` | `3000` | Host port the app is published on (inside the container the web server always listens on 3000, the API on 3001) |
 
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable.
 

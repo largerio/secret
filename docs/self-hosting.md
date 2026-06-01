@@ -10,6 +10,7 @@ and runs as a single container.
 - [Reverse proxy & HTTPS](#reverse-proxy--https)
 - [Backup & restore](#backup--restore)
 - [Updating](#updating)
+- [Troubleshooting](#troubleshooting)
 
 > **Image architecture:** the official image is multi-arch (`linux/amd64` and
 > `linux/arm64`), so it runs natively on x86 servers as well as ARM hosts —
@@ -87,11 +88,17 @@ Coolify gives you automatic HTTPS through its built-in proxy.
 
 ### Railway / Render (PaaS)
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
+
 Deploy directly from the image `ghcr.io/largerio/secret:latest`. A
-[`render.yaml`](../render.yaml) blueprint is included for one-click Render deploys.
+[`render.yaml`](../render.yaml) blueprint is included — the button above deploys
+it in one click; Render will then prompt you for the two required values
+(`SERVER_ENCRYPTION_KEY` and `APP_URL`).
 
 - ⚠️ **Attach a persistent disk/volume mounted at `/app/data`** — PaaS
   filesystems are ephemeral, so without it every redeploy wipes all notes.
+  The included `render.yaml` already declares this disk. Note that persistent
+  disks require a **paid** instance type on Render (the free tier has no disks).
 - Set `APP_URL` to the platform-assigned domain.
 - Set `SERVER_ENCRYPTION_KEY` yourself — it must be 32 random bytes, base64
   encoded (`openssl rand -base64 32`). A platform's generic "random value"
@@ -207,3 +214,66 @@ docker image prune -f   # clean up old layers
 ```
 
 Your data lives in the volume, so updates never delete notes.
+
+---
+
+## Troubleshooting
+
+**First reflex:** look at the logs — every startup error is printed there.
+
+```bash
+docker compose logs -f        # or: docker logs -f secret
+```
+
+### Container keeps restarting / exits immediately
+
+Almost always a missing or invalid `SERVER_ENCRYPTION_KEY`. The logs will show:
+
+```
+ERROR: SERVER_ENCRYPTION_KEY is required.
+Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Generate a key (`openssl rand -base64 32`), set it in `.env`
+(`SERVER_ENCRYPTION_KEY=<output>`), then `docker compose up -d`.
+
+> The key must be exactly **32 bytes encoded as base64** (44 characters ending
+> in `=`). A random password or hex string will be rejected.
+
+### Changed `.env` but nothing happens
+
+`docker compose up -d` only recreates the container when its configuration
+changed. After editing `.env`, force a recreate:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+### Port 3000 already in use
+
+Set a different host port in `.env` (e.g. `PORT=8080`), then
+`docker compose up -d --force-recreate`. The app will be reachable on
+`http://<host>:8080`.
+
+### "Permission denied" on `/app/data` (bind mounts)
+
+Happens when you replaced the named volume with a bind-mounted folder. The
+container runs as **uid 1001**, so the folder must be writable by it:
+
+```bash
+sudo chown -R 1001:1001 /path/to/your/data
+```
+
+### Container is `unhealthy`
+
+Check `docker compose logs` for the underlying error, and verify the health
+endpoint from inside the host:
+
+```bash
+curl http://localhost:3000/api/health    # should return {"status":"ok"}
+```
+
+### Uploads fail behind a reverse proxy
+
+Increase the proxy's request body limit (`client_max_body_size` in Nginx) to at
+least `MAX_CHUNKED_FILE_SIZE` — see [Reverse proxy & HTTPS](#reverse-proxy--https).
