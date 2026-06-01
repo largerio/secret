@@ -82,15 +82,9 @@ export class LocalStorage implements StorageBackend {
 
 	async deleteChunks(noteId: string, chunkCount: number): Promise<void> {
 		assertChunkCount(chunkCount);
+		// All chunks of a note live under its own directory, so a single
+		// recursive removal replaces per-chunk unlink round-trips.
 		const dirPath = this.assertSafePath(join(this.filesPath, noteId));
-		for (let i = 0; i < chunkCount; i++) {
-			try {
-				const filePath = this.assertSafePath(join(dirPath, `chunk_${String(i)}`));
-				await unlink(filePath);
-			} catch {
-				/* chunk already deleted or missing */
-			}
-		}
 		try {
 			await rm(dirPath, { recursive: true });
 		} catch {

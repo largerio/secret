@@ -96,15 +96,15 @@ export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 
 		if (existing === undefined || existing.resetAt <= now) {
 			if (store.size >= MAX_STORE_SIZE && existing === undefined) {
-				let evicted = false;
+				// Bulk-evict every expired entry in one sweep: freeing all reusable
+				// slots at once (instead of one per request) keeps a full store from
+				// rejecting new clients under sustained traffic.
 				for (const [key, entry] of store) {
 					if (entry.resetAt <= now) {
 						store.delete(key);
-						evicted = true;
-						break;
 					}
 				}
-				if (!evicted) {
+				if (store.size >= MAX_STORE_SIZE) {
 					return c.json({ error: "Too many requests" }, 429);
 				}
 			}

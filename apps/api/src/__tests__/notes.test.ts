@@ -1875,6 +1875,30 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.headers.get("X-Salt")).toBe(testSalt);
 		expect(res.headers.get("X-Has-Password")).toBe("true");
 	});
+
+	it("streams chunks in order with read-ahead prefetching (more chunks than window)", async () => {
+		const chunkCount = 6;
+		const { id } = await createChunkedNote({ chunkCount });
+
+		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("X-Chunk-Count")).toBe(String(chunkCount));
+
+		// Decode the length-prefixed framing and verify every chunk arrives
+		// in order with its original (client-encrypted) content.
+		const body = new Uint8Array(await res.arrayBuffer());
+		const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+		const frames: string[] = [];
+		let offset = 0;
+		while (offset < body.byteLength) {
+			const len = view.getUint32(offset);
+			offset += 4;
+			frames.push(Buffer.from(body.subarray(offset, offset + len)).toString());
+			offset += len;
+		}
+
+		expect(frames).toEqual(Array.from({ length: chunkCount }, (_, i) => `chunk-data-${String(i)}`));
+	});
 });
 
 describe("GET /api/v1/notes/:id/stream edge cases", () => {
@@ -1910,6 +1934,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 	async function createChunkedNoteViaApp(
 		targetApp: ReturnType<typeof createAppWithCustomStorage>,
+		chunkCount = 1,
 	): Promise<{ id: string; deleteToken: string }> {
 		const initRes = await targetApp.request("/api/v1/notes/upload/init", {
 			method: "POST",
@@ -1921,20 +1946,22 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 				expiresIn: 3600,
 				maxReads: 0,
 				fileCount: 1,
-				chunkCount: 1,
+				chunkCount,
 			}),
 		});
 		const { uploadId } = (await initRes.json()) as { uploadId: string };
 
-		const chunk = chunkData("chunk-data-0");
-		await targetApp.request(`/api/v1/notes/upload/${uploadId}/chunks/0`, {
-			method: "PUT",
-			headers: {
-				"Content-Type": "application/octet-stream",
-				"X-Chunk-Hash": sha256hex(chunk),
-			},
-			body: chunk as BodyInit,
-		});
+		for (let i = 0; i < chunkCount; i++) {
+			const chunk = chunkData(`chunk-data-${String(i)}`);
+			await targetApp.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(i)}`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/octet-stream",
+					"X-Chunk-Hash": sha256hex(chunk),
+				},
+				body: chunk as BodyInit,
+			});
+		}
 
 		const completeRes = await targetApp.request(`/api/v1/notes/upload/${uploadId}/complete`, {
 			method: "POST",
@@ -1942,6 +1969,39 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		});
 		return completeRes.json() as Promise<{ id: string; deleteToken: string }>;
 	}
+
+	it("errors the stream when a later chunk read fails mid-stream", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		// Create a 2-chunk note using real storage first
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
+
+		// Stream through a storage whose chunk-1 read fails (chunk 0 still works,
+		// so the pre-flight check passes and headers are already sent).
+		const failingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) =>
+				idx === 0
+					? realStorage.readChunk(noteId, idx)
+					: Promise.reject(new Error("mid-stream read failure")),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const failApp = createAppWithCustomStorage(db, failingStorage);
+
+		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200); // Headers committed before the failure
+
+		// Consuming the body must surface the stream error
+		let streamFailed = false;
+		try {
+			await res.arrayBuffer();
+		} catch {
+			streamFailed = true;
+		}
+		expect(streamFailed).toBe(true);
+	});
 
 	it("handles corrupted chunk data (too small for auth tag)", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
