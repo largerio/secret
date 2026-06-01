@@ -170,22 +170,51 @@ const toolbarBtnStyle =
 		</div>
 		{#if activeTab === "write"}
 			<div class="flex pr-2">
-				<button type="button" onclick={insertHeading} style={toolbarBtnStyle} title="Heading"
+				<button
+					type="button"
+					onclick={insertHeading}
+					style={toolbarBtnStyle}
+					title={t("md_btn_heading")}
+					aria-label={t("md_btn_heading")}
 					><span class="mono" style:font-size="12px" style:font-weight="600">H</span></button
 				>
-				<button type="button" onclick={insertBold} style={toolbarBtnStyle} title="Bold"
+				<button
+					type="button"
+					onclick={insertBold}
+					style={toolbarBtnStyle}
+					title={t("md_btn_bold")}
+					aria-label={t("md_btn_bold")}
 					><span style:font-weight="700" style:font-size="13px">B</span></button
 				>
-				<button type="button" onclick={insertItalic} style={toolbarBtnStyle} title="Italic"
+				<button
+					type="button"
+					onclick={insertItalic}
+					style={toolbarBtnStyle}
+					title={t("md_btn_italic")}
+					aria-label={t("md_btn_italic")}
 					><span style:font-style="italic" style:font-size="13px" class="serif">I</span></button
 				>
-				<button type="button" onclick={insertLink} style={toolbarBtnStyle} title="Link"
-					><Icon name="external" size={13} /></button
+				<button
+					type="button"
+					onclick={insertLink}
+					style={toolbarBtnStyle}
+					title={t("md_btn_link")}
+					aria-label={t("md_btn_link")}><Icon name="external" size={13} /></button
 				>
-				<button type="button" onclick={insertCode} style={toolbarBtnStyle} title="Code"
+				<button
+					type="button"
+					onclick={insertCode}
+					style={toolbarBtnStyle}
+					title={t("md_btn_code")}
+					aria-label={t("md_btn_code")}
 					><span class="mono" style:font-size="11px">{"</>"}</span></button
 				>
-				<button type="button" onclick={insertList} style={toolbarBtnStyle} title="List"
+				<button
+					type="button"
+					onclick={insertList}
+					style={toolbarBtnStyle}
+					title={t("md_btn_list")}
+					aria-label={t("md_btn_list")}
 					><span class="mono" style:font-size="13px">•</span></button
 				>
 			</div>

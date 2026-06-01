@@ -1,5 +1,6 @@
 <script lang="ts">
 import { page } from "$app/state";
+import Icon from "$lib/components/Icon.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
 import { t } from "$lib/i18n/index.svelte";
@@ -17,6 +18,10 @@ $effect(() => {
 	deleteToken = window.location.hash.slice(1);
 	mounted = true;
 });
+
+const deleteLabel = $derived(
+	!mounted ? t("loading") : isDeleting ? t("deleting") : t("delete_button"),
+);
 
 async function handleDelete() {
 	if (!confirm(t("delete_confirm"))) return;
@@ -46,40 +51,99 @@ async function handleDelete() {
 
 <div class="space-y-6">
 	{#if !data.noteExists && !isDeleted}
-		<div class="rounded-xl border border-slate-700 bg-slate-900 p-8 text-center">
-			<h1 class="text-xl font-semibold text-slate-300">{t("not_found_title")}</h1>
-			<p class="mt-2 text-slate-500">{t("not_found_description")}</p>
-			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				{t("new_note")}
+		<div
+			class="rounded-2xl border p-8 text-center"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+		>
+			<h1 class="serif" style:font-size="24px" style:color="var(--text)">
+				{t("not_found_title")}
+			</h1>
+			<p class="mt-2" style:color="var(--muted)">{t("not_found_description")}</p>
+			<a
+				href="/"
+				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
+				style:background="var(--accent)"
+				style:color="var(--accent-ink)"
+				style:padding="12px 18px"
+				style:font-size="14px"
+			>
+				<Icon name="lock" size={14} />
+				<span>{t("new_note")}</span>
 			</a>
 		</div>
-
 	{:else if isDeleted}
-		<div class="rounded-xl border border-green-800/50 bg-green-900/20 p-8 text-center">
-			<p class="text-lg font-semibold text-green-300">
-				<i class="fa-solid fa-check"></i> {t("note_deleted")}
+		<div
+			class="rounded-2xl border p-8 text-center"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+		>
+			<p
+				class="inline-flex items-center justify-center gap-2"
+				style:color="var(--text)"
+				style:font-size="17px"
+				style:font-weight="500"
+			>
+				<Icon name="check" size={16} />
+				<span>{t("note_deleted")}</span>
 			</p>
-			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				{t("new_note")}
-			</a>
+			<div>
+				<a
+					href="/"
+					class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
+					style:background="var(--accent)"
+					style:color="var(--accent-ink)"
+					style:padding="12px 18px"
+					style:font-size="14px"
+				>
+					<Icon name="lock" size={14} />
+					<span>{t("new_note")}</span>
+				</a>
+			</div>
 		</div>
-
 	{:else if mounted && !deleteToken}
-		<div class="rounded-xl border border-red-800/50 bg-red-900/20 p-8 text-center">
-			<h1 class="text-lg font-semibold text-red-300">{t("error_title")}</h1>
-			<p class="mt-2 text-sm text-red-400">{t("manage_invalid_token")}</p>
-			<a href="/" class="mt-4 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-				{t("new_note")}
+		<div
+			class="rounded-2xl border p-8 text-center"
+			style:background="var(--accent-soft)"
+			style:border-color="var(--accent-ring)"
+		>
+			<h1 style:color="var(--text)" style:font-size="17px" style:font-weight="600">
+				{t("error_title")}
+			</h1>
+			<p class="mt-2" style:color="var(--muted)" style:font-size="14px">
+				{t("manage_invalid_token")}
+			</p>
+			<a
+				href="/"
+				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
+				style:background="var(--accent)"
+				style:color="var(--accent-ink)"
+				style:padding="12px 18px"
+				style:font-size="14px"
+			>
+				<Icon name="lock" size={14} />
+				<span>{t("new_note")}</span>
 			</a>
 		</div>
-
 	{:else}
-		<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 space-y-4">
-			<h1 class="text-xl font-semibold">{t("manage_title")}</h1>
-			<p class="text-sm text-slate-400">{t("manage_description")}</p>
+		<div
+			class="space-y-4 rounded-2xl border p-6"
+			style:background="var(--bg-2)"
+			style:border-color="var(--line)"
+		>
+			<h1 class="serif" style:font-size="24px" style:color="var(--text)">
+				{t("manage_title")}
+			</h1>
+			<p style:color="var(--muted)" style:font-size="14px">{t("manage_description")}</p>
 
 			{#if error}
-				<div class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300" role="alert">
+				<div
+					class="rounded-xl border px-4 py-3 text-sm"
+					style:background="var(--accent-soft)"
+					style:border-color="var(--accent-ring)"
+					style:color="var(--text)"
+					role="alert"
+				>
 					{error}
 				</div>
 			{/if}
@@ -87,9 +151,13 @@ async function handleDelete() {
 			<button
 				onclick={handleDelete}
 				disabled={!mounted || isDeleting}
-				class="w-full rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm font-medium text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
+				class="inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+				style:background="var(--accent-soft)"
+				style:border-color="var(--accent-ring)"
+				style:color="var(--accent)"
 			>
-				<i class="fa-solid fa-trash"></i> {!mounted ? t("loading") : isDeleting ? t("deleting") : t("delete_button")}
+				<Icon name="trash" size={14} />
+				<span>{deleteLabel}</span>
 			</button>
 		</div>
 	{/if}

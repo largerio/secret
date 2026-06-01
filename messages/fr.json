@@ -179,5 +179,14 @@
 	"rv_gone_title": "Ce secret n'existe plus.",
 	"rv_gone_sub": "Il a été supprimé de nos serveurs. Vous ne pouvez plus y revenir.",
 	"rv_gone_cta": "Créer mon propre secret",
-	"ok_new": "Créer un autre secret"
+	"ok_new": "Créer un autre secret",
+	"show_password": "Afficher le mot de passe",
+	"hide_password": "Masquer le mot de passe",
+	"generate": "Générer",
+	"md_btn_heading": "Titre",
+	"md_btn_bold": "Gras",
+	"md_btn_italic": "Italique",
+	"md_btn_link": "Lien",
+	"md_btn_code": "Code",
+	"md_btn_list": "Liste"
 }

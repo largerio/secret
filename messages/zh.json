@@ -179,5 +179,14 @@
 	"rv_download": "下载",
 	"rv_gone_title": "此秘密不再存在。",
 	"rv_gone_sub": "已从我们的服务器中删除。您无法再返回。",
-	"rv_gone_cta": "创建我自己的秘密"
+	"rv_gone_cta": "创建我自己的秘密",
+	"show_password": "显示密码",
+	"hide_password": "隐藏密码",
+	"generate": "生成",
+	"md_btn_heading": "标题",
+	"md_btn_bold": "粗体",
+	"md_btn_italic": "斜体",
+	"md_btn_link": "链接",
+	"md_btn_code": "代码",
+	"md_btn_list": "列表"
 }

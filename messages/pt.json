@@ -179,5 +179,14 @@
 	"rv_download": "Transferir",
 	"rv_gone_title": "Este segredo já não existe.",
 	"rv_gone_sub": "Foi eliminado dos nossos servidores. Já não pode voltar a aceder-lhe.",
-	"rv_gone_cta": "Criar o meu próprio segredo"
+	"rv_gone_cta": "Criar o meu próprio segredo",
+	"show_password": "Mostrar senha",
+	"hide_password": "Ocultar senha",
+	"generate": "Gerar",
+	"md_btn_heading": "Título",
+	"md_btn_bold": "Negrito",
+	"md_btn_italic": "Itálico",
+	"md_btn_link": "Link",
+	"md_btn_code": "Código",
+	"md_btn_list": "Lista"
 }

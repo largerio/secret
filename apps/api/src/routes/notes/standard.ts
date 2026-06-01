@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import { createNoteMultipartSchema, NOTE_ID_LENGTH } from "@secret/shared";
+import { createNoteMultipartSchema, isValidNoteId } from "@secret/shared";
 import { eq } from "drizzle-orm";
 import { notes } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
@@ -128,7 +128,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 	app.get("/:id/raw", async (c) => {
 		const id = c.req.param("id");
-		if (!id || !/^[A-Za-z0-9_-]+$/.test(id) || id.length !== NOTE_ID_LENGTH) {
+		if (!id || !isValidNoteId(id)) {
 			return c.json({ error: "Invalid note ID" }, 400);
 		}
 

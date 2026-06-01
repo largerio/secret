@@ -4,7 +4,9 @@ import {
 	chunkedUploadInitSchema,
 	createNoteMultipartSchema,
 	createNoteSchema,
+	isValidNoteId,
 	noteIdSchema,
+	uploadSessionMetadataSchema,
 } from "../validation.js";
 
 describe("createNoteSchema", () => {
@@ -272,6 +274,93 @@ describe("chunkedUploadInitSchema", () => {
 			clientNonce: "a".repeat(49),
 		});
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("uploadSessionMetadataSchema", () => {
+	const validMeta = {
+		streamHeader: "someHeader",
+		clientNonce: "base64nonce==",
+		hasPassword: false,
+		expiresIn: 3600,
+		maxReads: 1,
+		fileCount: 1,
+	};
+
+	it("accepts valid metadata", () => {
+		const result = uploadSessionMetadataSchema.safeParse(validMeta);
+		expect(result.success).toBe(true);
+	});
+
+	it("accepts metadata with salt", () => {
+		const result = uploadSessionMetadataSchema.safeParse({ ...validMeta, salt: "someSalt" });
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects missing streamHeader", () => {
+		const { streamHeader: _, ...withoutHeader } = validMeta;
+		const result = uploadSessionMetadataSchema.safeParse(withoutHeader);
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects missing maxReads (no default in persisted metadata)", () => {
+		const { maxReads: _, ...withoutMaxReads } = validMeta;
+		const result = uploadSessionMetadataSchema.safeParse(withoutMaxReads);
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects non-object values", () => {
+		expect(uploadSessionMetadataSchema.safeParse(null).success).toBe(false);
+		expect(uploadSessionMetadataSchema.safeParse("string").success).toBe(false);
+		expect(uploadSessionMetadataSchema.safeParse(42).success).toBe(false);
+	});
+
+	it("rejects expiresIn outside allowed range", () => {
+		expect(
+			uploadSessionMetadataSchema.safeParse({ ...validMeta, expiresIn: MIN_EXPIRY_SECONDS - 1 })
+				.success,
+		).toBe(false);
+		expect(
+			uploadSessionMetadataSchema.safeParse({ ...validMeta, expiresIn: MAX_EXPIRY_SECONDS + 1 })
+				.success,
+		).toBe(false);
+	});
+});
+
+describe("isValidNoteId", () => {
+	it("accepts a valid note ID", () => {
+		expect(isValidNoteId("abc123def456")).toBe(true);
+	});
+
+	it("accepts URL-safe characters (hyphen, underscore)", () => {
+		expect(isValidNoteId("abc_def-gh12")).toBe(true);
+	});
+
+	it("rejects an empty string", () => {
+		expect(isValidNoteId("")).toBe(false);
+	});
+
+	it("rejects an ID with the wrong length", () => {
+		expect(isValidNoteId("abc")).toBe(false);
+		expect(isValidNoteId("a".repeat(NOTE_ID_LENGTH + 1))).toBe(false);
+	});
+
+	it("rejects special characters", () => {
+		expect(isValidNoteId("abc!@#$%^&*(")).toBe(false);
+	});
+
+	it("agrees with noteIdSchema for representative inputs", () => {
+		const candidates = [
+			"abc123def456",
+			"abc_def-gh12",
+			"",
+			"abc",
+			"abc!@#$%^&*(",
+			"a".repeat(NOTE_ID_LENGTH + 1),
+		];
+		for (const candidate of candidates) {
+			expect(isValidNoteId(candidate)).toBe(noteIdSchema.safeParse(candidate).success);
+		}
 	});
 });
 

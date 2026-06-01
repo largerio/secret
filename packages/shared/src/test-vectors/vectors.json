@@ -1,6 +1,6 @@
 {
 	"version": 1,
-	"generatedWith": "libsodium-wrappers-sumo 1.0.21",
+	"generatedWith": "libsodium-wrappers-sumo 1.0.22",
 	"vectors": {
 		"xchacha20poly1305": [
 			{

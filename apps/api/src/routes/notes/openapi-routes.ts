@@ -3,17 +3,17 @@ import {
 	createNoteResponseSchema,
 	createNoteSchema,
 	deleteNoteResponseSchema,
-	NOTE_ID_LENGTH,
 	noteExistsResponseSchema,
+	noteIdSchema,
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
 } from "@secret/shared";
 
-const noteIdParam = z
-	.string()
-	.regex(/^[A-Za-z0-9_-]+$/, "Invalid note ID format")
-	.length(NOTE_ID_LENGTH, `Note ID must be ${String(NOTE_ID_LENGTH)} characters`)
-	.openapi({ param: { name: "id", in: "path" }, example: "aBcDeFgHiJkL" });
+// Reuse the shared note ID schema so the format is defined in one place.
+const noteIdParam = noteIdSchema.openapi({
+	param: { name: "id", in: "path" },
+	example: "aBcDeFgHiJkL",
+});
 
 export const createNoteRoute = createRoute({
 	method: "post",

@@ -179,5 +179,14 @@
 	"rv_download": "Herunterladen",
 	"rv_gone_title": "Dieses Geheimnis existiert nicht mehr.",
 	"rv_gone_sub": "Es wurde von unseren Servern gelöscht. Sie können nicht mehr dorthin zurückkehren.",
-	"rv_gone_cta": "Mein eigenes Geheimnis erstellen"
+	"rv_gone_cta": "Mein eigenes Geheimnis erstellen",
+	"show_password": "Passwort anzeigen",
+	"hide_password": "Passwort verbergen",
+	"generate": "Generieren",
+	"md_btn_heading": "Überschrift",
+	"md_btn_bold": "Fett",
+	"md_btn_italic": "Kursiv",
+	"md_btn_link": "Link",
+	"md_btn_code": "Code",
+	"md_btn_list": "Liste"
 }
