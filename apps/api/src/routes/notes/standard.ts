@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { notes } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
 import {
+	buildNoteHeaders,
 	consumeNote,
 	httpError,
 	insertNote,
@@ -139,23 +140,9 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			id,
 		);
 
-		const headers: Record<string, string> = {
-			"Content-Type": "application/octet-stream",
-			// Force a download and forbid MIME sniffing so the still-encrypted blob
-			// is never interpreted/executed in a browser context (defense in depth;
-			// the global security middleware also sets nosniff).
-			"Content-Disposition": "attachment",
-			"X-Content-Type-Options": "nosniff",
-			"Content-Length": String(clientBlob.length),
-			"X-Client-Nonce": sanitizeHeaderValue(note.clientNonce),
-			"X-Has-Password": String(note.hasPassword),
-			"X-File-Count": String(note.fileCount),
-			"X-Created-At": note.createdAt.toISOString(),
-			"X-Expires-At": note.expiresAt.toISOString(),
-		};
-		if (note.salt) {
-			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
-		}
+		const headers = buildNoteHeaders(note);
+		headers["Content-Length"] = String(clientBlob.length);
+		headers["X-Client-Nonce"] = sanitizeHeaderValue(note.clientNonce);
 
 		return new Response(new Uint8Array(clientBlob) as BodyInit, { status: 200, headers });
 	});

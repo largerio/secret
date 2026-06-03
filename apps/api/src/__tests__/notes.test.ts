@@ -142,7 +142,7 @@ describe("POST /api/v1/notes", () => {
 		});
 		expect(res.status).toBe(401);
 		const json = await res.json();
-		expect(json.error).toBe("PoW token required");
+		expect(json.error).toBe("Unauthorized");
 	});
 
 	it("rejects requests with an invalid API key", async () => {
@@ -156,7 +156,7 @@ describe("POST /api/v1/notes", () => {
 		});
 		expect(res.status).toBe(401);
 		const json = await res.json();
-		expect(json.error).toBe("Invalid API key");
+		expect(json.error).toBe("Unauthorized");
 	});
 
 	it("accepts a valid API key instead of Cap token", async () => {

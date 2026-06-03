@@ -85,6 +85,19 @@ describe("POST /redeem", () => {
 			body: JSON.stringify({ other: "field" }),
 		});
 		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json).toEqual({ success: false, message: "Invalid request" });
+	});
+
+	it("rejects non-array solutions", async () => {
+		const res = await mockApp.request("/redeem", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ token: "valid-token", solutions: "nope" }),
+		});
+		expect(res.status).toBe(400);
+		const json = await res.json();
+		expect(json).toEqual({ success: false, message: "Invalid request" });
 	});
 
 	it("rejects invalid challenge token", async () => {
@@ -176,7 +189,8 @@ describe("POST /verify", () => {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({}),
 		});
+		expect(res.status).toBe(400);
 		const json = await res.json();
-		expect(json.success).toBe(false);
+		expect(json).toEqual({ success: false, message: "Invalid request" });
 	});
 });

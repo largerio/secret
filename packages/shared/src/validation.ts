@@ -9,42 +9,44 @@ import {
 	UPLOAD_ID_LENGTH,
 } from "./constants.js";
 
+// Fields common to both the JSON and multipart create-note requests. The two
+// differ only in how the encrypted payload is carried (inline vs multipart
+// body) and in their fileCount floor, so everything else lives here.
+const baseNoteFields = {
+	clientNonce: z.string().min(1, "Client nonce is required").max(MAX_NONCE_LENGTH),
+	hasPassword: z.boolean(),
+	expiresIn: z
+		.number()
+		.int()
+		.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
+		.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
+	maxReads: z.number().int().min(0).max(1000).default(1),
+	salt: z.string().min(1).max(100).optional(),
+} as const;
+
+// Cross-field rule shared by every create-note schema: a password-protected
+// note must also carry the salt used to derive its key.
+const SALT_REQUIRED_REFINEMENT = {
+	message: "Salt is required when password is set",
+	path: ["salt"],
+};
+const saltMatchesPassword = (data: { hasPassword: boolean; salt?: string | undefined }): boolean =>
+	!data.hasPassword || data.salt !== undefined;
+
 export const createNoteSchema = z
 	.object({
+		...baseNoteFields,
 		encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
-		clientNonce: z.string().min(1, "Client nonce is required").max(MAX_NONCE_LENGTH),
-		hasPassword: z.boolean(),
-		expiresIn: z
-			.number()
-			.int()
-			.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
-			.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
-		maxReads: z.number().int().min(0).max(1000).default(1),
 		fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
-		salt: z.string().min(1).max(100).optional(),
 	})
-	.refine((data) => !data.hasPassword || data.salt !== undefined, {
-		message: "Salt is required when password is set",
-		path: ["salt"],
-	});
+	.refine(saltMatchesPassword, SALT_REQUIRED_REFINEMENT);
 
 export const createNoteMultipartSchema = z
 	.object({
-		clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
-		hasPassword: z.boolean(),
-		expiresIn: z
-			.number()
-			.int()
-			.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
-			.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
-		maxReads: z.number().int().min(0).max(1000).default(1),
+		...baseNoteFields,
 		fileCount: z.number().int().min(1).max(MAX_FILES_PER_NOTE),
-		salt: z.string().min(1).max(100).optional(),
 	})
-	.refine((data) => !data.hasPassword || data.salt !== undefined, {
-		message: "Salt is required when password is set",
-		path: ["salt"],
-	});
+	.refine(saltMatchesPassword, SALT_REQUIRED_REFINEMENT);
 
 const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/;
 
