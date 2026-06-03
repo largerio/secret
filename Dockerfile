@@ -2,7 +2,7 @@
 # Base image pinned by digest for reproducibility + integrity.
 # Refresh manually with: docker buildx imagetools inspect node:26-alpine
 # (or query the registry) and update the digest in BOTH stages.
-FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS builder
+FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS builder
 
 # Install corepack (not bundled in node:26-alpine) and enable it; the pnpm
 # version is resolved from package.json "packageManager", so Dependabot's npm
@@ -44,7 +44,7 @@ RUN node -e " \
   }"
 
 # Stage 2: Production
-FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS production
+FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS production
 
 RUN adduser -D -u 1001 appuser
 
