@@ -9,12 +9,12 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "^3.1057.0",
-		"@aws-sdk/lib-storage": "^3.1057.0",
+		"@aws-sdk/client-s3": "^3.1061.0",
+		"@aws-sdk/lib-storage": "^3.1061.0",
 		"@cap.js/server": "^4.0.5",
 		"@hono/node-server": "^2.0.4",
 		"@hono/zod-openapi": "^1.4.0",
-		"@scalar/hono-api-reference": "^0.10.19",
+		"@scalar/hono-api-reference": "^0.10.20",
 		"@secret/crypto": "workspace:*",
 		"@secret/shared": "workspace:*",
 		"drizzle-orm": "1.0.0-rc.4-273829f",
@@ -25,6 +25,6 @@
 	"devDependencies": {
 		"@types/node": "^25.9.1",
 		"drizzle-kit": "1.0.0-rc.4-273829f",
-		"tsx": "^4.22.3"
+		"tsx": "^4.22.4"
 	}
 }
