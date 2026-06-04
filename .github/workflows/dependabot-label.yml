@@ -3,19 +3,26 @@ name: Dependabot label
 # Label Dependabot PRs as auto-merge-eligible at open time. This workflow only
 # adds a label — the actual (delayed) merge is armed by dependabot-delayed-merge.yml.
 # Only patch/minor updates get labeled; major bumps stay for manual review.
-on: pull_request_target
+#
+# Uses `pull_request` (not `pull_request_target`): the latter runs with a
+# read-write token + secrets even for fork PRs and is the classic "pwn request"
+# footgun. With `pull_request`, fork PRs get a read-only token and no secrets, so
+# even if the actor guard were bypassed the job could not add a label. Dependabot
+# PRs still get write access here because the `permissions:` block grants it
+# explicitly (GitHub's documented auto-merge pattern).
+on: pull_request
 
 permissions: {}
 
 jobs:
   label:
+    # `dependabot[bot]` contains reserved characters ([ ]) that cannot appear in
+    # a human username, so this actor guard is not spoofable by renaming.
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      # pull_request_target runs in the base-branch context and never checks out
-      # or executes the PR's code — this step only calls the GitHub API.
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
