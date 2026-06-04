@@ -445,7 +445,7 @@ async function handleDecrypt() {
 				</div>
 				<div style:padding="18px 20px">
 					{#if status.payload.contentMode === "markdown"}
-						<div class="prose prose-invert prose-sm max-w-none">
+						<div class="prose prose-sm max-w-none">
 							{@html renderedMarkdown}
 						</div>
 					{:else if status.payload.contentMode === "secret"}

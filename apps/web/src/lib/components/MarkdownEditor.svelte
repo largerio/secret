@@ -245,7 +245,7 @@ const toolbarBtnStyle =
 			style:min-height="180px"
 		>
 			{#if renderedHtml}
-				<div class="prose prose-invert prose-sm max-w-none">
+				<div class="prose prose-sm max-w-none">
 					{@html renderedHtml}
 				</div>
 			{:else}
