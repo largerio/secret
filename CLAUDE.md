@@ -29,7 +29,7 @@ Monorepo with pnpm workspaces:
   - Routes: `src/routes/notes.ts` — OpenAPI routes via `@hono/zod-openapi`
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
   - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
-  - Database: SQLite via better-sqlite3 + Drizzle ORM (`src/db/`)
+  - Database: SQLite via Node's built-in `node:sqlite` (`DatabaseSync`) + Drizzle ORM (`drizzle-orm/node-sqlite`) (`src/db/`)
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
