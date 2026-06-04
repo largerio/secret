@@ -1,9 +1,33 @@
 {
 	"name": "@secret/sdk-js",
 	"version": "1.0.0",
+	"description": "JavaScript/TypeScript SDK for Secret — create, read, and delete zero-knowledge, end-to-end encrypted notes and files on any Secret instance.",
+	"keywords": [
+		"encryption",
+		"zero-knowledge",
+		"end-to-end-encryption",
+		"e2ee",
+		"secret",
+		"secure-sharing",
+		"privacy",
+		"sdk",
+		"typescript"
+	],
+	"homepage": "https://github.com/largerio/secret#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "packages/sdk-js"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc",

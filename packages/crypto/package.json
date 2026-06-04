@@ -1,11 +1,35 @@
 {
 	"name": "@secret/crypto",
 	"version": "1.0.0",
+	"description": "Encryption library that powers Secret — XChaCha20-Poly1305 on the client and AES-256-GCM on the server, with Argon2id key derivation and MessagePack serialization.",
+	"keywords": [
+		"encryption",
+		"cryptography",
+		"xchacha20-poly1305",
+		"aes-256-gcm",
+		"argon2id",
+		"libsodium",
+		"zero-knowledge",
+		"end-to-end-encryption",
+		"privacy"
+	],
+	"homepage": "https://github.com/largerio/secret#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "packages/crypto"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./client": "./src/client.ts",
 		"./server": "./src/server.ts"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc",
