@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      issues: write # creating a label goes through the issues/labels API
     steps:
       - name: Fetch Dependabot metadata
         id: meta
@@ -31,7 +32,14 @@ jobs:
 
       - name: Label patch/minor updates
         if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr edit "$PR_URL" --add-label auto-merge-48h
+        # gh pr edit --add-label fails if the label doesn't exist, so ensure it
+        # first. `gh label create --force` is idempotent: it creates the label or
+        # updates it if already present, never erroring.
+        run: |
+          gh label create auto-merge-48h --force \
+            --color 0e8a16 \
+            --description "Dependabot patch/minor PR, auto-merged once >=48h old and CI is green"
+          gh pr edit "$PR_URL" --add-label auto-merge-48h
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
