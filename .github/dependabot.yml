@@ -7,6 +7,11 @@ updates:
     groups:
       dependencies:
         patterns: ["*"]
+        # Group only patch/minor; major bumps come as separate PRs and are
+        # never auto-merged (see .github/workflows/dependabot-label.yml).
+        update-types:
+          - minor
+          - patch
     open-pull-requests-limit: 10
     commit-message:
       prefix: deps
@@ -20,6 +25,9 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: build
     labels: ["docker"]
@@ -32,6 +40,9 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: ci
     labels: ["github-actions"]

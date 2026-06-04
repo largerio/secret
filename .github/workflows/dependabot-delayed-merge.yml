@@ -1,0 +1,46 @@
+name: Dependabot delayed merge
+
+# Arms GitHub auto-merge for Dependabot PRs that are:
+#   1. labeled auto-merge-48h (patch/minor, set by dependabot-label.yml),
+#   2. at least 48h old (so a freshly published release is never merged blind —
+#      this window lets a compromised release be yanked/flagged first), and
+#   3. already passing CI (defense-in-depth in case branch protection is missing).
+#
+# The real merge still waits for required status checks to go green, which is
+# enforced by branch protection on main (required: check, e2e, audit, secrets).
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  arm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Arm auto-merge for eligible PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '48 hours ago' +%s)
+          gh pr list --repo "$REPO" --state open --author "app/dependabot" \
+            --label auto-merge-48h --json number,createdAt \
+            --jq '.[] | "\(.number) \(.createdAt)"' |
+          while read -r number created; do
+            [ -n "$number" ] || continue
+            created_ts=$(date -u -d "$created" +%s)
+            [ "$created_ts" -le "$cutoff" ] || continue
+            # Only arm if CI is already green. gh pr checks exits 0 when all
+            # checks pass, non-zero when any are pending or failing.
+            if gh pr checks "$number" --repo "$REPO"; then
+              echo "Arming auto-merge for PR #$number"
+              gh pr merge "$number" --repo "$REPO" --auto --squash
+            else
+              echo "Skipping PR #$number: checks not green yet"
+            fi
+          done

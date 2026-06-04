@@ -1,0 +1,30 @@
+name: Dependabot label
+
+# Label Dependabot PRs as auto-merge-eligible at open time. This workflow only
+# adds a label — the actual (delayed) merge is armed by dependabot-delayed-merge.yml.
+# Only patch/minor updates get labeled; major bumps stay for manual review.
+on: pull_request_target
+
+permissions: {}
+
+jobs:
+  label:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      # pull_request_target runs in the base-branch context and never checks out
+      # or executes the PR's code — this step only calls the GitHub API.
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label patch/minor updates
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr edit "$PR_URL" --add-label auto-merge-48h
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
