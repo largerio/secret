@@ -1,10 +1,32 @@
 {
 	"name": "@secret/shared",
 	"version": "1.0.0",
+	"description": "Shared types, Zod schemas, constants, and cross-language crypto test vectors for Secret, the zero-knowledge encrypted note and file sharing app.",
+	"keywords": [
+		"zod",
+		"schemas",
+		"types",
+		"zero-knowledge",
+		"end-to-end-encryption",
+		"secret",
+		"privacy"
+	],
+	"homepage": "https://github.com/largerio/secret#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "packages/shared"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./auth": "./src/auth.ts"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc",

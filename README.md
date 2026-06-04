@@ -1,15 +1,27 @@
 # Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing
 
 [![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#development)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue)](https://github.com/largerio/secret/stargazers)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 
-Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — the server never sees your content. Self-hosted with a single Docker container. No accounts, no tracking, no logs.
+Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
-> **Live demo:** [secret.larger.io](https://secret.larger.io)
+**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
+
+<p align="center">
+  <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
+  &nbsp;
+  <img src="docs/images/share.png" alt="Get a one-time link — the decryption key lives in the URL and never reaches the server" width="32%" />
+  &nbsp;
+  <img src="docs/images/view.png" alt="Recipient opens the link — decrypted locally, self-destructs after reading" width="32%" />
+</p>
+
+<p align="center"><sub><b>Create</b> → encrypted locally &nbsp;·&nbsp; <b>Share</b> → one-time link, key never sent &nbsp;·&nbsp; <b>Read</b> → decrypted in-browser, then gone</sub></p>
 
 ## Table of Contents
 

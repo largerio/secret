@@ -1,6 +1,17 @@
 {
 	"name": "@secret/api",
 	"version": "1.0.0",
+	"private": true,
+	"description": "Hono API server for Secret — stores doubly encrypted notes and files (AES-256-GCM server layer), with OpenAPI docs, rate limiting, and pluggable local/S3 storage.",
+	"homepage": "https://github.com/largerio/secret#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "apps/api"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
 	"type": "module",
 	"scripts": {
 		"dev": "tsx watch src/index.ts",

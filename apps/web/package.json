@@ -1,6 +1,17 @@
 {
 	"name": "@secret/web",
 	"version": "1.0.0",
+	"private": true,
+	"description": "SvelteKit frontend for Secret — encrypts notes and files in the browser (XChaCha20-Poly1305) before they ever reach the server. Consumes the @secret/sdk-js client.",
+	"homepage": "https://github.com/largerio/secret#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "apps/web"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
