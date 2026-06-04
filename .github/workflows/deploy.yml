@@ -180,6 +180,13 @@ jobs:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     permissions: {}
     environment: production
+    # Serialize deployments across all refs (main pushes and v* tags share one
+    # group), so concurrent merges/releases never run two SSH deploys against the
+    # same host at once. cancel-in-progress stays false: never interrupt an
+    # in-flight deploy; queue the next one and let it run to completion.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     steps:
       - name: Deploy
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
