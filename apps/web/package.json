@@ -14,19 +14,19 @@
 		"@secret/sdk-js": "workspace:*",
 		"@secret/shared": "workspace:*",
 		"isomorphic-dompurify": "^3.15.0",
-		"marked": "^18.0.4",
+		"marked": "^18.0.5",
 		"qrcode": "^1.5.4"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.4",
-		"@sveltejs/kit": "^2.62.0",
+		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4.3.0",
 		"@types/node": "^25.9.1",
 		"@types/qrcode": "^1.5.6",
 		"svelte": "^5.56.1",
-		"svelte-check": "^4.5.0",
+		"svelte-check": "^4.6.0",
 		"tailwindcss": "^4.3.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16"
