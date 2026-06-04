@@ -20,6 +20,19 @@ import type {
 	SecretClientConfig,
 } from "./types.js";
 
+// Overall-progress milestones (0–1) reported through onProgress. Each upload or
+// read path splits its progress bar between phases; these named boundaries
+// replace the magic decimals that were previously scattered inline.
+const PROGRESS = {
+	// Standard upload: encryption fills the bar up to here, upload fills the rest.
+	standardEncrypted: 0.3,
+	// Chunked upload: encryption up to here, then chunk upload spans the rest.
+	chunkedEncrypted: 0.2,
+	chunkedUploadSpan: 0.7,
+	// Read: download spans this fraction, decryption fills the remainder.
+	downloadSpan: 0.7,
+} as const;
+
 async function sha256hex(data: Uint8Array): Promise<string> {
 	const hashBuffer = await crypto.subtle.digest(
 		"SHA-256",
@@ -76,9 +89,17 @@ export class SecretClient {
 
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const encrypted = await encryptNote(payload, options.password);
-		options.onProgress?.({ phase: "encrypting", phaseProgress: 1, overallProgress: 0.3 });
+		options.onProgress?.({
+			phase: "encrypting",
+			phaseProgress: 1,
+			overallProgress: PROGRESS.standardEncrypted,
+		});
 
-		options.onProgress?.({ phase: "uploading", phaseProgress: 0, overallProgress: 0.3 });
+		options.onProgress?.({
+			phase: "uploading",
+			phaseProgress: 0,
+			overallProgress: PROGRESS.standardEncrypted,
+		});
 		let response: { id: string; expiresAt: string; deleteToken: string };
 
 		if (fileCount > 0) {
@@ -140,13 +161,17 @@ export class SecretClient {
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const encrypted = await encryptNoteChunked(payload, chunkSize, options.password);
 		const totalChunks = encrypted.chunks.length;
-		options.onProgress?.({ phase: "encrypting", phaseProgress: 1, overallProgress: 0.2 });
+		options.onProgress?.({
+			phase: "encrypting",
+			phaseProgress: 1,
+			overallProgress: PROGRESS.chunkedEncrypted,
+		});
 
 		// Init chunked upload session
 		options.onProgress?.({
 			phase: "uploading",
 			phaseProgress: 0,
-			overallProgress: 0.2,
+			overallProgress: PROGRESS.chunkedEncrypted,
 			currentChunk: 0,
 			totalChunks,
 		});
@@ -179,7 +204,7 @@ export class SecretClient {
 			options.onProgress?.({
 				phase: "uploading",
 				phaseProgress: chunkProgress,
-				overallProgress: 0.2 + chunkProgress * 0.7,
+				overallProgress: PROGRESS.chunkedEncrypted + chunkProgress * PROGRESS.chunkedUploadSpan,
 				currentChunk: i + 1,
 				totalChunks,
 			});
@@ -270,10 +295,18 @@ export class SecretClient {
 	): Promise<ReadNoteResult> {
 		const response = await http.getNoteRaw(this.httpConfig, id, (p) => {
 			options?.onDownloadProgress?.(p);
-			options?.onProgress?.({ phase: "downloading", phaseProgress: p, overallProgress: p * 0.7 });
+			options?.onProgress?.({
+				phase: "downloading",
+				phaseProgress: p,
+				overallProgress: p * PROGRESS.downloadSpan,
+			});
 		});
 
-		options?.onProgress?.({ phase: "decrypting", phaseProgress: 0, overallProgress: 0.7 });
+		options?.onProgress?.({
+			phase: "decrypting",
+			phaseProgress: 0,
+			overallProgress: PROGRESS.downloadSpan,
+		});
 		let payload: NotePayload;
 		try {
 			payload = await decryptNoteBytes(
@@ -339,11 +372,15 @@ export class SecretClient {
 			options?.onProgress?.({
 				phase: "downloading",
 				phaseProgress: p,
-				overallProgress: p * 0.7,
+				overallProgress: p * PROGRESS.downloadSpan,
 			});
 		});
 
-		options?.onProgress?.({ phase: "decrypting", phaseProgress: 0, overallProgress: 0.7 });
+		options?.onProgress?.({
+			phase: "decrypting",
+			phaseProgress: 0,
+			overallProgress: PROGRESS.downloadSpan,
+		});
 		let payload: NotePayload;
 		try {
 			payload = await decryptNoteChunked(

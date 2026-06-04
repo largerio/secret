@@ -28,6 +28,37 @@ export function sanitizeHeaderValue(value: string): string {
 	return value.replace(/[\r\n\0]/g, "");
 }
 
+/**
+ * Response headers shared by the encrypted-blob download endpoints (`/raw` and
+ * `/stream`). Callers add their own Content-Length and payload-shape headers
+ * (e.g. X-Client-Nonce or X-Stream-Header). User-controlled values are
+ * sanitized to prevent HTTP header injection.
+ */
+export function buildNoteHeaders(note: {
+	hasPassword: boolean;
+	fileCount: number;
+	createdAt: Date;
+	expiresAt: Date;
+	salt: string | null;
+}): Record<string, string> {
+	const headers: Record<string, string> = {
+		"Content-Type": "application/octet-stream",
+		// Force a download and forbid MIME sniffing so the still-encrypted blob
+		// is never interpreted/executed in a browser context (defense in depth;
+		// the global security middleware also sets nosniff).
+		"Content-Disposition": "attachment",
+		"X-Content-Type-Options": "nosniff",
+		"X-Has-Password": String(note.hasPassword),
+		"X-File-Count": String(note.fileCount),
+		"X-Created-At": note.createdAt.toISOString(),
+		"X-Expires-At": note.expiresAt.toISOString(),
+	};
+	if (note.salt) {
+		headers["X-Salt"] = sanitizeHeaderValue(note.salt);
+	}
+	return headers;
+}
+
 export function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never {
 	throw new HTTPException(status, { message });
 }
@@ -173,18 +204,16 @@ export async function consumeNote(
 			clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
 		}
 	} catch (err) {
+		if (err instanceof StorageNotFoundError) {
+			httpError(404, "Note not found");
+		}
+		httpError(500, "Failed to decrypt note");
+	} finally {
+		// Finalize storage cleanup for a burned note on both the success and
+		// error paths (the catch above always throws via httpError).
 		if (result.shouldDelete) {
 			await deleteOrSchedule(db, storage, { noteId: id, ...note });
 		}
-		if (err instanceof StorageNotFoundError) {
-			httpError(404, "Note not found");
-		} else {
-			httpError(500, "Failed to decrypt note");
-		}
-	}
-
-	if (result.shouldDelete) {
-		await deleteOrSchedule(db, storage, { noteId: id, ...note });
 	}
 
 	return { clientBlob, note };

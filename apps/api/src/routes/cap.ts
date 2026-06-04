@@ -6,8 +6,20 @@ import {
 	DEFAULT_CAP_DIFFICULTY,
 } from "@secret/shared";
 import { Hono } from "hono";
+import { z } from "zod";
 
 const cap = new Cap({ noFSState: true });
+
+// Cap's redeem/verify payloads are an internal (undocumented) contract, so the
+// schemas live here rather than in @secret/shared.
+const redeemSchema = z.object({
+	token: z.string(),
+	solutions: z.array(z.number()),
+});
+
+const verifySchema = z.object({
+	token: z.string(),
+});
 
 export interface CapChallengeConfig {
 	challengeCount: number;
@@ -48,11 +60,12 @@ export function createCapRoutes(
 			return c.json({ success: false, message: "Invalid JSON" }, 400);
 		}
 
-		const { token, solutions } = body as { token?: string; solutions?: number[] };
-		const result = await capInstance.redeemChallenge({
-			token: token ?? "",
-			solutions: solutions ?? [],
-		});
+		const parsed = redeemSchema.safeParse(body);
+		if (!parsed.success) {
+			return c.json({ success: false, message: "Invalid request" }, 400);
+		}
+
+		const result = await capInstance.redeemChallenge(parsed.data);
 
 		if (!result.success) {
 			return c.json({ success: false, message: result.message }, 400);
@@ -66,11 +79,15 @@ export function createCapRoutes(
 		try {
 			body = await c.req.json();
 		} catch {
-			return c.json({ success: false }, 400);
+			return c.json({ success: false, message: "Invalid JSON" }, 400);
 		}
 
-		const { token } = body as { token?: string };
-		const result = await capInstance.validateToken(token ?? "");
+		const parsed = verifySchema.safeParse(body);
+		if (!parsed.success) {
+			return c.json({ success: false, message: "Invalid request" }, 400);
+		}
+
+		const result = await capInstance.validateToken(parsed.data.token);
 
 		return c.json({ success: result.success });
 	});

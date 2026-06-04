@@ -15,6 +15,7 @@ import { notes, uploadChunks, uploads } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 import {
+	buildNoteHeaders,
 	consumeNoteTx,
 	DELETE_TOKEN_LENGTH,
 	type NotesEnv,
@@ -233,23 +234,9 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const { note } = result;
 		const chunkCount = note.chunkCount as number;
 
-		const headers: Record<string, string> = {
-			"Content-Type": "application/octet-stream",
-			// Force a download and forbid MIME sniffing so the still-encrypted stream
-			// is never interpreted/executed in a browser context (defense in depth;
-			// the global security middleware also sets nosniff).
-			"Content-Disposition": "attachment",
-			"X-Content-Type-Options": "nosniff",
-			"X-Stream-Header": sanitizeHeaderValue(note.streamHeader as string),
-			"X-Chunk-Count": String(chunkCount),
-			"X-Has-Password": String(note.hasPassword),
-			"X-File-Count": String(note.fileCount),
-			"X-Created-At": note.createdAt.toISOString(),
-			"X-Expires-At": note.expiresAt.toISOString(),
-		};
-		if (note.salt) {
-			headers["X-Salt"] = sanitizeHeaderValue(note.salt);
-		}
+		const headers = buildNoteHeaders(note);
+		headers["X-Stream-Header"] = sanitizeHeaderValue(note.streamHeader as string);
+		headers["X-Chunk-Count"] = String(chunkCount);
 
 		const IV_LENGTH = 12;
 		const AUTH_TAG_LENGTH = 16;

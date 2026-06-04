@@ -28,7 +28,7 @@ describe("createWriteAuth", () => {
 		const res = await app.request("/test", { method: "POST" });
 		expect(res.status).toBe(401);
 		const json = await res.json();
-		expect(json.error).toBe("PoW token required");
+		expect(json.error).toBe("Unauthorized");
 	});
 
 	it("rejects DELETE without Cap token or API key", async () => {
@@ -63,7 +63,7 @@ describe("createWriteAuth", () => {
 		});
 		expect(res.status).toBe(401);
 		const json = await res.json();
-		expect(json.error).toBe("Invalid API key");
+		expect(json.error).toBe("Unauthorized");
 	});
 
 	it("accepts valid Cap token", async () => {
@@ -89,7 +89,7 @@ describe("createWriteAuth", () => {
 		});
 		expect(res.status).toBe(401);
 		const json = await res.json();
-		expect(json.error).toBe("Invalid PoW token");
+		expect(json.error).toBe("Unauthorized");
 	});
 
 	it("prefers API key over Cap token", async () => {

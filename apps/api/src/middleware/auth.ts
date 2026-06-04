@@ -19,6 +19,8 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 			return;
 		}
 
+		// Use a single generic message for every failure path so a caller cannot
+		// probe which auth method (API key vs PoW token) a route expects.
 		const authHeader = c.req.header("authorization");
 		if (authHeader) {
 			const key = authHeader.replace(/^Bearer\s+/i, "");
@@ -27,18 +29,18 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 				return;
 			}
 
-			return c.json({ error: "Invalid API key" }, 401);
+			return c.json({ error: "Unauthorized" }, 401);
 		}
 
 		const capToken = c.req.header("x-cap-token");
 		if (!capToken) {
-			return c.json({ error: "PoW token required" }, 401);
+			return c.json({ error: "Unauthorized" }, 401);
 		}
 
 		// keepToken: false makes the PoW token single-use (replay protection).
 		const { success } = await cap.validateToken(capToken, { keepToken: false });
 		if (!success) {
-			return c.json({ error: "Invalid PoW token" }, 401);
+			return c.json({ error: "Unauthorized" }, 401);
 		}
 
 		await next();

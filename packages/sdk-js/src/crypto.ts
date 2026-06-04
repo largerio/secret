@@ -20,7 +20,7 @@ import {
 } from "@secret/crypto/client";
 import type { ContentMode, NotePayload } from "@secret/shared";
 
-function concatBytes(arrays: Uint8Array[]): Uint8Array {
+function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
 	const result = new Uint8Array(totalLen);
 	let offset = 0;
@@ -281,7 +281,7 @@ export async function decryptNoteChunked(
 			dataChunks.push(decrypted);
 		}
 
-		const totalData = concatBytes(dataChunks);
+		const totalData = concatUint8Arrays(dataChunks);
 
 		// Distribute bytes to files based on metadata sizes
 		let byteOffset = 0;

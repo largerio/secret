@@ -102,6 +102,16 @@ if (STORAGE_BACKEND !== "local" && STORAGE_BACKEND !== "s3") {
 	process.exit(1);
 }
 
+if (!Number.isInteger(CONFIGURED_MAX_FILE_SIZE) || CONFIGURED_MAX_FILE_SIZE <= 0) {
+	console.error("ERROR: MAX_FILE_SIZE must be a positive integer");
+	process.exit(1);
+}
+
+if (!Number.isInteger(CONFIGURED_MAX_FILES) || CONFIGURED_MAX_FILES <= 0) {
+	console.error("ERROR: MAX_FILES_PER_NOTE must be a positive integer");
+	process.exit(1);
+}
+
 if (Number.isNaN(CHUNK_SIZE) || CHUNK_SIZE <= 0) {
 	console.error("ERROR: CHUNK_SIZE must be a positive number");
 	process.exit(1);
@@ -173,6 +183,10 @@ app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
 app.use("*", createCors([APP_URL]));
 app.use("*", compress());
 
+// Hono matches `app.use(path)` against the exact path (not as a prefix), so
+// the JSON create endpoint (/api/v1/notes) and the multipart upload endpoint
+// (/api/v1/notes/upload) each need their own body-limit rule. Individual chunk
+// uploads get a tighter limit from the wildcard rule registered after them.
 const maxBodySize = CONFIGURED_MAX_FILE_SIZE * CONFIGURED_MAX_FILES + 1024 * 1024;
 app.use(
 	"/api/v1/notes",
@@ -191,6 +205,13 @@ app.use(
 	}),
 );
 
+// Per-IP rate limits, tuned per endpoint and layered by path specificity.
+// Hono applies every middleware whose path matches, so a request can pass
+// through several of these; the bounds below are chosen to make that stacking
+// harmless. Roughly: note create/list is the scarcest (30/min), generic
+// note reads are looser (60/min), existence probes are the tightest (20/min),
+// and chunk uploads are the most permissive (200/min) since one upload fans
+// out into many chunk requests.
 const notesRateLimit = createRateLimit({
 	windowMs: 60_000,
 	max: 30,
