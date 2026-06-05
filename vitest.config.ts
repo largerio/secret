@@ -2,7 +2,19 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
-		exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "apps/e2e/**"],
+		// Two projects: a Node project for the backend packages/API, and a
+		// jsdom + Svelte project (apps/web/vitest.config.ts) for the frontend.
+		projects: [
+			{
+				test: {
+					name: "node",
+					environment: "node",
+					include: ["packages/**/*.test.ts", "apps/api/**/*.test.ts"],
+					exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**"],
+				},
+			},
+			"./apps/web/vitest.config.ts",
+		],
 		coverage: {
 			provider: "v8",
 			include: ["packages/*/src/**", "apps/*/src/**"],

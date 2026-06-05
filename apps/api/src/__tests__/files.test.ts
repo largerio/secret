@@ -1,4 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { StorageInvalidKeyError, StorageNotFoundError } from "../storage/errors.js";
 import { LocalStorage } from "../storage/local.js";
@@ -47,6 +49,19 @@ describe("LocalStorage", () => {
 		const key = await storage.save("ls-binary", data);
 		const read = await storage.read(key);
 		expect(read).toEqual(data);
+	});
+
+	it("writes files with owner-only permissions (0o600)", async () => {
+		const storage = new LocalStorage(storageDir);
+		const key = await storage.save("ls-perms", Buffer.from("secret"));
+		expect((await stat(key)).mode & 0o777).toBe(0o600);
+	});
+
+	it("writes chunk files and directories with owner-only permissions", async () => {
+		const storage = new LocalStorage(storageDir);
+		const chunkKey = await storage.saveChunk("ls-chunk-perms", 0, Buffer.from("c"));
+		expect((await stat(chunkKey)).mode & 0o777).toBe(0o600);
+		expect((await stat(dirname(chunkKey))).mode & 0o777).toBe(0o700);
 	});
 
 	it("rejects path traversal in save", async () => {

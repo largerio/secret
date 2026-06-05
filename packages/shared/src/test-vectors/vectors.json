@@ -1,5 +1,5 @@
 {
-	"version": 1,
+	"version": 2,
 	"generatedWith": "libsodium-wrappers-sumo 1.0.22",
 	"vectors": {
 		"xchacha20poly1305": [
@@ -16,6 +16,27 @@
 				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
 				"plaintext": "SGVsbG8sIFNlY3JldCE=",
 				"ciphertext": "DYlmcdhxhP8EDF/sBRGjq0leBJ/G5zh9ZGfCHe5c"
+			},
+			{
+				"description": "encrypt one-block (64 byte) plaintext",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"plaintext": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==",
+				"ciphertext": "Re0IHrNYoqtpZieCfT2tzyu7jT++E9zOBVmR/Pu+4CnxpogMYmNa643CRH23GYEBlRcUyu5d5pDCjjvRFRxMvNd3srKW2R1v1dxe5gSAdAc="
+			},
+			{
+				"description": "encrypt multi-block (256 byte) plaintext",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"plaintext": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==",
+				"ciphertext": "Re0IHrNYoqtpZieCfT2tzyu7jT++E9zOBVmR/Pu+4CnxpogMYmNa643CRH23GYEBlRcUyu5d5pDCjjvRFRxMvCYzpD/ori560SUAJzQQcjCcNogbQlftVQeqfFzLA0hvajPMB70ovS4UOLmkfOlKx+lo/m70mOHuqr0Qc59+DIzequH5WCqVuLuw1x0eX0N0+XkRGPIHPEK12iHuoZlNMWkf4wqBOmlGg5Y/K3fHbtn6wRrAh8xT4k8l7/tYkFPrva/crGaJbU4/O/tXeMi6azLdiA0+ifZH9Vks1RlqHyVeHXprNEdvL7zLi3QoD1UGVGcjLU5BhjYL4X6oYBDzRpxceo7DFG3oiWcfPLV5f9E="
+			},
+			{
+				"description": "encrypt binary plaintext with 0x00/0xff bytes",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"plaintext": "AP8A/xB/gP4B",
+				"ciphertext": "RRMK4qciJFJgE6aLhxmDAS7hOfILGYAxcQ=="
 			}
 		],
 		"argon2id": [
@@ -30,6 +51,18 @@
 				"memLimit": 268435456,
 				"algorithm": "argon2id13",
 				"derivedKey": "EiT1xdd7hrEBZFlE1TMhtKCikNdA7qeU3Z98paoTK64="
+			},
+			{
+				"description": "derive key from non-ASCII password with alternate base key",
+				"password": "Pässwörd-2!🔒",
+				"salt": "0NHS09TV1tfY2drb3N3e3w==",
+				"baseKey": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+				"baseKeyUrl": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+				"combinedInput": "Pässwörd-2!🔒:QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+				"opsLimit": 3,
+				"memLimit": 268435456,
+				"algorithm": "argon2id13",
+				"derivedKey": "6b1ux+CnuafTQPUjuVsTpcolB4K5pjEkAKsO2C/fRBk="
 			}
 		],
 		"pipeline": [
@@ -62,6 +95,64 @@
 				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
 				"ciphertext": "xkh+eM8pCuIOG0ipBlnXqBvM9kDPram2czTuiZPukVK0I95KPjLZqsyHCyUKsAtAxEtDUa4No9PUw3mejVUL8wPYkhnUn0dN9Q0jAtwuVQWpdH4sd3baxkyAQ2TlO2IQbDvCAfkutCcINL27JU2I5rIuMiDv0hJ5N1iWLw=="
+			},
+			{
+				"description": "text note, password-protected (key derived via Argon2id)",
+				"payload": {
+					"text": "password protected",
+					"contentMode": "text"
+				},
+				"payloadMsgpack": "gqR0ZXh0snBhc3N3b3JkIHByb3RlY3RlZKtjb250ZW50TW9kZaR0ZXh0",
+				"key": "DNaM5KgzJitNICZml/b27BijEMgYT3VcHFDaOsee2fQ=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"ciphertext": "XO+6u7jQo0iy3HGfpnLKlfgsMqhsq3SIvr6k3hzZLToLfayUseDpETHg0lgAsrdnhT4Hvwxuv865mA==",
+				"password": "note-password-9",
+				"salt": "wMHCw8TFxsfIycrLzM3Ozw==",
+				"baseKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8="
+			},
+			{
+				"description": "note with an empty (zero-byte) file",
+				"payload": {
+					"text": "empty file",
+					"contentMode": "text",
+					"files": [
+						{
+							"name": "empty.bin",
+							"type": "application/octet-stream",
+							"size": 0,
+							"data": ""
+						}
+					]
+				},
+				"payloadMsgpack": "g6R0ZXh0qmVtcHR5IGZpbGWrY29udGVudE1vZGWkdGV4dKVmaWxlc5GEpG5hbWWpZW1wdHkuYmlupHR5cGW4YXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtpHNpemUApGRhdGHEAA==",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"ciphertext": "xkh+eM8pDskMH1nwUVbKrF4B/EPEcq+3aQ3kg4IHilOp8w9JLyoZvzRvyjj6WcqHwEtWjaNGss6UE3WTWUTK4hYCihXPihxU9gJlAxspWQvhFK46c2PWpiyaXGKX+nJRfjNqZIeq1j9iWKHdQTOI4ZaRmJs="
+			},
+			{
+				"description": "note with multiple files",
+				"payload": {
+					"text": "two files",
+					"contentMode": "text",
+					"files": [
+						{
+							"name": "a.txt",
+							"type": "text/plain",
+							"size": 14,
+							"data": "ZmlsZSBBIGNvbnRlbnQ="
+						},
+						{
+							"name": "b.bin",
+							"type": "application/octet-stream",
+							"size": 6,
+							"data": "AAEC/f7/"
+						}
+					]
+				},
+				"payloadMsgpack": "g6R0ZXh0qXR3byBmaWxlc6tjb250ZW50TW9kZaR0ZXh0pWZpbGVzkoSkbmFtZaVhLnR4dKR0eXBlqnRleHQvcGxhaW6kc2l6ZQ6kZGF0YcQOZmlsZSBBIGNvbnRlbnSEpG5hbWWlYi5iaW6kdHlwZbhhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW2kc2l6ZQakZGF0YcQGAAEC/f7/",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+				"ciphertext": "xkh+eM8pDdgWAA3vGFzGs5DJ8ELeY6StUC/vgkPXm06lIsxGKiMPXiFPADf2UQpPi1JejX4cqdefHXWPUVVd8woTjxIImAFH/GLuCBkpXbvCAbMkcyL6IjycSHPyMGK0rjzPCbzouWceOL1rZP1UzSF4/G3shPT4pq0FZsxsEYc7X04JqN12Xl6dLv/ot8tfDYn36qKUqtQvvkWK8X5oRelLXMZH5JBxLih8Xw=="
 			}
 		],
 		"encoding": [
@@ -74,6 +165,31 @@
 				"description": "base64url key encoding (32 bytes, alternate)",
 				"raw": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
 				"base64url": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+			},
+			{
+				"description": "base64url encoding (3 bytes, 0 padding)",
+				"raw": "AQID",
+				"base64url": "AQID"
+			},
+			{
+				"description": "base64url encoding (4 bytes, 2 padding chars)",
+				"raw": "AQIDBA==",
+				"base64url": "AQIDBA"
+			},
+			{
+				"description": "base64url encoding (5 bytes, 1 padding char)",
+				"raw": "AQIDBAU=",
+				"base64url": "AQIDBAU"
+			},
+			{
+				"description": "base64url encoding (all-zero bytes)",
+				"raw": "AAAAAAAAAAAAAAAAAAAAAA==",
+				"base64url": "AAAAAAAAAAAAAAAAAAAAAA"
+			},
+			{
+				"description": "base64url encoding (all-0xff bytes)",
+				"raw": "/////////////////////w==",
+				"base64url": "_____________________w"
 			}
 		]
 	}

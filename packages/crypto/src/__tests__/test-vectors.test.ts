@@ -41,11 +41,24 @@ describe("test vectors", () => {
 		await initSodium();
 
 		for (const v of testVectors.vectors.pipeline) {
-			const ciphertext = fromBase64(v.ciphertext);
 			const nonce = fromBase64(v.nonce);
-			const key = fromBase64(v.key);
 
-			const payload = decryptPayload(ciphertext, nonce, key);
+			// For password-protected vectors, the sealing key must be reproducible by
+			// running the Argon2id derivation — proving the end-to-end password path.
+			let key = fromBase64(v.key);
+			if (v.password !== undefined) {
+				expect(v.salt).toBeDefined();
+				expect(v.baseKey).toBeDefined();
+				const derived = deriveKeyFromPassword(
+					v.password,
+					fromBase64(v.salt as string),
+					fromBase64(v.baseKey as string),
+				);
+				expect(derived).toEqual(key);
+				key = derived;
+			}
+
+			const payload = decryptPayload(fromBase64(v.ciphertext), nonce, key);
 			expect(payload.text).toBe(v.payload.text);
 			expect(payload.contentMode).toBe(v.payload.contentMode);
 
@@ -59,6 +72,7 @@ describe("test vectors", () => {
 					expect(actual?.name).toBe(expected?.name);
 					expect(actual?.type).toBe(expected?.type);
 					expect(actual?.size).toBe(expected?.size);
+					expect(actual?.data).toEqual(fromBase64(expected?.data as string));
 				}
 			}
 		}
