@@ -88,9 +88,15 @@ export async function insertNote(
 		salt: string | null;
 	},
 ) {
-	const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(params.clientBlob, serverKey);
-
+	// Generate the id first so it can be bound to the server-layer ciphertext as
+	// AAD (see serverEncrypt): each blob is pinned to its note row.
 	const id = nanoid(NOTE_ID_LENGTH);
+	const { encrypted: serverBlob, iv: serverIv } = serverEncrypt(
+		params.clientBlob,
+		serverKey,
+		Buffer.from(id),
+	);
+
 	const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
 	const now = new Date();
 	const expiresAt = new Date(now.getTime() + params.expiresIn * 1000);
@@ -197,11 +203,12 @@ export async function consumeNote(
 
 	let clientBlob: Buffer;
 	try {
+		const aad = Buffer.from(id);
 		if (note.filePath) {
 			const fileData = await storage.read(note.filePath);
-			clientBlob = serverDecrypt(fileData, serverIv, serverKey);
+			clientBlob = serverDecrypt(fileData, serverIv, serverKey, aad);
 		} else {
-			clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey);
+			clientBlob = serverDecrypt(note.encryptedData, serverIv, serverKey, aad);
 		}
 	} catch (err) {
 		if (err instanceof StorageNotFoundError) {
