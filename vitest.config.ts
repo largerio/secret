@@ -17,14 +17,21 @@ export default defineConfig({
 		],
 		coverage: {
 			provider: "v8",
-			include: ["packages/*/src/**", "apps/*/src/**"],
+			// Only `.ts` sources (this also covers `*.svelte.ts` rune modules);
+			// keeps `.svelte`/`.html`/`.css` out of the v8 parser.
+			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
 			exclude: [
 				"**/*.d.ts",
 				"**/index.ts",
 				"**/*.test.ts",
 				"**/__tests__/**",
 				"**/types.ts",
-				"apps/web/src/**",
+				// Frontend: gate the logic modules + utils, but exclude route
+				// loaders and server-only modules (`$env`/SSR SDK) that need a
+				// SvelteKit harness to exercise. (`.svelte` components are already
+				// outside the `*.ts` include above.)
+				"apps/web/src/routes/**",
+				"apps/web/src/lib/server/**",
 				"**/storage/interface.ts",
 			],
 			thresholds: {

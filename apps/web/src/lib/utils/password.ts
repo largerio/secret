@@ -27,11 +27,15 @@ export function getPasswordStrength(password: string): PasswordStrength {
 	if (/[^\w\s]/.test(password)) score++;
 
 	const idx = Math.min(score - 1, 4);
-	return {
-		score,
-		labelKey: idx >= 0 ? (STRENGTH_KEYS[idx] ?? null) : null,
-		color: idx >= 0 ? (STRENGTH_COLORS[idx] ?? "#ef4444") : "#ef4444",
-	};
+	if (idx < 0) return { score, labelKey: null, color: "#ef4444" };
+
+	// idx ∈ [0, 4] here and both arrays have 5 entries, so the `??` fallbacks
+	// below are unreachable — they exist only for noUncheckedIndexedAccess.
+	/* v8 ignore next */
+	const labelKey = STRENGTH_KEYS[idx] ?? null;
+	/* v8 ignore next */
+	const color = STRENGTH_COLORS[idx] ?? "#ef4444";
+	return { score, labelKey, color };
 }
 
 // Ambiguous characters (0/O, 1/l/I) are excluded so generated passwords
@@ -43,8 +47,10 @@ export function generatePassword(length = 20): string {
 	const values = new Uint32Array(length);
 	crypto.getRandomValues(values);
 	let password = "";
-	for (let i = 0; i < length; i++) {
-		password += PASSWORD_CHARS[(values[i] ?? 0) % PASSWORD_CHARS.length];
+	// Iterating the typed array yields `number` (not `number | undefined`), so no
+	// index fallback is needed.
+	for (const value of values) {
+		password += PASSWORD_CHARS[value % PASSWORD_CHARS.length];
 	}
 	return password;
 }

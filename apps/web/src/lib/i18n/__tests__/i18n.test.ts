@@ -1,13 +1,19 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
 	detectLocale,
 	formatDateTime,
 	getLocale,
+	type Locale,
 	type MessageKey,
 	parseAcceptLanguage,
 	setLocale,
 	t,
 } from "../index.svelte.js";
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+	setLocale("en");
+});
 
 describe("parseAcceptLanguage", () => {
 	it("picks the first supported language", () => {
@@ -46,6 +52,11 @@ describe("locale state and translation", () => {
 		expect(t("totally_made_up_key" as MessageKey)).toBe("totally_made_up_key");
 	});
 
+	it("falls back to the English message when the active locale has no map", () => {
+		setLocale("xx" as Locale);
+		expect(t("chunk_progress", { current: 1, total: 2 })).toBe("Chunk 1 of 2");
+	});
+
 	it("returns the raw message when no params are supplied", () => {
 		const value = t("chunk_progress");
 		expect(value).toContain("{current}");
@@ -57,6 +68,21 @@ describe("detectLocale", () => {
 	it("returns a supported locale based on navigator.language", () => {
 		// jsdom reports navigator.language as "en-US".
 		expect(detectLocale()).toBe("en");
+	});
+
+	it("returns English when navigator is unavailable (SSR)", () => {
+		vi.stubGlobal("navigator", undefined);
+		expect(detectLocale()).toBe("en");
+	});
+
+	it("returns English when navigator.language is unsupported", () => {
+		vi.stubGlobal("navigator", { language: "xx-XX" });
+		expect(detectLocale()).toBe("en");
+	});
+
+	it("maps a supported navigator.language to its locale", () => {
+		vi.stubGlobal("navigator", { language: "fr-FR" });
+		expect(detectLocale()).toBe("fr");
 	});
 });
 

@@ -1,9 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMode, initTheme, setMode, toggleMode } from "../theme.svelte.js";
 
 describe("theme store", () => {
 	beforeEach(() => {
 		delete document.documentElement.dataset["mode"];
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
 	it("defaults to dark mode", () => {
@@ -40,5 +44,19 @@ describe("theme store", () => {
 		document.documentElement.dataset["mode"] = "dark";
 		initTheme();
 		expect(getMode()).toBe("dark");
+	});
+
+	it("setMode skips DOM side effects when document is undefined (SSR)", () => {
+		setMode("dark");
+		vi.stubGlobal("document", undefined);
+		expect(() => setMode("light")).not.toThrow();
+		expect(getMode()).toBe("light");
+	});
+
+	it("initTheme leaves the mode untouched when no value is given under SSR", () => {
+		initTheme("light");
+		vi.stubGlobal("document", undefined);
+		initTheme();
+		expect(getMode()).toBe("light");
 	});
 });
