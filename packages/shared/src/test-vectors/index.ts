@@ -36,9 +36,14 @@ export interface PipelineVector {
 		readonly files?: ReadonlyArray<PipelineFileVector>;
 	};
 	readonly payloadMsgpack: string;
+	/** The XChaCha20 key the ciphertext was sealed with (the derived key when password-protected). */
 	readonly key: string;
 	readonly nonce: string;
 	readonly ciphertext: string;
+	/** Present for password-protected notes: `key` must equal Argon2id(password, salt, baseKey). */
+	readonly password?: string;
+	readonly salt?: string;
+	readonly baseKey?: string;
 }
 
 export interface EncodingVector {

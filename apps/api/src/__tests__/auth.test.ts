@@ -92,6 +92,18 @@ describe("createWriteAuth", () => {
 		expect(json.error).toBe("Unauthorized");
 	});
 
+	it("accepts an API key with a lowercase bearer scheme", async () => {
+		const app = new Hono();
+		app.use("*", createWriteAuth(["my-key"]));
+		app.post("/test", (c) => c.json({ ok: true }));
+
+		const res = await app.request("/test", {
+			method: "POST",
+			headers: { Authorization: "bearer my-key" },
+		});
+		expect(res.status).toBe(200);
+	});
+
 	it("prefers API key over Cap token", async () => {
 		const app = new Hono();
 		app.use("*", createWriteAuth(["my-key"]));
