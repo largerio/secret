@@ -42,6 +42,57 @@ export interface HttpClientConfig {
 	readonly baseUrl: string;
 	readonly fetch: typeof fetch;
 	readonly apiKey?: string;
+	readonly timeoutMs?: number;
+	readonly maxRetries?: number;
+	readonly retryBackoffMs?: (attempt: number) => number;
+}
+
+const defaultBackoffMs = (attempt: number): number => 2 ** attempt * 250;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Wrap `config.fetch` with a per-request timeout and, for idempotent requests
+ * only, retry on transient failures (network errors, request timeouts, and 5xx
+ * responses). Non-idempotent requests (note creation/deletion) are sent exactly
+ * once so a slow-but-successful write is never duplicated. On the final attempt
+ * the Response is returned as-is so callers' existing body-based error handling
+ * still applies.
+ */
+async function requestWithPolicy(
+	config: HttpClientConfig,
+	url: string,
+	init: RequestInit,
+	idempotent: boolean,
+): Promise<Response> {
+	const maxAttempts = idempotent ? Math.max(1, config.maxRetries ?? 1) : 1;
+	const backoff = config.retryBackoffMs ?? defaultBackoffMs;
+
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const controller = config.timeoutMs === undefined ? undefined : new AbortController();
+		const timer =
+			controller === undefined ? undefined : setTimeout(() => controller.abort(), config.timeoutMs);
+		try {
+			const res = await config.fetch(url, {
+				...init,
+				...(controller ? { signal: controller.signal } : {}),
+			});
+			if (res.status >= 500 && attempt < maxAttempts) {
+				await delay(backoff(attempt));
+				continue;
+			}
+			return res;
+		} catch (err) {
+			lastError = err;
+			if (attempt >= maxAttempts) throw err;
+			await delay(backoff(attempt));
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+	/* v8 ignore next — loop always returns or throws before falling through */
+	throw lastError;
 }
 
 function authHeaders(apiKey?: string, capToken?: string): Record<string, string> {
@@ -72,11 +123,16 @@ export async function postJson(
 	body: unknown,
 	capToken?: string,
 ): Promise<CreateNoteResponse> {
-	const res = await config.fetch(`${config.baseUrl}${path}`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey, capToken) },
-		body: JSON.stringify(body),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}${path}`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey, capToken) },
+			body: JSON.stringify(body),
+		},
+		false,
+	);
 
 	return handleResponse<CreateNoteResponse>(res);
 }
@@ -94,14 +150,16 @@ export async function postFormData(
 			authHeaders(config.apiKey, capToken),
 			formData,
 			onProgress,
+			config.timeoutMs,
 		);
 	}
 
-	const res = await config.fetch(`${config.baseUrl}${path}`, {
-		method: "POST",
-		headers: authHeaders(config.apiKey, capToken),
-		body: formData,
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}${path}`,
+		{ method: "POST", headers: authHeaders(config.apiKey, capToken), body: formData },
+		false,
+	);
 
 	return handleResponse<CreateNoteResponse>(res);
 }
@@ -111,9 +169,12 @@ export async function getJson<T>(
 	path: string,
 	onProgress?: (progress: number) => void,
 ): Promise<T> {
-	const res = await config.fetch(`${config.baseUrl}${path}`, {
-		headers: authHeaders(config.apiKey),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}${path}`,
+		{ headers: authHeaders(config.apiKey) },
+		true,
+	);
 
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
@@ -161,9 +222,12 @@ export async function getNoteRaw(
 	id: string,
 	onProgress?: (progress: number) => void,
 ): Promise<RawNoteResponse> {
-	const res = await config.fetch(`${config.baseUrl}/notes/${id}/raw`, {
-		headers: authHeaders(config.apiKey),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}/raw`,
+		{ headers: authHeaders(config.apiKey) },
+		true,
+	);
 
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
@@ -226,9 +290,12 @@ export async function getNote(
 }
 
 export async function checkNote(config: HttpClientConfig, id: string): Promise<NoteInfo> {
-	const res = await config.fetch(`${config.baseUrl}/notes/${id}/exists`, {
-		headers: authHeaders(config.apiKey),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}/exists`,
+		{ headers: authHeaders(config.apiKey) },
+		true,
+	);
 
 	if (res.status === 404) {
 		return {
@@ -255,10 +322,15 @@ export async function deleteNote(
 	deleteToken: string,
 	capToken?: string,
 ): Promise<void> {
-	const res = await config.fetch(`${config.baseUrl}/notes/${id}`, {
-		method: "DELETE",
-		headers: { "X-Delete-Token": deleteToken, ...authHeaders(config.apiKey, capToken) },
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}`,
+		{
+			method: "DELETE",
+			headers: { "X-Delete-Token": deleteToken, ...authHeaders(config.apiKey, capToken) },
+		},
+		false,
+	);
 
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
@@ -278,11 +350,16 @@ export async function initChunkedUpload(
 	metadata: Record<string, unknown>,
 	capToken?: string,
 ): Promise<ChunkedUploadInitResult> {
-	const res = await config.fetch(`${config.baseUrl}/notes/upload/init`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey, capToken) },
-		body: JSON.stringify(metadata),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/upload/init`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey, capToken) },
+			body: JSON.stringify(metadata),
+		},
+		false,
+	);
 	return handleResponse<ChunkedUploadInitResult>(res);
 }
 
@@ -293,7 +370,8 @@ export async function uploadChunk(
 	data: Uint8Array,
 	hash: string,
 ): Promise<void> {
-	const res = await config.fetch(
+	const res = await requestWithPolicy(
+		config,
 		`${config.baseUrl}/notes/upload/${uploadId}/chunks/${String(index)}`,
 		{
 			method: "PUT",
@@ -304,6 +382,7 @@ export async function uploadChunk(
 			},
 			body: data as BodyInit,
 		},
+		true,
 	);
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
@@ -316,10 +395,12 @@ export async function completeChunkedUpload(
 	uploadId: string,
 	capToken?: string,
 ): Promise<CreateNoteResponse> {
-	const res = await config.fetch(`${config.baseUrl}/notes/upload/${uploadId}/complete`, {
-		method: "POST",
-		headers: authHeaders(config.apiKey, capToken),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/upload/${uploadId}/complete`,
+		{ method: "POST", headers: authHeaders(config.apiKey, capToken) },
+		false,
+	);
 	return handleResponse<CreateNoteResponse>(res);
 }
 
@@ -341,9 +422,12 @@ export async function getNoteStream(
 	id: string,
 	onProgress?: (progress: number) => void,
 ): Promise<StreamNoteResponse> {
-	const res = await config.fetch(`${config.baseUrl}/notes/${id}/stream`, {
-		headers: authHeaders(config.apiKey),
-	});
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}/stream`,
+		{ headers: authHeaders(config.apiKey) },
+		true,
+	);
 
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));

@@ -190,4 +190,22 @@ describe("postFormDataXhr", () => {
 
 		await expect(promise).rejects.toThrow("Upload cancelled");
 	});
+
+	test("sets xhr.timeout and rejects on timeout event when timeoutMs is given", async () => {
+		const { xhr, triggerEvent } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+
+		const promise = postFormDataXhr(
+			"https://example.com/upload",
+			{},
+			new FormData(),
+			vi.fn(),
+			5000,
+		);
+		expect((xhr as unknown as { timeout: number }).timeout).toBe(5000);
+		triggerEvent("timeout");
+
+		await expect(promise).rejects.toThrow("Upload timed out");
+	});
 });

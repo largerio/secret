@@ -18,6 +18,15 @@ export interface SecretClientConfig {
 	readonly fetch?: typeof fetch;
 	/** Optional API key for authenticated instances. Sent as Bearer token. */
 	readonly apiKey?: string;
+	/** Per-request timeout in ms. Default: none (no timeout). */
+	readonly timeoutMs?: number;
+	/**
+	 * Max attempts for idempotent requests (reads + chunk PUTs). Default: 1 (no
+	 * retry). Note creation/deletion are never retried (non-idempotent).
+	 */
+	readonly maxRetries?: number;
+	/** Backoff (ms) before retry attempt N (1-based). Default: 2**N * 250. */
+	readonly retryBackoffMs?: (attempt: number) => number;
 }
 
 export interface CreateNoteOptions {

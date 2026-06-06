@@ -52,6 +52,9 @@ export class SecretClient {
 			baseUrl: `${baseUrl}/api/v1`,
 			fetch: config.fetch ?? globalThis.fetch.bind(globalThis),
 			...(config.apiKey ? { apiKey: config.apiKey } : {}),
+			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+			...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+			...(config.retryBackoffMs ? { retryBackoffMs: config.retryBackoffMs } : {}),
 		};
 	}
 
@@ -118,11 +121,26 @@ export class SecretClient {
 			formData.append("metadata", metadata);
 			formData.append("data", blob);
 
+			// Map byte-level upload progress onto the overall bar so it advances
+			// smoothly across the upload phase instead of jumping at boundaries.
+			const uploadSpan = 1 - PROGRESS.standardEncrypted;
+			const onUpload =
+				options.onUploadProgress || options.onProgress
+					? (p: number): void => {
+							options.onUploadProgress?.(p);
+							options.onProgress?.({
+								phase: "uploading",
+								phaseProgress: p,
+								overallProgress: PROGRESS.standardEncrypted + p * uploadSpan,
+							});
+						}
+					: undefined;
+
 			response = await http.postFormData(
 				this.httpConfig,
 				"/notes/upload",
 				formData,
-				options.onUploadProgress,
+				onUpload,
 				options.capToken,
 			);
 		} else {
