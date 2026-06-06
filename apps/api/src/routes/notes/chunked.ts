@@ -116,9 +116,14 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 			return c.json({ error: "Chunk hash mismatch" }, 400);
 		}
 
-		// Server-encrypt the chunk (prepend IV to stored data)
+		// Server-encrypt the chunk (prepend IV to stored data). Bind each chunk to
+		// its note id via AAD so a chunk cannot be relocated to another note.
 		const serverKey = c.get("serverKey");
-		const { encrypted, iv } = serverEncrypt(Buffer.from(rawBody), serverKey);
+		const { encrypted, iv } = serverEncrypt(
+			Buffer.from(rawBody),
+			serverKey,
+			Buffer.from(session.noteId),
+		);
 		const storedData = Buffer.concat([iv, encrypted]);
 
 		const storage = c.get("storage");
@@ -299,7 +304,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 							return;
 						}
 
-						const clientChunk = serverDecrypt(encrypted, iv, serverKey);
+						const clientChunk = serverDecrypt(encrypted, iv, serverKey, Buffer.from(id));
 
 						// Length-prefix framing: 4 bytes big-endian length + chunk data
 						const lengthBuf = Buffer.alloc(4);

@@ -47,6 +47,32 @@ describe("serverEncrypt / serverDecrypt", () => {
 		const tooShort = Buffer.from([1, 2, 3]);
 		expect(() => serverDecrypt(tooShort, iv, serverKey)).toThrow("too short for auth tag");
 	});
+
+	it("roundtrips data bound to matching AAD", () => {
+		const data = new Uint8Array([1, 2, 3, 4, 5]);
+		const aad = Buffer.from("note-id-123");
+		const { encrypted, iv } = serverEncrypt(data, serverKey, aad);
+		const decrypted = serverDecrypt(encrypted, iv, serverKey, aad);
+		expect(new Uint8Array(decrypted)).toEqual(data);
+	});
+
+	it("fails decryption when AAD does not match", () => {
+		const data = new Uint8Array([1, 2, 3]);
+		const { encrypted, iv } = serverEncrypt(data, serverKey, Buffer.from("note-a"));
+		expect(() => serverDecrypt(encrypted, iv, serverKey, Buffer.from("note-b"))).toThrow();
+	});
+
+	it("fails decryption when AAD is missing but was used to encrypt", () => {
+		const data = new Uint8Array([1, 2, 3]);
+		const { encrypted, iv } = serverEncrypt(data, serverKey, Buffer.from("note-a"));
+		expect(() => serverDecrypt(encrypted, iv, serverKey)).toThrow();
+	});
+
+	it("fails decryption when AAD is supplied but was not used to encrypt", () => {
+		const data = new Uint8Array([1, 2, 3]);
+		const { encrypted, iv } = serverEncrypt(data, serverKey);
+		expect(() => serverDecrypt(encrypted, iv, serverKey, Buffer.from("note-a"))).toThrow();
+	});
 });
 
 describe("parseServerKey", () => {

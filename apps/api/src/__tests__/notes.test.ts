@@ -649,6 +649,27 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(json.error).toBe("Failed to decrypt note");
 	});
 
+	it("rejects a stored blob relocated from another note (AAD binding to id)", async () => {
+		// Each note's server-layer blob is bound to its id via AAD. Moving one
+		// note's full crypto material (blob + IV) into another row would decrypt
+		// fine under the shared server key without AAD, but must fail here because
+		// the row's id no longer matches the id the blob was encrypted under.
+		const { id: idA } = await createTestNote();
+		const { id: idB } = await createTestNote();
+
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const noteB = db.select().from(notes).where(eq(notes.id, idB)).get();
+		db.update(notes)
+			.set({ encryptedData: noteB?.encryptedData, serverNonce: noteB?.serverNonce })
+			.where(eq(notes.id, idA))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${idA}`);
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe("Failed to decrypt note");
+	});
+
 	it("returns 404 when the stored file has been removed from disk", async () => {
 		const { id } = await createTestNote({ fileCount: 1 });
 		const { notes: notesTable } = await import("../db/schema.js");
