@@ -21,15 +21,31 @@
 	"license": "MIT",
 	"author": "Larger.io",
 	"type": "module",
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
 		".": "./src/index.ts",
 		"./auth": "./src/auth.ts"
 	},
+	"files": [
+		"dist"
+	],
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"exports": {
+			".": {
+				"types": "./dist/index.d.ts",
+				"import": "./dist/index.js"
+			},
+			"./auth": {
+				"types": "./dist/auth.d.ts",
+				"import": "./dist/auth.js"
+			}
+		}
 	},
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {

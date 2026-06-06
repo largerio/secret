@@ -269,6 +269,25 @@ packages/shared/  Zod schemas, types, constants, crypto test vectors
 messages/         i18n (10 languages)
 ```
 
+> Requires **Node.js 26+** (the code uses Node 26 APIs such as `Error.isError`
+> and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
+> older version.
+
+### Publishing the packages
+
+`@secret/shared`, `@secret/crypto`, and `@secret/sdk-js` are published to npm via
+[changesets](https://github.com/changesets/changesets):
+
+```bash
+pnpm changeset          # describe the change + pick the version bump
+pnpm version-packages   # apply pending changesets (bump versions + changelogs)
+pnpm release            # build, then publish (pnpm rewrites workspace:* + applies
+                        # publishConfig so exports point at the compiled dist/)
+```
+
+In development the packages resolve to their TypeScript sources (`exports` →
+`./src`); the `dist/`-pointing entry points only take effect when packed/published.
+
 ## Security
 
 | Layer | Details |
