@@ -91,7 +91,11 @@ Monorepo with pnpm workspaces:
 
 ## Environment
 
-- Node.js >= 26
+- **Node.js >= 26 is required** — run all commands (`pnpm test`, `pnpm build`, etc.)
+  with Node 26+. The codebase relies on Node 26 APIs such as `Error.isError` and
+  the built-in `node:sqlite` (`DatabaseSync`); older runtimes (e.g. Node 22) fail
+  at runtime with errors like `Error.isError is not a function`. If the active
+  shell defaults to an older Node, switch first (e.g. `nvm use 26`).
 - pnpm (workspace monorepo)
 - ES modules throughout
 - SQLite data in `./data/` (gitignored)

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import { SECRETSTREAM_ABYTES, serverDecrypt, serverEncrypt } from "@secret/crypto";
+import { SECRETSTREAM_ABYTES } from "@secret/crypto/client";
+import { serverDecrypt, serverEncrypt } from "@secret/crypto/server";
 import {
 	chunkedUploadInitSchema,
 	isValidNoteId,

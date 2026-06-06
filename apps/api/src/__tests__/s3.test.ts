@@ -3,6 +3,7 @@ import { StorageNotFoundError } from "../storage/errors.js";
 import { S3Storage } from "../storage/s3.js";
 
 const mockSend = vi.fn();
+const mockDestroy = vi.fn();
 const mockDone = vi.fn().mockResolvedValue({});
 
 vi.mock("@aws-sdk/client-s3", () => {
@@ -16,6 +17,7 @@ vi.mock("@aws-sdk/client-s3", () => {
 	return {
 		S3Client: class MockS3Client {
 			send = mockSend;
+			destroy = mockDestroy;
 		},
 		PutObjectCommand: class MockPutObjectCommand {
 			constructor(public params: unknown) {}
@@ -275,6 +277,13 @@ describe("S3Storage", () => {
 				"Invalid note ID for storage key",
 			);
 			await expect(storage.deleteChunks("note123", -1)).rejects.toThrow("Invalid chunk count");
+		});
+	});
+
+	describe("close", () => {
+		it("destroys the underlying S3 client", async () => {
+			await storage.close();
+			expect(mockDestroy).toHaveBeenCalledTimes(1);
 		});
 	});
 });

@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { parseServerKey } from "@secret/crypto";
+import { parseServerKey } from "@secret/crypto/server";
 import { createApp } from "./app.js";
 import { startCleanupJob } from "./cleanup.js";
 import { ConfigError, parseConfig } from "./config.js";
@@ -36,7 +36,8 @@ function shutdown(): void {
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}
-	server.close(() => {
+	server.close(async () => {
+		await storage.close?.();
 		sqlite.close();
 		process.exit(0);
 	});

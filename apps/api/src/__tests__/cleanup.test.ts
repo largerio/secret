@@ -153,6 +153,86 @@ describe("startCleanupJob", () => {
 		consoleSpy.mockRestore();
 	});
 
+	it("isolates a note whose retry scheduling itself throws", async () => {
+		const filePath = resolve(`${TEST_FILES_PATH}/iso-fail`);
+		writeFileSync(filePath, "data");
+
+		const failingStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn().mockRejectedValue(new Error("disk error")),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
+		};
+
+		insertNote("isofail00001", { fileCount: 1, filePath });
+
+		// Proxy the DB so persisting the retry row throws: deleteOrSchedule then
+		// rejects, exercising safeDelete's per-task isolation (the catch branch).
+		const throwingDb = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop === "insert") {
+					return () => {
+						throw new Error("insert failed");
+					};
+				}
+				const value = Reflect.get(target, prop, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as AppDatabase;
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(throwingDb, failingStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			"[cleanup] Failed to process note isofail00001:",
+			"insert failed",
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it("isolates a note whose retry scheduling throws a non-Error", async () => {
+		const filePath = resolve(`${TEST_FILES_PATH}/iso-fail-str`);
+		writeFileSync(filePath, "data");
+
+		const failingStorage: StorageBackend = {
+			save: vi.fn(),
+			read: vi.fn(),
+			delete: vi.fn().mockRejectedValue(new Error("disk error")),
+			saveChunk: vi.fn(),
+			readChunk: vi.fn(),
+			deleteChunks: vi.fn(),
+		};
+
+		insertNote("isofailstr01", { fileCount: 1, filePath });
+
+		const throwingDb = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop === "insert") {
+					return () => {
+						throw "insert string failure";
+					};
+				}
+				const value = Reflect.get(target, prop, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as AppDatabase;
+
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const timer = startCleanupJob(throwingDb, failingStorage, 100);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		clearInterval(timer);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			"[cleanup] Failed to process note isofailstr01:",
+			"insert string failure",
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it("catches and logs errors when database transaction fails", async () => {
 		const failingDb = {
 			transaction: () => {
