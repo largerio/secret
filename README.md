@@ -273,20 +273,21 @@ messages/         i18n (10 languages)
 > and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
 > older version.
 
-### Publishing the packages
+### Publishing the SDK
 
-`@largerio/secret-shared`, `@largerio/secret-crypto`, and `@largerio/secret-sdk` are published to npm via
-[changesets](https://github.com/changesets/changesets):
+Only **`@largerio/secret-sdk`** is published to npm. Its build (tsup) bundles the
+internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages, which
+stay private — so consumers install a single self-contained package. Releases go
+through [changesets](https://github.com/changesets/changesets):
 
 ```bash
 pnpm changeset          # describe the change + pick the version bump
-pnpm version-packages   # apply pending changesets (bump versions + changelogs)
-pnpm release            # build, then publish (pnpm rewrites workspace:* + applies
-                        # publishConfig so exports point at the compiled dist/)
+pnpm version-packages   # apply pending changesets (bump version + changelog)
+pnpm release            # build (bundles internals), then publish to npm
 ```
 
-In development the packages resolve to their TypeScript sources (`exports` →
-`./src`); the `dist/`-pointing entry points only take effect when packed/published.
+In development everything resolves to TypeScript sources (`exports` → `./src`);
+the bundled `dist/` is produced only when the SDK is packed/published.
 
 ## Security
 

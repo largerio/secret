@@ -44,12 +44,16 @@ Monorepo with pnpm workspaces:
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
   - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
 
-- **`packages/sdk-js`** — JS/TS SDK for Secret instances
+- **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; the **only published npm package**
   - `SecretClient` class: create, read, check, delete notes
   - Handles full encrypt→send and receive→decrypt flows
   - Progress callbacks for uploads (XHR in browser) and downloads (streaming fetch)
   - Optional API key support (`Authorization: Bearer <key>`)
   - Re-exports types from `@largerio/secret-shared`
+  - Built with **tsup** (`tsup.config.ts`): bundles `crypto` + `shared` into a single
+    self-contained package; `libsodium-wrappers-sumo` + `@msgpack/msgpack` stay external.
+    `crypto` and `shared` are `private` (never published), but still compiled to `dist`
+    via `tsc` because the API runtime imports them.
 
 - **`packages/crypto`** — Encryption library
   - Client: XChaCha20-Poly1305 via libsodium-wrappers-sumo
