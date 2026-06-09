@@ -1,9 +1,9 @@
 # Changesets
 
 This folder is managed by [changesets](https://github.com/changesets/changesets).
-It versions and publishes the three public packages — `@secret/shared`,
-`@secret/crypto`, and `@secret/sdk-js`. The private apps (`@secret/api`,
-`@secret/web`, `@secret/e2e`) are ignored.
+It versions and publishes the three public packages — `@largerio/shared`,
+`@largerio/crypto`, and `@largerio/sdk-js`. The private apps (`@largerio/api`,
+`@largerio/web`, `@largerio/e2e`) are ignored.
 
 Workflow:
 

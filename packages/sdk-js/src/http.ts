@@ -1,4 +1,4 @@
-import type { CreateNoteResponse, ReadNoteResponse } from "@secret/shared";
+import type { CreateNoteResponse, ReadNoteResponse } from "@largerio/shared";
 import { SecretApiError } from "./errors.js";
 import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";

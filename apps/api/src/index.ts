@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { parseServerKey } from "@secret/crypto/server";
+import { parseServerKey } from "@largerio/crypto/server";
 import { createApp } from "./app.js";
 import { startCleanupJob } from "./cleanup.js";
 import { ConfigError, parseConfig } from "./config.js";

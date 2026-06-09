@@ -1,5 +1,5 @@
 <script lang="ts">
-import { EXPIRATION_OPTIONS } from "@secret/shared";
+import { EXPIRATION_OPTIONS } from "@largerio/shared";
 import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
 import { generatePassword, getPasswordStrength } from "$lib/utils/password";

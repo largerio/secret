@@ -1,5 +1,5 @@
 {
-	"name": "@secret/shared",
+	"name": "@largerio/shared",
 	"version": "1.0.0",
 	"description": "Shared types, Zod schemas, constants, and cross-language crypto test vectors for Secret, the zero-knowledge encrypted note and file sharing app.",
 	"keywords": [

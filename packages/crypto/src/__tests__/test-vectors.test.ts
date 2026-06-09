@@ -1,4 +1,4 @@
-import { testVectors } from "@secret/shared";
+import { testVectors } from "@largerio/shared";
 import { describe, expect, test } from "vitest";
 import { decryptPayload, decryptRaw } from "../decrypt.js";
 import {

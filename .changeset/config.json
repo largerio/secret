@@ -7,5 +7,5 @@
 	"access": "public",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"ignore": ["@secret/api", "@secret/web", "@secret/e2e"]
+	"ignore": ["@largerio/api", "@largerio/web", "@largerio/e2e"]
 }

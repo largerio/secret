@@ -1,10 +1,10 @@
-import type { ServerConfig } from "@secret/shared";
+import type { ServerConfig } from "@largerio/shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
-} from "@secret/shared";
+} from "@largerio/shared";
 
 const DEFAULT_CONFIG: ServerConfig = {
 	appName: "Secret",

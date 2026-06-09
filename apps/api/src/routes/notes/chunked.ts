@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import { SECRETSTREAM_ABYTES } from "@secret/crypto/client";
-import { serverDecrypt, serverEncrypt } from "@secret/crypto/server";
+import { SECRETSTREAM_ABYTES } from "@largerio/crypto/client";
+import { serverDecrypt, serverEncrypt } from "@largerio/crypto/server";
 import {
 	chunkedUploadInitSchema,
 	isValidNoteId,
@@ -9,7 +9,7 @@ import {
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 	uploadSessionMetadataSchema,
-} from "@secret/shared";
+} from "@largerio/shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { notes, uploadChunks, uploads } from "../../db/schema.js";

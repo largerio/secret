@@ -1,5 +1,5 @@
+import type { NotePayload } from "@largerio/shared";
 import { decode } from "@msgpack/msgpack";
-import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 
 const VALID_CONTENT_MODES = new Set(["text", "markdown", "secret"]);

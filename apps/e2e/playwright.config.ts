@@ -37,14 +37,14 @@ export default defineConfig({
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	webServer: [
 		{
-			command: `mkdir -p "${path.join(TMP_DIR, "files")}" && pnpm --filter @secret/api dev`,
+			command: `mkdir -p "${path.join(TMP_DIR, "files")}" && pnpm --filter @largerio/api dev`,
 			port: API_PORT,
 			env: apiEnv,
 			reuseExistingServer: !process.env.CI,
 			timeout: 120_000,
 		},
 		{
-			command: "pnpm --filter @secret/web dev",
+			command: "pnpm --filter @largerio/web dev",
 			port: WEB_PORT,
 			reuseExistingServer: !process.env.CI,
 			timeout: 120_000,

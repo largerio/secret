@@ -1,5 +1,5 @@
 ---
-"@secret/sdk-js": minor
+"@largerio/sdk-js": minor
 ---
 
 Add per-request timeout and automatic retries to `SecretClient`. New

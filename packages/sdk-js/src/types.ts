@@ -1,4 +1,4 @@
-import type { ContentMode } from "@secret/shared";
+import type { ContentMode } from "@largerio/shared";
 
 export type UploadPhase = "encrypting" | "uploading" | "processing";
 export type DownloadPhase = "downloading" | "decrypting";
@@ -73,7 +73,7 @@ export interface ReadNoteOptions {
 }
 
 export interface ReadNoteResult {
-	readonly payload: import("@secret/shared").NotePayload;
+	readonly payload: import("@largerio/shared").NotePayload;
 	readonly createdAt: string;
 	readonly expiresAt: string;
 	readonly fileCount: number;

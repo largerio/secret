@@ -1,5 +1,5 @@
 {
-	"name": "@secret/crypto",
+	"name": "@largerio/crypto",
 	"version": "1.0.0",
 	"description": "Encryption library that powers Secret — XChaCha20-Poly1305 on the client and AES-256-GCM on the server, with Argon2id key derivation and MessagePack serialization.",
 	"keywords": [
@@ -57,7 +57,7 @@
 	},
 	"dependencies": {
 		"@msgpack/msgpack": "^3.1.3",
-		"@secret/shared": "workspace:*",
+		"@largerio/shared": "workspace:*",
 		"libsodium-wrappers-sumo": "^0.8.4"
 	},
 	"devDependencies": {

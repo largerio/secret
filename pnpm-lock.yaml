@@ -49,15 +49,15 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.4.0
         version: 1.4.0(hono@4.12.23)(zod@4.4.3)
+      '@largerio/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@largerio/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@scalar/hono-api-reference':
         specifier: ^0.10.20
         version: 0.10.20(hono@4.12.23)
-      '@secret/crypto':
-        specifier: workspace:*
-        version: link:../../packages/crypto
-      '@secret/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       drizzle-orm:
         specifier: 1.0.0-rc.4-273829f
         version: 1.0.0-rc.4-273829f(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.4.3)
@@ -95,10 +95,10 @@ importers:
       '@cap.js/widget':
         specifier: ^0.1.54
         version: 0.1.54
-      '@secret/sdk-js':
+      '@largerio/sdk-js':
         specifier: workspace:*
         version: link:../../packages/sdk-js
-      '@secret/shared':
+      '@largerio/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       isomorphic-dompurify:
@@ -153,12 +153,12 @@ importers:
 
   packages/crypto:
     dependencies:
+      '@largerio/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@msgpack/msgpack':
         specifier: ^3.1.3
         version: 3.1.3
-      '@secret/shared':
-        specifier: workspace:*
-        version: link:../shared
       libsodium-wrappers-sumo:
         specifier: ^0.8.4
         version: 0.8.4
@@ -169,10 +169,10 @@ importers:
 
   packages/sdk-js:
     dependencies:
-      '@secret/crypto':
+      '@largerio/crypto':
         specifier: workspace:*
         version: link:../crypto
-      '@secret/shared':
+      '@largerio/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:

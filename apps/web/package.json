@@ -1,8 +1,8 @@
 {
-	"name": "@secret/web",
+	"name": "@largerio/web",
 	"version": "1.0.0",
 	"private": true,
-	"description": "SvelteKit frontend for Secret — encrypts notes and files in the browser (XChaCha20-Poly1305) before they ever reach the server. Consumes the @secret/sdk-js client.",
+	"description": "SvelteKit frontend for Secret — encrypts notes and files in the browser (XChaCha20-Poly1305) before they ever reach the server. Consumes the @largerio/sdk-js client.",
 	"homepage": "https://github.com/largerio/secret#readme",
 	"bugs": "https://github.com/largerio/secret/issues",
 	"repository": {
@@ -22,8 +22,8 @@
 	"dependencies": {
 		"@cap.js/wasm": "^0.0.7",
 		"@cap.js/widget": "^0.1.54",
-		"@secret/sdk-js": "workspace:*",
-		"@secret/shared": "workspace:*",
+		"@largerio/sdk-js": "workspace:*",
+		"@largerio/shared": "workspace:*",
 		"isomorphic-dompurify": "^3.15.0",
 		"marked": "^18.0.5",
 		"qrcode": "^1.5.4"

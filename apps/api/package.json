@@ -1,5 +1,5 @@
 {
-	"name": "@secret/api",
+	"name": "@largerio/api",
 	"version": "1.0.0",
 	"private": true,
 	"description": "Hono API server for Secret — stores doubly encrypted notes and files (AES-256-GCM server layer), with OpenAPI docs, rate limiting, and pluggable local/S3 storage.",
@@ -26,8 +26,8 @@
 		"@hono/node-server": "^2.0.4",
 		"@hono/zod-openapi": "^1.4.0",
 		"@scalar/hono-api-reference": "^0.10.20",
-		"@secret/crypto": "workspace:*",
-		"@secret/shared": "workspace:*",
+		"@largerio/crypto": "workspace:*",
+		"@largerio/shared": "workspace:*",
 		"drizzle-orm": "1.0.0-rc.4-273829f",
 		"hono": "^4.12.23",
 		"nanoid": "^5.1.11",

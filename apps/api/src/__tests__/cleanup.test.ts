@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { serverEncrypt } from "@secret/crypto";
+import { serverEncrypt } from "@largerio/crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startCleanupJob } from "../cleanup.js";
 import type { AppDatabase } from "../db/index.js";

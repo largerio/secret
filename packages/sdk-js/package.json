@@ -1,5 +1,5 @@
 {
-	"name": "@secret/sdk-js",
+	"name": "@largerio/sdk-js",
 	"version": "1.0.0",
 	"description": "JavaScript/TypeScript SDK for Secret — create, read, and delete zero-knowledge, end-to-end encrypted notes and files on any Secret instance.",
 	"keywords": [
@@ -46,8 +46,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@secret/crypto": "workspace:*",
-		"@secret/shared": "workspace:*"
+		"@largerio/crypto": "workspace:*",
+		"@largerio/shared": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^25.9.1"

@@ -1,5 +1,5 @@
+import type { NotePayload } from "@largerio/shared";
 import { encode } from "@msgpack/msgpack";
-import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it } from "vitest";
 import {

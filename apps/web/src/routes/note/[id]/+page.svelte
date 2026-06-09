@@ -1,6 +1,6 @@
 <script lang="ts">
-import { SecretDecryptionError } from "@secret/sdk-js";
-import type { NotePayload } from "@secret/shared";
+import { SecretDecryptionError } from "@largerio/sdk-js";
+import type { NotePayload } from "@largerio/shared";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";

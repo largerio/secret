@@ -8,13 +8,13 @@ describe("getClient", () => {
 	});
 
 	afterEach(() => {
-		vi.doUnmock("@secret/sdk-js");
+		vi.doUnmock("@largerio/sdk-js");
 	});
 
 	it("creates the client once and caches it across calls", async () => {
 		const fakeClient = { tag: "client" };
 		const create = vi.fn().mockResolvedValue(fakeClient);
-		vi.doMock("@secret/sdk-js", () => ({ SecretClient: { create } }));
+		vi.doMock("@largerio/sdk-js", () => ({ SecretClient: { create } }));
 
 		const { getClient } = await import("../client.js");
 		const first = await getClient();
@@ -31,7 +31,7 @@ describe("getClient", () => {
 			.fn()
 			.mockRejectedValueOnce(new Error("wasm init failed"))
 			.mockResolvedValueOnce(fakeClient);
-		vi.doMock("@secret/sdk-js", () => ({ SecretClient: { create } }));
+		vi.doMock("@largerio/sdk-js", () => ({ SecretClient: { create } }));
 
 		const { getClient } = await import("../client.js");
 
