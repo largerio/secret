@@ -1,5 +1,5 @@
-import { serverDecrypt, serverEncrypt } from "@largerio/crypto/server";
-import { NOTE_ID_LENGTH } from "@largerio/shared";
+import { serverDecrypt, serverEncrypt } from "@largerio/secret-crypto/server";
+import { NOTE_ID_LENGTH } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";

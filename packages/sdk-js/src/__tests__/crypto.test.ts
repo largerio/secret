@@ -1,5 +1,5 @@
-import type { NotePayload } from "@largerio/shared";
-import { testVectors } from "@largerio/shared";
+import type { NotePayload } from "@largerio/secret-shared";
+import { testVectors } from "@largerio/secret-shared";
 import { describe, expect, test } from "vitest";
 import {
 	decryptNote,
@@ -256,11 +256,11 @@ describe("SDK crypto", () => {
 		await ensureInit();
 
 		for (const v of testVectors.vectors.pipeline) {
-			const { fromBase64 } = await import("@largerio/crypto/client");
+			const { fromBase64 } = await import("@largerio/secret-crypto/client");
 			const nonce = fromBase64(v.nonce);
 			const key = fromBase64(v.key);
 
-			const { decryptPayload } = await import("@largerio/crypto/client");
+			const { decryptPayload } = await import("@largerio/secret-crypto/client");
 			const payload = decryptPayload(fromBase64(v.ciphertext), nonce, key);
 			expect(payload.text).toBe(v.payload.text);
 		}

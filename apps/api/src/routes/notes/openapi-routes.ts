@@ -7,7 +7,7 @@ import {
 	noteIdSchema,
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
-} from "@largerio/shared";
+} from "@largerio/secret-shared";
 
 // Reuse the shared note ID schema so the format is defined in one place.
 const noteIdParam = noteIdSchema.openapi({

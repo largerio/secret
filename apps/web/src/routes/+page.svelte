@@ -1,7 +1,7 @@
 <script lang="ts">
-import type { ContentMode } from "@largerio/shared";
-import { MAX_TEXT_SIZE } from "@largerio/shared";
-import type { ProgressInfo, UploadPhase } from "@largerio/sdk-js";
+import type { ContentMode } from "@largerio/secret-shared";
+import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
+import type { ProgressInfo, UploadPhase } from "@largerio/secret-sdk";
 import EncryptionBadge from "$lib/components/EncryptionBadge.svelte";
 import FileDropZone from "$lib/components/FileDropZone.svelte";
 import Icon from "$lib/components/Icon.svelte";

@@ -49,10 +49,10 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.4.0
         version: 1.4.0(hono@4.12.23)(zod@4.4.3)
-      '@largerio/crypto':
+      '@largerio/secret-crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
-      '@largerio/shared':
+      '@largerio/secret-shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@scalar/hono-api-reference':
@@ -95,10 +95,10 @@ importers:
       '@cap.js/widget':
         specifier: ^0.1.54
         version: 0.1.54
-      '@largerio/sdk-js':
+      '@largerio/secret-sdk':
         specifier: workspace:*
         version: link:../../packages/sdk-js
-      '@largerio/shared':
+      '@largerio/secret-shared':
         specifier: workspace:*
         version: link:../../packages/shared
       isomorphic-dompurify:
@@ -153,7 +153,7 @@ importers:
 
   packages/crypto:
     dependencies:
-      '@largerio/shared':
+      '@largerio/secret-shared':
         specifier: workspace:*
         version: link:../shared
       '@msgpack/msgpack':
@@ -169,10 +169,10 @@ importers:
 
   packages/sdk-js:
     dependencies:
-      '@largerio/crypto':
+      '@largerio/secret-crypto':
         specifier: workspace:*
         version: link:../crypto
-      '@largerio/shared':
+      '@largerio/secret-shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:

@@ -26,9 +26,9 @@ COPY packages/ packages/
 COPY apps/ apps/
 COPY messages/ messages/
 
-RUN pnpm --filter @largerio/shared build
-RUN pnpm --filter @largerio/crypto build
-RUN pnpm --filter @largerio/sdk-js build
+RUN pnpm --filter @largerio/secret-shared build
+RUN pnpm --filter @largerio/secret-crypto build
+RUN pnpm --filter @largerio/secret-sdk build
 RUN pnpm --filter @largerio/web build
 RUN pnpm --filter @largerio/api build
 

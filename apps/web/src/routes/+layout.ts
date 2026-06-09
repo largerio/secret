@@ -1,4 +1,4 @@
-import type { ServerConfig } from "@largerio/shared";
+import type { ServerConfig } from "@largerio/secret-shared";
 import { setConfig } from "$lib/config.svelte";
 import type { Locale } from "$lib/i18n/index.svelte";
 import { setLocale } from "$lib/i18n/index.svelte";

@@ -125,11 +125,11 @@ For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, s
 Use the JavaScript/TypeScript SDK to interact with any Secret instance programmatically:
 
 ```bash
-npm install @largerio/sdk-js
+npm install @largerio/secret-sdk
 ```
 
 ```typescript
-import { SecretClient } from "@largerio/sdk-js";
+import { SecretClient } from "@largerio/secret-sdk";
 
 const client = await SecretClient.create({
   baseUrl: "https://secret.example.com",
@@ -275,7 +275,7 @@ messages/         i18n (10 languages)
 
 ### Publishing the packages
 
-`@largerio/shared`, `@largerio/crypto`, and `@largerio/sdk-js` are published to npm via
+`@largerio/secret-shared`, `@largerio/secret-crypto`, and `@largerio/secret-sdk` are published to npm via
 [changesets](https://github.com/changesets/changesets):
 
 ```bash

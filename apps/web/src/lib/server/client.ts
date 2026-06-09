@@ -1,4 +1,4 @@
-import { SecretClient } from "@largerio/sdk-js";
+import { SecretClient } from "@largerio/secret-sdk";
 import { API_TARGET } from "./env";
 
 let clientPromise: Promise<SecretClient> | undefined;

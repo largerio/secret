@@ -1,5 +1,5 @@
-import type { NotePayload } from "@largerio/shared";
-import { testVectors } from "@largerio/shared";
+import type { NotePayload } from "@largerio/secret-shared";
+import { testVectors } from "@largerio/secret-shared";
 import { beforeAll, describe, expect, it } from "vitest";
 // Import exclusively through the public barrel entrypoint that the SDK and web
 // app consume, so this test exercises the `./client` export surface directly.

@@ -5,7 +5,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { NotePayload } from "@largerio/shared";
+import type { NotePayload } from "@largerio/secret-shared";
 import { encode } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
 import { expect, test } from "vitest";

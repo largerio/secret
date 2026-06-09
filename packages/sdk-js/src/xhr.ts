@@ -1,4 +1,4 @@
-import type { CreateNoteResponse } from "@largerio/shared";
+import type { CreateNoteResponse } from "@largerio/secret-shared";
 import { SecretApiError } from "./errors.js";
 
 export function postFormDataXhr(

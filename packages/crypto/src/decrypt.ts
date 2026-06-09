@@ -1,4 +1,4 @@
-import type { NotePayload } from "@largerio/shared";
+import type { NotePayload } from "@largerio/secret-shared";
 import { decode } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
 

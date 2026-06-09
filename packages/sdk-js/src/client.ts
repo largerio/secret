@@ -1,5 +1,5 @@
-import type { NotePayload } from "@largerio/shared";
-import { DEFAULT_CHUNK_SIZE, DEFAULT_EXPIRY_SECONDS } from "@largerio/shared";
+import type { NotePayload } from "@largerio/secret-shared";
+import { DEFAULT_CHUNK_SIZE, DEFAULT_EXPIRY_SECONDS } from "@largerio/secret-shared";
 import {
 	decryptNote,
 	decryptNoteBytes,

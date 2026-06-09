@@ -1397,7 +1397,7 @@ describe("Chunked upload flow", () => {
 		// Look up the upload session's noteId and pre-insert a note with that ID
 		const { uploads: uploadsTable, notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		const { serverEncrypt } = await import("@largerio/crypto");
+		const { serverEncrypt } = await import("@largerio/secret-crypto");
 		const session = db
 			.select()
 			.from(uploadsTable)
