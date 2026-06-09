@@ -7,6 +7,8 @@ export default defineConfig({
 	sourcemap: true,
 	clean: true,
 	treeshake: true,
+	// Published baseline for the bundle (broad Node/browser support). The repo
+	// otherwise targets ES2025; keep bundled-in code within es2022 syntax.
 	target: "es2022",
 	// Inline the internal workspace packages (crypto + shared) so consumers
 	// install a single self-contained package. zod (only used by shared's

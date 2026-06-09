@@ -1182,7 +1182,8 @@ describe("request policy (timeout + retry)", () => {
 		const err = await catchApiError(getJson(config, "/notes/x"));
 		expect(err.status).toBe(500);
 		expect(err.message).toBe("still down");
-		expect(fetchMock).toHaveBeenCalledTimes(2);
+		// maxRetries: 2 → 3 attempts total (initial + 2 retries).
+		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 
 	test("retries idempotent chunk PUT on 5xx", async () => {
@@ -1225,7 +1226,10 @@ describe("request policy (timeout + retry)", () => {
 		);
 		const config = policyConfig(fetchMock, { timeoutMs: 10 });
 
-		await expect(getJson(config, "/notes/x")).rejects.toThrow("aborted");
+		// A timeout surfaces as a typed SecretApiError, not the raw AbortError.
+		const err = await catchApiError(getJson(config, "/notes/x"));
+		expect(err).toBeInstanceOf(SecretApiError);
+		expect(err.message).toBe("Request timed out");
 	});
 
 	test("uses the default backoff when none is configured", async () => {

@@ -65,14 +65,22 @@ async function requestWithPolicy(
 	init: RequestInit,
 	idempotent: boolean,
 ): Promise<Response> {
-	const maxAttempts = idempotent ? Math.max(1, config.maxRetries ?? 1) : 1;
+	// `maxRetries` is a retry count, not a total attempt count: N retries = N+1
+	// attempts. Default 0 (no retry). Non-idempotent requests run exactly once.
+	const maxAttempts = idempotent ? 1 + Math.max(0, config.maxRetries ?? 0) : 1;
 	const backoff = config.retryBackoffMs ?? defaultBackoffMs;
 
 	let lastError: unknown;
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		const controller = config.timeoutMs === undefined ? undefined : new AbortController();
+		let timedOut = false;
 		const timer =
-			controller === undefined ? undefined : setTimeout(() => controller.abort(), config.timeoutMs);
+			controller === undefined
+				? undefined
+				: setTimeout(() => {
+						timedOut = true;
+						controller.abort();
+					}, config.timeoutMs);
 		try {
 			const res = await config.fetch(url, {
 				...init,
@@ -84,8 +92,11 @@ async function requestWithPolicy(
 			}
 			return res;
 		} catch (err) {
-			lastError = err;
-			if (attempt >= maxAttempts) throw err;
+			// Surface our own timeouts as a typed SecretApiError so callers can
+			// rely on the same error contract as every other failure path (a raw
+			// AbortError DOMException would slip past `instanceof SecretApiError`).
+			lastError = timedOut ? new SecretApiError("Request timed out", 0) : err;
+			if (attempt >= maxAttempts) throw lastError;
 			await delay(backoff(attempt));
 		} finally {
 			if (timer !== undefined) clearTimeout(timer);

@@ -21,8 +21,9 @@ export interface SecretClientConfig {
 	/** Per-request timeout in ms. Default: none (no timeout). */
 	readonly timeoutMs?: number;
 	/**
-	 * Max attempts for idempotent requests (reads + chunk PUTs). Default: 1 (no
-	 * retry). Note creation/deletion are never retried (non-idempotent).
+	 * Number of retries for idempotent requests (reads + chunk PUTs) on network
+	 * errors, timeouts, and 5xx responses. Default: 0 (no retry). E.g. 2 = up to
+	 * 3 attempts total. Note creation/deletion are never retried (non-idempotent).
 	 */
 	readonly maxRetries?: number;
 	/** Backoff (ms) before retry attempt N (1-based). Default: 2**N * 250. */

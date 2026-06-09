@@ -36,8 +36,15 @@ function shutdown(): void {
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}
+	// Hard fallback: never let a hung close() keep the process alive forever.
+	const forceExit = setTimeout(() => process.exit(1), 10_000);
+	forceExit.unref();
 	server.close(async () => {
-		await storage.close?.();
+		try {
+			await storage.close?.();
+		} catch (err) {
+			console.error("[shutdown] storage close failed:", Error.isError(err) ? err.message : err);
+		}
 		sqlite.close();
 		process.exit(0);
 	});
