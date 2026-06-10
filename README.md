@@ -289,6 +289,12 @@ pnpm release            # build (bundles internals), then publish to npm
 In development everything resolves to TypeScript sources (`exports` → `./src`);
 the bundled `dist/` is produced only when the SDK is packed/published.
 
+CI publishes via **npm trusted publishing (OIDC)** — see
+[`.github/workflows/release.yml`](.github/workflows/release.yml). Merging a
+changeset to `main` opens a "Version Packages" PR; merging that PR publishes the
+new version. No `NPM_TOKEN` secret is used: GitHub authenticates to npm with a
+short-lived OIDC token against the package's configured trusted publisher.
+
 ## Security
 
 | Layer | Details |
