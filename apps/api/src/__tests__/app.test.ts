@@ -110,9 +110,28 @@ describe("createApp — versioned API", () => {
 	it("serves the OpenAPI 3.1 document", async () => {
 		const res = await makeApp().request("/api/v1/openapi.json");
 		expect(res.status).toBe(200);
-		const doc = (await res.json()) as { openapi: string; info: { title: string } };
+		const doc = (await res.json()) as {
+			openapi: string;
+			info: { title: string };
+			paths: Record<string, unknown>;
+		};
 		expect(doc.openapi).toBe("3.1.0");
 		expect(doc.info.title).toBe("Secret API");
+		// Every notes endpoint must be documented, including the binary/multipart
+		// ones whose handlers validate manually.
+		expect(Object.keys(doc.paths)).toEqual(
+			expect.arrayContaining([
+				"/notes",
+				"/notes/upload",
+				"/notes/{id}",
+				"/notes/{id}/exists",
+				"/notes/{id}/raw",
+				"/notes/{id}/stream",
+				"/notes/upload/init",
+				"/notes/upload/{uploadId}/chunks/{index}",
+				"/notes/upload/{uploadId}/complete",
+			]),
+		);
 	});
 
 	it("serves the Scalar docs page", async () => {

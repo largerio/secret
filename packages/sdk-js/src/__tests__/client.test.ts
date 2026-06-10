@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SecretClient } from "../client.js";
-import { SecretApiError, SecretDecryptionError } from "../errors.js";
+import { SecretApiError, SecretDecryptionError, SecretValidationError } from "../errors.js";
 
 // The single, cause-hiding message every decryption failure must surface.
 const UNIFORM_DECRYPTION_MESSAGE = "Unable to decrypt: wrong password/key or corrupted data";
@@ -214,6 +214,33 @@ describe("SecretClient", () => {
 		expect(() => SecretClient.parseShareUrl("https://example.com/note/abc")).toThrow(
 			"missing key fragment",
 		);
+	});
+
+	test("createNote rejects oversized text before any network call", async () => {
+		const http = await getHttpMocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.createNote({ text: "x".repeat(102_401) })).rejects.toThrow(
+			SecretValidationError,
+		);
+		expect(http.postJson).not.toHaveBeenCalled();
+		expect(http.postFormData).not.toHaveBeenCalled();
+		expect(http.initChunkedUpload).not.toHaveBeenCalled();
+	});
+
+	test("createNote rejects too many files before any network call", async () => {
+		const http = await getHttpMocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		const files = Array.from({ length: 11 }, (_, i) => ({
+			name: `f${String(i)}.bin`,
+			type: "application/octet-stream",
+			data: new Uint8Array([1]),
+		}));
+		await expect(client.createNote({ files })).rejects.toThrow(SecretValidationError);
+		expect(http.postJson).not.toHaveBeenCalled();
+		expect(http.postFormData).not.toHaveBeenCalled();
+		expect(http.initChunkedUpload).not.toHaveBeenCalled();
 	});
 
 	test("createNote with text-only sends postJson", async () => {

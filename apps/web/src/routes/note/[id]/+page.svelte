@@ -13,6 +13,7 @@ import { formatDateTime, t } from "$lib/i18n/index.svelte";
 import { setStep } from "$lib/steps.svelte";
 import { copyWithFeedback } from "$lib/utils/clipboard";
 import { isPreviewable } from "$lib/utils/fileType";
+import { renderMarkdown } from "$lib/utils/markdown";
 
 interface NoteInfo {
 	hasPassword: boolean;
@@ -53,13 +54,9 @@ $effect(() => {
 	const text = status.payload.text ?? "";
 	let cancelled = false;
 	(async () => {
-		const [{ marked }, DOMPurify] = await Promise.all([
-			import("marked"),
-			import("isomorphic-dompurify"),
-		]);
+		const html = await renderMarkdown(text);
 		if (cancelled) return;
-		const raw = marked.parse(text, { async: false }) as string;
-		renderedMarkdown = DOMPurify.default.sanitize(raw);
+		renderedMarkdown = html;
 	})();
 	return () => {
 		cancelled = true;
@@ -288,7 +285,12 @@ async function handleDecrypt() {
 					<Icon name="key" size={12} />
 					<span>{t("un_pw_eyebrow")}</span>
 				</div>
-				<p style:color="var(--muted)" style:font-size="13px" style:margin="0 0 12px">
+				<p
+					id="decrypt-password-hint"
+					style:color="var(--muted)"
+					style:font-size="13px"
+					style:margin="0 0 12px"
+				>
 					{t("un_pw_hint")}
 				</p>
 				<input
@@ -297,6 +299,7 @@ async function handleDecrypt() {
 					type="password"
 					bind:value={password}
 					placeholder={t("un_pw_placeholder")}
+					aria-describedby="decrypt-password-hint"
 					autocomplete="off"
 					autofocus
 					onkeydown={(e) => {
@@ -312,6 +315,7 @@ async function handleDecrypt() {
 				/>
 				{#if wrongPassword}
 					<div
+						role="alert"
 						class="mono mt-2 inline-flex items-center gap-1.5"
 						style:font-size="12px"
 						style:color="var(--accent)"

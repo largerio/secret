@@ -1,6 +1,7 @@
 <script lang="ts">
 import { getLocale, setLocale, type Locale } from "$lib/i18n/index.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { setPreferenceCookie } from "$lib/utils/cookies";
 
 const LANGS: { code: Locale; label: string }[] = [
 	{ code: "en", label: "English" },
@@ -25,8 +26,7 @@ function pick(l: Locale) {
 	setLocale(l);
 	open = false;
 	if (typeof document !== "undefined") {
-		// biome-ignore lint/suspicious/noDocumentCookie: CookieStore API not universally supported
-		document.cookie = `secret_lang=${l}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
+		setPreferenceCookie("secret_lang", l);
 	}
 }
 

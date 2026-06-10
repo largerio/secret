@@ -1,5 +1,10 @@
 import type { NotePayload } from "@largerio/secret-shared";
-import { DEFAULT_CHUNK_SIZE, DEFAULT_EXPIRY_SECONDS } from "@largerio/secret-shared";
+import {
+	DEFAULT_CHUNK_SIZE,
+	DEFAULT_EXPIRY_SECONDS,
+	MAX_FILES_PER_NOTE,
+	MAX_TEXT_SIZE,
+} from "@largerio/secret-shared";
 import {
 	decryptNote,
 	decryptNoteBytes,
@@ -8,7 +13,7 @@ import {
 	encryptNoteChunked,
 	ensureInit,
 } from "./crypto.js";
-import { SecretApiError, SecretDecryptionError } from "./errors.js";
+import { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { HttpClientConfig } from "./http.js";
 import * as http from "./http.js";
 import type {
@@ -66,6 +71,19 @@ export class SecretClient {
 	async createNote(options: CreateNoteOptions): Promise<CreateNoteResult> {
 		const fileCount = options.files?.length ?? 0;
 		const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
+
+		// Fail fast on protocol-level limits (not instance-configurable) so the
+		// caller gets an error before encrypting and uploading the whole payload.
+		if (options.text !== undefined && options.text.length > MAX_TEXT_SIZE) {
+			throw new SecretValidationError(
+				`Text exceeds the maximum length of ${String(MAX_TEXT_SIZE)} characters`,
+			);
+		}
+		if (fileCount > MAX_FILES_PER_NOTE) {
+			throw new SecretValidationError(
+				`A note can include at most ${String(MAX_FILES_PER_NOTE)} files`,
+			);
+		}
 
 		const payload: NotePayload = {
 			...(options.text !== undefined ? { text: options.text } : {}),
