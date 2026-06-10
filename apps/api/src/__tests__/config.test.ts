@@ -6,7 +6,7 @@ import {
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
-} from "@secret/shared";
+} from "@largerio/secret-shared";
 import { describe, expect, it } from "vitest";
 import { type AppConfig, ConfigError, parseConfig } from "../config.js";
 

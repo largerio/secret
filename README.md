@@ -125,11 +125,11 @@ For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, s
 Use the JavaScript/TypeScript SDK to interact with any Secret instance programmatically:
 
 ```bash
-npm install @secret/sdk-js
+npm install @largerio/secret-sdk
 ```
 
 ```typescript
-import { SecretClient } from "@secret/sdk-js";
+import { SecretClient } from "@largerio/secret-sdk";
 
 const client = await SecretClient.create({
   baseUrl: "https://secret.example.com",
@@ -268,6 +268,26 @@ packages/crypto/  libsodium + AES-256-GCM encryption
 packages/shared/  Zod schemas, types, constants, crypto test vectors
 messages/         i18n (10 languages)
 ```
+
+> Requires **Node.js 26+** (the code uses Node 26 APIs such as `Error.isError`
+> and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
+> older version.
+
+### Publishing the SDK
+
+Only **`@largerio/secret-sdk`** is published to npm. Its build (tsup) bundles the
+internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages, which
+stay private — so consumers install a single self-contained package. Releases go
+through [changesets](https://github.com/changesets/changesets):
+
+```bash
+pnpm changeset          # describe the change + pick the version bump
+pnpm version-packages   # apply pending changesets (bump version + changelog)
+pnpm release            # build (bundles internals), then publish to npm
+```
+
+In development everything resolves to TypeScript sources (`exports` → `./src`);
+the bundled `dist/` is produced only when the SDK is packed/published.
 
 ## Security
 

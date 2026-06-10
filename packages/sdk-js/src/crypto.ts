@@ -17,8 +17,8 @@ import {
 	keyToBase64Url,
 	toBase64,
 	zeroMemory,
-} from "@secret/crypto/client";
-import type { ContentMode, NotePayload } from "@secret/shared";
+} from "@largerio/secret-crypto/client";
+import type { ContentMode, NotePayload } from "@largerio/secret-shared";
 
 function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);

@@ -1,4 +1,4 @@
-import type { CreateNoteResponse } from "@secret/shared";
+import type { CreateNoteResponse } from "@largerio/secret-shared";
 import { SecretApiError } from "./errors.js";
 
 export function postFormDataXhr(
@@ -6,10 +6,16 @@ export function postFormDataXhr(
 	headers: Record<string, string>,
 	formData: FormData,
 	onProgress: (progress: number) => void,
+	timeoutMs?: number,
 ): Promise<CreateNoteResponse> {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
 		xhr.open("POST", url);
+
+		if (timeoutMs !== undefined) {
+			xhr.timeout = timeoutMs;
+			xhr.addEventListener("timeout", () => reject(new SecretApiError("Upload timed out", 0)));
+		}
 
 		for (const [name, value] of Object.entries(headers)) {
 			xhr.setRequestHeader(name, value);

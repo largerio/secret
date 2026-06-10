@@ -26,11 +26,11 @@ COPY packages/ packages/
 COPY apps/ apps/
 COPY messages/ messages/
 
-RUN pnpm --filter @secret/shared build
-RUN pnpm --filter @secret/crypto build
-RUN pnpm --filter @secret/sdk-js build
-RUN pnpm --filter @secret/web build
-RUN pnpm --filter @secret/api build
+RUN pnpm --filter @largerio/secret-shared build
+RUN pnpm --filter @largerio/secret-crypto build
+RUN pnpm --filter @largerio/secret-sdk build
+RUN pnpm --filter @largerio/web build
+RUN pnpm --filter @largerio/api build
 
 # Rewrite package exports from .ts sources to compiled .js dist
 RUN node -e " \

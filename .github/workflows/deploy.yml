@@ -59,7 +59,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browser
-        run: pnpm --filter @secret/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 
       - name: Run E2E tests
         run: pnpm test:e2e

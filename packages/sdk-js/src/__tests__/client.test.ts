@@ -168,6 +168,33 @@ describe("SecretClient", () => {
 		expect(config.apiKey).toBe("test-key-123");
 	});
 
+	test("passes timeout and retry options through to httpConfig", async () => {
+		const http = await getHttpMocks();
+		http.checkNote.mockResolvedValue({
+			exists: false,
+			hasPassword: false,
+			fileCount: 0,
+			expiresAt: "",
+			maxReads: 1,
+			chunked: false,
+		});
+
+		const backoff = (attempt: number): number => attempt * 100;
+		const client = await SecretClient.create({
+			baseUrl: "https://example.com",
+			timeoutMs: 5000,
+			maxRetries: 4,
+			retryBackoffMs: backoff,
+		});
+
+		await client.checkNote("aBcDeFgHiJkL");
+
+		const config = http.checkNote.mock.calls[0]?.[0] as import("../http.js").HttpClientConfig;
+		expect(config.timeoutMs).toBe(5000);
+		expect(config.maxRetries).toBe(4);
+		expect(config.retryBackoffMs).toBe(backoff);
+	});
+
 	test("buildShareUrl constructs correct URL", async () => {
 		const client = await SecretClient.create({ baseUrl: "https://secret.example.com" });
 		const url = client.buildShareUrl("aBcDeFgHiJkL", "myKeyFragment");
@@ -293,7 +320,70 @@ describe("SecretClient", () => {
 		expect(metadata["fileCount"]).toBe(1);
 		expect(metadata["hasPassword"]).toBe(false);
 
-		expect(callArgs[3]).toBe(onUploadProgress);
+		// The upload callback is now wrapped to also drive the overall-progress
+		// bar, but it must still forward the raw 0–1 value to onUploadProgress.
+		const forwarded = callArgs[3] as (p: number) => void;
+		expect(typeof forwarded).toBe("function");
+		forwarded(0.5);
+		expect(onUploadProgress).toHaveBeenCalledWith(0.5);
+	});
+
+	test("createNote file upload maps byte progress onto the overall bar", async () => {
+		const crypto = await getCryptoMocks();
+		crypto.encryptNote.mockResolvedValue({
+			encryptedData: btoa("encrypted-bytes"),
+			clientNonce: "nonce",
+			keyFragment: "key",
+		});
+
+		const http = await getHttpMocks();
+		http.postFormData.mockResolvedValue({
+			id: "fileNote99999",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "ftok",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const onProgress = vi.fn();
+
+		await client.createNote({
+			text: "Note with file",
+			files: [{ name: "t.txt", type: "text/plain", data: new TextEncoder().encode("x") }],
+			onProgress,
+		});
+
+		const forwarded = (http.postFormData.mock.calls[0] ?? [])[3] as (p: number) => void;
+		forwarded(0.5);
+		// Upload spans the bar from the post-encryption milestone (0.3) to 1.
+		expect(onProgress).toHaveBeenCalledWith({
+			phase: "uploading",
+			phaseProgress: 0.5,
+			overallProgress: 0.3 + 0.5 * 0.7,
+		});
+	});
+
+	test("createNote file upload without progress callbacks omits the wrapper", async () => {
+		const crypto = await getCryptoMocks();
+		crypto.encryptNote.mockResolvedValue({
+			encryptedData: btoa("encrypted-bytes"),
+			clientNonce: "nonce",
+			keyFragment: "key",
+		});
+
+		const http = await getHttpMocks();
+		http.postFormData.mockResolvedValue({
+			id: "fileNoteABCDE",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "ftok",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		await client.createNote({
+			text: "Note with file",
+			files: [{ name: "t.txt", type: "text/plain", data: new TextEncoder().encode("x") }],
+		});
+
+		expect((http.postFormData.mock.calls[0] ?? [])[3]).toBeUndefined();
 	});
 
 	test("createNote with files and password includes salt in metadata", async () => {

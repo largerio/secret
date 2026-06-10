@@ -2,11 +2,11 @@
  * Full crypto surface: client (XChaCha20-Poly1305) + server (AES-256-GCM).
  *
  * Three entry points are published so callers pull in only what they need:
- *  - `@secret/crypto`        — this barrel: client + server primitives (backend).
- *  - `@secret/crypto/client` — client-only, plus the MessagePack decode helpers
+ *  - `@largerio/secret-crypto`        — this barrel: client + server primitives (backend).
+ *  - `@largerio/secret-crypto/client` — client-only, plus the MessagePack decode helpers
  *                              (`decodePayloadBytes`/`decodeRawBytes`); excludes
  *                              server code so the browser bundle stays lean.
- *  - `@secret/crypto/server` — server-only (AES-256-GCM) primitives.
+ *  - `@largerio/secret-crypto/server` — server-only (AES-256-GCM) primitives.
  */
 export type { DecryptChunkResult } from "./decrypt.js";
 export { decryptChunk, decryptPayload, decryptRaw, initStreamDecrypt } from "./decrypt.js";

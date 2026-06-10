@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# Never run two releases at once, and never cancel an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Canonical repo only — forks have no NPM_TOKEN and should not publish.
+    if: github.repository == 'largerio/secret'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version commit / create the Version Packages PR branch
+      pull-requests: write # open and update the Version Packages PR
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Gate the whole release on the NPM_TOKEN secret being present. The secrets
+      # context can't be read inside `if:`, so surface its presence as an output.
+      - name: Check for NPM_TOKEN
+        id: token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::NPM_TOKEN secret is not set — skipping versioning and publish."
+          fi
+
+      # changesets/action picks the action based on pending changesets:
+      #   • changeset files present      → runs `version`, opens/updates the
+      #     "Version Packages" PR (does NOT publish)
+      #   • none present but versions are
+      #     ahead of what's on npm        → runs `publish`
+      # So this only ships when there is genuinely a new version to release.
+      - name: Create Version Packages PR or publish
+        if: steps.token.outputs.present == 'true'
+        uses: changesets/action@3841a0683d3cfa6dae0f9bb335290003010fe3f0 # v1.9.0
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

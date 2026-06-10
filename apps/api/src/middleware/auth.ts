@@ -1,4 +1,4 @@
-import { verifyApiKeyBuffers } from "@secret/shared/auth";
+import { verifyApiKeyBuffers } from "@largerio/secret-shared/auth";
 import type { MiddlewareHandler } from "hono";
 import { cap } from "../routes/cap.js";
 

@@ -1,5 +1,5 @@
+import type { NotePayload } from "@largerio/secret-shared";
 import { encode } from "@msgpack/msgpack";
-import type { NotePayload } from "@secret/shared";
 import sodium from "libsodium-wrappers-sumo";
 import { generateNonce } from "./keys.js";
 

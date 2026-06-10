@@ -188,4 +188,8 @@ export class S3Storage implements StorageBackend {
 			}
 		}
 	}
+
+	async close(): Promise<void> {
+		this.client.destroy();
+	}
 }

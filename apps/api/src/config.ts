@@ -6,7 +6,7 @@ import {
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
-} from "@secret/shared";
+} from "@largerio/secret-shared";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 

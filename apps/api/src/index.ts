@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { parseServerKey } from "@secret/crypto";
+import { parseServerKey } from "@largerio/secret-crypto/server";
 import { createApp } from "./app.js";
 import { startCleanupJob } from "./cleanup.js";
 import { ConfigError, parseConfig } from "./config.js";
@@ -36,7 +36,15 @@ function shutdown(): void {
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}
-	server.close(() => {
+	// Hard fallback: never let a hung close() keep the process alive forever.
+	const forceExit = setTimeout(() => process.exit(1), 10_000);
+	forceExit.unref();
+	server.close(async () => {
+		try {
+			await storage.close?.();
+		} catch (err) {
+			console.error("[shutdown] storage close failed:", Error.isError(err) ? err.message : err);
+		}
 		sqlite.close();
 		process.exit(0);
 	});

@@ -1137,3 +1137,119 @@ describe("getNoteStream", () => {
 		expect(err.message).toContain("exceeds maximum");
 	});
 });
+
+describe("request policy (timeout + retry)", () => {
+	function policyConfig(
+		fetchMock: typeof fetch,
+		extra: Partial<HttpClientConfig>,
+	): HttpClientConfig {
+		return { baseUrl: "https://api.example.com", fetch: fetchMock, ...extra };
+	}
+
+	test("retries idempotent GET on 5xx then succeeds", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(errorResponse(503, { error: "down" }))
+			.mockResolvedValueOnce(errorResponse(500, { error: "down" }))
+			.mockResolvedValueOnce(okResponse({ ok: true }));
+		const config = policyConfig(fetchMock, { maxRetries: 3, retryBackoffMs: () => 0 });
+
+		const result = await getJson<{ ok: boolean }>(config, "/notes/x");
+
+		expect(result).toEqual({ ok: true });
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	test("retries idempotent GET on network error then succeeds", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockRejectedValueOnce(new TypeError("network down"))
+			.mockResolvedValueOnce(okResponse({ ok: true }));
+		const config = policyConfig(fetchMock, { maxRetries: 2, retryBackoffMs: () => 0 });
+
+		const result = await getJson<{ ok: boolean }>(config, "/notes/x");
+
+		expect(result).toEqual({ ok: true });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	test("returns the final 5xx response after exhausting retries", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(errorResponse(500, { error: "still down" }));
+		const config = policyConfig(fetchMock, { maxRetries: 2, retryBackoffMs: () => 0 });
+
+		const err = await catchApiError(getJson(config, "/notes/x"));
+		expect(err.status).toBe(500);
+		expect(err.message).toBe("still down");
+		// maxRetries: 2 → 3 attempts total (initial + 2 retries).
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	test("retries idempotent chunk PUT on 5xx", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(errorResponse(502, { error: "bad gateway" }))
+			.mockResolvedValueOnce(okResponse({}));
+		const config = policyConfig(fetchMock, { maxRetries: 2, retryBackoffMs: () => 0 });
+
+		await uploadChunk(config, "upload1", 0, new Uint8Array([1, 2, 3]), "hash");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	test("does not retry non-idempotent POST on 5xx", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(errorResponse(503, { error: "down" }));
+		const config = policyConfig(fetchMock, { maxRetries: 5, retryBackoffMs: () => 0 });
+
+		const err = await catchApiError(postJson(config, "/notes", { data: "x" }));
+		expect(err.status).toBe(503);
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	test("does not retry non-idempotent POST on network error", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("network down"));
+		const config = policyConfig(fetchMock, { maxRetries: 5, retryBackoffMs: () => 0 });
+
+		await expect(postJson(config, "/notes", { data: "x" })).rejects.toThrow("network down");
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	test("aborts the request after timeoutMs", async () => {
+		const fetchMock = vi.fn<typeof fetch>(
+			(_url, init) =>
+				new Promise((_resolve, reject) => {
+					const signal = (init as RequestInit).signal as AbortSignal;
+					signal.addEventListener("abort", () => reject(new Error("aborted")));
+				}),
+		);
+		const config = policyConfig(fetchMock, { timeoutMs: 10 });
+
+		// A timeout surfaces as a typed SecretApiError, not the raw AbortError.
+		const err = await catchApiError(getJson(config, "/notes/x"));
+		expect(err).toBeInstanceOf(SecretApiError);
+		expect(err.message).toBe("Request timed out");
+	});
+
+	test("uses the default backoff when none is configured", async () => {
+		vi.useFakeTimers();
+		try {
+			const fetchMock = vi
+				.fn<typeof fetch>()
+				.mockResolvedValueOnce(errorResponse(500, { error: "down" }))
+				.mockResolvedValueOnce(okResponse({ ok: true }));
+			const config = policyConfig(fetchMock, { maxRetries: 2 });
+
+			const promise = getJson<{ ok: boolean }>(config, "/notes/x");
+			// Default backoff for attempt 1 is 2**1 * 250 = 500ms.
+			await vi.advanceTimersByTimeAsync(500);
+			const result = await promise;
+
+			expect(result).toEqual({ ok: true });
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});

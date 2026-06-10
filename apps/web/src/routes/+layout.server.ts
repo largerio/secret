@@ -1,10 +1,10 @@
-import type { ServerConfig } from "@secret/shared";
+import type { ServerConfig } from "@largerio/secret-shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
-} from "@secret/shared";
+} from "@largerio/secret-shared";
 import type { ServerLoad } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
 

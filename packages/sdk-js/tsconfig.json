@@ -4,7 +4,11 @@
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"lib": ["ES2025", "DOM"],
-		"types": ["node"]
+		"types": ["node"],
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"ignoreDeprecations": "6.0"
 	},
 	"include": ["src"]
 }

@@ -1,4 +1,4 @@
-import type { ContentMode } from "@secret/shared";
+import type { ContentMode } from "@largerio/secret-shared";
 
 export type UploadPhase = "encrypting" | "uploading" | "processing";
 export type DownloadPhase = "downloading" | "decrypting";
@@ -18,6 +18,16 @@ export interface SecretClientConfig {
 	readonly fetch?: typeof fetch;
 	/** Optional API key for authenticated instances. Sent as Bearer token. */
 	readonly apiKey?: string;
+	/** Per-request timeout in ms. Default: none (no timeout). */
+	readonly timeoutMs?: number;
+	/**
+	 * Number of retries for idempotent requests (reads + chunk PUTs) on network
+	 * errors, timeouts, and 5xx responses. Default: 0 (no retry). E.g. 2 = up to
+	 * 3 attempts total. Note creation/deletion are never retried (non-idempotent).
+	 */
+	readonly maxRetries?: number;
+	/** Backoff (ms) before retry attempt N (1-based). Default: 2**N * 250. */
+	readonly retryBackoffMs?: (attempt: number) => number;
 }
 
 export interface CreateNoteOptions {
@@ -64,7 +74,7 @@ export interface ReadNoteOptions {
 }
 
 export interface ReadNoteResult {
-	readonly payload: import("@secret/shared").NotePayload;
+	readonly payload: import("@largerio/secret-shared").NotePayload;
 	readonly createdAt: string;
 	readonly expiresAt: string;
 	readonly fileCount: number;

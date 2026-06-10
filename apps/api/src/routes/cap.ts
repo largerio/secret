@@ -4,14 +4,14 @@ import {
 	CAP_CHALLENGE_SIZE,
 	DEFAULT_CAP_CHALLENGE_COUNT,
 	DEFAULT_CAP_DIFFICULTY,
-} from "@secret/shared";
+} from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { z } from "zod";
 
 const cap = new Cap({ noFSState: true });
 
 // Cap's redeem/verify payloads are an internal (undocumented) contract, so the
-// schemas live here rather than in @secret/shared.
+// schemas live here rather than in @largerio/secret-shared.
 const redeemSchema = z.object({
 	token: z.string(),
 	solutions: z.array(z.number()),

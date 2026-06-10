@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { Hono } from "hono";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // Import the app factory first: it pulls in `@hono/zod-openapi`, which extends
-// Zod with `.openapi()` before `@secret/shared` schemas are constructed (the
+// Zod with `.openapi()` before `@largerio/secret-shared` schemas are constructed (the
 // same ordering the production entry point relies on).
 import { createApp } from "../app.js";
 import { type AppConfig, parseConfig } from "../config.js";
