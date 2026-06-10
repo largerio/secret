@@ -130,6 +130,62 @@ describe("createRateLimit", () => {
 		rl.cleanup();
 	});
 
+	it("ignores an invalid X-Forwarded-For and falls through to X-Real-IP", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["10.0.0.0/8"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		// Two different trusted peers send the same X-Real-IP but a garbage,
+		// unparseable X-Forwarded-For. The bad XFF must be discarded so both
+		// requests key on the shared X-Real-IP — the second is throttled.
+		await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "not-an-ip", "X-Real-IP": "1.2.3.4" } },
+			mockEnv("10.0.0.5"),
+		);
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "still-not-an-ip", "X-Real-IP": "1.2.3.4" } },
+			mockEnv("10.0.0.6"),
+		);
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("falls back to peer IP when trusted proxy sends invalid forwarded headers", async () => {
+		const app = new Hono();
+		const rl = createRateLimit({
+			windowMs: 60_000,
+			max: 1,
+			trustedProxies: ["127.0.0.1/32"],
+		});
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		// Unparseable forwarded values must not create distinct buckets: a client
+		// behind the proxy cannot spoof or churn keys with junk. Both requests key
+		// on the peer IP, so the second is throttled.
+		await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "garbage", "X-Real-IP": "also-garbage" } },
+			mockEnv("127.0.0.1"),
+		);
+		const res = await app.request(
+			"/test",
+			{ headers: { "X-Forwarded-For": "different-garbage", "X-Real-IP": "more-garbage" } },
+			mockEnv("127.0.0.1"),
+		);
+		expect(res.status).toBe(429);
+
+		rl.cleanup();
+	});
+
 	it("falls back to peer IP when trusted proxy sends no forwarded headers", async () => {
 		const app = new Hono();
 		const rl = createRateLimit({

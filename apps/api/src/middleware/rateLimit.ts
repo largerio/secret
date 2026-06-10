@@ -65,11 +65,17 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 	if (peer === null) return "unknown";
 
 	if (trusted.check(peer.ip, peer.type)) {
+		// Only trust a forwarded value that parses as a valid IP. Otherwise an
+		// untrusted client behind the proxy could inject arbitrary
+		// X-Forwarded-For/X-Real-IP strings to spoof another client's key or
+		// churn the bounded rate-limit store (evicting legitimate entries).
 		const forwarded = c.req.header("x-forwarded-for");
 		const firstForwarded = forwarded?.split(",")[0]?.trim();
-		if (firstForwarded) return firstForwarded;
+		const forwardedIp = firstForwarded ? normalizeIp(firstForwarded) : null;
+		if (forwardedIp) return forwardedIp.ip;
 		const realIp = c.req.header("x-real-ip")?.trim();
-		if (realIp) return realIp;
+		const realIpNormalized = realIp ? normalizeIp(realIp) : null;
+		if (realIpNormalized) return realIpNormalized.ip;
 	}
 
 	return peer.ip;

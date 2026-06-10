@@ -603,7 +603,7 @@ describe("GET /api/v1/notes/:id", () => {
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
 		const json = await res.json();
-		expect(json.error).toBe("Note has expired");
+		expect(json.error).toBe("Note not found");
 	});
 
 	it("returns 404 and deletes file for expired note with files", async () => {
@@ -850,7 +850,7 @@ describe("GET /api/v1/notes/:id", () => {
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
-		expect((await res.json()).error).toBe("Note has expired");
+		expect((await res.json()).error).toBe("Note not found");
 	});
 
 	it("handles burn-after-read chunked note via JSON endpoint", async () => {
@@ -1090,7 +1090,7 @@ describe("storage.delete error resilience", () => {
 
 		const res = await failApp.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
-		expect((await res.json()).error).toBe("Note has expired");
+		expect((await res.json()).error).toBe("Note not found");
 	});
 
 	it("burn-after-read returns data even when storage.delete fails", async () => {
@@ -1781,7 +1781,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		const res = await app.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
 		const json = await res.json();
-		expect(json.error).toBe("Note has expired");
+		expect(json.error).toBe("Note not found");
 	});
 
 	it("logs error when chunk cleanup fails for expired chunked note on stream", async () => {

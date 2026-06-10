@@ -283,10 +283,16 @@ export async function decryptNoteChunked(
 
 		const totalData = concatUint8Arrays(dataChunks);
 
-		// Distribute bytes to files based on metadata sizes
+		// Distribute bytes to files based on metadata sizes. subarray() clamps
+		// silently if the decrypted stream is shorter than the header claims, so
+		// validate each slice length explicitly (defense in depth — the stream
+		// is already authenticated) rather than returning truncated file data.
 		let byteOffset = 0;
 		const files = fileMeta.map((meta) => {
 			const data = totalData.subarray(byteOffset, byteOffset + meta.size);
+			if (data.length !== meta.size) {
+				throw new Error("Decrypted file data does not match the declared size");
+			}
 			byteOffset += meta.size;
 			return { name: meta.name, type: meta.type, size: meta.size, data };
 		});
