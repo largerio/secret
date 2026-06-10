@@ -13,4 +13,5 @@ Workflow:
    update the changelog.
 3. `pnpm release` — build (tsup bundles crypto + shared into the SDK) and publish
    to npm. pnpm applies `publishConfig` (which points `exports` at the compiled
-   `dist/` output) at pack time.
+   `dist/` output) at pack time. In CI this runs under the Release workflow,
+   which authenticates via **npm trusted publishing (OIDC)** — no token.

@@ -13,12 +13,14 @@ concurrency:
 
 jobs:
   release:
-    # Canonical repo only — forks have no NPM_TOKEN and should not publish.
+    # Canonical repo only — forks can't satisfy the npm trusted publisher and
+    # must not publish.
     if: github.repository == 'largerio/secret'
     runs-on: ubuntu-latest
     permissions:
       contents: write # push the version commit / create the Version Packages PR branch
       pull-requests: write # open and update the Version Packages PR
+      id-token: write # OIDC: authenticate to npm via trusted publishing (no token)
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -33,19 +35,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Gate the whole release on the NPM_TOKEN secret being present. The secrets
-      # context can't be read inside `if:`, so surface its presence as an output.
-      - name: Check for NPM_TOKEN
-        id: token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::NPM_TOKEN secret is not set — skipping versioning and publish."
-          fi
+      # Trusted publishing (OIDC) requires npm CLI >= 11.5.1; changeset publish
+      # shells out to it. Pin it explicitly so we don't depend on the bundled
+      # version drifting.
+      - run: npm install -g npm@^11
 
       # changesets/action picks the action based on pending changesets:
       #   • changeset files present      → runs `version`, opens/updates the
@@ -53,8 +46,9 @@ jobs:
       #   • none present but versions are
       #     ahead of what's on npm        → runs `publish`
       # So this only ships when there is genuinely a new version to release.
+      # Publishing authenticates via OIDC against the npm trusted publisher
+      # configured for @largerio/secret-sdk — no NPM_TOKEN secret involved.
       - name: Create Version Packages PR or publish
-        if: steps.token.outputs.present == 'true'
         uses: changesets/action@3841a0683d3cfa6dae0f9bb335290003010fe3f0 # v1.9.0
         with:
           version: pnpm version-packages
@@ -63,4 +57,3 @@ jobs:
           title: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
