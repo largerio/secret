@@ -1476,6 +1476,27 @@ describe("Chunked upload flow", () => {
 		expect((await res.json()).error).toBe("Invalid chunk index");
 	});
 
+	it("rejects chunk with non-integer index", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("test");
+
+		for (const badIndex of ["1.5", "12abc", "0x1"]) {
+			const res = await app.request(
+				`/api/v1/notes/upload/${initJson.uploadId}/chunks/${badIndex}`,
+				{
+					method: "PUT",
+					headers: {
+						"Content-Type": "application/octet-stream",
+						"X-Chunk-Hash": sha256hex(chunk),
+					},
+					body: chunk as BodyInit,
+				},
+			);
+			expect(res.status).toBe(400);
+			expect((await res.json()).error).toBe("Invalid chunk index");
+		}
+	});
+
 	it("rejects too many chunks on init", async () => {
 		// maxChunkedFileSize=524_288_000, chunkSize=4_194_304 → maxChunks=125
 		// Use 200 which passes Zod (max 10000) but exceeds computed maxChunks

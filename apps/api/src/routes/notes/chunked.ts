@@ -23,8 +23,21 @@ import {
 	sanitizeHeaderValue,
 	validateUploadId,
 } from "./helpers.js";
+import {
+	streamNoteRoute,
+	uploadChunkRoute,
+	uploadCompleteRoute,
+	uploadInitRoute,
+} from "./openapi-routes.js";
 
 export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
+	// These handlers validate manually (binary bodies, custom error shapes), so
+	// they are documented via the registry instead of app.openapi().
+	app.openAPIRegistry.registerPath(uploadInitRoute);
+	app.openAPIRegistry.registerPath(uploadChunkRoute);
+	app.openAPIRegistry.registerPath(uploadCompleteRoute);
+	app.openAPIRegistry.registerPath(streamNoteRoute);
+
 	app.post("/upload/init", async (c) => {
 		const body = await c.req.json().catch(() => null);
 		if (!body) return c.json({ error: "Invalid JSON body" }, 400);
@@ -78,12 +91,13 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 	app.put("/upload/:uploadId/chunks/:index", async (c) => {
 		const uploadId = c.get("uploadId");
-		const indexStr = c.req.param("index");
-		const index = parseInt(indexStr as string, 10);
+		const indexStr = c.req.param("index") as string;
 
-		if (Number.isNaN(index) || index < 0) {
+		// Digits only — parseInt would silently truncate inputs like "1.5" or "12abc".
+		if (!/^\d+$/.test(indexStr)) {
 			return c.json({ error: "Invalid chunk index" }, 400);
 		}
+		const index = Number(indexStr);
 
 		const db = c.get("db");
 		const session = db.select().from(uploads).where(eq(uploads.id, uploadId)).get();

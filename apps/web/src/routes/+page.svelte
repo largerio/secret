@@ -288,6 +288,7 @@ const TABS: {
 						placeholder={t("text_placeholder")}
 						rows="8"
 						maxlength={MAX_TEXT_SIZE}
+						aria-describedby="note-text-count"
 						class="w-full rounded-xl border outline-none transition-colors"
 						style:background="var(--bg-2)"
 						style:border-color="var(--line)"
@@ -299,6 +300,7 @@ const TABS: {
 						style:min-height="180px"
 					></textarea>
 					<div
+						id="note-text-count"
 						class="mono pointer-events-none absolute"
 						style:bottom="12px"
 						style:right="14px"
@@ -320,7 +322,7 @@ const TABS: {
 		<SecuritySettings bind:password bind:expiresIn bind:maxReads />
 
 		{#if isSubmitting}
-			<div class="mb-4">
+			<div class="mb-4" role="status">
 				<StepProgress
 					steps={[
 						{ key: "encrypting", label: t("step_encrypting"), icon: "fa-solid fa-shield-halved" },

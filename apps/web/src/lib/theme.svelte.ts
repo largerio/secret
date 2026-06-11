@@ -1,7 +1,8 @@
+import { setPreferenceCookie } from "./utils/cookies.js";
+
 export type ThemeMode = "dark" | "light";
 
 const COOKIE_NAME = "secret_theme";
-const MAX_AGE = 60 * 60 * 24 * 365;
 
 let mode = $state<ThemeMode>("dark");
 
@@ -24,8 +25,7 @@ export function setMode(next: ThemeMode): void {
 	mode = next;
 	if (typeof document !== "undefined") {
 		document.documentElement.dataset["mode"] = next;
-		// biome-ignore lint/suspicious/noDocumentCookie: CookieStore API not universally supported
-		document.cookie = `${COOKIE_NAME}=${next}; path=/; max-age=${MAX_AGE}; samesite=lax`;
+		setPreferenceCookie(COOKIE_NAME, next);
 	}
 }
 

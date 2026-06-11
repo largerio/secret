@@ -1,6 +1,7 @@
 <script lang="ts">
 import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { renderMarkdown } from "$lib/utils/markdown";
 
 interface Props {
 	value: string;
@@ -23,13 +24,7 @@ $effect(() => {
 			renderedHtml = "";
 			return;
 		}
-		const [{ marked }, DOMPurify] = await Promise.all([
-			import("marked"),
-			import("isomorphic-dompurify"),
-		]);
-		renderedHtml = DOMPurify.default.sanitize(
-			marked.parse(currentValue, { async: false }) as string,
-		);
+		renderedHtml = await renderMarkdown(currentValue);
 	}, 200);
 
 	return () => clearTimeout(timer);

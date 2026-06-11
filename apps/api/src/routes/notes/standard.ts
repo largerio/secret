@@ -12,7 +12,14 @@ import {
 	type NotesEnv,
 	sanitizeHeaderValue,
 } from "./helpers.js";
-import { createNoteRoute, deleteNoteRoute, existsRoute, readNoteRoute } from "./openapi-routes.js";
+import {
+	createNoteRoute,
+	deleteNoteRoute,
+	existsRoute,
+	rawNoteRoute,
+	readNoteRoute,
+	uploadNoteRoute,
+} from "./openapi-routes.js";
 
 export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 	app.openapi(createNoteRoute, async (c) => {
@@ -32,6 +39,9 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 		return c.json(result, 201);
 	});
 
+	// Multipart bodies are validated manually below, so the route is documented
+	// via the registry instead of app.openapi().
+	app.openAPIRegistry.registerPath(uploadNoteRoute);
 	app.post("/upload", async (c) => {
 		let formData: FormData;
 		try {
@@ -127,6 +137,8 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 		});
 	});
 
+	// Binary response endpoint — documented via the registry, validated manually.
+	app.openAPIRegistry.registerPath(rawNoteRoute);
 	app.get("/:id/raw", async (c) => {
 		const id = c.req.param("id");
 		if (!id || !isValidNoteId(id)) {
