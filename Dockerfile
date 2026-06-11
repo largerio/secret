@@ -46,6 +46,11 @@ RUN node -e " \
 # Stage 2: Production
 FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS production
 
+# CVE-2026-45447: the pinned base image still ships openssl 3.5.6-r0; pull the
+# fixed 3.5.7-r0 from the Alpine repos until upstream node:26-alpine is rebuilt.
+# Remove once a refreshed digest includes openssl >= 3.5.7-r0.
+RUN apk upgrade --no-cache libssl3 libcrypto3
+
 RUN adduser -D -u 1001 appuser
 
 WORKDIR /app
