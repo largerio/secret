@@ -156,8 +156,11 @@ export async function consumeNoteTx(
 
 		if (note.expiresAt < new Date()) {
 			tx.delete(notes).where(eq(notes.id, id)).run();
+			// Return the same message/status as a non-existent note so the read
+			// endpoint cannot be used as an oracle to distinguish "expired" from
+			// "never existed" (the /exists endpoint already conflates both).
 			return {
-				error: "Note has expired" as const,
+				error: "Note not found" as const,
 				status: 404 as const,
 				filePath: note.filePath,
 				chunkCount: note.chunkCount,

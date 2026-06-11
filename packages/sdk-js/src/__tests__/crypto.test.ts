@@ -252,6 +252,29 @@ describe("SDK crypto", () => {
 		expect(decrypted.files?.[1]?.data).toEqual(new Uint8Array(0));
 	});
 
+	test("decryptNoteChunked throws when a file's data is shorter than its declared size", async () => {
+		await ensureInit();
+
+		// Build a chunked note by hand whose header lies about a file's size
+		// (declares 999 bytes but only ships 5). encryptNoteChunked always derives
+		// the header size from the real data, so the mismatch must be forged at the
+		// stream level to exercise the length-validation guard.
+		const { encryptChunk, encodeRaw, generateKey, initStreamEncrypt, keyToBase64Url, toBase64 } =
+			await import("@largerio/secret-crypto/client");
+
+		const baseKey = generateKey();
+		const { state, header } = initStreamEncrypt(baseKey);
+		const headerBytes = encodeRaw({
+			files: [{ name: "lies.txt", type: "text/plain", size: 999 }],
+		});
+		const fileData = new TextEncoder().encode("short");
+		const chunks = [encryptChunk(state, headerBytes, false), encryptChunk(state, fileData, true)];
+
+		await expect(
+			decryptNoteChunked(chunks, toBase64(header), keyToBase64Url(baseKey)),
+		).rejects.toThrow("does not match the declared size");
+	});
+
 	test("is compatible with test vectors", async () => {
 		await ensureInit();
 
