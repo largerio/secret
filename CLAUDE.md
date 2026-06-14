@@ -100,6 +100,16 @@ Monorepo with pnpm workspaces:
   the built-in `node:sqlite` (`DatabaseSync`); older runtimes (e.g. Node 22) fail
   at runtime with errors like `Error.isError is not a function`. If the active
   shell defaults to an older Node, switch first (e.g. `nvm use 26`).
+  - **AI agents (Claude Code app) running without the Docker image** land in a
+    container that defaults to an older Node (e.g. Node 22) and has no Node 26
+    pre-installed. Install and select it with nvm before running anything:
+    ```bash
+    export NVM_DIR="/opt/nvm" && . "$NVM_DIR/nvm.sh"   # nvm lives in /opt/nvm here
+    nvm install 26 && nvm use 26
+    pnpm install                                        # re-run so native deps build against Node 26
+    ```
+    Re-source nvm (`. "$NVM_DIR/nvm.sh"`) in each new shell, since env vars don't
+    persist between commands.
 - pnpm (workspace monorepo)
 - ES modules throughout
 - SQLite data in `./data/` (gitignored)
