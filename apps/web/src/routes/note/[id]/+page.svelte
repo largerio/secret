@@ -106,6 +106,13 @@ onMount(() => {
 	};
 });
 
+function acceptBurn() {
+	burnAccepted = true;
+	// With no password to enter, nothing waits for the user between "I understand"
+	// and "Reveal", so decrypt in the same gesture instead of forcing a second click.
+	if (!needsPassword) handleDecrypt();
+}
+
 async function handleDecrypt() {
 	const id = page.params["id"];
 	if (!id || status.state !== "ready") return;
@@ -254,8 +261,9 @@ async function handleDecrypt() {
 				</p>
 				<button
 					type="button"
-					onclick={() => (burnAccepted = true)}
-					class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all"
+					onclick={acceptBurn}
+					disabled={!mounted}
+					class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
 					style:background="var(--accent)"
 					style:color="var(--accent-ink)"
 					style:padding="10px 16px"
