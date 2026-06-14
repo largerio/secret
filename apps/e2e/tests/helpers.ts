@@ -114,19 +114,23 @@ export async function revealNote(
 	const accept = page.getByRole("button", { name: /I understand, continue/i });
 	const reveal = page.getByRole("button", { name: /Reveal the secret/i });
 
-	// Single-read notes gate the reveal CTA behind a burn-after-read warning.
-	// Retry the acknowledgement until client-side hydration has wired up the
-	// handler — an early click on the SSR'd button would otherwise be silently
-	// dropped. Multi-read notes show no warning, so skip it when absent.
+	// Single-read notes gate behind a burn-after-read warning. Both the accept and
+	// reveal buttons are `disabled={!mounted}`, so waiting for one to be enabled
+	// guarantees Svelte has hydrated and the click handler is attached.
 	if (await accept.isVisible()) {
-		await expect(async () => {
+		await expect(accept).toBeEnabled({ timeout: 30_000 });
+
+		if (options.password === undefined) {
+			// No password: acknowledging the warning decrypts in a single click —
+			// the separate "Reveal the secret" button never appears.
 			await accept.click();
-			await expect(reveal).toBeVisible({ timeout: 2000 });
-		}).toPass({ timeout: 30_000 });
+			return;
+		}
+
+		// Password-protected: acknowledging reveals the password field + reveal CTA.
+		await accept.click();
 	}
 
-	// The reveal button is `disabled={!mounted}`; waiting for it to be enabled
-	// guarantees Svelte has hydrated and the click handler is attached.
 	await expect(reveal).toBeEnabled({ timeout: 30_000 });
 
 	if (options.password !== undefined) {
