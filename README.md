@@ -81,13 +81,21 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 ```bash
 mkdir secret && cd secret
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
-curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
-
-# Generate a server encryption key (REQUIRED) and paste it into .env
-openssl rand -base64 32   # → SERVER_ENCRYPTION_KEY=<output>
-# Set APP_URL to your public URL (or leave http://localhost:3000 for local)
 
 docker compose up -d      # pulls ghcr.io/largerio/secret:latest
+```
+
+That's it — on first launch the server encryption key is generated automatically and
+saved inside the data volume, so there's nothing to configure. For a real deployment
+on your own domain, add a `.env` to set your public URL (and optionally pin the key):
+
+```bash
+curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
+# In .env, set:
+#   APP_URL=https://secret.example.com    # your public URL (used for CORS, sitemap, robots.txt)
+# Optional — pin the key yourself instead of the auto-generated one:
+#   openssl rand -base64 32   → SERVER_ENCRYPTION_KEY=<output>
+docker compose up -d --force-recreate
 ```
 
 Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
@@ -110,8 +118,7 @@ If something doesn't work, run `docker compose logs -f` — see
 ```bash
 git clone https://github.com/largerio/secret.git
 cd secret
-cp .env.example .env
-openssl rand -base64 32   # → set SERVER_ENCRYPTION_KEY in .env
+cp .env.example .env   # optional — set APP_URL / pin SERVER_ENCRYPTION_KEY if you want
 
 # Uncomment `build: .` (and comment out `image:`) in docker-compose.yml to build locally
 docker compose up -d
@@ -167,7 +174,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVER_ENCRYPTION_KEY` | — | **Required.** AES-256-GCM key (32 bytes, base64) |
+| `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
 | `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for logo, favicon, footer…) |
@@ -180,7 +187,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port the app is published on (inside the container the web server always listens on 3000, the API on 3001) |
 
-> **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable.
+> **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key.
 
 ### S3 Storage (optional)
 
