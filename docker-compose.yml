@@ -11,7 +11,8 @@ services:
     environment:
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
-      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY}
+      # Leave unset to auto-generate a key on first launch (persisted in the volume).
+      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - APP_NAME=${APP_NAME:-Secret}
       - APP_DESCRIPTION=${APP_DESCRIPTION:-Secure zero-knowledge note and file sharing}

@@ -20,22 +20,13 @@ and runs as a single container.
 
 ## Quick deploy (VPS / any Docker host)
 
-You only need two files — `docker-compose.yml` and `.env`. No git clone required.
+You only need one file — `docker-compose.yml`. No git clone, no manual key. The
+server encryption key is generated automatically on first launch and persisted in
+the data volume, so this works with zero configuration:
 
 ```bash
 mkdir secret && cd secret
-
-# Grab the compose file and an env template
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
-curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
-
-# Generate the REQUIRED server encryption key and paste it into .env
-openssl rand -base64 32
-#   → set SERVER_ENCRYPTION_KEY=<output> in .env
-
-# Set your public URL in .env, e.g.
-#   APP_URL=https://secret.example.com
-
 docker compose up -d
 ```
 
@@ -43,8 +34,25 @@ The container pulls `ghcr.io/largerio/secret:latest`, creates a persistent
 Docker volume for your data, and serves the app on port `3000`.
 Open `http://<your-host>:3000` and you're live.
 
+**Deploying on your own domain** — add a `.env` to set your public URL (and,
+optionally, to pin the encryption key yourself rather than using the generated one):
+
+```bash
+curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
+
+# In .env, set your public URL — used for CORS, sitemap.xml and robots.txt:
+#   APP_URL=https://secret.example.com
+
+# OPTIONAL — pin the key explicitly (otherwise one is auto-generated & persisted):
+#   openssl rand -base64 32   → SERVER_ENCRYPTION_KEY=<output>
+
+docker compose up -d --force-recreate
+```
+
 > ⚠️ **Never change `SERVER_ENCRYPTION_KEY` after the first launch** — all
-> existing notes become permanently unreadable. Back it up somewhere safe.
+> existing notes become permanently unreadable. When auto-generated it is stored
+> at `.encryption_key` inside the data volume, so a volume backup includes it;
+> still keep a copy somewhere safe.
 
 ---
 
@@ -227,18 +235,23 @@ docker compose logs -f        # or: docker logs -f secret
 
 ### Container keeps restarting / exits immediately
 
-Almost always a missing or invalid `SERVER_ENCRYPTION_KEY`. The logs will show:
+If no `SERVER_ENCRYPTION_KEY` is set, the container generates one on first launch
+and stores it at `.encryption_key` inside the data volume — so this should not
+happen on a fresh deployment. If you **did** set the key explicitly and it is
+invalid, the logs will show:
 
 ```
 ERROR: SERVER_ENCRYPTION_KEY is required.
 Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Generate a key (`openssl rand -base64 32`), set it in `.env`
-(`SERVER_ENCRYPTION_KEY=<output>`), then `docker compose up -d`.
+Either unset `SERVER_ENCRYPTION_KEY` to let one be generated, or set a valid key
+(`openssl rand -base64 32`) in `.env` and run `docker compose up -d --force-recreate`.
 
-> The key must be exactly **32 bytes encoded as base64** (44 characters ending
-> in `=`). A random password or hex string will be rejected.
+> An explicit key must be exactly **32 bytes encoded as base64** (44 characters
+> ending in `=`). A random password or hex string will be rejected. The data
+> volume must also be writable by uid 1001 so the auto-generated key can be saved
+> (bind mounts: `chown -R 1001:1001 /path/to/data`).
 
 ### Changed `.env` but nothing happens
 
