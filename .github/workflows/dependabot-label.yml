@@ -43,3 +43,7 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, so gh can't infer the repo from a git
+          # remote. GH_REPO points `gh label create` (which has no --repo flag)
+          # at the right repo; without it gh fails with "not a git repository".
+          GH_REPO: ${{ github.repository }}
