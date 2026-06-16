@@ -38,19 +38,56 @@ export function getPasswordStrength(password: string): PasswordStrength {
 	return { score, labelKey, color };
 }
 
+/** Which character classes a generated password may draw from. */
+export interface PasswordOptions {
+	readonly uppercase?: boolean;
+	readonly lowercase?: boolean;
+	readonly digits?: boolean;
+	readonly symbols?: boolean;
+}
+
 // Ambiguous characters (0/O, 1/l/I) are excluded so generated passwords
 // can be read aloud or retyped without confusion.
-const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+const CHARSETS = {
+	uppercase: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+	lowercase: "abcdefghjkmnpqrstuvwxyz",
+	digits: "23456789",
+	symbols: "!@#$%",
+} as const;
 
-/** Generate a random password from display-safe characters. */
-export function generatePassword(length = 20): string {
-	const values = new Uint32Array(length);
-	crypto.getRandomValues(values);
+/**
+ * Draw a uniform integer in [0, max) from the CSPRNG. Rejection sampling
+ * discards the tail of the 32-bit range that would otherwise introduce modulo
+ * bias, so every character is equally likely regardless of charset size.
+ */
+function uniformIndex(max: number): number {
+	const limit = Math.floor(0x1_0000_0000 / max) * max;
+	const array = new Uint32Array(1);
+	for (;;) {
+		crypto.getRandomValues(array);
+		/* v8 ignore next */
+		const value = array[0] ?? 0;
+		if (value < limit) return value % max;
+	}
+}
+
+/**
+ * Generate a random password from display-safe characters. By default every
+ * character class is enabled; pass `options` to restrict the charset. If no
+ * class is enabled the lowercase set is used as a safe fallback.
+ */
+export function generatePassword(length = 20, options?: PasswordOptions): string {
+	const opts = options ?? { uppercase: true, lowercase: true, digits: true, symbols: true };
+	let charset = "";
+	if (opts.uppercase) charset += CHARSETS.uppercase;
+	if (opts.lowercase) charset += CHARSETS.lowercase;
+	if (opts.digits) charset += CHARSETS.digits;
+	if (opts.symbols) charset += CHARSETS.symbols;
+	if (charset.length === 0) charset = CHARSETS.lowercase;
+
 	let password = "";
-	// Iterating the typed array yields `number` (not `number | undefined`), so no
-	// index fallback is needed.
-	for (const value of values) {
-		password += PASSWORD_CHARS[value % PASSWORD_CHARS.length];
+	for (let i = 0; i < length; i++) {
+		password += charset[uniformIndex(charset.length)];
 	}
 	return password;
 }

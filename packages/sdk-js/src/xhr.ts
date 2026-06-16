@@ -1,4 +1,4 @@
-import type { CreateNoteResponse } from "@largerio/secret-shared";
+import { type CreateNoteResponse, createNoteResponseSchema } from "@largerio/secret-shared";
 import { SecretApiError } from "./errors.js";
 
 export function postFormDataXhr(
@@ -28,17 +28,27 @@ export function postFormDataXhr(
 		});
 
 		xhr.addEventListener("load", () => {
+			let data: Record<string, unknown>;
 			try {
-				const data = JSON.parse(xhr.responseText) as Record<string, unknown>;
-				if (xhr.status >= 200 && xhr.status < 300) {
-					resolve(data as unknown as CreateNoteResponse);
-				} else {
-					const error =
-						typeof data["error"] === "string" ? data["error"] : `HTTP ${String(xhr.status)}`;
-					reject(new SecretApiError(error, xhr.status));
-				}
+				data = JSON.parse(xhr.responseText) as Record<string, unknown>;
 			} catch {
 				reject(new SecretApiError("Invalid JSON response", xhr.status));
+				return;
+			}
+
+			if (xhr.status >= 200 && xhr.status < 300) {
+				// Validate the success shape at runtime rather than trusting the cast —
+				// a malformed 2xx body should fail loudly instead of propagating.
+				const parsed = createNoteResponseSchema.safeParse(data);
+				if (!parsed.success) {
+					reject(new SecretApiError("Invalid response", xhr.status));
+					return;
+				}
+				resolve(parsed.data);
+			} else {
+				const error =
+					typeof data["error"] === "string" ? data["error"] : `HTTP ${String(xhr.status)}`;
+				reject(new SecretApiError(error, xhr.status));
 			}
 		});
 
