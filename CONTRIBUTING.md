@@ -30,7 +30,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```bash
 pnpm lint         # Biome lint + format
 pnpm typecheck    # TypeScript strict
-pnpm test         # All 422 tests must pass
+pnpm test         # All 719 tests must pass
 ```
 
 4. Commit with a clear message (see [Commit Messages](#commit-messages))
@@ -61,7 +61,7 @@ Use `import type { ... }` for type-only imports.
 ## Project Structure
 
 ```
-apps/api/           Backend (Hono, Node.js 25, SQLite)
+apps/api/           Backend (Hono, Node.js 26, SQLite)
 apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
 packages/sdk-js/    JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)

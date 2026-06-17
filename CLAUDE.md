@@ -26,7 +26,7 @@ pnpm typecheck        # TypeScript strict check (all packages)
 Monorepo with pnpm workspaces:
 
 - **`apps/api`** — Hono HTTP server (Node.js 26, TypeScript)
-  - Routes: `src/routes/notes.ts` — OpenAPI routes via `@hono/zod-openapi`
+  - Routes: `src/routes/notes/` (split into `standard.ts`, `chunked.ts`, `openapi-routes.ts`, `helpers.ts`) — OpenAPI routes via `@hono/zod-openapi`
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
   - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
   - Database: SQLite via Node's built-in `node:sqlite` (`DatabaseSync`) + Drizzle ORM (`drizzle-orm/node-sqlite`) (`src/db/`)
@@ -79,7 +79,7 @@ Monorepo with pnpm workspaces:
 
 ## Code Style
 
-- **Formatter**: Biome 2.4 — tabs, 100-char lines, double quotes, semicolons always
+- **Formatter**: Biome 2.5 — tabs, 100-char lines, double quotes, semicolons always
 - **TypeScript**: Strict mode (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noNonNullAssertion`)
 - **No `any`**: Biome enforces `noExplicitAny`
 - **Imports**: Use `type` imports for type-only (`import type { ... }`)
@@ -122,7 +122,7 @@ Monorepo with pnpm workspaces:
 
 ## Testing
 
-683 tests. 100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
+719 tests. 100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
 
 Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
 

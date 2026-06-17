@@ -259,7 +259,7 @@ Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZ
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 422 tests, 100% backend coverage
+pnpm test         # 719 tests, 100% coverage
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
