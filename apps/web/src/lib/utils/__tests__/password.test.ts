@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generatePassword, getPasswordStrength } from "../password.js";
 
 describe("getPasswordStrength", () => {
@@ -74,5 +74,38 @@ describe("generatePassword", () => {
 	it("rates its own output as excellent", () => {
 		const result = getPasswordStrength(generatePassword());
 		expect(result.score).toBeGreaterThanOrEqual(4);
+	});
+
+	it("restricts the charset to the requested character classes", () => {
+		expect(generatePassword(60, { digits: true })).toMatch(/^[2-9]+$/);
+		expect(generatePassword(60, { uppercase: true })).toMatch(/^[A-HJ-NP-Z]+$/);
+		expect(generatePassword(60, { lowercase: true, symbols: true })).toMatch(/^[a-hj-km-z!@#$%]+$/);
+	});
+
+	it("falls back to lowercase when every class is disabled", () => {
+		const password = generatePassword(60, {
+			uppercase: false,
+			lowercase: false,
+			digits: false,
+			symbols: false,
+		});
+		expect(password).toMatch(/^[a-hj-km-z]+$/);
+	});
+
+	it("rejects biased samples from the tail of the random range", () => {
+		// First draw lands in the rejected tail (>= limit), second is accepted.
+		// This exercises the rejection-sampling loop that removes modulo bias.
+		const draws = [4_294_967_290, 5];
+		let call = 0;
+		const spy = vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((array) => {
+			(array as Uint32Array)[0] = draws[call++] ?? 0;
+			return array;
+		});
+
+		const password = generatePassword(1);
+
+		expect(password).toHaveLength(1);
+		expect(spy).toHaveBeenCalledTimes(2);
+		spy.mockRestore();
 	});
 });

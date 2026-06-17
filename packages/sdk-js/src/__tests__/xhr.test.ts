@@ -169,6 +169,21 @@ describe("postFormDataXhr", () => {
 		await expect(promise).rejects.toThrow("Invalid JSON response");
 	});
 
+	test("rejects when a 2xx body fails schema validation", async () => {
+		const { xhr, triggerEvent } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+
+		xhr.status = 200;
+		// Missing expiresAt and deleteToken — a malformed success response.
+		xhr.responseText = JSON.stringify({ id: "x1" });
+
+		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
+		triggerEvent("load");
+
+		await expect(promise).rejects.toThrow("Invalid response");
+	});
+
 	test("rejects with Network error on XHR error event", async () => {
 		const { xhr, triggerEvent } = createMockXhr();
 		installXhr(xhr);

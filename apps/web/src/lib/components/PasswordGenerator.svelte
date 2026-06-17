@@ -1,6 +1,8 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { generatePassword } from "$lib/utils/password";
 
 interface Props {
 	value: string;
@@ -16,48 +18,15 @@ let digits = $state(true);
 let symbols = $state(true);
 let copied = $state(false);
 
-const CHARSETS = {
-	uppercase: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-	lowercase: "abcdefghijklmnopqrstuvwxyz",
-	digits: "0123456789",
-	symbols: "!@#$%^&*()-_=+[]{}|;:,.<>?/~`",
-};
-
-function uniformRandom(max: number): number {
-	const limit = Math.floor(0x100000000 / max) * max;
-	const array = new Uint32Array(1);
-	for (;;) {
-		crypto.getRandomValues(array);
-		const val = array[0] ?? 0;
-		if (val < limit) return val % max;
-	}
-}
-
+// Regenerate only on explicit user intent (mount, the regenerate button, a
+// charset toggle, or releasing the length slider) — never continuously while
+// the slider is being dragged.
 function generate(): void {
-	let charset = "";
-	if (uppercase) charset += CHARSETS.uppercase;
-	if (lowercase) charset += CHARSETS.lowercase;
-	if (digits) charset += CHARSETS.digits;
-	if (symbols) charset += CHARSETS.symbols;
-
-	if (charset.length === 0) {
-		charset = CHARSETS.lowercase;
-	}
-
-	let result = "";
-	for (let i = 0; i < length; i++) {
-		result += charset[uniformRandom(charset.length)];
-	}
-
-	value = result;
-	onchange?.(result);
+	value = generatePassword(length, { uppercase, lowercase, digits, symbols });
+	onchange?.(value);
 }
 
-$effect(() => {
-	const _ = length + +uppercase + +lowercase + +digits + +symbols;
-	void _;
-	generate();
-});
+onMount(generate);
 
 async function copyPassword(): Promise<void> {
 	try {
@@ -129,6 +98,7 @@ function charColor(ch: string): string {
 				min="8"
 				max="64"
 				bind:value={length}
+				onchange={generate}
 				class="flex-1 cursor-pointer"
 				style:accent-color="var(--accent)"
 			/>
@@ -186,6 +156,7 @@ function charColor(ch: string): string {
 					else if (o.k === "lower") lowercase = !lowercase;
 					else if (o.k === "digits") digits = !digits;
 					else symbols = !symbols;
+					generate();
 				}}
 				class="mono inline-flex items-center gap-1.5 rounded-lg border transition-all"
 				style:background={on ? "var(--accent-soft)" : "var(--bg-3)"}
