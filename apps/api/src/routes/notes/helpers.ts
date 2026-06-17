@@ -59,8 +59,12 @@ export function buildNoteHeaders(note: {
 	return headers;
 }
 
-export function httpError(status: 400 | 401 | 403 | 404 | 500, message: string): never {
-	throw new HTTPException(status, { message });
+export function httpError(
+	status: 400 | 401 | 403 | 404 | 500,
+	message: string,
+	cause?: unknown,
+): never {
+	throw new HTTPException(status, { message, ...(cause !== undefined ? { cause } : {}) });
 }
 
 const UPLOAD_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -217,7 +221,10 @@ export async function consumeNote(
 		if (err instanceof StorageNotFoundError) {
 			httpError(404, "Note not found");
 		}
-		httpError(500, "Failed to decrypt note");
+		// Preserve the underlying decryption failure as the HTTPException cause so
+		// it can be surfaced in the server log under DEBUG (the client response
+		// stays the generic "Failed to decrypt note" — no decryption oracle).
+		httpError(500, "Failed to decrypt note", err);
 	} finally {
 		// Finalize storage cleanup for a burned note on both the success and
 		// error paths (the catch above always throws via httpError).

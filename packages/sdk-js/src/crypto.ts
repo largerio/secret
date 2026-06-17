@@ -199,6 +199,11 @@ export async function encryptNoteChunked(
 
 		return {
 			header: toBase64(header),
+			// Chunked notes authenticate via the secretstream `header` above, not a
+			// standalone nonce. This value is a placeholder that exists only to
+			// satisfy the shared create schema and the NOT NULL `client_nonce`
+			// column; it is never consumed when reading a chunked note
+			// (see decryptNoteChunked / readNoteStream).
 			clientNonce: toBase64(generateNonce()),
 			chunks,
 			keyFragment,

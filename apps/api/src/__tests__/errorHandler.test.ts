@@ -29,6 +29,9 @@ describe("createErrorHandler", () => {
 	let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
+		// Restore first so each test starts from a fresh spy with no leaked call
+		// history from a previous test in this block.
+		vi.restoreAllMocks();
 		consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 	});
 
@@ -42,6 +45,35 @@ describe("createErrorHandler", () => {
 		const res = await app.request("/x");
 		expect(res.status).toBe(418);
 		expect(await res.json()).toEqual({ error: "teapot" });
+		expect(consoleSpy).not.toHaveBeenCalled();
+	});
+
+	it("logs an HTTPException cause under debug while keeping the client message", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: true }));
+		const cause = new Error("real decryption failure");
+		app.get("/x", () => {
+			throw new HTTPException(500, { message: "Failed to decrypt note", cause });
+		});
+
+		const res = await app.request("/x");
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({ error: "Failed to decrypt note" });
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Failed to decrypt note"),
+			cause,
+		);
+	});
+
+	it("does not log an HTTPException without a cause under debug", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: true }));
+		app.get("/x", () => {
+			throw new HTTPException(404, { message: "Note not found" });
+		});
+
+		const res = await app.request("/x");
+		expect(res.status).toBe(404);
 		expect(consoleSpy).not.toHaveBeenCalled();
 	});
 

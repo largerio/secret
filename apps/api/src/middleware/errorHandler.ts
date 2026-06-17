@@ -28,6 +28,12 @@ export function createErrorHandler(
 ): (err: Error, c: Context) => Response {
 	return (err, c) => {
 		if (err instanceof HTTPException) {
+			// HTTPExceptions are deliberate, client-safe responses, so they are not
+			// logged by default. When one carries a `cause` (e.g. the real
+			// decryption error behind a generic 500), surface it under DEBUG only.
+			if (options.debug && err.cause !== undefined) {
+				console.error(`[error] ${err.status} ${err.message}:`, err.cause);
+			}
 			return c.json({ error: err.message }, err.status);
 		}
 		const errorId = randomUUID();
