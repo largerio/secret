@@ -6,10 +6,9 @@ import { generatePassword } from "$lib/utils/password";
 
 interface Props {
 	value: string;
-	onchange?: (value: string) => void;
 }
 
-let { value = $bindable(""), onchange }: Props = $props();
+let { value = $bindable("") }: Props = $props();
 
 let length = $state(20);
 let uppercase = $state(true);
@@ -23,7 +22,6 @@ let copied = $state(false);
 // the slider is being dragged.
 function generate(): void {
 	value = generatePassword(length, { uppercase, lowercase, digits, symbols });
-	onchange?.(value);
 }
 
 onMount(generate);

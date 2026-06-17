@@ -21,17 +21,27 @@ let { steps, currentStep, progress, label }: Props = $props();
 	<div class="flex items-center justify-center gap-0">
 		{#each steps as step, i}
 			{#if i > 0}
-				<div class="h-0.5 flex-1 max-w-12 {i <= currentStep ? 'bg-primary' : 'bg-slate-700'}">
+				<div
+					class="h-0.5 flex-1 max-w-12"
+					style:background={i <= currentStep ? "var(--accent)" : "var(--line)"}
+				>
 				</div>
 			{/if}
 			<div class="flex flex-col items-center gap-1">
 				<div
 					class="flex h-8 w-8 items-center justify-center rounded-full text-sm transition-colors
-						{i < currentStep
-						? 'bg-primary text-white'
+						{i === currentStep ? 'border-2 animate-pulse' : ''}{i > currentStep ? 'border' : ''}"
+					style:background={i < currentStep ? "var(--accent)" : "transparent"}
+					style:border-color={i === currentStep
+						? "var(--accent)"
+						: i > currentStep
+							? "var(--line-2)"
+							: "transparent"}
+					style:color={i < currentStep
+						? "var(--accent-ink)"
 						: i === currentStep
-							? 'border-2 border-primary text-primary animate-pulse'
-							: 'border border-slate-600 text-slate-500'}"
+							? "var(--accent)"
+							: "var(--muted-2)"}
 				>
 					{#if i < currentStep}
 						<i class="fa-solid fa-check text-xs"></i>
@@ -40,7 +50,8 @@ let { steps, currentStep, progress, label }: Props = $props();
 					{/if}
 				</div>
 				<span
-					class="text-[10px] font-medium {i <= currentStep ? 'text-slate-300' : 'text-slate-500'}"
+					class="text-[10px] font-medium"
+					style:color={i <= currentStep ? "var(--text)" : "var(--muted-2)"}
 				>
 					{step.label}
 				</span>
@@ -51,6 +62,6 @@ let { steps, currentStep, progress, label }: Props = $props();
 	<ProgressBar progress={progress} animated={currentStep < steps.length - 1} />
 
 	{#if label}
-		<p class="text-center text-xs text-slate-500">{label}</p>
+		<p class="text-center text-xs" style:color="var(--muted-2)">{label}</p>
 	{/if}
 </div>

@@ -12,12 +12,12 @@ const isActive = $derived(animated && clamped < 100);
 
 <div class="w-full space-y-1">
 	{#if label}
-		<div class="flex justify-between text-xs text-slate-400">
+		<div class="flex justify-between text-xs" style:color="var(--muted)">
 			<span>{label}</span>
 			<span>{Math.round(clamped)}%</span>
 		</div>
 	{/if}
-	<div class="h-3 w-full rounded-full bg-slate-700 overflow-hidden" role="progressbar" aria-valuenow={Math.round(clamped)} aria-valuemin={0} aria-valuemax={100}>
+	<div class="h-3 w-full rounded-full overflow-hidden" style:background="var(--bg-3)" role="progressbar" aria-valuenow={Math.round(clamped)} aria-valuemin={0} aria-valuemax={100}>
 		<div
 			class="h-full rounded-full transition-all duration-300 ease-out {isActive
 				? 'progress-shimmer'
