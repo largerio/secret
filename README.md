@@ -6,12 +6,17 @@
 [![GitHub stars](https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue)](https://github.com/largerio/secret/stargazers)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
+[![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
 
 Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
 **[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
+
+<p align="center">
+  <img src="docs/images/demo.gif" alt="Compose a secret, encrypt it in the browser, and get a one-time share link whose key never reaches the server" width="100%" />
+</p>
 
 <p align="center">
   <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
