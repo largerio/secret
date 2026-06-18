@@ -15,6 +15,10 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 **[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
 
 <p align="center">
+  <img src="docs/images/demo.gif" alt="Compose a secret, encrypt it in the browser, and get a one-time share link whose key never reaches the server" width="100%" />
+</p>
+
+<p align="center">
   <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
   &nbsp;
   <img src="docs/images/share.png" alt="Get a one-time link — the decryption key lives in the URL and never reaches the server" width="32%" />
