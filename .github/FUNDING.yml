@@ -1,0 +1,7 @@
+# Funding sources for the "Sponsor" button on the repository.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: [largerio]
+buy_me_a_coffee: largerio
+
+# custom: ["https://secret.larger.io"]   # Up to 4 custom URLs

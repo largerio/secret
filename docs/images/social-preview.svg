@@ -1,0 +1,49 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <radialGradient id="glow" cx="22%" cy="14%" r="62%">
+      <stop offset="0%" stop-color="#e9603f" stop-opacity="0.20"/>
+      <stop offset="55%" stop-color="#e9603f" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#e9603f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f1764f"/>
+      <stop offset="100%" stop-color="#e0573b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="1280" height="640" fill="#0e0f13"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="1279" height="639" rx="0" stroke="#1d2028"/>
+
+  <!-- left: wordmark + copy -->
+  <g transform="translate(96, 150)">
+    <!-- small e2e badge -->
+    <g>
+      <circle cx="8" cy="7" r="5" fill="#36c08a"/>
+      <text x="26" y="13" font-size="20" letter-spacing="3" fill="#36c08a" font-weight="600" font-family="'JetBrains Mono', ui-monospace, monospace">E2E ENCRYPTED · AES-256-GCM</text>
+    </g>
+
+    <!-- wordmark -->
+    <text x="-4" y="160" font-size="172" fill="#ecedf1" font-family="'Instrument Serif', Georgia, 'Times New Roman', serif" font-style="italic">Secret</text>
+
+    <!-- tagline -->
+    <text x="0" y="232" font-size="40" fill="#ecedf1" font-weight="500">Zero-knowledge encrypted note &amp; file sharing.</text>
+    <text x="0" y="288" font-size="27" fill="#a7adbd">Encrypted in your browser — the server never sees your content.</text>
+
+    <!-- alternative-to line -->
+    <text x="0" y="372" font-size="22" fill="#838a9e" font-family="'JetBrains Mono', ui-monospace, monospace">Open-source alternative to PrivateBin · OneTimeSecret · Yopass</text>
+  </g>
+
+  <!-- right: lock motif -->
+  <g transform="translate(958, 196)" stroke="url(#accent)" stroke-width="13" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="34" y="118" width="220" height="168" rx="26" fill="#16181e"/>
+    <path d="M86 118 V82 a58 58 0 0 1 116 0 V118"/>
+    <circle cx="144" cy="188" r="22" fill="url(#accent)" stroke="none"/>
+    <path d="M144 206 V236" stroke="url(#accent)"/>
+  </g>
+
+  <!-- footer: domain -->
+  <text x="96" y="588" font-size="26" fill="#838a9e" font-family="'JetBrains Mono', ui-monospace, monospace">secret<tspan fill="#e0573b">.larger.io</tspan></text>
+  <text x="1184" y="588" text-anchor="end" font-size="22" fill="#5a6072" font-family="'JetBrains Mono', ui-monospace, monospace">Svelte 5 · Hono · TypeScript · MIT</text>
+</svg>
