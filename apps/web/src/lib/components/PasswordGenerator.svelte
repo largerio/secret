@@ -97,6 +97,7 @@ function charColor(ch: string): string {
 				max="64"
 				bind:value={length}
 				onchange={generate}
+				aria-label={t("password_length")}
 				class="flex-1 cursor-pointer"
 				style:accent-color="var(--accent)"
 			/>
@@ -127,7 +128,7 @@ function charColor(ch: string): string {
 				onclick={copyPassword}
 				disabled={!value}
 				class="inline-flex items-center gap-1.5 rounded-lg border transition-colors disabled:opacity-50"
-				style:background="var(--accent)"
+				style:background="var(--accent-strong)"
 				style:border-color="transparent"
 				style:color="var(--accent-ink)"
 				style:padding="8px 14px"

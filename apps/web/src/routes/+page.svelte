@@ -340,7 +340,7 @@ const TABS: {
 			type="submit"
 			disabled={!mounted || isSubmitting || !canSubmit}
 			class="inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-			style:background="var(--accent)"
+			style:background="var(--accent-strong)"
 			style:color="var(--accent-ink)"
 			style:padding="16px 24px"
 			style:font-size="15px"

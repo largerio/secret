@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
 export interface CreateNoteOptions {
@@ -137,4 +138,32 @@ export async function revealNote(
 		await page.locator("#decrypt-password").fill(options.password);
 	}
 	await reveal.click();
+}
+
+/**
+ * Runs axe-core against the current page state and asserts there are no WCAG
+ * 2.0/2.1 A or AA violations. The caller is responsible for first navigating to —
+ * and waiting for — the UI state it wants to audit (axe analyses the live DOM at
+ * call time, so a stable, fully-hydrated state is required for a meaningful scan).
+ *
+ * `best-practice` rules are intentionally left out: the gate covers the WCAG
+ * success criteria only, which keeps it actionable and stable across axe releases.
+ * On failure each violation is printed as `[impact] rule-id: help` followed by the
+ * offending node selectors, so a CI log points straight at the rule and element.
+ */
+export async function expectNoA11yViolations(page: Page, label: string): Promise<void> {
+	const { violations } = await new AxeBuilder({ page })
+		.withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+		.analyze();
+
+	const summary = violations
+		.map(
+			(v) =>
+				`  [${v.impact}] ${v.id}: ${v.help}\n    ${v.nodes
+					.map((n) => n.target.join(" "))
+					.join("\n    ")}`,
+		)
+		.join("\n");
+
+	expect(violations, `a11y violations on "${label}":\n${summary}`).toEqual([]);
 }
