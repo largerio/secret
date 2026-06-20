@@ -152,6 +152,14 @@ export async function revealNote(
  * offending node selectors, so a CI log points straight at the rule and element.
  */
 export async function expectNoA11yViolations(page: Page, label: string): Promise<void> {
+	// Settle any in-flight mount transitions before scanning: Svelte's fade/fly use
+	// the Web Animations API, and a half-faded element reports washed-out colors that
+	// trip color-contrast. Finishing each animation snaps it to its end (full-opacity)
+	// state, making the scan deterministic regardless of machine speed.
+	await page.evaluate(() => {
+		for (const animation of document.getAnimations()) animation.finish();
+	});
+
 	const { violations } = await new AxeBuilder({ page })
 		.withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
 		.analyze();
