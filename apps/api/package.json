@@ -20,21 +20,21 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "^3.1069.0",
-		"@aws-sdk/lib-storage": "^3.1069.0",
+		"@aws-sdk/client-s3": "^3.1077.0",
+		"@aws-sdk/lib-storage": "^3.1077.0",
 		"@cap.js/server": "^4.0.5",
-		"@hono/node-server": "^2.0.5",
+		"@hono/node-server": "^2.0.6",
 		"@hono/zod-openapi": "^1.4.0",
-		"@scalar/hono-api-reference": "^0.11.3",
+		"@scalar/hono-api-reference": "^0.11.7",
 		"@largerio/secret-crypto": "workspace:*",
 		"@largerio/secret-shared": "workspace:*",
 		"drizzle-orm": "1.0.0-rc.4-273829f",
-		"hono": "^4.12.25",
-		"nanoid": "^5.1.11",
+		"hono": "^4.12.27",
+		"nanoid": "^5.1.16",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@types/node": "^25.9.3",
+		"@types/node": "^26.1.0",
 		"drizzle-kit": "1.0.0-rc.4",
 		"tsx": "^4.22.4"
 	}
