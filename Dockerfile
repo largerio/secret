@@ -56,7 +56,12 @@ RUN adduser -D -u 1001 appuser
 WORKDIR /app
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN npm install -g corepack@0.35.0 && corepack enable
+# corepack (pnpm) is the only package manager used here; npm is needed solely to
+# bootstrap corepack and is never invoked at runtime. Drop it from the final image
+# so it also drops npm's bundled undici (flagged by Trivy, e.g. CVE-2026-12151).
+# The Node runtime's built-in undici and the app's own undici are unaffected.
+RUN npm install -g corepack@0.35.0 && corepack enable && \
+	rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY --from=builder /build/package.json /build/pnpm-workspace.yaml /build/pnpm-lock.yaml ./
 COPY --from=builder /build/packages/shared/package.json packages/shared/
