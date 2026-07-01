@@ -1,6 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
-import * as schema from "./schema.js";
 
 export function createDatabase(dbPath: string): {
 	db: ReturnType<typeof drizzle>;
@@ -91,7 +90,10 @@ export function createDatabase(dbPath: string): {
 		`CREATE INDEX IF NOT EXISTS idx_pending_deletions_next_retry ON pending_deletions (next_retry_at)`,
 	);
 
-	const db = drizzle({ client: sqlite, schema });
+	// drizzle-orm 1.0 dropped the `schema` config option (relational queries now
+	// use the separate `relations` API). This app only uses the core query
+	// builder with explicit table references, so no schema/relations is needed.
+	const db = drizzle({ client: sqlite });
 	return { db, sqlite };
 }
 
