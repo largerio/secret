@@ -28,7 +28,7 @@
 		"@scalar/hono-api-reference": "^0.11.3",
 		"@largerio/secret-crypto": "workspace:*",
 		"@largerio/secret-shared": "workspace:*",
-		"drizzle-orm": "1.0.0-rc.4-273829f",
+		"drizzle-orm": "1.0.0-rc.4",
 		"hono": "^4.12.25",
 		"nanoid": "^5.1.11",
 		"zod": "^4.4.3"
