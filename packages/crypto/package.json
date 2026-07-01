@@ -43,6 +43,6 @@
 		"libsodium-wrappers-sumo": "^0.8.4"
 	},
 	"devDependencies": {
-		"@types/node": "^25.9.3"
+		"@types/node": "^26.1.0"
 	}
 }
