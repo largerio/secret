@@ -63,7 +63,7 @@ async function handleDelete() {
 			<a
 				href="/"
 				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-				style:background="var(--accent)"
+				style:background="var(--accent-strong)"
 				style:color="var(--accent-ink)"
 				style:padding="12px 18px"
 				style:font-size="14px"
@@ -91,7 +91,7 @@ async function handleDelete() {
 				<a
 					href="/"
 					class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-					style:background="var(--accent)"
+					style:background="var(--accent-strong)"
 					style:color="var(--accent-ink)"
 					style:padding="12px 18px"
 					style:font-size="14px"
@@ -116,7 +116,7 @@ async function handleDelete() {
 			<a
 				href="/"
 				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-				style:background="var(--accent)"
+				style:background="var(--accent-strong)"
 				style:color="var(--accent-ink)"
 				style:padding="12px 18px"
 				style:font-size="14px"

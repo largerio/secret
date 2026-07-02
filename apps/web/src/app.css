@@ -35,6 +35,10 @@
 	--muted: #a7adbd;
 	--muted-2: #838a9e;
 	--accent: oklch(0.68 0.2 25);
+	/* Darker accent for solid buttons with white text: the bright `--accent`
+	   only reaches 3.15:1 against white, below the WCAG AA 4.5:1 threshold for
+	   normal-size text, so CTAs use this (#dc2626 → 4.84:1) instead. */
+	--accent-strong: #dc2626;
 	--accent-ink: #ffffff;
 	--accent-soft: oklch(0.68 0.2 25 / 0.16);
 	--accent-ring: oklch(0.68 0.2 25 / 0.4);
@@ -54,6 +58,9 @@
 	--muted: #4e4b42;
 	--muted-2: #70695e;
 	--accent: oklch(0.58 0.22 25);
+	/* See dark-mode note above — white text on a solid accent button needs the
+	   darker shade to clear 4.5:1. */
+	--accent-strong: #dc2626;
 	--accent-ink: #ffffff;
 	--accent-soft: oklch(0.58 0.22 25 / 0.10);
 	--accent-ring: oklch(0.58 0.22 25 / 0.30);
