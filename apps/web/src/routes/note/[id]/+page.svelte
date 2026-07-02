@@ -202,7 +202,7 @@ async function handleDecrypt() {
 		<a
 			href="/"
 			class="inline-flex items-center gap-2 rounded-lg transition-colors"
-			style:background="var(--accent)"
+			style:background="var(--accent-strong)"
 			style:color="var(--accent-ink)"
 			style:padding="12px 18px"
 			style:font-size="14px"
@@ -264,7 +264,7 @@ async function handleDecrypt() {
 					onclick={acceptBurn}
 					disabled={!mounted}
 					class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-					style:background="var(--accent)"
+					style:background="var(--accent-strong)"
 					style:color="var(--accent-ink)"
 					style:padding="10px 16px"
 					style:font-size="13px"
@@ -341,7 +341,7 @@ async function handleDecrypt() {
 				onclick={handleDecrypt}
 				disabled={!mounted}
 				class="mb-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-				style:background="var(--accent)"
+				style:background="var(--accent-strong)"
 				style:color="var(--accent-ink)"
 				style:padding="16px 24px"
 				style:font-size="15px"
@@ -547,7 +547,7 @@ async function handleDecrypt() {
 		<a
 			href="/"
 			class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-			style:background="var(--accent)"
+			style:background="var(--accent-strong)"
 			style:color="var(--accent-ink)"
 			style:padding="12px 18px"
 			style:font-size="14px"

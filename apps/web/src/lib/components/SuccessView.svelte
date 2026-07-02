@@ -153,7 +153,7 @@ async function copy(text: string, setFlag: (v: boolean) => void) {
 				type="button"
 				onclick={() => copy(shareUrl, (v) => (copied = v))}
 				class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all"
-				style:background="var(--accent)"
+				style:background="var(--accent-strong)"
 				style:color="var(--accent-ink)"
 				style:padding="12px 18px"
 				style:font-size="13px"
@@ -364,6 +364,7 @@ async function copy(text: string, setFlag: (v: boolean) => void) {
 						type="text"
 						readonly
 						value={manageUrl}
+						aria-label={t("delete_label")}
 						class="min-w-0 flex-1 rounded-lg border outline-none"
 						style:background="var(--bg-2)"
 						style:border-color="var(--line)"

@@ -54,7 +54,7 @@ const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 	<a
 		href="#main-content"
 		class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:px-4 focus:py-2"
-		style:background="var(--accent)"
+		style:background="var(--accent-strong)"
 		style:color="var(--accent-ink)"
 	>
 		{t("skip_to_content")}
