@@ -38,9 +38,9 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.2",
 		"@changesets/cli": "^2.27.0",
-		"@vitest/coverage-v8": "^4.1.9",
+		"@vitest/coverage-v8": "^4.1.10",
 		"lefthook": "^2.1.9",
 		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"vitest": "^4.1.10"
 	}
 }
