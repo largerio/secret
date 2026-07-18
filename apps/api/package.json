@@ -30,7 +30,7 @@
 		"@largerio/secret-shared": "workspace:*",
 		"drizzle-orm": "1.0.0-rc.4",
 		"hono": "^4.12.30",
-		"nanoid": "^5.1.16",
+		"nanoid": "^6.0.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
