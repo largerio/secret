@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { constants, mkdirSync } from "node:fs";
+import { access, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
 	assertChunkCount,
@@ -27,6 +27,12 @@ export class LocalStorage implements StorageBackend {
 			throw new StorageInvalidKeyError("Path traversal detected");
 		}
 		return resolved;
+	}
+
+	async probe(): Promise<void> {
+		// Write access, not just existence: a full disk or a volume remounted
+		// read-only is exactly the failure the health endpoint must surface.
+		await access(this.filesPath, constants.W_OK);
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {

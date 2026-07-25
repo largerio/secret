@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
+import { pendingDeletions } from "../db/schema.js";
 import { createWriteAuth } from "../middleware/auth.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
@@ -751,46 +752,6 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(res.status).toBe(404);
 	});
 
-	it("logs error when chunk cleanup fails for burn-after-read chunked note", async () => {
-		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ chunkCount: 1, streamHeader: "hdr" })
-			.where(eq(notesTable.id, id))
-			.run();
-
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failStorage: StorageBackend = {
-			save: (nid, data) => realStorage.save(nid, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
-			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
-			deleteChunks: () => Promise.reject("chunk burn fail string"),
-		};
-		const customApp = new Hono<AppEnv>();
-		customApp.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		customApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		customApp.use("/api/v1/notes/*", writeAuth);
-		customApp.route("/api/v1/notes", createNotesRoutes());
-
-		// Read succeeds (data served from encryptedData blob, not chunks since we didn't save actual chunks)
-		const res = await customApp.request(`/api/v1/notes/${id}`);
-		expect(res.status).toBe(200);
-	});
-
 	it("logs Error.message when chunk cleanup fails with Error for expired chunked note", async () => {
 		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
 		const { notes: notesTable } = await import("../db/schema.js");
@@ -826,17 +787,17 @@ describe("GET /api/v1/notes/:id", () => {
 		customApp.use("/api/v1/notes/*", writeAuth);
 		customApp.route("/api/v1/notes", createNotesRoutes());
 
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const res = await customApp.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
 
-		// Also test burn-after-read with Error
-		const { id: id2 } = await createTestNote({ maxReads: 1, fileCount: 0 });
-		db.update(notesTable)
-			.set({ chunkCount: 1, streamHeader: "hdr" })
-			.where(eq(notesTable.id, id2))
-			.run();
-		const res2 = await customApp.request(`/api/v1/notes/${id2}`);
-		expect(res2.status).toBe(200);
+		// The row is gone but its chunks are not: the failure must be recorded for
+		// retry, otherwise the objects are orphaned in storage forever.
+		expect(consoleSpy).toHaveBeenCalledWith(
+			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk fail error`,
+		);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(1);
+		consoleSpy.mockRestore();
 	});
 
 	it("returns 404 and cleans up chunks for expired chunked note", async () => {
@@ -853,7 +814,11 @@ describe("GET /api/v1/notes/:id", () => {
 		expect((await res.json()).error).toBe("Note not found");
 	});
 
-	it("handles burn-after-read chunked note via JSON endpoint", async () => {
+	// A chunked note stores an empty `encryptedData` blob, so serving it from an
+	// inline endpoint used to increment the read counter, fail to decrypt, and
+	// then delete the row AND its chunks in the cleanup path — destroying the
+	// note and answering 500. The shape check must run before the read is burned.
+	it("rejects a chunked note on the JSON endpoint without consuming a read", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
@@ -863,10 +828,28 @@ describe("GET /api/v1/notes/:id", () => {
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}`);
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Note is chunked; read it from /:id/stream");
 
-		const res2 = await app.request(`/api/v1/notes/${id}`);
-		expect(res2.status).toBe(404);
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row).toBeDefined();
+		expect(row?.readCount).toBe(0);
+	});
+
+	it("rejects a chunked note on the raw endpoint without consuming a read", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ chunkCount: 1, streamHeader: "hdr" })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		expect(res.status).toBe(400);
+
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.readCount).toBe(0);
 	});
 });
 
@@ -1332,11 +1315,14 @@ describe("Chunked upload flow", () => {
 
 	it("rejects chunk for non-existent upload session", async () => {
 		const chunk = chunkData("test");
-		const res = await app.request("/api/v1/notes/upload/nonexistent_session_id_padding_/chunks/0", {
-			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
-			body: chunk as BodyInit,
-		});
+		const res = await app.request(
+			"/api/v1/notes/upload/nonexistent_session_id_padding__/chunks/0",
+			{
+				method: "PUT",
+				headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+				body: chunk as BodyInit,
+			},
+		);
 		expect(res.status).toBe(404);
 	});
 
@@ -1524,11 +1510,27 @@ describe("Chunked upload flow", () => {
 		expect((await res.json()).error).toBe("Chunk too large");
 	});
 
+	it("rejects a malformed upload ID before hitting the database", async () => {
+		// Distinct from a well-formed but unknown session (404): a wrong-length or
+		// wrong-charset id can never name a real session, so it is a 400.
+		for (const badId of ["short", "x".repeat(64), "has!invalid$chars_padding_______"]) {
+			const res = await app.request(`/api/v1/notes/upload/${badId}/complete`, {
+				method: "POST",
+				headers: authHeaders(),
+			});
+			expect(res.status).toBe(400);
+			expect((await res.json()).error).toBe("Invalid upload ID");
+		}
+	});
+
 	it("rejects complete for non-existent upload session", async () => {
-		const res = await app.request("/api/v1/notes/upload/nonexistent_session_id_padding_/complete", {
-			method: "POST",
-			headers: authHeaders(),
-		});
+		const res = await app.request(
+			"/api/v1/notes/upload/nonexistent_session_id_padding__/complete",
+			{
+				method: "POST",
+				headers: authHeaders(),
+			},
+		);
 		expect(res.status).toBe(404);
 	});
 

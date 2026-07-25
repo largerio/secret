@@ -12,9 +12,12 @@ import { type AppConfig, ConfigError, parseConfig } from "../config.js";
 
 type Env = NodeJS.ProcessEnv;
 
+/** A syntactically valid key (32 bytes base64) — parseConfig rejects anything else. */
+const TEST_KEY = Buffer.alloc(32, 7).toString("base64");
+
 /** A minimal environment that parses successfully (only the required key set). */
 function baseEnv(overrides: Record<string, string | undefined> = {}): Env {
-	return { SERVER_ENCRYPTION_KEY: "test-key", ...overrides } as Env;
+	return { SERVER_ENCRYPTION_KEY: TEST_KEY, ...overrides } as Env;
 }
 
 function expectConfigError(env: Env, message: string): ConfigError {
@@ -40,7 +43,7 @@ describe("parseConfig", () => {
 				databasePath: "./data/secret.db",
 				filesPath: "./data/files",
 				appUrl: "http://localhost:3001",
-				serverKey: "test-key",
+				serverKey: TEST_KEY,
 				cleanupIntervalMs: CLEANUP_INTERVAL_MS,
 				capDifficulty: DEFAULT_CAP_DIFFICULTY,
 				capChallengeCount: DEFAULT_CAP_CHALLENGE_COUNT,
@@ -69,17 +72,63 @@ describe("parseConfig", () => {
 	});
 
 	describe("API key collection", () => {
+		const key0 = "k0".padEnd(32, "0");
+		const key1 = "k1".padEnd(32, "1");
+
 		it("collects API_KEY and numbered variants, trimming and dropping blanks", () => {
 			const config = parseConfig(
 				baseEnv({
-					API_KEY: " key0 ",
-					API_KEY_1: "key1",
+					API_KEY: ` ${key0} `,
+					API_KEY_1: key1,
 					API_KEY_2: "   ",
 					API_KEY_9: undefined,
 					NOT_AN_API_KEY: "ignored",
 				}),
 			);
-			expect(config.apiKeys).toEqual(["key0", "key1"]);
+			expect(config.apiKeys).toEqual([key0, key1]);
+		});
+
+		it("rejects an API key short enough to brute-force", () => {
+			const err = expectConfigError(
+				baseEnv({ API_KEY: "hunter2" }),
+				"API keys must be at least 32 characters long.",
+			);
+			expect(err.hint).toContain("openssl rand -base64 32");
+		});
+
+		it("rejects a short key even when another key is strong", () => {
+			expectConfigError(
+				baseEnv({ API_KEY: key0, API_KEY_2: "short" }),
+				"API keys must be at least 32 characters long.",
+			);
+		});
+	});
+
+	describe("server key validation", () => {
+		it("rejects a key that does not decode to 32 bytes", () => {
+			const err = expectConfigError(
+				baseEnv({ SERVER_ENCRYPTION_KEY: "dev-key-change-me-in-production-32ch" }),
+				"SERVER_ENCRYPTION_KEY must be 32 bytes (256 bits) encoded in base64.",
+			);
+			expect(err.hint).toContain("openssl rand -base64 32");
+		});
+
+		it("accepts a 32-byte base64 key", () => {
+			expect(parseConfig(baseEnv()).serverKey).toBe(TEST_KEY);
+		});
+	});
+
+	describe("allowServerKeyChange flag", () => {
+		it.each([
+			["1", true],
+			["true", true],
+			["0", false],
+			[undefined, false],
+		])("ALLOW_SERVER_KEY_CHANGE=%s -> %s", (value, expected) => {
+			const config = parseConfig(
+				baseEnv(value === undefined ? {} : { ALLOW_SERVER_KEY_CHANGE: value }),
+			);
+			expect(config.allowServerKeyChange).toBe(expected);
 		});
 	});
 
@@ -101,7 +150,7 @@ describe("parseConfig", () => {
 				{ SERVER_ENCRYPTION_KEY: "" } as Env,
 				"SERVER_ENCRYPTION_KEY is required.",
 			);
-			expect(err.hint).toContain("randomBytes(32)");
+			expect(err.hint).toContain("openssl rand -base64 32");
 		});
 
 		it.each([

@@ -24,7 +24,7 @@ const TEST_SERVER_KEY = randomBytes(32);
 function buildConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 	// Tiny size limits so oversized-body tests stay cheap to trigger.
 	const base = parseConfig({
-		SERVER_ENCRYPTION_KEY: "test-key",
+		SERVER_ENCRYPTION_KEY: TEST_SERVER_KEY.toString("base64"),
 		APP_URL: "https://secret.test",
 		MAX_FILE_SIZE: "1",
 		MAX_FILES_PER_NOTE: "1",
@@ -62,11 +62,43 @@ afterAll(() => {
 });
 
 describe("createApp — unversioned routes", () => {
-	it("serves a health check with no-cache", async () => {
+	it("reports healthy when the database and storage respond", async () => {
 		const res = await makeApp().request("/api/health");
 		expect(res.status).toBe(200);
-		expect(res.headers.get("cache-control")).toBe("no-cache");
-		expect(await res.json()).toEqual({ status: "ok" });
+		expect(res.headers.get("cache-control")).toBe("no-store");
+		expect(await res.json()).toEqual({
+			status: "ok",
+			checks: { database: "ok", storage: "ok" },
+		});
+	});
+
+	it("reports 503 when the storage backend is unreachable", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		vi.spyOn(storage, "probe").mockRejectedValue(new Error("bucket unreachable"));
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		const app = createApp({ db, serverKey: TEST_SERVER_KEY, storage, config: buildConfig() }).app;
+		const res = await app.request("/api/health");
+
+		expect(res.status).toBe(503);
+		expect(await res.json()).toEqual({
+			status: "degraded",
+			checks: { database: "ok", storage: "error" },
+		});
+		expect(consoleSpy).toHaveBeenCalledWith("[health] storage probe failed:", "bucket unreachable");
+		consoleSpy.mockRestore();
+	});
+
+	it("reports 503 when the database is closed", async () => {
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const app = makeApp();
+		sqlite.close();
+
+		const res = await app.request("/api/health");
+
+		expect(res.status).toBe(503);
+		expect((await res.json()).checks.database).toBe("error");
+		consoleSpy.mockRestore();
 	});
 
 	it("serves robots.txt referencing the configured appUrl", async () => {

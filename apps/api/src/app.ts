@@ -1,11 +1,12 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-shared";
 import { Scalar } from "@scalar/hono-api-reference";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
+import { createHealthCheck } from "./health.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
 import { createRateLimit, type RateLimitResult } from "./middleware/rateLimit.js";
@@ -89,29 +90,27 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		}),
 	);
 
-	// Per-IP rate limits, tuned per endpoint and layered by path specificity.
-	// Hono applies every middleware whose path matches, so a request can pass
-	// through several of these; the bounds below are chosen to make that stacking
-	// harmless. Roughly: note create/list is the scarcest (30/min), generic
-	// note reads are looser (60/min), existence probes are the tightest (20/min),
-	// and chunk uploads are the most permissive (200/min) since one upload fans
-	// out into many chunk requests.
-	const notesRateLimit = createRateLimit({
+	// Per-IP rate limits, one bound per endpoint class:
+	//   create   30/min — the scarcest resource (every call stores a new note)
+	//   read     60/min — reads, deletes and upload finalization
+	//   exists   20/min — cheapest to abuse, tightest bound
+	//   chunks  200/min — one upload fans out into many chunk requests
+	const createLimit = createRateLimit({
 		windowMs: 60_000,
 		max: 30,
 		trustedProxies: config.trustedProxies,
 	});
-	const notesDetailRateLimit = createRateLimit({
+	const readLimit = createRateLimit({
 		windowMs: 60_000,
 		max: 60,
 		trustedProxies: config.trustedProxies,
 	});
-	const existsRateLimit = createRateLimit({
+	const existsLimit = createRateLimit({
 		windowMs: 60_000,
 		max: 20,
 		trustedProxies: config.trustedProxies,
 	});
-	const chunksRateLimit = createRateLimit({
+	const chunksLimit = createRateLimit({
 		windowMs: 60_000,
 		max: 200,
 		trustedProxies: config.trustedProxies,
@@ -123,10 +122,33 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		max: 60,
 		trustedProxies: config.trustedProxies,
 	});
-	app.use("/api/v1/notes", notesRateLimit.middleware);
-	app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
-	app.use("/api/v1/notes/upload/*/chunks/*", chunksRateLimit.middleware);
-	app.use("/api/v1/notes/*", notesDetailRateLimit.middleware);
+
+	// Hono runs EVERY middleware whose path matches, so registering these as
+	// layered `app.use()` rules stacked them: a chunk upload matched both the
+	// 200/min chunk rule and the generic `/api/v1/notes/*` rule, and the tighter
+	// bound won — capping a chunked upload at 60 chunks/min, which makes the
+	// advertised 500 MB limit (125 chunks) unreachable. `/upload` was likewise
+	// billed as a read (60/min) rather than a create (30/min). Dispatching to
+	// exactly one limiter per request keeps each documented bound exact.
+	const notesPrefix = "/api/v1/notes";
+	const pickNotesLimiter = (path: string): MiddlewareHandler => {
+		const sub = path.slice(notesPrefix.length).replace(/\/$/, "");
+		if (sub.endsWith("/exists")) return existsLimit.middleware;
+		if (/^\/upload\/[^/]+\/chunks\/[^/]+$/.test(sub)) return chunksLimit.middleware;
+		if (sub === "" || sub === "/upload" || sub === "/upload/init") return createLimit.middleware;
+		return readLimit.middleware;
+	};
+	const notesRateLimit: MiddlewareHandler = (c, next) => pickNotesLimiter(c.req.path)(c, next);
+	app.use(notesPrefix, notesRateLimit);
+	app.use(`${notesPrefix}/*`, notesRateLimit);
+
+	// Reads return note ciphertext that may be burn-after-read: a 200 without
+	// cache directives is heuristically cacheable (RFC 9111 §4.2.2), so a CDN or
+	// the browser cache could replay a note after the row is destroyed.
+	app.use(`${notesPrefix}/*`, async (c, next) => {
+		await next();
+		c.header("Cache-Control", "no-store");
+	});
 
 	const writeAuth = createWriteAuth(config.apiKeys);
 	app.use("/api/v1/notes/*", writeAuth);
@@ -142,9 +164,11 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	// --- Unversioned routes ---
 
-	app.get("/api/health", (c) => {
-		c.header("Cache-Control", "no-cache");
-		return c.json({ status: "ok" });
+	const checkHealth = createHealthCheck(db, storage);
+	app.get("/api/health", async (c) => {
+		c.header("Cache-Control", "no-store");
+		const report = await checkHealth();
+		return c.json(report, report.status === "ok" ? 200 : 503);
 	});
 	app.get("/robots.txt", (c) => {
 		c.header("Content-Type", "text/plain");
@@ -213,12 +237,6 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	return {
 		app,
-		rateLimiters: [
-			notesRateLimit,
-			notesDetailRateLimit,
-			existsRateLimit,
-			chunksRateLimit,
-			capRateLimit,
-		],
+		rateLimiters: [createLimit, readLimit, existsLimit, chunksLimit, capRateLimit],
 	};
 }

@@ -71,9 +71,12 @@ COPY --from=builder /build/apps/api/package.json apps/api/
 COPY --from=builder /build/apps/web/package.json apps/web/
 
 # Install prod deps, then strip the pnpm store/caches (runtime never invokes pnpm).
-RUN pnpm install --frozen-lockfile --prod && \
-	pnpm store prune 2>/dev/null || true && \
-	rm -rf ~/.local/share/pnpm ~/.cache /root/.npm 2>/dev/null || true
+# Kept as two layers on purpose: `a && b || true && c || true` parses as
+# `(((a && b) || true) && c) || true`, which exits 0 even when the install
+# fails — publishing an image with no node_modules at all.
+RUN pnpm install --frozen-lockfile --prod
+RUN { pnpm store prune || true; } && \
+	rm -rf ~/.local/share/pnpm ~/.cache /root/.npm || true
 
 COPY --from=builder /build/packages/shared/dist packages/shared/dist
 COPY --from=builder /build/packages/crypto/dist packages/crypto/dist

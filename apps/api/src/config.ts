@@ -10,6 +10,12 @@ import {
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
+/** AES-256 server layer key size. */
+const SERVER_KEY_BYTES = 32;
+
+/** Roughly the length of `openssl rand -base64 32`; rejects toy keys. */
+const MIN_API_KEY_LENGTH = 32;
+
 /**
  * Raised when an environment value fails validation. The entry point catches
  * this, prints the message (plus optional hint), and exits with status 1 —
@@ -46,6 +52,8 @@ export interface AppConfig {
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
+	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
+	readonly allowServerKeyChange: boolean;
 	readonly debug: boolean;
 }
 
@@ -94,7 +102,27 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	if (!serverKey) {
 		throw new ConfigError(
 			"SERVER_ENCRYPTION_KEY is required.",
-			"Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
+			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	// Decoded here rather than only at parseServerKey() so an invalid key exits
+	// with the same actionable message as a missing one, instead of an uncaught
+	// stack trace from the crypto layer.
+	if (Buffer.from(serverKey, "base64").length !== SERVER_KEY_BYTES) {
+		throw new ConfigError(
+			"SERVER_ENCRYPTION_KEY must be 32 bytes (256 bits) encoded in base64.",
+			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	// A weak API key is reachable from the internet (the web app forwards the
+	// Authorization header to the API), so refuse the ones that are brute-forceable.
+	const weakKey = apiKeys.find((key) => key.length < MIN_API_KEY_LENGTH);
+	if (weakKey !== undefined) {
+		throw new ConfigError(
+			`API keys must be at least ${String(MIN_API_KEY_LENGTH)} characters long.`,
+			"Generate one with: openssl rand -base64 32",
 		);
 	}
 
@@ -184,6 +212,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,
+		allowServerKeyChange:
+			env["ALLOW_SERVER_KEY_CHANGE"] === "1" || env["ALLOW_SERVER_KEY_CHANGE"] === "true",
 		debug: env["DEBUG"] === "1" || env["DEBUG"] === "true",
 	};
 }

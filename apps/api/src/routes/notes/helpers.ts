@@ -1,5 +1,5 @@
 import { serverDecrypt, serverEncrypt } from "@largerio/secret-crypto/server";
-import { NOTE_ID_LENGTH } from "@largerio/secret-shared";
+import { NOTE_ID_LENGTH, UPLOAD_ID_LENGTH } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -48,6 +48,11 @@ export function buildNoteHeaders(note: {
 		// the global security middleware also sets nosniff).
 		"Content-Disposition": "attachment",
 		"X-Content-Type-Options": "nosniff",
+		// A 200 without cache directives is heuristically cacheable (RFC 9111
+		// §4.2.2), so a CDN or the browser cache could replay a burn-after-read
+		// note after the row is gone. The global no-store middleware covers this
+		// too; repeated here because these headers bypass c.json().
+		"Cache-Control": "no-store",
 		"X-Has-Password": String(note.hasPassword),
 		"X-File-Count": String(note.fileCount),
 		"X-Created-At": note.createdAt.toISOString(),
@@ -71,7 +76,9 @@ const UPLOAD_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 export const validateUploadId: MiddlewareHandler<NotesEnv> = async (c, next) => {
 	const id = c.req.param("uploadId");
-	if (!id || !UPLOAD_ID_RE.test(id)) {
+	// Length is enforced alongside the charset so the lookup key stays bounded
+	// and matches the `.length(UPLOAD_ID_LENGTH)` the OpenAPI schema advertises.
+	if (!id || id.length !== UPLOAD_ID_LENGTH || !UPLOAD_ID_RE.test(id)) {
 		return c.json({ error: "Invalid upload ID" }, 400);
 	}
 	c.set("uploadId", id);
@@ -114,23 +121,34 @@ export async function insertNote(
 		storedBlob = serverBlob;
 	}
 
-	db.insert(notes)
-		.values({
-			id,
-			encryptedData: storedBlob,
-			serverNonce: serverIv.toString("base64"),
-			clientNonce: params.clientNonce,
-			hasPassword: params.hasPassword,
-			salt: params.salt,
-			deleteToken,
-			burnAfterRead: params.maxReads === 1,
-			fileCount: params.fileCount,
-			filePath,
-			expiresAt,
-			maxReads: params.maxReads,
-			createdAt: now,
-		})
-		.run();
+	try {
+		db.insert(notes)
+			.values({
+				id,
+				encryptedData: storedBlob,
+				serverNonce: serverIv.toString("base64"),
+				clientNonce: params.clientNonce,
+				hasPassword: params.hasPassword,
+				salt: params.salt,
+				deleteToken,
+				burnAfterRead: params.maxReads === 1,
+				fileCount: params.fileCount,
+				filePath,
+				expiresAt,
+				maxReads: params.maxReads,
+				createdAt: now,
+			})
+			.run();
+	} catch (err) {
+		// The blob is written before the row exists, so a failed insert (disk
+		// full, SQLITE_BUSY, corruption) would strand it: no `notes` row for the
+		// cleanup job to find, and no `pending_deletions` entry either. Reclaim
+		// it before rethrowing.
+		if (filePath) {
+			await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount: null });
+		}
+		throw err;
+	}
 
 	return { id, expiresAt: expiresAt.toISOString(), deleteToken };
 }
@@ -142,14 +160,18 @@ export async function insertNote(
 // readCount reached maxReads (callers finalize storage cleanup after
 // reading their payload).
 //
-// When `requireChunked` is true, returns 400 before incrementing the
-// read counter if the note has no chunk data — used by the streaming
-// endpoint so a shape-mismatched request does not burn a read.
+// `expect` declares which storage shape the calling endpoint can actually
+// serve. A mismatch returns 400 BEFORE the read counter is incremented, so a
+// request aimed at the wrong endpoint never burns a read. Both directions are
+// enforced: the streaming endpoint cannot serve an inline note, and the
+// inline endpoints cannot serve a chunked note (whose `encryptedData` is an
+// empty buffer — decrypting it would throw, and the burn would already be
+// committed, destroying the note for good).
 export async function consumeNoteTx(
 	db: AppDatabase,
 	storage: StorageBackend,
 	id: string,
-	options?: { requireChunked?: boolean },
+	options?: { expect?: "chunked" | "inline" },
 ) {
 	const result = db.transaction((tx) => {
 		const note = tx.select().from(notes).where(eq(notes.id, id)).get();
@@ -171,8 +193,17 @@ export async function consumeNoteTx(
 			};
 		}
 
-		if (options?.requireChunked && (!note.chunkCount || !note.streamHeader)) {
+		const isChunked = Boolean(note.chunkCount && note.streamHeader);
+
+		if (options?.expect === "chunked" && !isChunked) {
 			return { error: "Note is not a chunked note" as const, status: 400 as const };
+		}
+
+		if (options?.expect === "inline" && isChunked) {
+			return {
+				error: "Note is chunked; read it from /:id/stream" as const,
+				status: 400 as const,
+			};
 		}
 
 		const maxReads = note.maxReads ?? 0;
@@ -204,7 +235,7 @@ export async function consumeNote(
 	storage: StorageBackend,
 	id: string,
 ) {
-	const result = await consumeNoteTx(db, storage, id);
+	const result = await consumeNoteTx(db, storage, id, { expect: "inline" });
 	const { note } = result;
 	const serverIv = Buffer.from(note.serverNonce, "base64");
 
