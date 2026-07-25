@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { buildTrustedBlockList, createRateLimit } from "../middleware/rateLimit.js";
+import {
+	buildTrustedBlockList,
+	classifyNotesPath,
+	createRateLimit,
+} from "../middleware/rateLimit.js";
 
 function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
 	return { incoming: { socket: { remoteAddress } } };
@@ -401,5 +405,34 @@ describe("buildTrustedBlockList", () => {
 
 	it("throws on missing address", () => {
 		expect(() => buildTrustedBlockList(["/24"])).toThrow(/Invalid trusted proxy entry/);
+	});
+});
+
+describe("classifyNotesPath", () => {
+	it.each([
+		["/api/v1/notes", "create"],
+		["/api/v1/notes/", "create"],
+		["/api/v1/notes/upload", "create"],
+		["/api/v1/notes/upload/init", "create"],
+		["/api/v1/notes/aBcDeFgHiJkL/exists", "exists"],
+		["/api/v1/notes/upload/abc123/chunks/0", "chunks"],
+		["/api/v1/notes/upload/abc123/chunks/125", "chunks"],
+		["/api/v1/notes/aBcDeFgHiJkL", "read"],
+		["/api/v1/notes/aBcDeFgHiJkL/raw", "read"],
+		["/api/v1/notes/aBcDeFgHiJkL/stream", "read"],
+		["/api/v1/notes/upload/abc123/complete", "read"],
+	])("classifies %s as %s", (path, expected) => {
+		expect(classifyNotesPath(path)).toBe(expected);
+	});
+
+	it("keeps chunk uploads out of the tighter read bucket", () => {
+		// Regression guard: chunk uploads previously matched the generic
+		// `/notes/*` rule too, and the 60/min bound won — making a 125-chunk
+		// (500 MB) upload impossible to complete.
+		expect(classifyNotesPath("/api/v1/notes/upload/abc/chunks/61")).not.toBe("read");
+	});
+
+	it("bills the multipart create endpoint as a create, not a read", () => {
+		expect(classifyNotesPath("/api/v1/notes/upload")).toBe("create");
 	});
 });

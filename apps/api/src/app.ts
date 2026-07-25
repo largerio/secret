@@ -9,7 +9,12 @@ import type { AppDatabase } from "./db/index.js";
 import { createHealthCheck } from "./health.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
-import { createRateLimit, type RateLimitResult } from "./middleware/rateLimit.js";
+import {
+	classifyNotesPath,
+	createRateLimit,
+	type NotesRateClass,
+	type RateLimitResult,
+} from "./middleware/rateLimit.js";
 import {
 	createCors,
 	createDocsSecurityHeaders,
@@ -123,22 +128,17 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		trustedProxies: config.trustedProxies,
 	});
 
-	// Hono runs EVERY middleware whose path matches, so registering these as
-	// layered `app.use()` rules stacked them: a chunk upload matched both the
-	// 200/min chunk rule and the generic `/api/v1/notes/*` rule, and the tighter
-	// bound won — capping a chunked upload at 60 chunks/min, which makes the
-	// advertised 500 MB limit (125 chunks) unreachable. `/upload` was likewise
-	// billed as a read (60/min) rather than a create (30/min). Dispatching to
-	// exactly one limiter per request keeps each documented bound exact.
+	// One limiter per request (see classifyNotesPath): layering these as separate
+	// app.use() rules stacked them, since Hono runs every middleware that matches.
 	const notesPrefix = "/api/v1/notes";
-	const pickNotesLimiter = (path: string): MiddlewareHandler => {
-		const sub = path.slice(notesPrefix.length).replace(/\/$/, "");
-		if (sub.endsWith("/exists")) return existsLimit.middleware;
-		if (/^\/upload\/[^/]+\/chunks\/[^/]+$/.test(sub)) return chunksLimit.middleware;
-		if (sub === "" || sub === "/upload" || sub === "/upload/init") return createLimit.middleware;
-		return readLimit.middleware;
+	const byClass: Record<NotesRateClass, MiddlewareHandler> = {
+		create: createLimit.middleware,
+		read: readLimit.middleware,
+		exists: existsLimit.middleware,
+		chunks: chunksLimit.middleware,
 	};
-	const notesRateLimit: MiddlewareHandler = (c, next) => pickNotesLimiter(c.req.path)(c, next);
+	const notesRateLimit: MiddlewareHandler = (c, next) =>
+		byClass[classifyNotesPath(c.req.path)](c, next);
 	app.use(notesPrefix, notesRateLimit);
 	app.use(`${notesPrefix}/*`, notesRateLimit);
 

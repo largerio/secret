@@ -36,8 +36,10 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Runs with --coverage so the 100% thresholds in vitest.config.ts are
+      # actually enforced; `pnpm test` alone never evaluates them.
       - name: Test
-        run: pnpm test
+        run: pnpm test:coverage
 
       - name: Build
         run: pnpm build
@@ -119,7 +121,10 @@ jobs:
         run: gitleaks git . --redact --no-banner --verbose
 
   docker:
-    needs: check
+    # Every gate must pass before an image is published: with `needs: check`
+    # alone, a tag push could build, push and deploy while e2e was still
+    # running — shipping a regression, a known CVE or a leaked secret.
+    needs: [check, e2e, audit, secrets]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     permissions:

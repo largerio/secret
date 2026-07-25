@@ -7,6 +7,7 @@ import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
 import { createWriteAuth } from "../middleware/auth.js";
+import { insertNote } from "../routes/notes/helpers.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
@@ -1042,6 +1043,67 @@ describe("storage.delete error resilience", () => {
 		hono.route("/api/v1/notes", createNotesRoutes());
 		return hono;
 	}
+
+	it("reclaims the stored blob when the insert fails", async () => {
+		// The blob is written before the row exists. Without compensation a failed
+		// insert leaves it referenced by nothing: no `notes` row for the cleanup
+		// job, no `pending_deletions` entry — an orphan that never goes away.
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const deleted: string[] = [];
+		const trackingStorage: StorageBackend = {
+			...storage,
+			save: (id, data) => storage.save(id, data),
+			delete: (key) => {
+				deleted.push(key);
+				return storage.delete(key);
+			},
+			deleteChunks: (id, count) => storage.deleteChunks(id, count),
+			read: (key) => storage.read(key),
+			saveChunk: (id, index, data) => storage.saveChunk(id, index, data),
+			readChunk: (id, index) => storage.readChunk(id, index),
+		};
+
+		const brokenDb = {
+			...db,
+			insert: () => ({
+				values: () => ({
+					run: () => {
+						throw new Error("database or disk is full");
+					},
+				}),
+			}),
+		} as unknown as AppDatabase;
+
+		await expect(
+			insertNote(brokenDb, TEST_SERVER_KEY, trackingStorage, {
+				clientBlob: Buffer.from("payload"),
+				clientNonce: "nonce",
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 1,
+				fileCount: 1,
+				salt: null,
+			}),
+		).rejects.toThrow("database or disk is full");
+
+		expect(deleted).toHaveLength(1);
+
+		// A text-only note stores no blob, so there is nothing to reclaim.
+		deleted.length = 0;
+		await expect(
+			insertNote(brokenDb, TEST_SERVER_KEY, trackingStorage, {
+				clientBlob: Buffer.from("payload"),
+				clientNonce: "nonce",
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 1,
+				fileCount: 0,
+				salt: null,
+			}),
+		).rejects.toThrow("database or disk is full");
+
+		expect(deleted).toHaveLength(0);
+	});
 
 	it("delete endpoint succeeds even when storage.delete fails", async () => {
 		const { id, deleteToken } = await createTestNote({ fileCount: 1 });

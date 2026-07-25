@@ -122,7 +122,7 @@ Monorepo with pnpm workspaces:
 
 ## Testing
 
-719 tests. 100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
+100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules — the gate runs in CI via `pnpm test:coverage`. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
 
 The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, `**/index.ts` (barrel re-exports), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
 

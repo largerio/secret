@@ -22,10 +22,14 @@ export default defineConfig({
 			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
 			exclude: [
 				"**/*.d.ts",
-				"**/index.ts",
 				"**/*.test.ts",
 				"**/__tests__/**",
 				"**/types.ts",
+				// Barrels: `export … from` statements are hoisted, so v8 reports 0%
+				// for a file that runs no code of its own. `packages/crypto/src/client.ts`
+				// is one despite not being named index.ts.
+				"**/index.ts",
+				"packages/crypto/src/client.ts",
 				// Frontend: gate the logic modules + utils, but exclude route
 				// loaders and server-only modules (`$env`/SSR SDK) that need a
 				// SvelteKit harness to exercise. (`.svelte` components are already

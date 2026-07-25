@@ -81,6 +81,28 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 	return peer.ip;
 }
 
+export type NotesRateClass = "create" | "read" | "exists" | "chunks";
+
+/**
+ * Classify a `/api/v1/notes…` path into the one rate-limit bucket that applies.
+ *
+ * Hono runs every middleware whose path matches, so registering these bounds as
+ * layered `app.use()` rules made them stack: a chunk upload matched both the
+ * chunk rule and the generic `/notes/*` rule, and the tighter bound won —
+ * capping a chunked upload at 60 chunks/min and putting the advertised 500 MB
+ * limit (125 chunks) out of reach. Selecting exactly one bucket per request
+ * keeps each documented bound the one actually enforced.
+ *
+ * @param path Full request path, e.g. `/api/v1/notes/upload/abc/chunks/3`.
+ */
+export function classifyNotesPath(path: string): NotesRateClass {
+	const sub = path.slice("/api/v1/notes".length).replace(/\/$/, "");
+	if (sub.endsWith("/exists")) return "exists";
+	if (/^\/upload\/[^/]+\/chunks\/[^/]+$/.test(sub)) return "chunks";
+	if (sub === "" || sub === "/upload" || sub === "/upload/init") return "create";
+	return "read";
+}
+
 export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 	const store = new Map<string, RateLimitStore>();
 	const trusted = buildTrustedBlockList(options.trustedProxies ?? []);

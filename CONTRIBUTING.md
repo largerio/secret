@@ -30,7 +30,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```bash
 pnpm lint         # Biome lint + format
 pnpm typecheck    # TypeScript strict
-pnpm test         # All 719 tests must pass
+pnpm test         # The whole suite must pass
 ```
 
 4. Commit with a clear message (see [Commit Messages](#commit-messages))

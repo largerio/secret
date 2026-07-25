@@ -1,7 +1,7 @@
 # Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing
 
 [![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#development)
+[![Coverage](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](vitest.config.ts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue)](https://github.com/largerio/secret/stargazers)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
@@ -280,7 +280,8 @@ Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZ
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 719 tests, 100% coverage
+pnpm test         # full suite
+pnpm test:coverage # same, with the 100% coverage gate (what CI runs)
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
