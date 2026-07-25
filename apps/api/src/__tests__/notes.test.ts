@@ -2524,3 +2524,46 @@ describe("operator policy limits", () => {
 		expect((await res.json()).error).toBe("Maximum expiry is 3600 seconds");
 	});
 });
+
+// The product's central promise. The invariant currently holds by construction
+// (the db.transaction callback is synchronous on a single connection), but
+// nothing protected it: adding a single `await` inside that callback would open
+// the window and hand the same secret to two readers, with every test green.
+describe("burn-after-read under concurrent reads", () => {
+	it("serves a maxReads=1 note to exactly one of two simultaneous readers", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+
+		const [a, b] = await Promise.all([
+			app.request(`/api/v1/notes/${id}`),
+			app.request(`/api/v1/notes/${id}`),
+		]);
+
+		expect([a.status, b.status].sort()).toEqual([200, 404]);
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		expect(db.select().from(notesTable).where(eq(notesTable.id, id)).get()).toBeUndefined();
+	});
+
+	it("honours maxReads=3 across six simultaneous readers", async () => {
+		const { id } = await createTestNote({ maxReads: 3 });
+
+		const results = await Promise.all(
+			Array.from({ length: 6 }, () => app.request(`/api/v1/notes/${id}`)),
+		);
+
+		expect(results.filter((r) => r.status === 200)).toHaveLength(3);
+		expect(results.filter((r) => r.status === 404)).toHaveLength(3);
+	});
+
+	it("burns exactly once on the raw endpoint too", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+
+		const [a, b] = await Promise.all([
+			app.request(`/api/v1/notes/${id}/raw`),
+			app.request(`/api/v1/notes/${id}/raw`),
+		]);
+
+		expect([a.status, b.status].sort()).toEqual([200, 404]);
+	});
+});

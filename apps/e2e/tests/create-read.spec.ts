@@ -34,3 +34,25 @@ test("a wrong key (tampered fragment) fails to decrypt", async ({ page, context 
 		timeout: 15_000,
 	});
 });
+
+test("a link truncated before the # is reported as incomplete, and does not burn the note", async ({
+	page,
+	context,
+}) => {
+	// The most common real-world failure: mail clients, chat apps and SMS
+	// linkifiers routinely drop the fragment. Reporting "Note not found" sent
+	// people looking for the wrong problem — and, worse, suggested their secret
+	// had already been destroyed.
+	const secret = `truncated link ${Date.now()}`;
+	const shareUrl = await createTextNote(page, secret);
+
+	const reader = await context.newPage();
+	await reader.goto(shareUrl.split("#")[0] as string);
+
+	await expect(reader.getByRole("heading", { name: /Incomplete link/i })).toBeVisible();
+
+	// The read must not have been consumed: the full link still works.
+	const second = await context.newPage();
+	await revealNote(second, shareUrl);
+	await expect(second.getByTestId("note-text")).toHaveText(secret, { timeout: 15_000 });
+});
