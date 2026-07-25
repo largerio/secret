@@ -330,11 +330,11 @@ short-lived OIDC token against the package's configured trusted publisher.
 |-------|---------|
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
 | Server encryption | AES-256-GCM (defense-in-depth) |
-| Password KDF | Argon2id (64 MiB, 3 iterations) |
+| Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
-| Key hygiene | Zeroed after use (`sodium.memzero`) |
-| Privacy | No IP logging, no cookies, no tracking |
+| Key hygiene | Cleared from the WASM heap after use (`sodium.memzero`). The key still lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
+| Privacy | No IP logging, no tracking. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |

@@ -7,7 +7,6 @@ import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
 import { createWriteAuth } from "../middleware/auth.js";
-import { insertNote } from "../routes/notes/helpers.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
@@ -1062,6 +1061,10 @@ describe("storage.delete error resilience", () => {
 			saveChunk: (id, index, data) => storage.saveChunk(id, index, data),
 			readChunk: (id, index) => storage.readChunk(id, index),
 		};
+
+		// Imported lazily: a static import would evaluate the shared Zod schemas
+		// before @hono/zod-openapi extends Zod with .openapi().
+		const { insertNote } = await import("../routes/notes/helpers.js");
 
 		const brokenDb = {
 			...db,

@@ -21,7 +21,10 @@ const config = {
 				"object-src": ["none"],
 				"frame-ancestors": ["none"],
 				"base-uri": ["self"],
-				"form-action": ["self"],
+				// The app never submits a form (the one <form> calls preventDefault),
+				// so 'none' costs nothing and closes the exfiltration path a note
+				// author could otherwise build with injected markup.
+				"form-action": ["none"],
 				"upgrade-insecure-requests": true,
 			},
 		},

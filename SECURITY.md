@@ -39,7 +39,8 @@ The decryption key is stored in the URL fragment (`#key`), which browsers never 
 - `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` on file downloads
 - SQLite `secure_delete` and WAL mode
 - Non-root Docker container with read-only filesystem
-- No logging of note content, IPs, or user data
+- No logging of note content, decryption keys, or IP addresses (note IDs do
+  appear in cleanup and deletion-retry logs)
 
 ## Threat Model
 
@@ -85,7 +86,8 @@ The decryption key is stored in the URL fragment (`#key`), which browsers never 
 
 - **Metadata enumeration via `GET /api/v1/notes/:id/exists`.** This endpoint reveals
   whether a note ID exists and exposes coarse metadata (`hasPassword`, `fileCount`,
-  `chunked`, expiry, remaining reads) without authentication. It is rate-limited but
+  `chunked`, expiry, and the configured read limit — not the remaining count) without
+  authentication. It is rate-limited but
   is not zero-knowledge with respect to existence/metadata. Note IDs are long and
   random, so enumeration is impractical, but the leak is acknowledged.
 - **In-memory rate limiting is single-instance.** Counters live in process memory,

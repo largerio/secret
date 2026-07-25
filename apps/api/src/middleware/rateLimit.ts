@@ -69,10 +69,20 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 		// untrusted client behind the proxy could inject arbitrary
 		// X-Forwarded-For/X-Real-IP strings to spoof another client's key or
 		// churn the bounded rate-limit store (evicting legitimate entries).
+		//
+		// Read the chain right-to-left, peeling off hops that are themselves
+		// trusted proxies. The right-most entry is the one appended by the
+		// closest proxy, so it is the first that a client cannot forge; taking
+		// the left-most instead (the classic mistake) hands an attacker full
+		// control of the bucket key behind an `$proxy_add_x_forwarded_for`-style
+		// reverse proxy.
 		const forwarded = c.req.header("x-forwarded-for");
-		const firstForwarded = forwarded?.split(",")[0]?.trim();
-		const forwardedIp = firstForwarded ? normalizeIp(firstForwarded) : null;
-		if (forwardedIp) return forwardedIp.ip;
+		for (const hop of forwarded?.split(",").reverse() ?? []) {
+			const normalized = normalizeIp(hop.trim());
+			// A malformed hop makes everything to its left unverifiable.
+			if (!normalized) break;
+			if (!trusted.check(normalized.ip, normalized.type)) return normalized.ip;
+		}
 		const realIp = c.req.header("x-real-ip")?.trim();
 		const realIpNormalized = realIp ? normalizeIp(realIp) : null;
 		if (realIpNormalized) return realIpNormalized.ip;
