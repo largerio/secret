@@ -56,6 +56,8 @@ export interface AppConfig {
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
+	/** Scales every per-IP rate limit; >1 for deployments behind a shared address. */
+	readonly rateLimitMultiplier: number;
 	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
 	readonly allowServerKeyChange: boolean;
 	readonly debug: boolean;
@@ -99,6 +101,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const maxChunkedFileSize = Number(
 		env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
 	);
+	const rateLimitMultiplier = Number(env["RATE_LIMIT_MULTIPLIER"] ?? "1");
 	const trustedProxies = (env["TRUSTED_PROXIES"] ?? "")
 		.split(",")
 		.map((v) => v.trim())
@@ -188,6 +191,10 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError("CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE");
 	}
 
+	if (!(rateLimitMultiplier > 0) || rateLimitMultiplier > 100) {
+		throw new ConfigError("RATE_LIMIT_MULTIPLIER must be a number between 0 (exclusive) and 100");
+	}
+
 	try {
 		buildTrustedBlockList(trustedProxies);
 	} catch (err) {
@@ -235,6 +242,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,
+		rateLimitMultiplier,
 		allowServerKeyChange:
 			env["ALLOW_SERVER_KEY_CHANGE"] === "1" || env["ALLOW_SERVER_KEY_CHANGE"] === "true",
 		debug: env["DEBUG"] === "1" || env["DEBUG"] === "true",

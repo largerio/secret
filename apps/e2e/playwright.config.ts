@@ -22,6 +22,10 @@ const apiEnv = {
 	SERVER_ENCRYPTION_KEY: TEST_SERVER_ENCRYPTION_KEY,
 	CAP_DIFFICULTY: "1",
 	CAP_CHALLENGE_COUNT: "1",
+	// The whole suite hits the API from one address, so the per-IP budget is
+	// shared by all 26 tests running back to back. Without this the later ones
+	// get 429s that surface as "Service unavailable".
+	RATE_LIMIT_MULTIPLIER: "50",
 	DATABASE_PATH: path.join(TMP_DIR, "secret.db"),
 	FILES_PATH: path.join(TMP_DIR, "files"),
 	PORT: String(API_PORT),

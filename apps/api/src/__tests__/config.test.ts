@@ -149,6 +149,23 @@ describe("parseConfig", () => {
 		});
 	});
 
+	describe("rate limit multiplier", () => {
+		it("defaults to 1", () => {
+			expect(parseConfig(baseEnv()).rateLimitMultiplier).toBe(1);
+		});
+
+		it("accepts a value that loosens the limits", () => {
+			expect(parseConfig(baseEnv({ RATE_LIMIT_MULTIPLIER: "10" })).rateLimitMultiplier).toBe(10);
+		});
+
+		it.each(["0", "-1", "101", "not-a-number"])("rejects %s", (value) => {
+			expectConfigError(
+				baseEnv({ RATE_LIMIT_MULTIPLIER: value }),
+				"RATE_LIMIT_MULTIPLIER must be a number between 0 (exclusive) and 100",
+			);
+		});
+	});
+
 	describe("allowServerKeyChange flag", () => {
 		it.each([
 			["1", true],

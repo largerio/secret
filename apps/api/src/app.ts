@@ -100,35 +100,31 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	// Per-IP rate limits, one bound per endpoint class:
 	//   create   30/min — the scarcest resource (every call stores a new note)
 	//   read     60/min — reads, deletes and upload finalization
-	//   exists   20/min — cheapest to abuse, tightest bound
+	//   exists   60/min — one per note opened; see below
 	//   chunks  200/min — one upload fans out into many chunk requests
-	const createLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 30,
-		trustedProxies: config.trustedProxies,
-	});
-	const readLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 60,
-		trustedProxies: config.trustedProxies,
-	});
-	const existsLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 20,
-		trustedProxies: config.trustedProxies,
-	});
-	const chunksLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 200,
-		trustedProxies: config.trustedProxies,
-	});
+	//
+	// `exists` used to be the tightest bound at 20/min, on the theory that it is
+	// the cheapest endpoint to abuse. That traded a protection that does not
+	// exist for a real outage: note IDs are 12-char nanoids (~72 bits), so
+	// enumeration is impossible regardless of the limit (SECURITY.md says as
+	// much), while *every* note page view spends one — so 20 note opens a minute
+	// froze the endpoint for everyone sharing the bucket, which behind the
+	// bundled reverse proxy means all users at once.
+	//
+	// rateLimitMultiplier scales every bound for deployments where many
+	// legitimate users share one apparent address (corporate NAT, VPN, or a
+	// proxy whose address is not in TRUSTED_PROXIES).
+	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
+	const limit = (max: number) =>
+		createRateLimit({ windowMs: 60_000, max: scale(max), trustedProxies: config.trustedProxies });
+
+	const createLimit = limit(30);
+	const readLimit = limit(60);
+	const existsLimit = limit(60);
+	const chunksLimit = limit(200);
 	// One browser write costs 1 challenge + 1 redeem; 60/min stays generous for
 	// multi-tab use while capping free Proof-of-Work challenge generation.
-	const capRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 60,
-		trustedProxies: config.trustedProxies,
-	});
+	const capRateLimit = limit(60);
 
 	// One limiter per request (see classifyNotesPath): layering these as separate
 	// app.use() rules stacked them, since Hono runs every middleware that matches.
