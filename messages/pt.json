@@ -42,6 +42,11 @@
 	"expiry_30d": "30 dias",
 	"not_found_title": "Nota não encontrada",
 	"not_found_description": "Esta nota pode ter expirado, sido eliminada ou nunca ter existido.",
+	"error_too_many_files": "Máximo de {max} ficheiros por nota — {ignored} ignorado(s).",
+	"link_incomplete_title": "Ligação incompleta",
+	"link_incomplete_description": "Falta a chave de desencriptação nesta ligação. Copie a ligação completa, incluindo tudo o que vem depois do sinal #.",
+	"unavailable_title": "Serviço indisponível",
+	"unavailable_description": "Não foi possível aceder à nota. É um problema de ligação, não uma nota eliminada — tente novamente daqui a pouco.",
 	"error_wrong_password": "Palavra-passe incorreta ou chave inválida",
 	"error_empty_content": "Por favor, introduza texto ou carregue ficheiros.",
 	"error_text_too_long": "O texto é demasiado longo. Máximo {max} KB.",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "Itálico",
 	"md_btn_link": "Link",
 	"md_btn_code": "Código",
-	"md_btn_list": "Lista"
+	"md_btn_list": "Lista",
+	"burn_password_warning": "Tem apenas uma tentativa: uma palavra-passe errada destrói na mesma esta nota.",
+	"error_burned_wrong_password": "Palavra-passe incorreta. Esta nota era de leitura única e foi destruída."
 }

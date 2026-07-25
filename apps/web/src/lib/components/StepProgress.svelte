@@ -1,10 +1,12 @@
 <script lang="ts">
+import Icon, { type IconName } from "./Icon.svelte";
 import ProgressBar from "./ProgressBar.svelte";
 
 interface Step {
 	key: string;
 	label: string;
-	icon: string;
+	/** Name of an Icon.svelte glyph. */
+	icon: IconName;
 }
 
 interface Props {
@@ -44,9 +46,9 @@ let { steps, currentStep, progress, label }: Props = $props();
 							: "var(--muted-2)"}
 				>
 					{#if i < currentStep}
-						<i class="fa-solid fa-check text-xs"></i>
+						<Icon name="check" size={14} />
 					{:else}
-						<i class="{step.icon} text-xs"></i>
+						<Icon name={step.icon} size={14} />
 					{/if}
 				</div>
 				<span

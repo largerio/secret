@@ -12,6 +12,7 @@ interface FakeEventInit {
 	headers?: Record<string, string>;
 	cookies?: Record<string, string>;
 	body?: BodyInit;
+	clientAddress?: string;
 }
 
 function makeEvent(init: FakeEventInit = {}) {
@@ -27,6 +28,7 @@ function makeEvent(init: FakeEventInit = {}) {
 		request,
 		locals: {} as Record<string, unknown>,
 		cookies: { get: (name: string) => cookies[name] },
+		getClientAddress: () => init.clientAddress ?? "203.0.113.7",
 		// biome-ignore lint/suspicious/noExplicitAny: minimal SvelteKit event stub for unit testing
 	} as any;
 }
@@ -120,6 +122,28 @@ describe("API proxying", () => {
 		expect(res.headers.get("content-length")).toBeNull();
 	});
 
+	it("replaces a client-supplied X-Forwarded-For with the resolved address", async () => {
+		// Every browser request reaches the API through this proxy, so the API can
+		// only tell clients apart by this header. Forwarding the client's own value
+		// would let anyone mint unlimited rate-limit buckets.
+		const fetchMock = vi.fn(
+			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const event = makeEvent({
+			pathname: "/api/v1/notes",
+			headers: { "x-forwarded-for": "1.2.3.4", "x-real-ip": "5.6.7.8" },
+			clientAddress: "198.51.100.9",
+		});
+		await handle({ event, resolve });
+
+		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
+		const headers = requestInit?.headers as Headers;
+		expect(headers.get("x-forwarded-for")).toBe("198.51.100.9");
+		expect(headers.get("x-real-ip")).toBeNull();
+	});
+
 	it("does not attach a body for GET proxied requests", async () => {
 		const fetchMock = vi.fn(
 			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
@@ -132,5 +156,30 @@ describe("API proxying", () => {
 		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
 		expect(requestInit?.body).toBeNull();
 		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe("document security headers", () => {
+	it("sets HSTS, Referrer-Policy, nosniff, Permissions-Policy and COOP on HTML", async () => {
+		const res = await handle({ event: makeEvent(), resolve });
+
+		expect(res.headers.get("strict-transport-security")).toBe(
+			"max-age=63072000; includeSubDomains; preload",
+		);
+		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("permissions-policy")).toContain("camera=()");
+		expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
+	});
+
+	it("leaves proxied API responses untouched (the API sets its own)", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("ok", { status: 200 })),
+		);
+
+		const res = await handle({ event: makeEvent({ pathname: "/api/health" }), resolve });
+
+		expect(res.headers.get("strict-transport-security")).toBeNull();
 	});
 });

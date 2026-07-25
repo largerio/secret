@@ -39,7 +39,18 @@ function addFiles(newFiles: File[]) {
 		return;
 	}
 
+	// Dropping more files than the limit allows used to truncate the list in
+	// silence — with the quota already full, nothing happened at all and the
+	// user was left guessing.
 	const remaining = maxFilesPerNote - files.length;
+	if (newFiles.length > remaining) {
+		fileError = t("error_too_many_files", {
+			max: String(maxFilesPerNote),
+			ignored: String(newFiles.length - Math.max(remaining, 0)),
+		});
+		if (remaining <= 0) return;
+	}
+
 	const candidates = [...files, ...newFiles.slice(0, remaining)];
 	const totalSize = candidates.reduce((sum, f) => sum + f.size, 0);
 	if (totalSize > maxFileSize) {

@@ -3,13 +3,13 @@ import { getServerClient } from "$lib/server/client";
 
 export const load: ServerLoad = async ({ params }) => {
 	const id = params["id"];
-	if (!id) return { noteInfo: null };
+	if (!id) return { noteInfo: null, unavailable: false };
 
 	try {
 		const client = await getServerClient();
 		const info = await client.checkNote(id);
 
-		if (!info.exists) return { noteInfo: null };
+		if (!info.exists) return { noteInfo: null, unavailable: false };
 
 		return {
 			noteInfo: {
@@ -19,8 +19,12 @@ export const load: ServerLoad = async ({ params }) => {
 				expiresAt: info.expiresAt,
 				chunked: info.chunked,
 			},
+			unavailable: false,
 		};
 	} catch {
-		return { noteInfo: null };
+		// An unreachable API is NOT a missing note. Collapsing the two showed
+		// "Note not found" during an outage, telling the reader their secret had
+		// been destroyed when it was still there.
+		return { noteInfo: null, unavailable: true };
 	}
 };

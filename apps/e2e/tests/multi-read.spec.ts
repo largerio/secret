@@ -18,10 +18,15 @@ test("a multi-read note is readable N times, then destroyed", async ({ page, con
 		await reader.close();
 	}
 
-	// The reads are now exhausted: the note must be gone.
+	// The reads are now exhausted: the note must be gone. Assert on the heading
+	// specifically — "Service unavailable" and "Incomplete link" are rendered by
+	// the same block, and this test used to pass on a rate-limit error rather
+	// than on the note actually being destroyed.
 	const tooMany = await context.newPage();
 	await tooMany.goto(shareUrl);
-	await expect(tooMany.getByText(/Note not found/i)).toBeVisible({ timeout: 15_000 });
+	await expect(tooMany.getByRole("heading", { name: /Note not found/i })).toBeVisible({
+		timeout: 15_000,
+	});
 });
 
 test("the chosen expiry duration is reflected on creation and on the view page", async ({

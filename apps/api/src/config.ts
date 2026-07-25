@@ -4,11 +4,19 @@ import {
 	DEFAULT_CAP_DIFFICULTY,
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
+
+/** AES-256 server layer key size. */
+const SERVER_KEY_BYTES = 32;
+
+/** Roughly the length of `openssl rand -base64 32`; rejects toy keys. */
+const MIN_API_KEY_LENGTH = 32;
 
 /**
  * Raised when an environment value fails validation. The entry point catches
@@ -43,9 +51,15 @@ export interface AppConfig {
 	readonly storage: StorageConfig;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
+	/** Operator-enforced retention ceiling; cannot exceed MAX_EXPIRY_SECONDS. */
+	readonly maxExpirySeconds: number;
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
+	/** Scales every per-IP rate limit; >1 for deployments behind a shared address. */
+	readonly rateLimitMultiplier: number;
+	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
+	readonly allowServerKeyChange: boolean;
 	readonly debug: boolean;
 }
 
@@ -82,10 +96,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 
 	const maxFileSize = Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
 	const maxFilesPerNote = Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
+	const maxExpirySeconds = Number(env["MAX_EXPIRY"] ?? String(MAX_EXPIRY_SECONDS));
 	const chunkSize = Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE));
 	const maxChunkedFileSize = Number(
 		env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
 	);
+	const rateLimitMultiplier = Number(env["RATE_LIMIT_MULTIPLIER"] ?? "1");
 	const trustedProxies = (env["TRUSTED_PROXIES"] ?? "")
 		.split(",")
 		.map((v) => v.trim())
@@ -94,7 +110,27 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	if (!serverKey) {
 		throw new ConfigError(
 			"SERVER_ENCRYPTION_KEY is required.",
-			"Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
+			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	// Decoded here rather than only at parseServerKey() so an invalid key exits
+	// with the same actionable message as a missing one, instead of an uncaught
+	// stack trace from the crypto layer.
+	if (Buffer.from(serverKey, "base64").length !== SERVER_KEY_BYTES) {
+		throw new ConfigError(
+			"SERVER_ENCRYPTION_KEY must be 32 bytes (256 bits) encoded in base64.",
+			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	// A weak API key is reachable from the internet (the web app forwards the
+	// Authorization header to the API), so refuse the ones that are brute-forceable.
+	const weakKey = apiKeys.find((key) => key.length < MIN_API_KEY_LENGTH);
+	if (weakKey !== undefined) {
+		throw new ConfigError(
+			`API keys must be at least ${String(MIN_API_KEY_LENGTH)} characters long.`,
+			"Generate one with: openssl rand -base64 32",
 		);
 	}
 
@@ -126,6 +162,23 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError("MAX_FILES_PER_NOTE must be a positive integer");
 	}
 
+	if (maxFilesPerNote > MAX_FILES_PER_NOTE) {
+		throw new ConfigError(
+			`MAX_FILES_PER_NOTE cannot exceed the protocol limit of ${String(MAX_FILES_PER_NOTE)}`,
+		);
+	}
+
+	// Operators may tighten retention below the protocol ceiling, never above it.
+	if (
+		!Number.isInteger(maxExpirySeconds) ||
+		maxExpirySeconds < MIN_EXPIRY_SECONDS ||
+		maxExpirySeconds > MAX_EXPIRY_SECONDS
+	) {
+		throw new ConfigError(
+			`MAX_EXPIRY must be an integer between ${String(MIN_EXPIRY_SECONDS)} and ${String(MAX_EXPIRY_SECONDS)} seconds`,
+		);
+	}
+
 	if (Number.isNaN(chunkSize) || chunkSize <= 0) {
 		throw new ConfigError("CHUNK_SIZE must be a positive number");
 	}
@@ -136,6 +189,10 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 
 	if (chunkSize > maxChunkedFileSize) {
 		throw new ConfigError("CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE");
+	}
+
+	if (!(rateLimitMultiplier > 0) || rateLimitMultiplier > 100) {
+		throw new ConfigError("RATE_LIMIT_MULTIPLIER must be a number between 0 (exclusive) and 100");
 	}
 
 	try {
@@ -181,9 +238,13 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		storage,
 		maxFileSize,
 		maxFilesPerNote,
+		maxExpirySeconds,
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,
+		rateLimitMultiplier,
+		allowServerKeyChange:
+			env["ALLOW_SERVER_KEY_CHANGE"] === "1" || env["ALLOW_SERVER_KEY_CHANGE"] === "true",
 		debug: env["DEBUG"] === "1" || env["DEBUG"] === "true",
 	};
 }

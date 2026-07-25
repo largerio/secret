@@ -1,14 +1,20 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-shared";
 import { Scalar } from "@scalar/hono-api-reference";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
+import { createHealthCheck } from "./health.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
-import { createRateLimit, type RateLimitResult } from "./middleware/rateLimit.js";
+import {
+	classifyNotesPath,
+	createRateLimit,
+	type NotesRateClass,
+	type RateLimitResult,
+} from "./middleware/rateLimit.js";
 import {
 	createCors,
 	createDocsSecurityHeaders,
@@ -25,6 +31,8 @@ export interface AppEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		maxExpirySeconds: number;
+		maxFilesPerNote: number;
 	};
 }
 
@@ -89,44 +97,56 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		}),
 	);
 
-	// Per-IP rate limits, tuned per endpoint and layered by path specificity.
-	// Hono applies every middleware whose path matches, so a request can pass
-	// through several of these; the bounds below are chosen to make that stacking
-	// harmless. Roughly: note create/list is the scarcest (30/min), generic
-	// note reads are looser (60/min), existence probes are the tightest (20/min),
-	// and chunk uploads are the most permissive (200/min) since one upload fans
-	// out into many chunk requests.
-	const notesRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 30,
-		trustedProxies: config.trustedProxies,
-	});
-	const notesDetailRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 60,
-		trustedProxies: config.trustedProxies,
-	});
-	const existsRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 20,
-		trustedProxies: config.trustedProxies,
-	});
-	const chunksRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 200,
-		trustedProxies: config.trustedProxies,
-	});
+	// Per-IP rate limits, one bound per endpoint class:
+	//   create   30/min — the scarcest resource (every call stores a new note)
+	//   read     60/min — reads, deletes and upload finalization
+	//   exists   60/min — one per note opened; see below
+	//   chunks  200/min — one upload fans out into many chunk requests
+	//
+	// `exists` used to be the tightest bound at 20/min, on the theory that it is
+	// the cheapest endpoint to abuse. That traded a protection that does not
+	// exist for a real outage: note IDs are 12-char nanoids (~72 bits), so
+	// enumeration is impossible regardless of the limit (SECURITY.md says as
+	// much), while *every* note page view spends one — so 20 note opens a minute
+	// froze the endpoint for everyone sharing the bucket, which behind the
+	// bundled reverse proxy means all users at once.
+	//
+	// rateLimitMultiplier scales every bound for deployments where many
+	// legitimate users share one apparent address (corporate NAT, VPN, or a
+	// proxy whose address is not in TRUSTED_PROXIES).
+	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
+	const limit = (max: number) =>
+		createRateLimit({ windowMs: 60_000, max: scale(max), trustedProxies: config.trustedProxies });
+
+	const createLimit = limit(30);
+	const readLimit = limit(60);
+	const existsLimit = limit(60);
+	const chunksLimit = limit(200);
 	// One browser write costs 1 challenge + 1 redeem; 60/min stays generous for
 	// multi-tab use while capping free Proof-of-Work challenge generation.
-	const capRateLimit = createRateLimit({
-		windowMs: 60_000,
-		max: 60,
-		trustedProxies: config.trustedProxies,
+	const capRateLimit = limit(60);
+
+	// One limiter per request (see classifyNotesPath): layering these as separate
+	// app.use() rules stacked them, since Hono runs every middleware that matches.
+	const notesPrefix = "/api/v1/notes";
+	const byClass: Record<NotesRateClass, MiddlewareHandler> = {
+		create: createLimit.middleware,
+		read: readLimit.middleware,
+		exists: existsLimit.middleware,
+		chunks: chunksLimit.middleware,
+	};
+	const notesRateLimit: MiddlewareHandler = (c, next) =>
+		byClass[classifyNotesPath(c.req.path)](c, next);
+	app.use(notesPrefix, notesRateLimit);
+	app.use(`${notesPrefix}/*`, notesRateLimit);
+
+	// Reads return note ciphertext that may be burn-after-read: a 200 without
+	// cache directives is heuristically cacheable (RFC 9111 §4.2.2), so a CDN or
+	// the browser cache could replay a note after the row is destroyed.
+	app.use(`${notesPrefix}/*`, async (c, next) => {
+		await next();
+		c.header("Cache-Control", "no-store");
 	});
-	app.use("/api/v1/notes", notesRateLimit.middleware);
-	app.use("/api/v1/notes/*/exists", existsRateLimit.middleware);
-	app.use("/api/v1/notes/upload/*/chunks/*", chunksRateLimit.middleware);
-	app.use("/api/v1/notes/*", notesDetailRateLimit.middleware);
 
 	const writeAuth = createWriteAuth(config.apiKeys);
 	app.use("/api/v1/notes/*", writeAuth);
@@ -137,14 +157,18 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		c.set("storage", storage);
 		c.set("chunkSize", config.chunkSize);
 		c.set("maxChunkedFileSize", config.maxChunkedFileSize);
+		c.set("maxExpirySeconds", config.maxExpirySeconds);
+		c.set("maxFilesPerNote", config.maxFilesPerNote);
 		await next();
 	});
 
 	// --- Unversioned routes ---
 
-	app.get("/api/health", (c) => {
-		c.header("Cache-Control", "no-cache");
-		return c.json({ status: "ok" });
+	const checkHealth = createHealthCheck(db, storage);
+	app.get("/api/health", async (c) => {
+		c.header("Cache-Control", "no-store");
+		const report = await checkHealth();
+		return c.json(report, report.status === "ok" ? 200 : 503);
 	});
 	app.get("/robots.txt", (c) => {
 		c.header("Content-Type", "text/plain");
@@ -184,6 +208,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		return c.json({
 			maxFileSize: config.maxFileSize,
 			maxFilesPerNote: config.maxFilesPerNote,
+			maxExpiry: config.maxExpirySeconds,
 			chunkSize: config.chunkSize,
 			maxChunkedFileSize: config.maxChunkedFileSize,
 		});
@@ -213,12 +238,6 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	return {
 		app,
-		rateLimiters: [
-			notesRateLimit,
-			notesDetailRateLimit,
-			existsRateLimit,
-			chunksRateLimit,
-			capRateLimit,
-		],
+		rateLimiters: [createLimit, readLimit, existsLimit, chunksLimit, capRateLimit],
 	};
 }

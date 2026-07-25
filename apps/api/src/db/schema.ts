@@ -19,6 +19,13 @@ export const notes = sqliteTable("notes", {
 	streamHeader: text("stream_header"),
 });
 
+// Small key/value table for instance-level bookkeeping that must survive
+// restarts — currently only the server-key fingerprint (see keyGuard.ts).
+export const meta = sqliteTable("meta", {
+	key: text("key").primaryKey(),
+	value: text("value").notNull(),
+});
+
 export const uploads = sqliteTable("uploads", {
 	id: text("id").primaryKey(),
 	metadata: text("metadata").notNull(),

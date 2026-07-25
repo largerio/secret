@@ -14,10 +14,21 @@ interface Props {
 	expiresIn: number;
 	maxReads: string;
 	onreset: () => void;
+	/** Fired once the share link has been copied, so the page can drop its unload guard. */
+	onlinkcopied?: () => void;
 }
 
-const { shareUrl, qrCodeUrl, manageUrl, password, fileCount, expiresIn, maxReads, onreset }: Props =
-	$props();
+const {
+	shareUrl,
+	qrCodeUrl,
+	manageUrl,
+	password,
+	fileCount,
+	expiresIn,
+	maxReads,
+	onreset,
+	onlinkcopied,
+}: Props = $props();
 
 const config = $derived(getConfig());
 
@@ -151,7 +162,10 @@ async function copy(text: string, setFlag: (v: boolean) => void) {
 			</div>
 			<button
 				type="button"
-				onclick={() => copy(shareUrl, (v) => (copied = v))}
+				onclick={async () => {
+					await copy(shareUrl, (v) => (copied = v));
+					if (!clipboardError) onlinkcopied?.();
+				}}
 				class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all"
 				style:background="var(--accent-strong)"
 				style:color="var(--accent-ink)"

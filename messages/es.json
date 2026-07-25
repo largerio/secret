@@ -42,6 +42,11 @@
 	"expiry_30d": "30 días",
 	"not_found_title": "Nota no encontrada",
 	"not_found_description": "Esta nota puede haber expirado, sido eliminada o nunca haber existido.",
+	"error_too_many_files": "Máximo {max} archivos por nota — {ignored} ignorado(s).",
+	"link_incomplete_title": "Enlace incompleto",
+	"link_incomplete_description": "A este enlace le falta su clave de descifrado. Copia el enlace completo, incluido todo lo que sigue al signo #.",
+	"unavailable_title": "Servicio no disponible",
+	"unavailable_description": "No se pudo acceder a la nota. Es un problema de conexión, no una nota eliminada — inténtalo de nuevo en un momento.",
 	"error_wrong_password": "Contraseña incorrecta o clave inválida",
 	"error_empty_content": "Por favor, introduce texto o sube archivos.",
 	"error_text_too_long": "El texto es demasiado largo. Máximo {max} KB.",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "Cursiva",
 	"md_btn_link": "Enlace",
 	"md_btn_code": "Código",
-	"md_btn_list": "Lista"
+	"md_btn_list": "Lista",
+	"burn_password_warning": "Solo tienes un intento: una contraseña incorrecta destruirá igualmente esta nota.",
+	"error_burned_wrong_password": "Contraseña incorrecta. Esta nota era de lectura única y ha sido destruida."
 }

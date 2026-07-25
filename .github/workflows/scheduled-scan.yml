@@ -1,0 +1,85 @@
+name: Scheduled security scan
+
+# The audit and Trivy jobs in deploy.yml only run on push/PR, so a CVE disclosed
+# while the repo is quiet is never noticed — and self-hosters keep pulling the
+# same :latest image. This re-scans the published artifacts daily and opens an
+# issue when something turns up.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scheduled-scan
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      failed: ${{ steps.audit.outcome == 'failure' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit production dependencies
+        id: audit
+        continue-on-error: true
+        run: pnpm audit --audit-level=high --prod
+
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      failed: ${{ steps.trivy.outcome == 'failure' }}
+    steps:
+      - name: Scan the published image
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/largerio/secret:latest
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+  report:
+    needs: [audit, image]
+    if: needs.audit.outputs.failed == 'true' || needs.image.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open (or update) a tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --repo "${{ github.repository }}" \
+            --label security --state open --search "Scheduled security scan in:title" \
+            --json number --jq '.[0].number // empty')
+
+          body="The daily scan reported HIGH/CRITICAL findings. See the run: ${RUN_URL}"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Scheduled security scan found vulnerabilities" \
+              --label security --body "$body"
+          fi

@@ -90,6 +90,21 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
 }
 
 /**
+ * Reads the management (delete) URL off the success screen. Only valid right
+ * after createNote(), while the success view is still on screen — the delete
+ * token, like the decryption key, is never shown again.
+ */
+export async function getManageUrl(page: Page): Promise<string> {
+	// The link lives inside a collapsed <details>; open it so the input is visible.
+	await page.getByText(/delete link/i).click();
+	const input = page.locator("#manage-url");
+	await expect(input).toBeVisible();
+	const url = await input.inputValue();
+	expect(url, "manage URL should be present").toContain("/manage#");
+	return url;
+}
+
+/**
  * Convenience wrapper that creates a default single-read text note.
  */
 export async function createTextNote(page: Page, text: string): Promise<string> {

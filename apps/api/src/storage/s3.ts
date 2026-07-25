@@ -3,6 +3,7 @@ import {
 	DeleteObjectsCommand,
 	GetObjectCommand,
 	type GetObjectCommandOutput,
+	HeadBucketCommand,
 	NoSuchKey,
 	PutObjectCommand,
 	S3Client,
@@ -75,6 +76,12 @@ export class S3Storage implements StorageBackend {
 				secretAccessKey: config.secretAccessKey,
 			},
 		});
+	}
+
+	async probe(): Promise<void> {
+		// HeadBucket exercises endpoint reachability and credential validity in
+		// one cheap call — the two things that silently rot after a key rotation.
+		await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {

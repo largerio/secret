@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { notes } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
 import {
+	assertWithinPolicy,
 	buildNoteHeaders,
 	consumeNote,
 	httpError,
@@ -25,6 +26,11 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 	app.openapi(createNoteRoute, async (c) => {
 		const { encryptedData, clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } =
 			c.req.valid("json");
+
+		assertWithinPolicy(
+			{ maxExpirySeconds: c.get("maxExpirySeconds"), maxFilesPerNote: c.get("maxFilesPerNote") },
+			{ expiresIn, fileCount },
+		);
 
 		const result = await insertNote(c.get("db"), c.get("serverKey"), c.get("storage"), {
 			clientBlob: Buffer.from(encryptedData, "base64"),
@@ -73,6 +79,11 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 		}
 
 		const { clientNonce, hasPassword, expiresIn, maxReads, fileCount, salt } = parsed.data;
+
+		assertWithinPolicy(
+			{ maxExpirySeconds: c.get("maxExpirySeconds"), maxFilesPerNote: c.get("maxFilesPerNote") },
+			{ expiresIn, fileCount },
+		);
 
 		const result = await insertNote(c.get("db"), c.get("serverKey"), c.get("storage"), {
 			clientBlob: Buffer.from(await dataBlob.arrayBuffer()),

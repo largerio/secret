@@ -25,6 +25,8 @@ interface NoteInfo {
 
 type NoteStatus =
 	| { state: "not_found" }
+	| { state: "link_incomplete" }
+	| { state: "unavailable" }
 	| { state: "ready"; info: NoteInfo }
 	| { state: "downloading"; progress: number }
 	| { state: "decrypting" }
@@ -34,7 +36,11 @@ type NoteStatus =
 const { data } = $props();
 
 let status = $state<NoteStatus>(
-	data.noteInfo ? { state: "ready", info: data.noteInfo } : { state: "not_found" },
+	data.noteInfo
+		? { state: "ready", info: data.noteInfo }
+		: data.unavailable
+			? { state: "unavailable" }
+			: { state: "not_found" },
 );
 let mounted = $state(false);
 let password = $state("");
@@ -93,8 +99,11 @@ onMount(() => {
 	keyFragment = window.location.hash.slice(1);
 	mounted = true;
 
-	if (!keyFragment) {
-		status = { state: "not_found" };
+	// A missing fragment means the link was truncated in transit (mail clients,
+	// chat apps and SMS linkifiers all do it), not that the note is gone —
+	// saying "not found" sent people looking for the wrong problem.
+	if (!keyFragment && status.state === "ready") {
+		status = { state: "link_incomplete" };
 	}
 
 	return () => {
@@ -162,9 +171,13 @@ async function handleDecrypt() {
 		status = { state: "decrypted", payload, previewUrls };
 	} catch (e) {
 		// A decryption failure (wrong password/key or corrupted data) surfaces as
-		// a single typed error — we cannot tell which, by design. When the note is
-		// password-protected, offer another attempt; otherwise it's unrecoverable.
-		if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword) {
+		// a single typed error — we cannot tell which, by design.
+		//
+		// The server cannot verify the password (it never sees the key), so the
+		// read is already spent by the time we get here. Offering "try again" on a
+		// burn-after-read note was a lie: the note is gone and the second attempt
+		// 404s. Only retry when a read actually remains.
+		if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword && !isBurn) {
 			wrongPassword = true;
 			pwShake = true;
 			status = { state: "ready", info: data.noteInfo };
@@ -172,6 +185,8 @@ async function handleDecrypt() {
 				pwShake = false;
 				pwInputEl?.focus();
 			}, 450);
+		} else if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword) {
+			status = { state: "error", message: t("error_burned_wrong_password") };
 		} else {
 			status = { state: "error", message: t("error_decryption") };
 		}
@@ -187,7 +202,13 @@ async function handleDecrypt() {
 	<meta property="og:description" content={t("view_description")} />
 </svelte:head>
 
-{#if status.state === "not_found"}
+{#if status.state === "not_found" || status.state === "link_incomplete" || status.state === "unavailable"}
+	{@const copy =
+		status.state === "link_incomplete"
+			? { title: t("link_incomplete_title"), body: t("link_incomplete_description") }
+			: status.state === "unavailable"
+				? { title: t("unavailable_title"), body: t("unavailable_description") }
+				: { title: t("not_found_title"), body: t("not_found_description") }}
 	<section
 		class="rounded-2xl border"
 		style:background="var(--bg-2)"
@@ -196,9 +217,9 @@ async function handleDecrypt() {
 		style:text-align="center"
 	>
 		<h1 class="serif" style:font-size="32px" style:margin="0 0 12px">
-			{t("not_found_title")}
+			{copy.title}
 		</h1>
-		<p style:color="var(--muted)" style:margin="0 0 24px">{t("not_found_description")}</p>
+		<p style:color="var(--muted)" style:margin="0 0 24px">{copy.body}</p>
 		<a
 			href="/"
 			class="inline-flex items-center gap-2 rounded-lg transition-colors"
@@ -259,6 +280,17 @@ async function handleDecrypt() {
 				<p style:color="var(--text)" style:font-size="14px" style:margin="0 0 16px" style:line-height="1.5">
 					{t("un_burn_body")}
 				</p>
+				{#if needsPassword}
+					<p
+						style:color="var(--text)"
+						style:font-size="13px"
+						style:margin="0 0 16px"
+						style:line-height="1.5"
+						style:font-weight="500"
+					>
+						{t("burn_password_warning")}
+					</p>
+				{/if}
 				<button
 					type="button"
 					onclick={acceptBurn}
@@ -389,9 +421,9 @@ async function handleDecrypt() {
 		<div class="w-72 max-w-full">
 			<StepProgress
 				steps={[
-					{ key: "downloading", label: t("downloading"), icon: "fa-solid fa-cloud-arrow-down" },
-					{ key: "decrypting", label: t("decrypting"), icon: "fa-solid fa-lock-open" },
-					{ key: "done", label: t("done"), icon: "fa-solid fa-check" },
+					{ key: "downloading", label: t("downloading"), icon: "download" },
+					{ key: "decrypting", label: t("decrypting"), icon: "unlock" },
+					{ key: "done", label: t("done"), icon: "check" },
 				]}
 				currentStep={status.state === "downloading" ? 0 : 1}
 				progress={status.state === "downloading" ? status.progress : 100}

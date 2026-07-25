@@ -50,6 +50,13 @@ export function createDatabase(dbPath: string): {
 	// the column is kept to stay compatible with databases provisioned before
 	// the migration. It can be dropped once all deployments have rolled over.
 	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS meta (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)
+	`);
+
+	sqlite.exec(`
 		CREATE TABLE IF NOT EXISTS uploads (
 			id TEXT PRIMARY KEY,
 			metadata TEXT NOT NULL,

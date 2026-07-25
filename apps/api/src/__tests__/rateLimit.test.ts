@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { buildTrustedBlockList, createRateLimit } from "../middleware/rateLimit.js";
+import {
+	buildTrustedBlockList,
+	classifyNotesPath,
+	createRateLimit,
+} from "../middleware/rateLimit.js";
 
 function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
 	return { incoming: { socket: { remoteAddress } } };
@@ -84,7 +88,7 @@ describe("createRateLimit", () => {
 		rl.cleanup();
 	});
 
-	it("uses first IP from X-Forwarded-For when peer is trusted", async () => {
+	it("keys on the right-most untrusted X-Forwarded-For hop when the peer is trusted", async () => {
 		const app = new Hono();
 		const rl = createRateLimit({
 			windowMs: 60_000,
@@ -94,6 +98,9 @@ describe("createRateLimit", () => {
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
+		// Same real client (2.2.2.2, appended by the proxy), different forged
+		// prefix. Keying on the left-most entry would give each request its own
+		// bucket and defeat the limiter entirely.
 		await app.request(
 			"/test",
 			{ headers: { "X-Forwarded-For": "1.1.1.1, 2.2.2.2" } },
@@ -101,7 +108,7 @@ describe("createRateLimit", () => {
 		);
 		const res = await app.request(
 			"/test",
-			{ headers: { "X-Forwarded-For": "1.1.1.1, 3.3.3.3" } },
+			{ headers: { "X-Forwarded-For": "9.9.9.9, 2.2.2.2" } },
 			mockEnv("10.0.0.6"),
 		);
 		expect(res.status).toBe(429);
@@ -401,5 +408,82 @@ describe("buildTrustedBlockList", () => {
 
 	it("throws on missing address", () => {
 		expect(() => buildTrustedBlockList(["/24"])).toThrow(/Invalid trusted proxy entry/);
+	});
+});
+
+describe("X-Forwarded-For chain parsing", () => {
+	function appWithLimit(trustedProxies: string[]) {
+		const { middleware } = createRateLimit({ windowMs: 60_000, max: 1, trustedProxies });
+		const app = new Hono();
+		app.use("*", middleware);
+		app.get("/", (c) => c.text("ok"));
+		return app;
+	}
+
+	async function hit(app: Hono, forwarded: string, peer = "10.0.0.1") {
+		return app.request("/", { headers: { "x-forwarded-for": forwarded } }, mockEnv(peer));
+	}
+
+	it("uses the right-most untrusted hop, not the client-controlled left-most", async () => {
+		// nginx's $proxy_add_x_forwarded_for appends the real peer, so the real
+		// client is on the right. Reading the left-most entry lets any client
+		// send `X-Forwarded-For: <random>` and get a fresh bucket every request.
+		const app = appWithLimit(["10.0.0.0/8"]);
+
+		expect((await hit(app, "1.1.1.1, 203.0.113.5")).status).toBe(200);
+		// Same real client, different forged prefix: must hit the same bucket.
+		expect((await hit(app, "2.2.2.2, 203.0.113.5")).status).toBe(429);
+	});
+
+	it("peels off trusted proxy hops from the right", async () => {
+		const app = appWithLimit(["10.0.0.0/8"]);
+
+		expect((await hit(app, "203.0.113.5, 10.1.2.3")).status).toBe(200);
+		expect((await hit(app, "203.0.113.5, 10.9.9.9")).status).toBe(429);
+	});
+
+	it("stops at a malformed hop rather than trusting what is left of it", async () => {
+		const app = appWithLimit(["10.0.0.0/8"]);
+
+		// "garbage" is unverifiable, so everything left of it is too: fall back
+		// to the peer address instead of trusting 203.0.113.5.
+		expect((await hit(app, "203.0.113.5, garbage")).status).toBe(200);
+		expect((await hit(app, "198.51.100.1, garbage")).status).toBe(429);
+	});
+
+	it("falls back to the peer when every hop is a trusted proxy", async () => {
+		const app = appWithLimit(["10.0.0.0/8"]);
+
+		expect((await hit(app, "10.0.0.2, 10.0.0.3")).status).toBe(200);
+		expect((await hit(app, "10.0.0.4, 10.0.0.5")).status).toBe(429);
+	});
+});
+
+describe("classifyNotesPath", () => {
+	it.each([
+		["/api/v1/notes", "create"],
+		["/api/v1/notes/", "create"],
+		["/api/v1/notes/upload", "create"],
+		["/api/v1/notes/upload/init", "create"],
+		["/api/v1/notes/aBcDeFgHiJkL/exists", "exists"],
+		["/api/v1/notes/upload/abc123/chunks/0", "chunks"],
+		["/api/v1/notes/upload/abc123/chunks/125", "chunks"],
+		["/api/v1/notes/aBcDeFgHiJkL", "read"],
+		["/api/v1/notes/aBcDeFgHiJkL/raw", "read"],
+		["/api/v1/notes/aBcDeFgHiJkL/stream", "read"],
+		["/api/v1/notes/upload/abc123/complete", "read"],
+	])("classifies %s as %s", (path, expected) => {
+		expect(classifyNotesPath(path)).toBe(expected);
+	});
+
+	it("keeps chunk uploads out of the tighter read bucket", () => {
+		// Regression guard: chunk uploads previously matched the generic
+		// `/notes/*` rule too, and the 60/min bound won — making a 125-chunk
+		// (500 MB) upload impossible to complete.
+		expect(classifyNotesPath("/api/v1/notes/upload/abc/chunks/61")).not.toBe("read");
+	});
+
+	it("bills the multipart create endpoint as a create, not a read", () => {
+		expect(classifyNotesPath("/api/v1/notes/upload")).toBe("create");
 	});
 });

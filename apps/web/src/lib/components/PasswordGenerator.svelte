@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import Icon from "$lib/components/Icon.svelte";
 import { t } from "$lib/i18n/index.svelte";
+import { copyWithFeedback } from "$lib/utils/clipboard";
 import { generatePassword } from "$lib/utils/password";
 
 interface Props {
@@ -16,6 +17,7 @@ let lowercase = $state(true);
 let digits = $state(true);
 let symbols = $state(true);
 let copied = $state(false);
+let copyFailed = $state(false);
 
 // Regenerate only on explicit user intent (mount, the regenerate button, a
 // charset toggle, or releasing the length slider) — never continuously while
@@ -27,15 +29,10 @@ function generate(): void {
 onMount(generate);
 
 async function copyPassword(): Promise<void> {
-	try {
-		await navigator.clipboard.writeText(value);
-		copied = true;
-		setTimeout(() => {
-			copied = false;
-		}, 1400);
-	} catch {
-		/* silent */
-	}
+	// Goes through the shared helper so the plain-HTTP fallback applies here too;
+	// the previous inline call swallowed every failure, leaving the user
+	// convinced they had copied their password when they had not.
+	copyFailed = !(await copyWithFeedback(value, (v) => (copied = v), 1400));
 }
 
 function charColor(ch: string): string {
@@ -143,6 +140,11 @@ function charColor(ch: string): string {
 				{/if}
 			</button>
 		</div>
+		{#if copyFailed}
+			<p role="alert" style:color="var(--accent)" style:font-size="12px" style:margin="8px 0 0">
+				{t("error_clipboard")}
+			</p>
+		{/if}
 	</div>
 
 	<div class="flex flex-wrap gap-2">

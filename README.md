@@ -1,7 +1,7 @@
 # Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing
 
 [![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#development)
+[![Coverage](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](vitest.config.ts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue)](https://github.com/largerio/secret/stargazers)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
@@ -58,7 +58,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
-- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); add a new locale by dropping a JSON file in [`messages/`](messages/)
+- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
 - **Self-hostable** — Single Docker container, customizable branding
 
 ## Comparison
@@ -182,17 +182,19 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
-| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for logo, favicon, footer…) |
+| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for footer and social image) |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
-| `MAX_FILES_PER_NOTE` | `10` | Max files per note |
-| `MAX_EXPIRY` | `604800` | Max expiry in seconds (default: 7 days, max: 30 days) |
-| `API_KEY` | — | API key for SDK clients (optional) |
+| `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
+| `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
+| `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
+| `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
+| `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port the app is published on (inside the container the web server always listens on 3000, the API on 3001) |
 
-> **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key.
+> **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. The server stores a fingerprint of the key and **refuses to start** if it changes while notes exist, so a mistake fails loudly instead of silently bricking your data. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key; read it back with `docker compose exec app cat /app/data/.encryption_key`.
 
 ### S3 Storage (optional)
 
@@ -280,7 +282,8 @@ Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZ
 ```bash
 pnpm install
 pnpm dev          # API + web dev servers
-pnpm test         # 719 tests, 100% coverage
+pnpm test         # full suite
+pnpm test:coverage # same, with the 100% coverage gate (what CI runs)
 pnpm lint         # Biome lint + format
 pnpm build        # Production build
 pnpm typecheck    # TypeScript strict
@@ -291,6 +294,7 @@ pnpm typecheck    # TypeScript strict
 ```
 apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
 apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4)
+apps/e2e/         Playwright end-to-end tests (incl. axe-core a11y gate)
 packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/crypto/  libsodium + AES-256-GCM encryption
 packages/shared/  Zod schemas, types, constants, crypto test vectors
@@ -329,11 +333,11 @@ short-lived OIDC token against the package's configured trusted publisher.
 |-------|---------|
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
 | Server encryption | AES-256-GCM (defense-in-depth) |
-| Password KDF | Argon2id (64 MiB, 3 iterations) |
+| Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
-| Key hygiene | Zeroed after use (`sodium.memzero`) |
-| Privacy | No IP logging, no cookies, no tracking |
+| Key hygiene | Cleared from the WASM heap after use (`sodium.memzero`). The key still lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
+| Privacy | No IP logging, no tracking. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |

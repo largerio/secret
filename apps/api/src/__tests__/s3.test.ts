@@ -5,6 +5,8 @@ import { S3Storage } from "../storage/s3.js";
 const mockSend = vi.fn();
 const mockDestroy = vi.fn();
 const mockDone = vi.fn().mockResolvedValue({});
+/** Captures what S3Storage actually passes to the SDK client. */
+const clientConfigs: unknown[] = [];
 
 vi.mock("@aws-sdk/client-s3", () => {
 	class MockNoSuchKey extends Error {
@@ -18,6 +20,12 @@ vi.mock("@aws-sdk/client-s3", () => {
 		S3Client: class MockS3Client {
 			send = mockSend;
 			destroy = mockDestroy;
+			constructor(config: unknown) {
+				clientConfigs.push(config);
+			}
+		},
+		HeadBucketCommand: class MockHeadBucketCommand {
+			constructor(public params: unknown) {}
 		},
 		PutObjectCommand: class MockPutObjectCommand {
 			constructor(public params: unknown) {}
@@ -57,12 +65,41 @@ describe("S3Storage", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		clientConfigs.length = 0;
 		storage = new S3Storage(config);
 	});
 
-	it("accepts config with custom endpoint", () => {
-		const s3 = new S3Storage({ ...config, endpoint: "https://minio.local:9000" });
-		expect(s3).toBeDefined();
+	it("forwards credentials and region to the SDK client", () => {
+		// A swapped accessKeyId/secretAccessKey would otherwise pass every test.
+		expect(clientConfigs.at(-1)).toMatchObject({
+			region: "us-east-1",
+			forcePathStyle: false,
+			credentials: { accessKeyId: "test-key", secretAccessKey: "test-secret" },
+		});
+		expect(clientConfigs.at(-1)).not.toHaveProperty("endpoint");
+	});
+
+	it("passes a custom endpoint through and enables path style", () => {
+		new S3Storage({ ...config, endpoint: "https://minio.local:9000", forcePathStyle: true });
+		expect(clientConfigs.at(-1)).toMatchObject({
+			endpoint: "https://minio.local:9000",
+			forcePathStyle: true,
+		});
+	});
+
+	describe("probe", () => {
+		it("issues a HeadBucket against the configured bucket", async () => {
+			mockSend.mockResolvedValueOnce({});
+			await storage.probe();
+			expect(mockSend).toHaveBeenCalledWith(
+				expect.objectContaining({ params: { Bucket: "test-bucket" } }),
+			);
+		});
+
+		it("propagates a failure so the health endpoint can report it", async () => {
+			mockSend.mockRejectedValueOnce(new Error("InvalidAccessKeyId"));
+			await expect(storage.probe()).rejects.toThrow("InvalidAccessKeyId");
+		});
 	});
 
 	describe("save", () => {

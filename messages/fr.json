@@ -42,6 +42,11 @@
 	"expiry_30d": "30 jours",
 	"not_found_title": "Note introuvable",
 	"not_found_description": "Cette note a peut-être expiré, été supprimée, ou n'a jamais existé.",
+	"error_too_many_files": "Maximum {max} fichiers par note — {ignored} ignoré(s).",
+	"link_incomplete_title": "Lien incomplet",
+	"link_incomplete_description": "Il manque la clé de déchiffrement à ce lien. Copiez le lien entier, y compris tout ce qui suit le signe #.",
+	"unavailable_title": "Service indisponible",
+	"unavailable_description": "La note n'a pas pu être contactée. C'est un problème de connexion, pas une note supprimée — réessayez dans un instant.",
 	"error_wrong_password": "Mot de passe incorrect ou clé invalide",
 	"error_empty_content": "Veuillez entrer du texte ou ajouter des fichiers.",
 	"error_text_too_long": "Le texte est trop long. Maximum {max} Ko.",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "Italique",
 	"md_btn_link": "Lien",
 	"md_btn_code": "Code",
-	"md_btn_list": "Liste"
+	"md_btn_list": "Liste",
+	"burn_password_warning": "Vous n'avez qu'un essai : un mot de passe incorrect détruira quand même cette note.",
+	"error_burned_wrong_password": "Mot de passe incorrect. Cette note était à lecture unique et vient d'être détruite."
 }
