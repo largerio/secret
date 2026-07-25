@@ -16,6 +16,7 @@ import { notes, uploadChunks, uploads } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 import {
+	assertWithinPolicy,
 	buildNoteHeaders,
 	consumeNoteTx,
 	DELETE_TOKEN_LENGTH,
@@ -53,6 +54,11 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		if (data.chunkCount > maxChunks) {
 			return c.json({ error: `Maximum ${String(maxChunks)} chunks allowed` }, 400);
 		}
+
+		assertWithinPolicy(
+			{ maxExpirySeconds: c.get("maxExpirySeconds"), maxFilesPerNote: c.get("maxFilesPerNote") },
+			{ expiresIn: data.expiresIn, fileCount: data.fileCount },
+		);
 
 		const db = c.get("db");
 		const uploadId = nanoid(UPLOAD_ID_LENGTH);

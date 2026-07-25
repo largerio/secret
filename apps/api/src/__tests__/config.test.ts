@@ -4,8 +4,10 @@ import {
 	DEFAULT_CAP_DIFFICULTY,
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { describe, expect, it } from "vitest";
 import { type AppConfig, ConfigError, parseConfig } from "../config.js";
@@ -115,6 +117,35 @@ describe("parseConfig", () => {
 
 		it("accepts a 32-byte base64 key", () => {
 			expect(parseConfig(baseEnv()).serverKey).toBe(TEST_KEY);
+		});
+	});
+
+	describe("policy ceilings", () => {
+		it("rejects MAX_FILES_PER_NOTE above the protocol limit", () => {
+			expectConfigError(
+				baseEnv({ MAX_FILES_PER_NOTE: String(MAX_FILES_PER_NOTE + 1) }),
+				`MAX_FILES_PER_NOTE cannot exceed the protocol limit of ${String(MAX_FILES_PER_NOTE)}`,
+			);
+		});
+
+		it.each([
+			String(MAX_EXPIRY_SECONDS + 1),
+			String(MIN_EXPIRY_SECONDS - 1),
+			"not-a-number",
+			"3600.5",
+		])("rejects MAX_EXPIRY=%s", (value) => {
+			expectConfigError(
+				baseEnv({ MAX_EXPIRY: value }),
+				`MAX_EXPIRY must be an integer between ${String(MIN_EXPIRY_SECONDS)} and ${String(MAX_EXPIRY_SECONDS)} seconds`,
+			);
+		});
+
+		it("accepts a tightened retention ceiling", () => {
+			expect(parseConfig(baseEnv({ MAX_EXPIRY: "3600" })).maxExpirySeconds).toBe(3600);
+		});
+
+		it("defaults to the protocol ceiling", () => {
+			expect(parseConfig(baseEnv()).maxExpirySeconds).toBe(MAX_EXPIRY_SECONDS);
 		});
 	});
 

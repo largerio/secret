@@ -31,6 +31,8 @@ export interface AppEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		maxExpirySeconds: number;
+		maxFilesPerNote: number;
 	};
 }
 
@@ -159,6 +161,8 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		c.set("storage", storage);
 		c.set("chunkSize", config.chunkSize);
 		c.set("maxChunkedFileSize", config.maxChunkedFileSize);
+		c.set("maxExpirySeconds", config.maxExpirySeconds);
+		c.set("maxFilesPerNote", config.maxFilesPerNote);
 		await next();
 	});
 
@@ -208,6 +212,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		return c.json({
 			maxFileSize: config.maxFileSize,
 			maxFilesPerNote: config.maxFilesPerNote,
+			maxExpiry: config.maxExpirySeconds,
 			chunkSize: config.chunkSize,
 			maxChunkedFileSize: config.maxChunkedFileSize,
 		});

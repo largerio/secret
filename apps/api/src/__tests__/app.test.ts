@@ -134,6 +134,7 @@ describe("createApp — versioned API", () => {
 		expect(await res.json()).toEqual({
 			maxFileSize: config.maxFileSize,
 			maxFilesPerNote: config.maxFilesPerNote,
+			maxExpiry: config.maxExpirySeconds,
 			chunkSize: config.chunkSize,
 			maxChunkedFileSize: config.maxChunkedFileSize,
 		});

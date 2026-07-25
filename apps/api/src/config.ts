@@ -4,8 +4,10 @@ import {
 	DEFAULT_CAP_DIFFICULTY,
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
@@ -49,6 +51,8 @@ export interface AppConfig {
 	readonly storage: StorageConfig;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
+	/** Operator-enforced retention ceiling; cannot exceed MAX_EXPIRY_SECONDS. */
+	readonly maxExpirySeconds: number;
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
@@ -90,6 +94,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 
 	const maxFileSize = Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
 	const maxFilesPerNote = Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
+	const maxExpirySeconds = Number(env["MAX_EXPIRY"] ?? String(MAX_EXPIRY_SECONDS));
 	const chunkSize = Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE));
 	const maxChunkedFileSize = Number(
 		env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
@@ -154,6 +159,23 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError("MAX_FILES_PER_NOTE must be a positive integer");
 	}
 
+	if (maxFilesPerNote > MAX_FILES_PER_NOTE) {
+		throw new ConfigError(
+			`MAX_FILES_PER_NOTE cannot exceed the protocol limit of ${String(MAX_FILES_PER_NOTE)}`,
+		);
+	}
+
+	// Operators may tighten retention below the protocol ceiling, never above it.
+	if (
+		!Number.isInteger(maxExpirySeconds) ||
+		maxExpirySeconds < MIN_EXPIRY_SECONDS ||
+		maxExpirySeconds > MAX_EXPIRY_SECONDS
+	) {
+		throw new ConfigError(
+			`MAX_EXPIRY must be an integer between ${String(MIN_EXPIRY_SECONDS)} and ${String(MAX_EXPIRY_SECONDS)} seconds`,
+		);
+	}
+
 	if (Number.isNaN(chunkSize) || chunkSize <= 0) {
 		throw new ConfigError("CHUNK_SIZE must be a positive number");
 	}
@@ -209,6 +231,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		storage,
 		maxFileSize,
 		maxFilesPerNote,
+		maxExpirySeconds,
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,

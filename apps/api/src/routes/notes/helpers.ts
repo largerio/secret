@@ -19,8 +19,32 @@ export interface NotesEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		maxExpirySeconds: number;
+		maxFilesPerNote: number;
 		uploadId: string;
 	};
+}
+
+/**
+ * Enforce the operator's policy on a create request.
+ *
+ * The Zod schemas encode the *protocol* ceilings, which are compiled in and
+ * identical everywhere. The deployment-specific limits live in AppConfig, and
+ * used to be advertised by `GET /api/v1/config` without ever being checked —
+ * so an operator who set `MAX_EXPIRY=3600` for a retention policy, or
+ * `MAX_FILES_PER_NOTE=3`, saw their value echoed back while the server kept
+ * accepting 30-day, 10-file notes.
+ */
+export function assertWithinPolicy(
+	limits: { maxExpirySeconds: number; maxFilesPerNote: number },
+	request: { expiresIn: number; fileCount: number },
+): void {
+	if (request.expiresIn > limits.maxExpirySeconds) {
+		httpError(400, `Maximum expiry is ${String(limits.maxExpirySeconds)} seconds`);
+	}
+	if (request.fileCount > limits.maxFilesPerNote) {
+		httpError(400, `Maximum ${String(limits.maxFilesPerNote)} files per note`);
+	}
 }
 
 /** Strip CRLF and null bytes to prevent HTTP header injection */

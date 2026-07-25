@@ -12,7 +12,7 @@ const SANITIZE_CONFIG = {
 	FORBID_TAGS: ["form", "input", "button", "select", "textarea", "option", "style"],
 	FORBID_ATTR: ["style", "action", "formaction", "name"],
 	ALLOW_DATA_ATTR: false,
-} as const;
+};
 
 /**
  * Render markdown to sanitized HTML. marked and DOMPurify are lazy-imported so

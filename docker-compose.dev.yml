@@ -15,7 +15,9 @@ services:
       - PORT=3001
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
-      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-dev-key-change-me-in-production-32ch}
+      # Fixed 32-byte base64 key so `make dev` works on a fresh clone. The
+      # previous placeholder decoded to 27 bytes and crashed the API at boot.
+      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY:-c2VjcmV0LWRldi1rZXktZG8tbm90LXVzZS1pbi1wcm8=}
       - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-105906176}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - S3_BUCKET=${S3_BUCKET:-}

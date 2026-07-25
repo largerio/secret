@@ -126,7 +126,9 @@ describe("API proxying", () => {
 		// Every browser request reaches the API through this proxy, so the API can
 		// only tell clients apart by this header. Forwarding the client's own value
 		// would let anyone mint unlimited rate-limit buckets.
-		const fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
+		const fetchMock = vi.fn(
+			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const event = makeEvent({

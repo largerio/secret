@@ -26,6 +26,8 @@ interface AppEnv {
 		storage: StorageBackend;
 		chunkSize: number;
 		maxChunkedFileSize: number;
+		maxExpirySeconds: number;
+		maxFilesPerNote: number;
 	};
 }
 
@@ -175,6 +177,8 @@ describe("POST /api/v1/notes", () => {
 			c.set("storage", storage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth(["valid-api-key"]);
@@ -742,6 +746,8 @@ describe("GET /api/v1/notes/:id", () => {
 			c.set("storage", failStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -781,6 +787,8 @@ describe("GET /api/v1/notes/:id", () => {
 			c.set("storage", failStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -1035,6 +1043,8 @@ describe("storage.delete error resilience", () => {
 			c.set("storage", failingStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -1178,6 +1188,8 @@ describe("storage.delete error resilience", () => {
 			c.set("storage", stringFailStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -1879,6 +1891,8 @@ describe("GET /api/v1/notes/:id/stream", () => {
 			c.set("storage", failStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		failApp.route("/api/v1/notes", createNotesRoutes());
@@ -1921,6 +1935,8 @@ describe("GET /api/v1/notes/:id/stream", () => {
 			c.set("storage", failStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		errApp.route("/api/v1/notes", createNotesRoutes());
@@ -2033,6 +2049,8 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 			c.set("storage", storage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -2380,6 +2398,8 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 			c.set("storage", failStorage);
 			c.set("chunkSize", 4_194_304);
 			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", 2_592_000);
+			c.set("maxFilesPerNote", 10);
 			await next();
 		});
 		const writeAuth = createWriteAuth([]);
@@ -2403,5 +2423,104 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk delete failure`,
 		);
 		consoleSpy.mockRestore();
+	});
+});
+
+// MAX_EXPIRY and MAX_FILES_PER_NOTE were advertised by GET /api/v1/config and
+// documented in the README, but never enforced: an operator who set
+// MAX_EXPIRY=3600 for a retention policy saw the value echoed back while the
+// server kept accepting 30-day notes.
+describe("operator policy limits", () => {
+	function policyApp(limits: { maxExpirySeconds: number; maxFilesPerNote: number }) {
+		const hono = new Hono<AppEnv>();
+		hono.onError((err, c) => {
+			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+			return c.json({ error: "Internal server error" }, 500);
+		});
+		hono.use("*", async (c, next) => {
+			c.set("db", db);
+			c.set("serverKey", TEST_SERVER_KEY);
+			c.set("storage", new LocalStorage(TEST_FILES_PATH));
+			c.set("chunkSize", 4_194_304);
+			c.set("maxChunkedFileSize", 524_288_000);
+			c.set("maxExpirySeconds", limits.maxExpirySeconds);
+			c.set("maxFilesPerNote", limits.maxFilesPerNote);
+			await next();
+		});
+		hono.use("/api/v1/notes/*", createWriteAuth([]));
+		hono.route("/api/v1/notes", createNotesRoutes());
+		return hono;
+	}
+
+	it("rejects an expiry beyond the operator ceiling", async () => {
+		const tight = policyApp({ maxExpirySeconds: 3600, maxFilesPerNote: 10 });
+
+		const res = await tight.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(validBody({ expiresIn: 86_400 })),
+		});
+
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Maximum expiry is 3600 seconds");
+	});
+
+	it("accepts an expiry exactly at the ceiling", async () => {
+		const tight = policyApp({ maxExpirySeconds: 3600, maxFilesPerNote: 10 });
+
+		const res = await tight.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(validBody({ expiresIn: 3600 })),
+		});
+
+		expect(res.status).toBe(201);
+	});
+
+	it("rejects more files than the operator allows", async () => {
+		const tight = policyApp({ maxExpirySeconds: 2_592_000, maxFilesPerNote: 3 });
+
+		const res = await tight.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(validBody({ fileCount: 4 })),
+		});
+
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Maximum 3 files per note");
+	});
+
+	it("applies the same ceiling to the multipart endpoint", async () => {
+		const tight = policyApp({ maxExpirySeconds: 3600, maxFilesPerNote: 10 });
+
+		const res = await tight.request("/api/v1/notes/upload", {
+			method: "POST",
+			headers: authHeaders(),
+			body: multipartForm(validMultipartMeta({ expiresIn: 86_400 })),
+		});
+
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Maximum expiry is 3600 seconds");
+	});
+
+	it("applies the same ceiling to chunked upload init", async () => {
+		const tight = policyApp({ maxExpirySeconds: 3600, maxFilesPerNote: 10 });
+
+		const res = await tight.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify({
+				streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+				clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+				hasPassword: false,
+				expiresIn: 86_400,
+				maxReads: 1,
+				fileCount: 1,
+				chunkCount: 2,
+			}),
+		});
+
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Maximum expiry is 3600 seconds");
 	});
 });

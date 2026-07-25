@@ -34,8 +34,7 @@ The container pulls `ghcr.io/largerio/secret:latest`, creates a persistent
 Docker volume for your data, and serves the app on port `3000`.
 Open `http://<your-host>:3000` and you're live.
 
-**Deploying on your own domain** — add a `.env` to set your public URL (and,
-optionally, to pin the encryption key yourself rather than using the generated one):
+**Deploying on your own domain** — add a `.env` to set your public URL:
 
 ```bash
 curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
@@ -43,16 +42,25 @@ curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
 # In .env, set your public URL — used for CORS, sitemap.xml and robots.txt:
 #   APP_URL=https://secret.example.com
 
-# OPTIONAL — pin the key explicitly (otherwise one is auto-generated & persisted):
-#   openssl rand -base64 32   → SERVER_ENCRYPTION_KEY=<output>
-
 docker compose up -d --force-recreate
 ```
 
-> ⚠️ **Never change `SERVER_ENCRYPTION_KEY` after the first launch** — all
-> existing notes become permanently unreadable. When auto-generated it is stored
-> at `.encryption_key` inside the data volume, so a volume backup includes it;
-> still keep a copy somewhere safe.
+> ⚠️ **Do not set `SERVER_ENCRYPTION_KEY` on an instance that has already
+> started.** Every stored note is sealed with the key that created it, and the
+> key cannot be rotated: a different value makes all of them permanently
+> unreadable. The server keeps a fingerprint of the key and **refuses to start**
+> on a mismatch, so this fails loudly rather than silently — but the notes are
+> still only readable with the original key.
+>
+> If you want to manage the key yourself, either pin it **before the very first
+> launch**, or read back the one that was generated:
+>
+> ```bash
+> docker compose exec app cat /app/data/.encryption_key
+> ```
+>
+> Because it lives in the data volume, a volume backup already includes it —
+> keep a copy somewhere safe regardless.
 
 ---
 
@@ -237,16 +245,27 @@ docker compose logs -f        # or: docker logs -f secret
 
 If no `SERVER_ENCRYPTION_KEY` is set, the container generates one on first launch
 and stores it at `.encryption_key` inside the data volume — so this should not
-happen on a fresh deployment. If you **did** set the key explicitly and it is
-invalid, the logs will show:
+happen on a fresh deployment.
+
+If you **did** set the key explicitly and it is malformed, the logs will show:
 
 ```
-ERROR: SERVER_ENCRYPTION_KEY is required.
-Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+ERROR: SERVER_ENCRYPTION_KEY must be 32 bytes (256 bits) encoded in base64.
+Generate one with: openssl rand -base64 32
 ```
 
-Either unset `SERVER_ENCRYPTION_KEY` to let one be generated, or set a valid key
-(`openssl rand -base64 32`) in `.env` and run `docker compose up -d --force-recreate`.
+If the key is valid but is not the one that encrypted the existing notes:
+
+```
+ERROR: SERVER_ENCRYPTION_KEY does not match the key this database was created with.
+```
+
+Restore the original key — `docker compose exec app cat /app/data/.encryption_key`
+prints the generated one. Only if the stored notes are expendable, start once with
+`ALLOW_SERVER_KEY_CHANGE=true` to adopt the new key and abandon them.
+
+Either way, unset `SERVER_ENCRYPTION_KEY` to fall back to the generated key, or set
+a valid one in `.env`, then run `docker compose up -d --force-recreate`.
 
 > An explicit key must be exactly **32 bytes encoded as base64** (44 characters
 > ending in `=`). A random password or hex string will be rejected. The data
