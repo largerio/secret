@@ -42,6 +42,11 @@
 	"expiry_30d": "30 Tage",
 	"not_found_title": "Notiz nicht gefunden",
 	"not_found_description": "Diese Notiz ist möglicherweise abgelaufen, wurde gelöscht oder hat nie existiert.",
+	"error_too_many_files": "Maximal {max} Dateien pro Notiz — {ignored} ignoriert.",
+	"link_incomplete_title": "Unvollständiger Link",
+	"link_incomplete_description": "Diesem Link fehlt der Entschlüsselungsschlüssel. Kopieren Sie den vollständigen Link einschließlich allem nach dem #-Zeichen.",
+	"unavailable_title": "Dienst nicht verfügbar",
+	"unavailable_description": "Die Notiz konnte nicht erreicht werden. Das ist ein Verbindungsproblem, keine gelöschte Notiz — versuchen Sie es gleich noch einmal.",
 	"error_wrong_password": "Falsches Passwort oder ungültiger Schlüssel",
 	"error_empty_content": "Bitte gib Text ein oder lade Dateien hoch.",
 	"error_text_too_long": "Der Text ist zu lang. Maximal {max} KB.",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "Kursiv",
 	"md_btn_link": "Link",
 	"md_btn_code": "Code",
-	"md_btn_list": "Liste"
+	"md_btn_list": "Liste",
+	"burn_password_warning": "Sie haben einen Versuch: Ein falsches Passwort zerstört diese Notiz trotzdem.",
+	"error_burned_wrong_password": "Falsches Passwort. Diese Notiz war einmalig lesbar und wurde nun zerstört."
 }

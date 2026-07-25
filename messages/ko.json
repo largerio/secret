@@ -42,6 +42,11 @@
 	"expiry_30d": "30일",
 	"not_found_title": "노트를 찾을 수 없음",
 	"not_found_description": "이 노트는 만료되었거나, 삭제되었거나, 존재하지 않을 수 있습니다.",
+	"error_too_many_files": "노트당 최대 {max}개의 파일까지 가능합니다 — {ignored}개를 무시했습니다.",
+	"link_incomplete_title": "불완전한 링크",
+	"link_incomplete_description": "이 링크에 복호화 키가 없습니다. # 기호 뒤의 내용을 포함한 전체 링크를 복사하세요.",
+	"unavailable_title": "서비스를 사용할 수 없음",
+	"unavailable_description": "노트에 연결하지 못했습니다. 삭제된 노트가 아니라 연결 문제입니다 — 잠시 후 다시 시도하세요.",
 	"error_wrong_password": "비밀번호가 틀리거나 키가 유효하지 않습니다",
 	"error_empty_content": "텍스트를 입력하거나 파일을 업로드해 주세요.",
 	"error_text_too_long": "텍스트가 너무 깁니다. 최대 {max}KB입니다.",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "기울임꼴",
 	"md_btn_link": "링크",
 	"md_btn_code": "코드",
-	"md_btn_list": "목록"
+	"md_btn_list": "목록",
+	"burn_password_warning": "기회는 한 번입니다. 비밀번호가 틀려도 이 노트는 삭제됩니다.",
+	"error_burned_wrong_password": "비밀번호가 틀렸습니다. 이 노트는 1회 열람용이었으며 삭제되었습니다."
 }

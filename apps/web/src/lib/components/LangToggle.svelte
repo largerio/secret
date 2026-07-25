@@ -27,6 +27,10 @@ function pick(l: Locale) {
 	open = false;
 	if (typeof document !== "undefined") {
 		setPreferenceCookie("secret_lang", l);
+		// <html lang> otherwise keeps the SSR value until a full reload, so screen
+		// readers announce the new content with the previous language's voice
+		// (WCAG 3.1.1) and hyphenation/quotes stay wrong.
+		document.documentElement.lang = l;
 	}
 }
 

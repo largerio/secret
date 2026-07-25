@@ -42,6 +42,11 @@
 	"expiry_30d": "30天",
 	"not_found_title": "笔记未找到",
 	"not_found_description": "此笔记可能已过期、已被删除或从未存在。",
+	"error_too_many_files": "每条笔记最多 {max} 个文件，已忽略 {ignored} 个。",
+	"link_incomplete_title": "链接不完整",
+	"link_incomplete_description": "此链接缺少解密密钥。请复制完整链接，包括 # 号后面的全部内容。",
+	"unavailable_title": "服务不可用",
+	"unavailable_description": "无法访问该笔记。这是连接问题，并非笔记已被删除，请稍后重试。",
 	"error_wrong_password": "密码错误或密钥无效",
 	"error_empty_content": "请输入文本或上传文件。",
 	"error_text_too_long": "文本过长，最大{max}KB。",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "斜体",
 	"md_btn_link": "链接",
 	"md_btn_code": "代码",
-	"md_btn_list": "列表"
+	"md_btn_list": "列表",
+	"burn_password_warning": "只有一次机会：密码错误同样会销毁这条笔记。",
+	"error_burned_wrong_password": "密码错误。这条笔记为阅后即焚，现已销毁。"
 }

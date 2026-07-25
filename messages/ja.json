@@ -42,6 +42,11 @@
 	"expiry_30d": "30日",
 	"not_found_title": "ノートが見つかりません",
 	"not_found_description": "このノートは期限切れ、削除済み、または存在しない可能性があります。",
+	"error_too_many_files": "1つのノートにつき最大{max}ファイルです（{ignored}件を無視しました）。",
+	"link_incomplete_title": "リンクが不完全です",
+	"link_incomplete_description": "このリンクには復号キーが含まれていません。# 記号以降を含めたリンク全体をコピーしてください。",
+	"unavailable_title": "サービスを利用できません",
+	"unavailable_description": "ノートに接続できませんでした。削除されたのではなく接続の問題です。しばらくしてからもう一度お試しください。",
 	"error_wrong_password": "パスワードが間違っているか、キーが無効です",
 	"error_empty_content": "テキストを入力するか、ファイルをアップロードしてください。",
 	"error_text_too_long": "テキストが長すぎます。最大{max}KBです。",
@@ -188,5 +193,7 @@
 	"md_btn_italic": "斜体",
 	"md_btn_link": "リンク",
 	"md_btn_code": "コード",
-	"md_btn_list": "リスト"
+	"md_btn_list": "リスト",
+	"burn_password_warning": "試行は1回だけです。パスワードを間違えてもこのノートは破棄されます。",
+	"error_burned_wrong_password": "パスワードが違います。このノートは1回限りの閲覧だったため、破棄されました。"
 }

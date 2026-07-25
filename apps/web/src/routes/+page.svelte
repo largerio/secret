@@ -45,6 +45,17 @@ let shareUrl = $state("");
 let qrCodeUrl = $state("");
 let manageUrl = $state("");
 let createdFileCount = $state(0);
+let linkCopied = $state(false);
+
+// The decryption key lives only in this URL — it was never sent to the server
+// and cannot be recovered. A stray Back, reload or tab close before the user
+// copies it loses the secret for good, so warn while it is still on screen.
+$effect(() => {
+	if (!shareUrl || linkCopied) return;
+	const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+	window.addEventListener("beforeunload", warn);
+	return () => window.removeEventListener("beforeunload", warn);
+});
 
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
@@ -128,6 +139,7 @@ function reset() {
 	manageUrl = "";
 	qrCodeUrl = "";
 	createdFileCount = 0;
+	linkCopied = false;
 	error = "";
 	uploadPhase = "encrypting";
 	uploadChunkLabel = "";
@@ -186,6 +198,7 @@ const TABS: {
 		{expiresIn}
 		{maxReads}
 		onreset={reset}
+		onlinkcopied={() => (linkCopied = true)}
 	/>
 {:else}
 	<form
@@ -325,9 +338,9 @@ const TABS: {
 			<div class="mb-4" role="status">
 				<StepProgress
 					steps={[
-						{ key: "encrypting", label: t("step_encrypting"), icon: "fa-solid fa-shield-halved" },
-						{ key: "uploading", label: t("step_uploading"), icon: "fa-solid fa-cloud-arrow-up" },
-						{ key: "done", label: t("step_done"), icon: "fa-solid fa-check" },
+						{ key: "encrypting", label: t("step_encrypting"), icon: "shield" },
+						{ key: "uploading", label: t("step_uploading"), icon: "upload" },
+						{ key: "done", label: t("step_done"), icon: "check" },
 					]}
 					currentStep={uploadPhase === "encrypting" ? 0 : uploadPhase === "uploading" ? 1 : 2}
 					progress={uploadProgress ?? 0}
