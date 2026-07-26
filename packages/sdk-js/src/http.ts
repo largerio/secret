@@ -1,5 +1,5 @@
 import type { CreateNoteResponse, ReadNoteResponse } from "@largerio/secret-shared";
-import { SecretApiError } from "./errors.js";
+import { SecretApiError, SecretNetworkError } from "./errors.js";
 import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
 
@@ -95,7 +95,12 @@ async function requestWithPolicy(
 			// Surface our own timeouts as a typed SecretApiError so callers can
 			// rely on the same error contract as every other failure path (a raw
 			// AbortError DOMException would slip past `instanceof SecretApiError`).
-			lastError = timedOut ? new SecretApiError("Request timed out", 0) : err;
+			// A failed fetch (DNS, offline, connection reset, CORS) used to escape as
+			// a raw TypeError, so `instanceof SecretApiError` missed it and callers
+			// had no typed way to tell a transport failure from a rejection.
+			lastError = timedOut
+				? new SecretApiError("Request timed out", 0)
+				: new SecretNetworkError("Network request failed", { cause: err });
 			if (attempt >= maxAttempts) throw lastError;
 			await delay(backoff(attempt));
 		} finally {
@@ -308,23 +313,34 @@ export async function checkNote(config: HttpClientConfig, id: string): Promise<N
 		true,
 	);
 
-	if (res.status === 404) {
-		return {
-			exists: false,
-			hasPassword: false,
-			fileCount: 0,
-			expiresAt: "",
-			maxReads: 1,
-			chunked: false,
-		};
-	}
-
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
 		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
 	}
 
-	return res.json() as Promise<NoteInfo>;
+	// The API answers 200 `{exists:false}` for a missing note — never 404 — so
+	// the old 404 branch here was dead code. Worse, the success path cast the
+	// body straight to NoteInfo: for a missing note the caller received every
+	// required field as `undefined`, and the type said otherwise.
+	const body: unknown = await res.json();
+	if (!isNoteInfo(body)) {
+		throw new SecretApiError("Malformed response from /exists", res.status);
+	}
+	return body;
+}
+
+function isNoteInfo(value: unknown): value is NoteInfo {
+	if (typeof value !== "object" || value === null) return false;
+	const v = value as Record<string, unknown>;
+	if (v["exists"] === false) return true;
+	return (
+		v["exists"] === true &&
+		typeof v["hasPassword"] === "boolean" &&
+		typeof v["fileCount"] === "number" &&
+		typeof v["expiresAt"] === "string" &&
+		typeof v["maxReads"] === "number" &&
+		typeof v["chunked"] === "boolean"
+	);
 }
 
 export async function deleteNote(

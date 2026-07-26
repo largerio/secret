@@ -1,11 +1,19 @@
-export type { ContentMode, NoteFile, NotePayload } from "@largerio/secret-shared";
 export { SecretClient } from "./client.js";
-export { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
+export {
+	SecretApiError,
+	SecretDecryptionError,
+	SecretNetworkError,
+	SecretValidationError,
+} from "./errors.js";
 export type {
+	ContentMode,
 	CreateNoteOptions,
 	CreateNoteResult,
 	DownloadPhase,
+	ExistingNoteInfo,
+	NoteFile,
 	NoteInfo,
+	NotePayload,
 	ProgressInfo,
 	ReadNoteOptions,
 	ReadNoteResult,

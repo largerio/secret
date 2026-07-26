@@ -134,7 +134,9 @@ For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, s
 
 ## SDK
 
-Use the JavaScript/TypeScript SDK to interact with any Secret instance programmatically:
+Read from any Secret instance programmatically, and write to the ones where you hold an API key
+(writes require an API key or a Proof-of-Work token — see the
+[SDK README](packages/sdk-js/README.md)):
 
 ```bash
 npm install @largerio/secret-sdk

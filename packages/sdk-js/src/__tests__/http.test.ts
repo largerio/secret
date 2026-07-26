@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { SecretApiError } from "../errors.js";
+import { SecretApiError, SecretNetworkError } from "../errors.js";
 
 async function catchApiError(promise: Promise<unknown>): Promise<SecretApiError> {
 	try {
@@ -432,6 +432,7 @@ describe("checkNote", () => {
 			fileCount: 0,
 			expiresAt: "2099-01-01",
 			maxReads: 1,
+			chunked: false,
 		};
 		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse(info)));
 		const config = createConfig(fetchMock);
@@ -443,22 +444,47 @@ describe("checkNote", () => {
 		expect(url).toBe("https://api.example.com/notes/noteId123456/exists");
 	});
 
-	test("returns default on non-ok response", async () => {
+	test("returns {exists:false} for a missing note, which the API sends as a 200", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse({ exists: false })));
+		const config = createConfig(fetchMock);
+
+		expect(await checkNote(config, "missing12345")).toEqual({ exists: false });
+	});
+
+	test("rejects a body that does not match the documented shape", async () => {
+		// The old code cast the body straight to NoteInfo, so a truncated or
+		// unexpected response reached the caller with required fields undefined
+		// while the type claimed otherwise.
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(okResponse({ exists: true, hasPassword: false })),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(checkNote(config, "noteId123456"));
+		expect(err.message).toBe("Malformed response from /exists");
+	});
+
+	test.each([[null], ["a string"], [42], [{ exists: "maybe" }]])(
+		"rejects a non-object or mistyped body: %s",
+		async (body) => {
+			const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse(body)));
+			const config = createConfig(fetchMock);
+
+			const err = await catchApiError(checkNote(config, "noteId123456"));
+			expect(err.message).toBe("Malformed response from /exists");
+		},
+	);
+
+	test("surfaces a 404 as an error instead of a silent empty result", async () => {
+		// The API answers 200 {exists:false}; a 404 here means something else is
+		// wrong (a proxy, a wrong base URL) and must not look like "no such note".
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(errorResponse(404, { error: "Not found" })),
 		);
 		const config = createConfig(fetchMock);
 
-		const result = await checkNote(config, "missing12345");
-
-		expect(result).toEqual({
-			exists: false,
-			hasPassword: false,
-			fileCount: 0,
-			expiresAt: "",
-			maxReads: 1,
-			chunked: false,
-		});
+		const err = await catchApiError(checkNote(config, "missing12345"));
+		expect(err.status).toBe(404);
 	});
 
 	test("throws on server error (non-404)", async () => {
@@ -486,7 +512,14 @@ describe("checkNote", () => {
 	test("includes Authorization header when apiKey is set", async () => {
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(
-				okResponse({ exists: true, hasPassword: false, fileCount: 0, expiresAt: "", maxReads: 1 }),
+				okResponse({
+					exists: true,
+					hasPassword: false,
+					fileCount: 0,
+					expiresAt: "",
+					maxReads: 1,
+					chunked: false,
+				}),
 			),
 		);
 		const config = createConfig(fetchMock, "check-key");
@@ -1212,7 +1245,14 @@ describe("request policy (timeout + retry)", () => {
 		const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("network down"));
 		const config = policyConfig(fetchMock, { maxRetries: 5, retryBackoffMs: () => 0 });
 
-		await expect(postJson(config, "/notes", { data: "x" })).rejects.toThrow("network down");
+		// A transport failure now arrives as a typed SecretNetworkError carrying
+		// the original as `cause`, instead of a bare TypeError callers could not
+		// classify.
+		const err = await postJson(config, "/notes", { data: "x" }).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(SecretNetworkError);
+		expect((err as SecretNetworkError).message).toBe("Network request failed");
+		expect((err as SecretNetworkError).cause).toBeInstanceOf(TypeError);
+		expect(((err as SecretNetworkError).cause as Error).message).toBe("network down");
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 

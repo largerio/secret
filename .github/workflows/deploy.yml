@@ -44,6 +44,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Nothing else loads dist/: the unit tests import src/, so a broken bundle
+      # or a .d.ts referencing a private workspace package would ship unnoticed.
+      - name: Verify the publishable SDK artifact
+        run: pnpm --filter @largerio/secret-sdk verify-package
+
   e2e:
     runs-on: ubuntu-latest
     permissions:

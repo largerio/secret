@@ -1,3 +1,17 @@
+/**
+ * Thrown when the request never produced an HTTP response: DNS failure, offline
+ * client, connection reset, CORS rejection. Kept distinct from
+ * {@link SecretApiError} (which always carries a server status) so a caller can
+ * offer "retry" for a transport problem without mistaking it for a rejection.
+ */
+export class SecretNetworkError extends Error {
+	/** @param options Standard `Error` options; `cause` carries the original failure. */
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "SecretNetworkError";
+	}
+}
+
 export class SecretApiError extends Error {
 	readonly status: number;
 
