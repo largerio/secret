@@ -21,6 +21,11 @@ jobs:
       contents: write # push the version commit / create the Version Packages PR branch
       pull-requests: write # open and update the Version Packages PR
       id-token: write # OIDC: authenticate to npm via trusted publishing (no token)
+    env:
+      # `secrets` is not one of the contexts available to a step-level `if`
+      # (GitHub rejects the whole file), but it is available here — so resolve
+      # it once at job level and branch on the result below.
+      HAS_RELEASE_APP: ${{ secrets.APP_ID != '' }}
     steps:
       # A PR opened with the default GITHUB_TOKEN never triggers `pull_request`
       # workflows — GitHub suppresses them to avoid recursion. The "Version
@@ -37,7 +42,7 @@ jobs:
       # App ID / private key stored as the APP_ID and APP_PRIVATE_KEY secrets.
       - name: Mint a GitHub App token
         id: app-token
-        if: ${{ secrets.APP_ID != '' }}
+        if: env.HAS_RELEASE_APP == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.APP_ID }}
