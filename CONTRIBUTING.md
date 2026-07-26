@@ -172,6 +172,28 @@ Dropping a JSON file in `messages/` is not enough; register it in three places:
 2. `apps/web/src/hooks.server.ts` — add the code to `SUPPORTED_LOCALES`
 3. `apps/web/src/lib/components/LangToggle.svelte` — add it to `LANGS`
 
+## Releases
+
+Releases are driven by [changesets](https://github.com/changesets/changesets). Add one in the
+same PR as any user-visible change to the SDK:
+
+```bash
+pnpm changeset
+```
+
+On merge to `main`, the Release workflow collects pending changesets into a
+"chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` to
+npm via OIDC trusted publishing — no token is stored.
+
+The workflow opens that PR as a GitHub App rather than with the default
+`GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions
+taken by `GITHUB_TOKEN`: the version PR would otherwise reach `main` with no CI
+run at all. Maintainers configuring a fork need an App installed on the
+repository with two repository permissions — Contents (read/write) and Pull
+requests (read/write) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets.
+Without them the workflow falls back to `GITHUB_TOKEN` and still releases; only
+the CI run on the version PR is lost.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).

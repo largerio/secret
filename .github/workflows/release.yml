@@ -22,9 +22,33 @@ jobs:
       pull-requests: write # open and update the Version Packages PR
       id-token: write # OIDC: authenticate to npm via trusted publishing (no token)
     steps:
+      # A PR opened with the default GITHUB_TOKEN never triggers `pull_request`
+      # workflows — GitHub suppresses them to avoid recursion. The "Version
+      # Packages" PR therefore reached main with no CI at all: lint, typecheck,
+      # tests, e2e and the SDK package check were all skipped for it. Acting as
+      # a GitHub App gives it a distinct identity, so the checks run.
+      #
+      # Falls back to GITHUB_TOKEN when the App secrets are absent (forks, or
+      # before the App is installed): releases keep working, just without CI on
+      # the version PR, exactly as before.
+      #
+      # Setup: a GitHub App installed on this repo with only two repository
+      # permissions — Contents: read/write, Pull requests: read/write — and its
+      # App ID / private key stored as the APP_ID and APP_PRIVATE_KEY secrets.
+      - name: Mint a GitHub App token
+        id: app-token
+        if: ${{ secrets.APP_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Check out with the App token too, so the version commit is attributed
+          # to the App and pushing the PR branch uses the same identity.
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 
@@ -56,4 +80,4 @@ jobs:
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
