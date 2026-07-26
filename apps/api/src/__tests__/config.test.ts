@@ -307,3 +307,42 @@ describe("describeRateLimitScope", () => {
 		expect(describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"] })).toBeNull();
 	});
 });
+
+describe("blank environment values", () => {
+	// `FOO=` in a .env file, or an unset `${FOO}` in a compose file, arrives as
+	// an empty string. `Number("")` is 0, which failed the positive-integer
+	// checks and aborted startup with a message that never mentioned the blank.
+	it.each([
+		"PORT",
+		"CLEANUP_INTERVAL_MS",
+		"CAP_DIFFICULTY",
+		"CAP_CHALLENGE_COUNT",
+		"MAX_FILE_SIZE",
+		"MAX_FILES_PER_NOTE",
+		"MAX_EXPIRY",
+		"CHUNK_SIZE",
+		"MAX_CHUNKED_FILE_SIZE",
+		"RATE_LIMIT_MULTIPLIER",
+	])("treats a blank %s as unset", (key) => {
+		expect(() => parseConfig(baseEnv({ [key]: "" }))).not.toThrow();
+		expect(() => parseConfig(baseEnv({ [key]: "   " }))).not.toThrow();
+	});
+
+	it("keeps the defaults when every numeric value is blank", () => {
+		const config = parseConfig(
+			baseEnv({ PORT: "", MAX_FILE_SIZE: "", MAX_EXPIRY: "", CHUNK_SIZE: "" }),
+		);
+
+		expect(config.port).toBe(3001);
+		expect(config.maxFileSize).toBe(MAX_FILE_SIZE);
+		expect(config.maxExpirySeconds).toBe(MAX_EXPIRY_SECONDS);
+		expect(config.chunkSize).toBe(DEFAULT_CHUNK_SIZE);
+	});
+
+	it("still rejects a value that is present but invalid", () => {
+		expectConfigError(
+			baseEnv({ MAX_FILE_SIZE: "20MB" }),
+			"MAX_FILE_SIZE must be a positive integer",
+		);
+	});
+});

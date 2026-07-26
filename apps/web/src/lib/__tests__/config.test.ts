@@ -30,6 +30,7 @@ describe("config store", () => {
 			maxFilesPerNote: 3,
 			chunkSize: 5678,
 			maxChunkedFileSize: 90000,
+			maxExpiry: 604800,
 		};
 
 		setConfig(injected);

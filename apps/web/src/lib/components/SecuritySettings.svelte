@@ -1,6 +1,7 @@
 <script lang="ts">
-import { EXPIRATION_OPTIONS } from "@largerio/secret-shared";
 import Icon from "$lib/components/Icon.svelte";
+import { getConfig } from "$lib/config.svelte";
+import { allowedExpirationOptions } from "$lib/server-config";
 import { t } from "$lib/i18n/index.svelte";
 import { generatePassword, getPasswordStrength } from "$lib/utils/password";
 
@@ -13,6 +14,18 @@ interface Props {
 let { password = $bindable(), expiresIn = $bindable(), maxReads = $bindable() }: Props = $props();
 
 let showPassword = $state(false);
+
+// Only offer what this instance will accept: the API enforces MAX_EXPIRY per
+// request, and listing options beyond it produced a raw 400 on submit.
+const expirationOptions = $derived(allowedExpirationOptions(getConfig().maxExpiry));
+
+// A selection carried over from a looser config (or the component default)
+// would silently fail, so snap it back into range.
+$effect(() => {
+	if (!expirationOptions.some((option) => option.value === expiresIn)) {
+		expiresIn = expirationOptions[expirationOptions.length - 1]?.value ?? expiresIn;
+	}
+});
 
 const READS = [
 	{ value: "1", key: "reads_1" as const },
@@ -150,7 +163,7 @@ function generatePwField() {
 					style:padding="12px 14px"
 					style:font-size="14px"
 				>
-					{#each EXPIRATION_OPTIONS as option (option.value)}
+					{#each expirationOptions as option (option.value)}
 						<option value={option.value}>{t(option.labelKey)}</option>
 					{/each}
 				</select>

@@ -12,6 +12,19 @@ import {
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
+/**
+ * Read a numeric setting, treating an empty value as absent.
+ *
+ * `FOO=` in a .env file (or an unset `${FOO}` in a compose file) arrives as an
+ * empty string, and `Number("")` is 0 — which failed the positive-integer
+ * checks below and aborted startup with a message that never mentioned the
+ * real problem. A blank value should mean "use the default".
+ */
+function readEnvNumber(value: string | undefined, fallback: number): number {
+	if (value === undefined || value.trim() === "") return fallback;
+	return Number(value);
+}
+
 /** AES-256 server layer key size. */
 const SERVER_KEY_BYTES = 32;
 
@@ -100,17 +113,21 @@ export function describeRateLimitScope(config: {
  * surface it (the entry point logs + exits; tests assert on the message).
  */
 export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
-	const port = Number(env["PORT"] ?? "3001");
+	const port = readEnvNumber(env["PORT"], Number("3001"));
 	const host = env["HOST"] ?? "0.0.0.0";
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
 	const serverKey = env["SERVER_ENCRYPTION_KEY"];
 	const appUrl = env["APP_URL"] ?? `http://localhost:${String(port)}`;
-	const cleanupIntervalMs = Number(env["CLEANUP_INTERVAL_MS"] ?? String(CLEANUP_INTERVAL_MS));
-	const capDifficulty = Number(env["CAP_DIFFICULTY"] ?? String(DEFAULT_CAP_DIFFICULTY));
-	const capChallengeCount = Number(
-		env["CAP_CHALLENGE_COUNT"] ?? String(DEFAULT_CAP_CHALLENGE_COUNT),
+	const cleanupIntervalMs = readEnvNumber(
+		env["CLEANUP_INTERVAL_MS"],
+		Number(String(CLEANUP_INTERVAL_MS)),
 	);
+	const capDifficulty = readEnvNumber(
+		env["CAP_DIFFICULTY"],
+		Number(String(DEFAULT_CAP_DIFFICULTY)),
+	);
+	const capChallengeCount = readEnvNumber(env["CAP_CHALLENGE_COUNT"], DEFAULT_CAP_CHALLENGE_COUNT);
 
 	const apiKeys = Object.entries(env)
 		.filter(([key]) => /^API_KEY(_\d+)?$/.test(key))
@@ -125,14 +142,15 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const s3SecretAccessKey = env["S3_SECRET_ACCESS_KEY"] ?? "";
 	const s3ForcePathStyle = env["S3_FORCE_PATH_STYLE"] === "true";
 
-	const maxFileSize = Number(env["MAX_FILE_SIZE"] ?? String(MAX_FILE_SIZE));
-	const maxFilesPerNote = Number(env["MAX_FILES_PER_NOTE"] ?? String(MAX_FILES_PER_NOTE));
-	const maxExpirySeconds = Number(env["MAX_EXPIRY"] ?? String(MAX_EXPIRY_SECONDS));
-	const chunkSize = Number(env["CHUNK_SIZE"] ?? String(DEFAULT_CHUNK_SIZE));
-	const maxChunkedFileSize = Number(
-		env["MAX_CHUNKED_FILE_SIZE"] ?? String(DEFAULT_MAX_CHUNKED_SIZE),
+	const maxFileSize = readEnvNumber(env["MAX_FILE_SIZE"], Number(String(MAX_FILE_SIZE)));
+	const maxFilesPerNote = readEnvNumber(
+		env["MAX_FILES_PER_NOTE"],
+		Number(String(MAX_FILES_PER_NOTE)),
 	);
-	const rateLimitMultiplier = Number(env["RATE_LIMIT_MULTIPLIER"] ?? "1");
+	const maxExpirySeconds = readEnvNumber(env["MAX_EXPIRY"], Number(String(MAX_EXPIRY_SECONDS)));
+	const chunkSize = readEnvNumber(env["CHUNK_SIZE"], Number(String(DEFAULT_CHUNK_SIZE)));
+	const maxChunkedFileSize = readEnvNumber(env["MAX_CHUNKED_FILE_SIZE"], DEFAULT_MAX_CHUNKED_SIZE);
+	const rateLimitMultiplier = readEnvNumber(env["RATE_LIMIT_MULTIPLIER"], Number("1"));
 	const trustedProxies = (env["TRUSTED_PROXIES"] ?? "")
 		.split(",")
 		.map((v) => v.trim())
