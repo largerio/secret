@@ -12,6 +12,7 @@ import StepProgress from "$lib/components/StepProgress.svelte";
 import SuccessView from "$lib/components/SuccessView.svelte";
 import { getClient } from "$lib/client";
 import { getConfig } from "$lib/config.svelte";
+import { defaultExpiration } from "$lib/server-config";
 import { t } from "$lib/i18n/index.svelte";
 import { setStep } from "$lib/steps.svelte";
 import { solveCap } from "$lib/utils/cap";
@@ -30,7 +31,7 @@ let contentMode = $state<ContentMode>("text");
 let text = $state("");
 let files = $state<File[]>([]);
 let password = $state("");
-let expiresIn = $state(86400);
+let expiresIn = $state(defaultExpiration(getConfig().maxExpiry));
 let maxReads = $state("1");
 
 // Submission state
@@ -133,7 +134,7 @@ function reset() {
 	text = "";
 	files = [];
 	password = "";
-	expiresIn = 86400;
+	expiresIn = defaultExpiration(getConfig().maxExpiry);
 	maxReads = "1";
 	shareUrl = "";
 	manageUrl = "";

@@ -12,6 +12,11 @@ services:
     environment:
       - NODE_ENV=development
       - HOST=0.0.0.0
+      # Passed through so instance limits can be exercised locally, e.g.
+      # `MAX_EXPIRY=3600 make dev` to check the expiry picker narrows.
+      - MAX_EXPIRY=${MAX_EXPIRY:-}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-}
+      - MAX_FILES_PER_NOTE=${MAX_FILES_PER_NOTE:-}
       - PORT=3001
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files

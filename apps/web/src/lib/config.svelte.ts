@@ -2,6 +2,7 @@ import type { ServerConfig } from "@largerio/secret-shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
+	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 } from "@largerio/secret-shared";
@@ -17,6 +18,7 @@ const DEFAULT_CONFIG: ServerConfig = {
 	maxFilesPerNote: MAX_FILES_PER_NOTE,
 	chunkSize: DEFAULT_CHUNK_SIZE,
 	maxChunkedFileSize: DEFAULT_MAX_CHUNKED_SIZE,
+	maxExpiry: MAX_EXPIRY_SECONDS,
 };
 
 let config = $state<ServerConfig>(DEFAULT_CONFIG);
