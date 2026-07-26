@@ -147,6 +147,10 @@ jobs:
     # running — shipping a regression, a known CVE or a leaked secret.
     needs: [check, e2e, audit, secrets, workflows]
     runs-on: ubuntu-latest
+    outputs:
+      # The exact image that was built, pushed and scanned. Deploying by tag
+      # would let a later push move it between the scan and the rollout.
+      digest: ${{ steps.build.outputs.digest }}
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -216,25 +220,56 @@ jobs:
     steps:
       - name: Deploy
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        env:
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_SSH_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: IMAGE_DIGEST
           script: |
+            set -eu
             cd /opt/secret/prod
+
+            # What is running right now — the thing to go back to if the new
+            # image never becomes healthy.
+            PREVIOUS=$(docker compose ps -q app | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null || true)
+
+            SECRET_IMAGE="ghcr.io/largerio/secret@${IMAGE_DIGEST}"
+            export SECRET_IMAGE
+            echo "Deploying ${SECRET_IMAGE}"
+
             docker compose pull
             docker compose up -d --remove-orphans
-            docker image prune -f
 
-            echo "Waiting for health check..."
-            for i in $(seq 1 30); do
-              if [ "$(docker compose ps --format '{{.Health}}' app)" = "healthy" ]; then
-                echo "Health check passed"
-                exit 0
-              fi
-              sleep 2
+            # Wait for the container to report healthy rather than assuming it.
+            # A container that boots and immediately fails every request used to
+            # count as a successful deploy.
+            HEALTH=starting
+            for _ in $(seq 1 40); do
+              CID=$(docker compose ps -q app)
+              HEALTH=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo starting)
+              case "$HEALTH" in
+                healthy|none) break ;;
+              esac
+              sleep 5
             done
-            echo "Health check failed after 60s"
-            docker compose logs --tail 20
-            exit 1
+
+            if [ "$HEALTH" != "healthy" ] && [ "$HEALTH" != "none" ]; then
+              echo "::error::Deployment is $HEALTH after 200s"
+              docker compose logs --tail 50 app || true
+
+              if [ -n "$PREVIOUS" ]; then
+                echo "Rolling back to ${PREVIOUS}"
+                SECRET_IMAGE="$PREVIOUS" docker compose up -d --remove-orphans
+              else
+                echo "::warning::No previous image recorded; leaving the failed container in place"
+              fi
+              exit 1
+            fi
+
+            echo "Healthy on ${SECRET_IMAGE}"
+            # Keep recent images so a manual rollback still has something to
+            # pull from; an unfiltered prune deleted the only copy.
+            docker image prune -f --filter "until=168h"

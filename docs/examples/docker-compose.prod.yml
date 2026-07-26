@@ -1,0 +1,81 @@
+# Reference production compose file.
+#
+# The bundled docker-compose.yml at the repo root is aimed at getting started:
+# it publishes a port and expects you to put your own TLS in front. This one
+# shows what a hardened, CI-deployed instance looks like — copy it to your
+# server (conventionally /opt/secret/prod/compose.yaml) and adapt.
+#
+# The pieces that matter, and why:
+#
+#   SECRET_IMAGE   The deploy workflow exports this as an immutable digest, so
+#                  the rollout uses exactly the image CI built and scanned.
+#                  Deploying by tag lets a later push move it underneath you,
+#                  and leaves nothing to roll back to. The default keeps manual
+#                  `docker compose up -d` working.
+#   healthcheck    The deploy waits for this before declaring success, and
+#                  rolls back if it never goes healthy. Without it a container
+#                  that boots and fails every request counts as a good deploy.
+#   mem_limit      Reads are buffered in memory; size it above your largest
+#                  expected file, not below.
+#   logging        The json-file driver is unbounded by default and will fill
+#                  the disk given enough months.
+#
+# See docs/self-hosting.md for the environment variables themselves.
+
+services:
+  app:
+    image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
+    restart: always
+    volumes:
+      - secret-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/secret.db
+      - FILES_PATH=/app/data/files
+      - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY}
+      - APP_URL=https://${DOMAIN}
+
+      # Rate limiting can only tell clients apart when these three agree with
+      # your proxy setup — otherwise every user shares one bucket and the API
+      # says so at startup.
+      # See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy
+      - TRUSTED_PROXIES=127.0.0.1/32
+      - ADDRESS_HEADER=X-Forwarded-For
+      - XFF_DEPTH=1
+
+    # The image ships its own HEALTHCHECK; this only shortens the start period
+    # so a rollout is judged quickly. Remove it to keep the image defaults.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    mem_limit: 512m
+    pids_limit: 512
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Give in-flight uploads a chance to finish; the app force-exits after 8s.
+    stop_grace_period: 30s
+
+volumes:
+  secret-data:

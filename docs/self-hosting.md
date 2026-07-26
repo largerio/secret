@@ -8,6 +8,7 @@ and runs as a single container.
 - [One-click & platform deploys](#one-click--platform-deploys)
 - [Synology NAS (DSM 7 / Container Manager)](#synology-nas-dsm-7--container-manager)
 - [Reverse proxy & HTTPS](#reverse-proxy--https)
+- [Deploying from CI](#deploying-from-ci)
 - [Backup & restore](#backup--restore)
 - [Updating](#updating)
 - [Troubleshooting](#troubleshooting)
@@ -214,6 +215,40 @@ the shared bucket.
 **On Synology** you can skip an external proxy and use the built-in one:
 DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
 `secret.example.com:443` → `localhost:3000`. DSM manages the certificate.
+
+---
+
+## Deploying from CI
+
+The GitHub Actions workflow in this repository builds the image, scans it, then
+deploys over SSH. Two details are worth copying into any pipeline of your own.
+
+**Deploy the digest, not the tag.** `:latest` and `:main` move. Between the scan
+and the rollout, or between two rollouts, the tag can point somewhere else — and
+once it has moved there is nothing left to roll back to. The workflow passes the
+digest it just built and scanned:
+
+```bash
+SECRET_IMAGE="ghcr.io/largerio/secret@sha256:..." docker compose up -d
+```
+
+Your compose file needs to accept it, with a default so manual runs still work:
+
+```yaml
+image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
+```
+
+**Wait for healthy, and roll back if it never is.** A container that starts and
+then fails every request is a successful `docker compose up` — the exit code
+says nothing about whether the app works. The workflow polls the health status
+and, if it does not turn healthy, prints the last 50 log lines and restores the
+image that was running before.
+
+That is also why `docker image prune -f` is scoped: an unfiltered prune deletes
+the previous image, which is the one a rollback needs.
+
+A complete reference file is in
+[`docs/examples/docker-compose.prod.yml`](examples/docker-compose.prod.yml).
 
 ---
 
