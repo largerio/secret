@@ -160,6 +160,56 @@ the [main README](../README.md#reverse-proxy). Two reminders:
 - Set `client_max_body_size` (Nginx) / request body limits to at least
   `MAX_CHUNKED_FILE_SIZE` (default 500 MB) so large uploads aren't rejected.
 - Update `APP_URL` in `.env` to your `https://` domain.
+- Make rate limiting see real client addresses — see below.
+
+### Making rate limiting work behind a proxy
+
+By default **every user shares a single rate-limit bucket**. The limits still
+apply; they just apply to your whole instance at once, so one busy visitor can
+exhaust them for everybody. The API logs a warning about this at startup.
+
+The cause is structural: inside the container the web app proxies `/api` to the
+API, so the API only ever sees `127.0.0.1` as its peer. It will not believe a
+forwarded address unless you tell it which proxies to trust.
+
+Three variables fix it:
+
+```env
+# The API: trust the address forwarded by the bundled web app.
+TRUSTED_PROXIES=127.0.0.1/32
+
+# The web app: derive the client address from the header your proxy sets,
+# and say how many proxies sit in front of it (1 for a single Nginx/Traefik/
+# Caddy/Cloudflare hop, 2 if Cloudflare fronts your own proxy, and so on).
+ADDRESS_HEADER=X-Forwarded-For
+XFF_DEPTH=1
+```
+
+`XFF_DEPTH` matters: `X-Forwarded-For` is a list a client can prefill, and only
+the last entries — the ones your own proxies appended — are trustworthy. Set it
+too high and a client can pick its own bucket; set it too low and everyone
+shares one again.
+
+Your proxy must actually set the header. Nginx needs it spelled out:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+Caddy and Traefik do it on their own.
+
+**Verify it took effect** — this should answer `200`, not hang or 503:
+
+```bash
+docker compose exec app node -e "fetch('http://localhost:3000/api/health').then(r=>console.log(r.status))"
+```
+
+A container stuck in `health: starting` after setting `ADDRESS_HEADER` means the
+health check cannot reach the app; check that `XFF_DEPTH` matches your actual
+number of proxies. Requests that skip the proxy (like this health check) carry
+no `X-Forwarded-For`, which is expected and handled — they simply fall back to
+the shared bucket.
 
 **On Synology** you can skip an external proxy and use the built-in one:
 DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from

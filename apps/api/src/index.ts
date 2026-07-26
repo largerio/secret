@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { parseServerKey } from "@largerio/secret-crypto/server";
 import { createApp } from "./app.js";
 import { startCleanupJob } from "./cleanup.js";
-import { ConfigError, parseConfig } from "./config.js";
+import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { createStorageBackend } from "./storage/index.js";
@@ -94,6 +94,11 @@ function shutdown(exitCode = 0): void {
 
 process.on("SIGTERM", () => shutdown());
 process.on("SIGINT", () => shutdown());
+
+const rateLimitWarning = describeRateLimitScope(config);
+if (rateLimitWarning) {
+	console.warn(rateLimitWarning);
+}
 
 console.log(
 	`Secret API listening on ${config.host}:${String(config.port)} [storage=${config.storageBackend}]`,

@@ -13,6 +13,7 @@ interface FakeEventInit {
 	cookies?: Record<string, string>;
 	body?: BodyInit;
 	clientAddress?: string;
+	clientAddressThrows?: boolean;
 }
 
 function makeEvent(init: FakeEventInit = {}) {
@@ -28,7 +29,16 @@ function makeEvent(init: FakeEventInit = {}) {
 		request,
 		locals: {} as Record<string, unknown>,
 		cookies: { get: (name: string) => cookies[name] },
-		getClientAddress: () => init.clientAddress ?? "203.0.113.7",
+		getClientAddress: () => {
+			if (init.clientAddressThrows) {
+				// What adapter-node does when ADDRESS_HEADER is set and the header
+				// is absent — every request that skips the reverse proxy.
+				throw new Error(
+					"Address header was specified with ADDRESS_HEADER=x-forwarded-for but is absent from request",
+				);
+			}
+			return init.clientAddress ?? "203.0.113.7";
+		},
 		// biome-ignore lint/suspicious/noExplicitAny: minimal SvelteKit event stub for unit testing
 	} as any;
 }
@@ -141,6 +151,45 @@ describe("API proxying", () => {
 		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
 		const headers = requestInit?.headers as Headers;
 		expect(headers.get("x-forwarded-for")).toBe("198.51.100.9");
+		expect(headers.get("x-real-ip")).toBeNull();
+	});
+
+	it("keeps proxying when the client address cannot be resolved", async () => {
+		// This exact case took production down: with ADDRESS_HEADER set,
+		// adapter-node throws on any request that did not come through the
+		// reverse proxy — starting with the container health check. The
+		// exception propagated, the health check failed, the orchestrator pulled
+		// the container from the pool and the whole site 404'd.
+		const fetchMock = vi.fn(
+			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const event = makeEvent({ pathname: "/api/health", clientAddressThrows: true });
+		const res = await handle({ event, resolve });
+
+		expect(res.status).toBe(200);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("drops a client-supplied X-Forwarded-For when the address is unknown", async () => {
+		// Falling back to the incoming header would hand the rate limiter a value
+		// the client chose — the spoofing this proxy exists to prevent.
+		const fetchMock = vi.fn(
+			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const event = makeEvent({
+			pathname: "/api/v1/notes",
+			headers: { "x-forwarded-for": "1.2.3.4", "x-real-ip": "5.6.7.8" },
+			clientAddressThrows: true,
+		});
+		await handle({ event, resolve });
+
+		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
+		const headers = requestInit?.headers as Headers;
+		expect(headers.get("x-forwarded-for")).toBeNull();
 		expect(headers.get("x-real-ip")).toBeNull();
 	});
 
