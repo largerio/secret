@@ -18,7 +18,8 @@ import {
 	toBase64,
 	zeroMemory,
 } from "@largerio/secret-crypto/client";
-import type { ContentMode, NotePayload } from "@largerio/secret-shared";
+import { SecretDecryptionError, SecretValidationError } from "./errors.js";
+import type { ContentMode, NotePayload } from "./types.js";
 
 function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
@@ -109,6 +110,16 @@ export async function decryptNoteBytes(
 
 	const baseKey = keyFromBase64Url(keyFragment);
 	let decryptionKey: Uint8Array;
+
+	if (password && !salt) {
+		// Silently falling back to the base key here produced a generic
+		// "wrong password" failure, so a proxy stripping the X-Salt header turned
+		// a perfectly recoverable note into an apparently unopenable one.
+		zeroMemory(baseKey);
+		throw new SecretValidationError(
+			"The note requires a password but the server did not return its salt",
+		);
+	}
 
 	if (password && salt) {
 		decryptionKey = deriveKeyFromPassword(password, fromBase64(salt), baseKey);
@@ -230,6 +241,35 @@ interface StreamingHeader {
 	readonly files?: ReadonlyArray<StreamingFileHeader>;
 }
 
+const CONTENT_MODES: ReadonlySet<string> = new Set(["text", "markdown", "secret"]);
+
+/**
+ * The non-chunked path validates its decoded payload (`isNotePayload`); this one
+ * used to cast. The stream is authenticated, so a third party cannot forge it —
+ * but the *sender* controls the plaintext and can emit an arbitrary MessagePack
+ * header, which then flowed into the payload untyped.
+ */
+function isStreamingHeader(value: unknown): value is StreamingHeader {
+	if (typeof value !== "object" || value === null) return false;
+	const v = value as Record<string, unknown>;
+
+	if (v["text"] !== undefined && typeof v["text"] !== "string") return false;
+	if (v["contentMode"] !== undefined && !CONTENT_MODES.has(v["contentMode"] as string))
+		return false;
+	if (v["files"] === undefined) return true;
+	if (!Array.isArray(v["files"])) return false;
+
+	return v["files"].every((f: unknown) => {
+		if (typeof f !== "object" || f === null) return false;
+		const file = f as Record<string, unknown>;
+		return (
+			typeof file["name"] === "string" &&
+			typeof file["type"] === "string" &&
+			typeof file["size"] === "number"
+		);
+	});
+}
+
 export async function decryptNoteChunked(
 	encryptedChunks: Uint8Array[],
 	streamHeader: string,
@@ -241,6 +281,16 @@ export async function decryptNoteChunked(
 
 	const baseKey = keyFromBase64Url(keyFragment);
 	let decryptionKey: Uint8Array;
+
+	if (password && !salt) {
+		// Silently falling back to the base key here produced a generic
+		// "wrong password" failure, so a proxy stripping the X-Salt header turned
+		// a perfectly recoverable note into an apparently unopenable one.
+		zeroMemory(baseKey);
+		throw new SecretValidationError(
+			"The note requires a password but the server did not return its salt",
+		);
+	}
 
 	if (password && salt) {
 		decryptionKey = deriveKeyFromPassword(password, fromBase64(salt), baseKey);
@@ -263,7 +313,10 @@ export async function decryptNoteChunked(
 
 		// Decode header to get file metadata
 		const decoded = decodeRawBytes(headerBytes);
-		const headerData = decoded as StreamingHeader;
+		if (!isStreamingHeader(decoded)) {
+			throw new SecretDecryptionError();
+		}
+		const headerData = decoded;
 		const fileMeta = headerData.files ?? [];
 
 		// If header was the only chunk (text-only note or note with 0-byte files)

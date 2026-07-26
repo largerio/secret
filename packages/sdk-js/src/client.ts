@@ -1,4 +1,3 @@
-import type { NotePayload } from "@largerio/secret-shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_EXPIRY_SECONDS,
@@ -20,6 +19,7 @@ import type {
 	CreateNoteOptions,
 	CreateNoteResult,
 	NoteInfo,
+	NotePayload,
 	ReadNoteOptions,
 	ReadNoteResult,
 	SecretClientConfig,
@@ -63,11 +63,46 @@ export class SecretClient {
 		};
 	}
 
+	/**
+	 * Create a client, waiting for the libsodium WASM module to initialise.
+	 *
+	 * Always use this rather than `new SecretClient()`: the constructor cannot
+	 * await, and every crypto call would throw until initialisation completed.
+	 *
+	 * @example
+	 * ```ts
+	 * const client = await SecretClient.create({ baseUrl: "https://secret.example.com" });
+	 * ```
+	 */
 	static async create(config?: SecretClientConfig): Promise<SecretClient> {
 		await ensureInit();
 		return new SecretClient(config ?? {});
 	}
 
+	/**
+	 * Encrypt a note in this process and upload the ciphertext.
+	 *
+	 * The returned `keyFragment` is **never sent to the server** and cannot be
+	 * recovered from it: lose it and the note is unreadable. Large payloads
+	 * switch to a chunked upload automatically.
+	 *
+	 * Writes require authentication unless the instance is open: pass `apiKey`
+	 * to the client, or a `capToken` obtained from a Proof-of-Work challenge.
+	 *
+	 * @returns The note id, the key fragment, and the delete token that allows
+	 * revoking the note later.
+	 * @throws {SecretValidationError} if the payload exceeds a protocol limit
+	 * (checked before any encryption or upload work).
+	 * @throws {SecretApiError} if the server rejects the request (401 unauthorized,
+	 * 413 too large, 429 rate-limited).
+	 * @throws {SecretNetworkError} if the request never reached the server.
+	 *
+	 * @example
+	 * ```ts
+	 * const { id, keyFragment } = await client.createNote({ text: "hello", maxReads: 1 });
+	 * const url = client.buildShareUrl(id, keyFragment);
+	 * ```
+	 */
 	async createNote(options: CreateNoteOptions): Promise<CreateNoteResult> {
 		const fileCount = options.files?.length ?? 0;
 		const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
@@ -272,10 +307,35 @@ export class SecretClient {
 		return size;
 	}
 
+	/**
+	 * Fetch a note's metadata without consuming a read.
+	 *
+	 * Narrow on `exists` before reading any other field. Note that an expired
+	 * note is indistinguishable from one that never existed — deliberately, so
+	 * the endpoint cannot be used as an existence oracle.
+	 *
+	 * @throws {SecretApiError} on a server error (including 429).
+	 * @throws {SecretNetworkError} if the request never reached the server.
+	 */
 	async checkNote(id: string): Promise<NoteInfo> {
 		return http.checkNote(this.httpConfig, id);
 	}
 
+	/**
+	 * Download a note and decrypt it locally.
+	 *
+	 * **This consumes a read.** On a burn-after-read note the server destroys it
+	 * the moment the ciphertext is served — before decryption is even attempted —
+	 * so a wrong password still spends the only read. Check `hasPassword` with
+	 * {@link checkNote} first and collect the password before calling this.
+	 *
+	 * @param keyFragment The key from the share URL fragment.
+	 * @throws {SecretDecryptionError} for a wrong password, a wrong key, or
+	 * tampered ciphertext — deliberately indistinguishable, to avoid an oracle.
+	 * @throws {SecretApiError} with status 404 when the note is gone (expired,
+	 * already burned, or never existed).
+	 * @throws {SecretNetworkError} if the request never reached the server.
+	 */
 	async readNote(
 		id: string,
 		keyFragment: string,
@@ -442,30 +502,62 @@ export class SecretClient {
 		};
 	}
 
+	/**
+	 * Revoke a note before it expires, using the delete token from
+	 * {@link createNote}. Idempotent from the caller's perspective only in that a
+	 * second call reports 404.
+	 *
+	 * @throws {SecretApiError} 403 for a wrong token, 404 if the note is already gone.
+	 * @throws {SecretNetworkError} if the request never reached the server.
+	 */
 	async deleteNote(id: string, deleteToken: string, capToken?: string): Promise<void> {
 		return http.deleteNote(this.httpConfig, id, deleteToken, capToken);
 	}
 
+	/**
+	 * Build the shareable URL for a note. The key lives in the fragment, which
+	 * browsers never send to the server — that is what keeps the sharing
+	 * zero-knowledge.
+	 *
+	 * With the default relative `baseUrl` the result is relative too
+	 * (`/note/<id>#<key>`); prepend an origin before sending it to anyone.
+	 */
 	buildShareUrl(id: string, keyFragment: string): string {
 		const base = this.httpConfig.baseUrl.replace("/api/v1", "");
 		return `${base}/note/${encodeURIComponent(id)}#${encodeURIComponent(keyFragment)}`;
 	}
 
+	/**
+	 * Split a share URL back into its note id and key fragment. Accepts absolute
+	 * and relative URLs, so it round-trips the output of {@link buildShareUrl}
+	 * under the default (relative) configuration.
+	 *
+	 * @throws {SecretValidationError} if the URL is malformed, names no note, or
+	 * carries no key fragment — the usual sign of a link truncated in transit.
+	 */
 	static parseShareUrl(url: string): { id: string; keyFragment: string } {
-		const parsed = new URL(url);
+		let parsed: URL;
+		try {
+			// A base is supplied so a relative URL parses: `new URL()` alone threw a
+			// raw TypeError on exactly what buildShareUrl produces by default.
+			parsed = new URL(url, "http://share.invalid");
+		} catch {
+			throw new SecretValidationError("Invalid share URL");
+		}
+
 		const pathParts = parsed.pathname.split("/");
 		const noteIndex = pathParts.indexOf("note");
 
 		const id = noteIndex !== -1 ? pathParts[noteIndex + 1] : undefined;
 		if (!id) {
-			throw new Error("Invalid share URL: missing note ID");
+			throw new SecretValidationError("Invalid share URL: missing note ID");
 		}
-		const keyFragment = parsed.hash.slice(1);
 
+		const keyFragment = decodeURIComponent(parsed.hash.slice(1));
 		if (!keyFragment) {
-			throw new Error("Invalid share URL: missing key fragment");
+			throw new SecretValidationError("Invalid share URL: missing key fragment");
 		}
 
-		return { id, keyFragment };
+		return { id: decodeURIComponent(id), keyFragment };
 	}
 }

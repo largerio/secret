@@ -1,4 +1,28 @@
-import type { ContentMode } from "@largerio/secret-shared";
+/**
+ * Payload types are declared here rather than re-exported from
+ * `@largerio/secret-shared`, which is a private workspace package that is never
+ * published: a generated `.d.ts` pointing at it left every TypeScript consumer
+ * with TS2307. `payload-contract.test.ts` asserts these stay structurally
+ * identical to the shared definitions, so a divergence fails the build.
+ */
+
+/** How the note body should be interpreted once decrypted. */
+export type ContentMode = "text" | "markdown" | "secret";
+
+/** A file carried inside an encrypted note payload. */
+export interface NoteFile {
+	readonly name: string;
+	readonly type: string;
+	readonly size: number;
+	readonly data: Uint8Array;
+}
+
+/** The decrypted contents of a note. */
+export interface NotePayload {
+	readonly text?: string;
+	readonly contentMode?: ContentMode;
+	readonly files?: ReadonlyArray<NoteFile>;
+}
 
 export type UploadPhase = "encrypting" | "uploading" | "processing";
 export type DownloadPhase = "downloading" | "decrypting";
@@ -74,17 +98,30 @@ export interface ReadNoteOptions {
 }
 
 export interface ReadNoteResult {
-	readonly payload: import("@largerio/secret-shared").NotePayload;
+	readonly payload: NotePayload;
 	readonly createdAt: string;
 	readonly expiresAt: string;
 	readonly fileCount: number;
 }
 
-export interface NoteInfo {
-	readonly exists: boolean;
+/** Metadata about an existing note, as reported by `checkNote`. */
+export interface ExistingNoteInfo {
+	readonly exists: true;
+	/** Whether a password is required in addition to the key fragment. */
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
+	/** ISO 8601 timestamp. */
 	readonly expiresAt: string;
+	/** Configured read limit (0 means unlimited) — not the remaining count. */
 	readonly maxReads: number;
+	/** Whether the note must be read through the streaming endpoint. */
 	readonly chunked: boolean;
 }
+
+/**
+ * A discriminated union: the API returns only `{exists: false}` for a missing
+ * note, so declaring the other fields as always-present made the type lie —
+ * callers reading `info.maxReads` on a missing note silently got `undefined`.
+ * Narrow on `exists` before touching anything else.
+ */
+export type NoteInfo = ExistingNoteInfo | { readonly exists: false };

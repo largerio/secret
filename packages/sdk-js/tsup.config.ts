@@ -3,8 +3,14 @@ import { defineConfig } from "tsup";
 export default defineConfig({
 	entry: ["src/index.ts"],
 	format: ["esm"],
-	dts: true,
-	sourcemap: true,
+	// `dts: true` alone only bundles the *runtime*: the generated .d.ts kept
+	// `import … from "@largerio/secret-shared"`, a package marked private and
+	// never published, so every TypeScript consumer got TS2307 — including on
+	// the example in the README. `resolve` inlines those declarations too.
+	dts: { resolve: [/^@largerio\/secret-(crypto|shared)(\/|$)/] },
+	// Not published (see "files"): a 1.2 MB map for a 580 KB bundle tripled the
+	// tarball for something no consumer of a published package consumes.
+	sourcemap: false,
 	clean: true,
 	treeshake: true,
 	// Published baseline for the bundle (broad Node/browser support). The repo

@@ -133,7 +133,10 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		const info = await client.checkNote("aBcDeFgHiJkL");
 
+		// Narrowing on `exists` is now required — the union does not expose the
+		// metadata fields until the note is known to exist.
 		expect(info.exists).toBe(true);
+		if (!info.exists) throw new Error("expected the note to exist");
 		expect(info.hasPassword).toBe(false);
 		expect(http.checkNote).toHaveBeenCalled();
 	});
@@ -1146,5 +1149,51 @@ describe("SecretClient", () => {
 		const phases = onProgress.mock.calls.map((call: Array<{ phase: string }>) => call[0]?.phase);
 		expect(phases).toContain("downloading");
 		expect(phases).toContain("decrypting");
+	});
+});
+
+describe("parseShareUrl", () => {
+	test("round-trips a relative URL, which is what the default config produces", async () => {
+		// `new URL(url)` alone threw a raw TypeError on exactly the output of
+		// buildShareUrl under the default (relative) baseUrl.
+		const client = await SecretClient.create();
+		const url = client.buildShareUrl("aBcDeFgHiJkL", "k3y-fragment");
+
+		expect(url).toBe("/note/aBcDeFgHiJkL#k3y-fragment");
+		expect(SecretClient.parseShareUrl(url)).toEqual({
+			id: "aBcDeFgHiJkL",
+			keyFragment: "k3y-fragment",
+		});
+	});
+
+	test("round-trips an absolute URL", async () => {
+		const client = await SecretClient.create({ baseUrl: "https://secret.example.com" });
+		const url = client.buildShareUrl("aBcDeFgHiJkL", "k3y");
+
+		expect(url).toBe("https://secret.example.com/note/aBcDeFgHiJkL#k3y");
+		expect(SecretClient.parseShareUrl(url)).toEqual({ id: "aBcDeFgHiJkL", keyFragment: "k3y" });
+	});
+
+	test("preserves a fragment containing URL-escaped characters", async () => {
+		const client = await SecretClient.create();
+		const fragment = "a+b/c=d";
+		const parsed = SecretClient.parseShareUrl(client.buildShareUrl("aBcDeFgHiJkL", fragment));
+
+		expect(parsed.keyFragment).toBe(fragment);
+	});
+
+	test("rejects a URL the platform cannot parse at all", () => {
+		expect(() => SecretClient.parseShareUrl("http://[::1")).toThrow(SecretValidationError);
+	});
+
+	test.each([
+		["not a url at all", "Invalid share URL"],
+		["https://example.com/wrong/path#key", "Invalid share URL: missing note ID"],
+		["https://example.com/note/aBcDeFgHiJkL", "Invalid share URL: missing key fragment"],
+	])("rejects %s with a typed error", (url, message) => {
+		// A truncated link (mail clients drop the fragment) is the common case,
+		// and it used to throw a bare Error that callers could not classify.
+		expect(() => SecretClient.parseShareUrl(url)).toThrow(SecretValidationError);
+		expect(() => SecretClient.parseShareUrl(url)).toThrow(message);
 	});
 });
