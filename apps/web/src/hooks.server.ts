@@ -1,4 +1,4 @@
-import type { Handle } from "@sveltejs/kit";
+import type { Handle, RequestEvent } from "@sveltejs/kit";
 import { type Locale, parseAcceptLanguage } from "$lib/i18n/index.svelte";
 import { API_TARGET } from "$lib/server/env";
 
@@ -16,6 +16,25 @@ export const DOCUMENT_SECURITY_HEADERS: Readonly<Record<string, string>> = {
 	"Cross-Origin-Opener-Policy": "same-origin",
 };
 
+/**
+ * Resolve the requesting client's address, or `undefined` when it cannot be
+ * established.
+ *
+ * With ADDRESS_HEADER set, adapter-node *throws* if that header is missing
+ * rather than returning a fallback — and it is legitimately missing on every
+ * request that does not come through the reverse proxy, starting with the
+ * container health check. Letting that propagate takes the whole proxy down:
+ * the health check fails, the orchestrator marks the container unhealthy and
+ * pulls it out of the pool, and the site 404s.
+ */
+function resolveClientAddress(event: RequestEvent): string | undefined {
+	try {
+		return event.getClientAddress();
+	} catch {
+		return undefined;
+	}
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
 	const acceptLang = event.request.headers.get("accept-language") ?? "";
 	const cookieLang = event.cookies.get("secret_lang");
@@ -31,14 +50,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const target = `${API_TARGET}${event.url.pathname}${event.url.search}`;
 		const hasBody = event.request.method !== "GET" && event.request.method !== "HEAD";
 
-		// Every browser request reaches the API through this proxy, so the API
-		// only ever sees 127.0.0.1 as the peer and has to rely on X-Forwarded-For
-		// to tell clients apart. Forwarding the client's own header verbatim would
-		// let anyone mint an unlimited number of rate-limit buckets, so it is
-		// replaced with the address SvelteKit resolved. (Behind an external
-		// reverse proxy, set ADDRESS_HEADER/XFF_DEPTH so this is the real client.)
+		// Every browser request reaches the API through this proxy, so the API only
+		// ever sees 127.0.0.1 as its peer and has to rely on X-Forwarded-For to
+		// tell clients apart. Forwarding the client's own header verbatim would
+		// let anyone mint unlimited rate-limit buckets, so it is replaced with the
+		// address SvelteKit resolved — or dropped entirely when there is none.
 		const headers = new Headers(event.request.headers);
-		headers.set("x-forwarded-for", event.getClientAddress());
+		const clientAddress = resolveClientAddress(event);
+
+		if (clientAddress) {
+			headers.set("x-forwarded-for", clientAddress);
+		} else {
+			// Better to rate-limit everyone as one bucket than to trust a value the
+			// client could have chosen. See the startup warning in getAddressMode().
+			headers.delete("x-forwarded-for");
+		}
 		headers.delete("x-real-ip");
 
 		const res = await fetch(target, {

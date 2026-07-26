@@ -10,7 +10,7 @@ import {
 	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { describe, expect, it } from "vitest";
-import { type AppConfig, ConfigError, parseConfig } from "../config.js";
+import { type AppConfig, ConfigError, describeRateLimitScope, parseConfig } from "../config.js";
 
 type Env = NodeJS.ProcessEnv;
 
@@ -291,5 +291,19 @@ describe("parseConfig", () => {
 			const config = parseConfig(baseEnv({ TRUSTED_PROXIES: "10.0.0.0/8, ::1" }));
 			expect(config.trustedProxies).toEqual(["10.0.0.0/8", "::1"]);
 		});
+	});
+});
+
+describe("describeRateLimitScope", () => {
+	it("warns when no proxy is trusted, since every user then shares one bucket", () => {
+		const warning = describeRateLimitScope({ trustedProxies: [] });
+
+		expect(warning).toContain("TRUSTED_PROXIES is empty");
+		expect(warning).toContain("ADDRESS_HEADER");
+		expect(warning).toContain("docs/self-hosting.md");
+	});
+
+	it("stays quiet once a proxy is trusted", () => {
+		expect(describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"] })).toBeNull();
 	});
 });

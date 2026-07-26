@@ -64,6 +64,37 @@ export interface AppConfig {
 }
 
 /**
+ * Warn when per-IP rate limiting cannot actually tell clients apart.
+ *
+ * In the bundled image every browser request reaches the API through the web
+ * app's proxy, so the peer address is always 127.0.0.1. Without TRUSTED_PROXIES
+ * the API has no reason to believe the forwarded address, and correctly falls
+ * back to the peer — which means *every* user shares a single bucket. The
+ * limits still apply, they just apply to the whole instance at once, and
+ * nothing about that is visible from the outside.
+ *
+ * Returns null when the configuration can distinguish clients (or when the API
+ * is exposed directly, where the peer address is the real one).
+ *
+ * @returns A message to log at startup, or null.
+ */
+export function describeRateLimitScope(config: {
+	trustedProxies: ReadonlyArray<string>;
+}): string | null {
+	if (config.trustedProxies.length > 0) return null;
+
+	return [
+		"WARNING: TRUSTED_PROXIES is empty, so per-IP rate limits are shared by all",
+		"users behind any proxy — including the web app bundled in this image.",
+		"If this instance sits behind a reverse proxy, set:",
+		"  TRUSTED_PROXIES=127.0.0.1/32",
+		"and, on the web app, ADDRESS_HEADER=X-Forwarded-For plus XFF_DEPTH=<number",
+		"of proxies in front of it>. See docs/self-hosting.md#reverse-proxy--https.",
+		"Ignore this if the API is exposed directly, with no proxy in front.",
+	].join("\n");
+}
+
+/**
  * Parse and validate configuration from a process environment. Throws
  * {@link ConfigError} on any invalid value so the caller can decide how to
  * surface it (the entry point logs + exits; tests assert on the message).
