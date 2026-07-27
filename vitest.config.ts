@@ -9,7 +9,9 @@ export default defineConfig({
 				test: {
 					name: "node",
 					environment: "node",
-					include: ["packages/**/*.test.ts", "apps/api/**/*.test.ts"],
+					// `tests/` holds repo-level checks that belong to no package —
+					// deployment files the container actually reads, for instance.
+					include: ["packages/**/*.test.ts", "apps/api/**/*.test.ts", "tests/**/*.test.ts"],
 					exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**"],
 				},
 			},
