@@ -91,17 +91,21 @@ docker compose up -d      # pulls ghcr.io/largerio/secret:latest
 ```
 
 That's it — on first launch the server encryption key is generated automatically and
-saved inside the data volume, so there's nothing to configure. For a real deployment
-on your own domain, add a `.env` to set your public URL (and optionally pin the key):
+saved inside the data volume, so there's nothing to configure.
+
+**On your own domain, with HTTPS** — add `docker-compose.tls.yml`, which brings a
+Caddy that obtains and renews the certificate:
 
 ```bash
-curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
-# In .env, set:
-#   APP_URL=https://secret.example.com    # your public URL (used for CORS, sitemap, robots.txt)
-# Optional — pin the key yourself instead of the auto-generated one:
-#   openssl rand -base64 32   → SERVER_ENCRYPTION_KEY=<output>
-docker compose up -d --force-recreate
+curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.tls.yml
+echo "DOMAIN=secret.example.com" > .env
+
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
+
+Point the domain at the host first, so Caddy can answer the ACME challenge. To pin
+the encryption key yourself instead of using the generated one, add
+`SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)` to `.env` **before** the first launch.
 
 Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
 If something doesn't work, run `docker compose logs -f` — see
@@ -194,7 +198,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
-| `PORT` | `3000` | Host port the app is published on (inside the container the web server always listens on 3000, the API on 3001) |
+| `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
 
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. The server stores a fingerprint of the key and **refuses to start** if it changes while notes exist, so a mistake fails loudly instead of silently bricking your data. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key; read it back with `docker compose exec app cat /app/data/.encryption_key`.
 
