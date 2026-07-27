@@ -38,7 +38,16 @@ services:
       - API_KEY_3=${API_KEY_3:-}
       - CAP_DIFFICULTY=${CAP_DIFFICULTY:-4}
       - CAP_CHALLENGE_COUNT=${CAP_CHALLENGE_COUNT:-50}
+      # These three must all reach the container for rate limits to tell clients
+      # apart behind a proxy — TRUSTED_PROXIES alone silences the startup warning
+      # without fixing anything.
+      # See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      - ADDRESS_HEADER=${ADDRESS_HEADER:-}
+      - XFF_DEPTH=${XFF_DEPTH:-1}
+      - RATE_LIMIT_MULTIPLIER=${RATE_LIMIT_MULTIPLIER:-1}
+      # Escape hatch for a key mismatch; adopting a new key abandons every note.
+      - ALLOW_SERVER_KEY_CHANGE=${ALLOW_SERVER_KEY_CHANGE:-false}
       - CLEANUP_INTERVAL_MS=${CLEANUP_INTERVAL_MS:-300000}
       - DEBUG=${DEBUG:-0}
     restart: unless-stopped
