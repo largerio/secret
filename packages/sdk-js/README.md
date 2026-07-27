@@ -10,13 +10,18 @@ npm install @largerio/secret-sdk
 
 Works in Node.js and in the browser. Ships as ESM with TypeScript types.
 
+> **Reads are open on every instance. Writes are not.** `createNote` and `deleteNote` need an API key — a string the instance operator sets in their own environment. There is no sign-up: point the SDK at an instance you run, or at one that issued you a key. See [Instances and access](#instances-and-access).
+
 ## Quick start
 
 ```ts
 import { SecretClient } from "@largerio/secret-sdk";
 
 // `create` (not `new`) — it waits for the libsodium WASM module to load.
-const client = await SecretClient.create({ baseUrl: "https://secret.larger.io" });
+const client = await SecretClient.create({
+  baseUrl: "https://secret.example.com", // the instance you talk to
+  apiKey: process.env.SECRET_API_KEY,    // required to write
+});
 
 const { id, keyFragment, deleteToken } = await client.createNote({
   text: "the launch code is 0000",
@@ -26,11 +31,45 @@ const { id, keyFragment, deleteToken } = await client.createNote({
 
 // The fragment is the key. It is not stored server-side and cannot be recovered.
 console.log(client.buildShareUrl(id, keyFragment));
-// → https://secret.larger.io/note/aBcDeFgHiJkL#K7pQ...
+// → https://secret.example.com/note/aBcDeFgHiJkL#K7pQ...
 
 const { payload } = await client.readNote(id, keyFragment);
 console.log(payload.text); // "the launch code is 0000"
 ```
+
+## Instances and access
+
+| Instance | `checkNote` / `readNote` | `createNote` / `deleteNote` |
+|---|---|---|
+| One you run | ✅ | ✅ with the `API_KEY` you set |
+| One that issued you a key | ✅ | ✅ with that key |
+| Any other public instance | ✅ | ❌ `401 Unauthorized` |
+
+An API key is not something you sign up for — it is a value the operator puts in the instance's environment (`API_KEY=…`, 32 characters minimum). The public demo at `secret.larger.io` is no exception: a `createNote` without credentials gets a flat `401`. Against an instance where you hold no key, the SDK is read-only.
+
+Running your own takes three lines:
+
+```bash
+curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
+echo "API_KEY=$(openssl rand -base64 32)" > .env
+docker compose up -d      # → http://localhost:3000
+```
+
+That key is now the one you pass as `apiKey`. See the [self-hosting guide](https://github.com/largerio/secret/blob/main/docs/self-hosting.md) for a real deployment, and `API_KEY_1`, `API_KEY_2`… when you want one key per client.
+
+### Calling from a browser
+
+An instance answers cross-origin requests from exactly one origin: the `APP_URL` it was configured with. A page served from any other domain is blocked by CORS — **reads included**. So either call the SDK from your server, or serve your front-end from the instance's own origin.
+
+### Proof-of-Work instead of a key
+
+Instances also accept a Cap Proof-of-Work token per write, which is how the bundled web UI writes without shipping a key to the browser:
+
+```ts
+await client.createNote({ text: "hi", capToken });
+```
+
+The token comes from the [Cap](https://capjs.js.org) widget solving a challenge against the instance's own `/api/cap/` endpoints — a browser path, same-origin by construction. Anything server-side: use an API key.
 
 ## Reading safely
 
@@ -54,33 +93,30 @@ const { payload } = await client.readNote(id, keyFragment, { password });
 
 ## Files
 
+A file is a name, a MIME type and the bytes — the SDK never touches the filesystem itself:
+
 ```ts
-const file = new File([bytes], "report.pdf", { type: "application/pdf" });
+import { readFile } from "node:fs/promises";
 
 const { id, keyFragment } = await client.createNote({
   text: "see attached",
-  files: [file],
+  files: [
+    {
+      name: "report.pdf",
+      type: "application/pdf",
+      data: new Uint8Array(await readFile("report.pdf")),
+    },
+  ],
   onProgress: ({ phase, overallProgress }) => {
     console.log(phase, Math.round(overallProgress * 100) + "%");
   },
 });
 ```
 
+In the browser, turn a picked `File` into that shape with
+`{ name: file.name, type: file.type, data: new Uint8Array(await file.arrayBuffer()) }`.
+
 Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does.
-
-## Authentication
-
-Reads are open on every instance. **Writes are not**: `createNote` and `deleteNote` need either an API key or a Proof-of-Work token.
-
-```ts
-// Instances that issued you an API key:
-const client = await SecretClient.create({ baseUrl, apiKey: process.env.SECRET_API_KEY });
-
-// Public instances: solve a Proof-of-Work challenge and pass the token.
-await client.createNote({ text: "hi", capToken });
-```
-
-Against a public instance where you hold no key, the SDK is effectively read-only.
 
 ## Errors
 
@@ -89,7 +125,7 @@ Every failure path is typed, so you can branch on the cause:
 | Class | When | Notable |
 |---|---|---|
 | `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work |
-| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout) |
+| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout). A missing or wrong `apiKey` on a write surfaces here as `401` |
 | `SecretNetworkError` | The request never reached the server | DNS, offline, connection reset, CORS. `.cause` holds the original error |
 | `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle |
 
@@ -112,16 +148,16 @@ Note that a missing note is a `404` from `readNote`, but `{ exists: false }` fro
 
 ```ts
 await SecretClient.create({
-  baseUrl: "https://secret.example.com", // default: "" (relative — browser, same origin)
-  apiKey: "…",                           // sent as `Authorization: Bearer …`
-  timeoutMs: 30_000,
-  maxRetries: 2,                         // GETs only; writes are never retried
-  retryBackoffMs: 300,
-  fetch: customFetch,                    // defaults to globalThis.fetch
+  baseUrl: "https://secret.example.com",  // default: "" (relative — browser, same origin)
+  apiKey: "…",                            // sent as `Authorization: Bearer …`
+  timeoutMs: 30_000,                      // default: none
+  maxRetries: 2,                          // default: 0 — reads and chunk PUTs only
+  retryBackoffMs: (attempt) => attempt * 500, // ms before retry N (1-based). Default: 2 ** N * 250
+  fetch: customFetch,                     // defaults to globalThis.fetch
 });
 ```
 
-Writes are deliberately never retried: a retried `createNote` could store the note twice.
+Note creation and deletion are deliberately never retried: a retried `createNote` could store the note twice.
 
 ## Reference
 
@@ -139,7 +175,7 @@ Writes are deliberately never retried: a retried `createNote` could store the no
 
 Node.js ≥ 18, or any browser with WebAssembly and `crypto.getRandomValues`.
 
-`libsodium-wrappers-sumo` and `@msgpack/msgpack` are peer runtime dependencies, installed automatically.
+`libsodium-wrappers-sumo` and `@msgpack/msgpack` are runtime dependencies, installed with the package.
 
 ## Security model
 
