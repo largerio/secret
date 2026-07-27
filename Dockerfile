@@ -90,8 +90,8 @@ RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
 USER 1001
 
 ENV NODE_ENV=production
-ENV PORT=3001
-ENV HOST=0.0.0.0
+# PORT is deliberately unset: it means "the port the site is served on", the one
+# a PaaS injects. entrypoint.sh gives the API its own host and port.
 ENV DATABASE_PATH=/app/data/secret.db
 ENV FILES_PATH=/app/data/files
 
@@ -99,6 +99,6 @@ EXPOSE 3000
 
 # Node-based healthcheck avoids shipping curl (smaller image, less attack surface).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-	CMD node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+	CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["sh", "entrypoint.sh"]

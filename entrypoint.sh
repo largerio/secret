@@ -37,15 +37,22 @@ if [ -z "${SERVER_ENCRYPTION_KEY:-}" ]; then
 	export SERVER_ENCRYPTION_KEY
 fi
 
-# API server (internal, port 3001)
-node apps/api/dist/index.js &
+# `PORT` is the public web server's, never the API's: every PaaS injects it and
+# routes traffic there.
+api_port="${API_PORT:-3001}"
+web_port="${PORT:-3000}"
+
+# API server: loopback only, since its one caller is the web server in this same
+# container. API_HOST=0.0.0.0 exposes it.
+PORT="$api_port" HOST="${API_HOST:-127.0.0.1}" node apps/api/dist/index.js &
 api_pid=$!
 
-# SvelteKit frontend (exposed, port 3000). BODY_SIZE_LIMIT caps the request body
-# the adapter-node server accepts; without it the adapter defaults to 512K, which
-# rejects uploads. Default to ~101MB (MAX_FILE_SIZE * MAX_FILES_PER_NOTE + 1MB) so
-# the image works out of the box regardless of how env vars are wired.
-PORT=3000 ORIGIN="${APP_URL:-http://localhost:3000}" \
+# SvelteKit frontend (exposed). BODY_SIZE_LIMIT caps the request body the
+# adapter-node server accepts; without it the adapter defaults to 512K, which
+# rejects uploads. Default to ~101MB (MAX_FILE_SIZE * MAX_FILES_PER_NOTE + 1MB)
+# so the image works out of the box regardless of how env vars are wired.
+PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \
+	API_URL="${API_URL:-http://127.0.0.1:$api_port}" \
 	BODY_SIZE_LIMIT="${BODY_SIZE_LIMIT:-105906176}" \
 	node apps/web/build/index.js &
 web_pid=$!

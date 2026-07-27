@@ -4,14 +4,16 @@ Deploy your own Secret instance in minutes — no clone, no build. The official
 image is published to [`ghcr.io/largerio/secret`](https://ghcr.io/largerio/secret)
 and runs as a single container.
 
-- [Quick deploy (VPS / any Docker host)](#quick-deploy-vps--any-docker-host)
-- [One-click & platform deploys](#one-click--platform-deploys)
-- [Synology NAS (DSM 7 / Container Manager)](#synology-nas-dsm-7--container-manager)
-- [Reverse proxy & HTTPS](#reverse-proxy--https)
-- [Deploying from CI](#deploying-from-ci)
-- [Backup & restore](#backup--restore)
-- [Updating](#updating)
-- [Troubleshooting](#troubleshooting)
+| Where you're deploying | Start here |
+|---|---|
+| A VPS, or any host with Docker | [Quick deploy](#quick-deploy-vps--any-docker-host) — with HTTPS in one command |
+| Coolify, Portainer, Render | [One-click & platform deploys](#one-click--platform-deploys) |
+| A Synology NAS | [Synology NAS](#synology-nas-dsm-7--container-manager) |
+| Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
+
+Once it is up: [API keys](#api-keys-for-the-sdk) ·
+[Backup & restore](#backup--restore) · [Updating](#updating) ·
+[Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
 > **Image architecture:** the official image is multi-arch (`linux/amd64` and
 > `linux/arm64`), so it runs natively on x86 servers as well as ARM hosts —
@@ -21,9 +23,9 @@ and runs as a single container.
 
 ## Quick deploy (VPS / any Docker host)
 
-You only need one file — `docker-compose.yml`. No git clone, no manual key. The
-server encryption key is generated automatically on first launch and persisted in
-the data volume, so this works with zero configuration:
+Start with `docker-compose.yml`. No git clone, no manual key: the server
+encryption key is generated on first launch and persisted in the data volume, so
+this works with zero configuration.
 
 ```bash
 mkdir secret && cd secret
@@ -35,33 +37,31 @@ The container pulls `ghcr.io/largerio/secret:latest`, creates a persistent
 Docker volume for your data, and serves the app on port `3000`.
 Open `http://<your-host>:3000` and you're live.
 
-**Deploying on your own domain** — add a `.env` to set your public URL:
+**On your own domain, with HTTPS.** `docker-compose.tls.yml` adds Caddy, which
+obtains and renews the certificate for you:
 
 ```bash
-curl -o .env https://raw.githubusercontent.com/largerio/secret/main/.env.example
+curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.tls.yml
+echo "DOMAIN=secret.example.com" > .env
 
-# In .env, set your public URL — used for CORS, sitemap.xml and robots.txt:
-#   APP_URL=https://secret.example.com
-
-docker compose up -d --force-recreate
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
-> ⚠️ **Do not set `SERVER_ENCRYPTION_KEY` on an instance that has already
-> started.** Every stored note is sealed with the key that created it, and the
-> key cannot be rotated: a different value makes all of them permanently
-> unreadable. The server keeps a fingerprint of the key and **refuses to start**
-> on a mismatch, so this fails loudly rather than silently — but the notes are
-> still only readable with the original key.
->
-> If you want to manage the key yourself, either pin it **before the very first
-> launch**, or read back the one that was generated:
->
-> ```bash
-> docker compose exec app cat /app/data/.encryption_key
-> ```
->
-> Because it lives in the data volume, a volume backup already includes it —
-> keep a copy somewhere safe regardless.
+Point the domain at this host first — Caddy proves ownership over ports 80 and
+443. Only those two are published: the app itself is reachable through the proxy
+alone, and `APP_URL` is derived from `DOMAIN`.
+
+Already running a reverse proxy? Skip that file, set `APP_URL` in `.env`, and see
+[Reverse proxy & HTTPS](#reverse-proxy--https).
+
+> ⚠️ **The encryption key cannot be rotated.** Setting a different
+> `SERVER_ENCRYPTION_KEY` on a running instance makes every stored note
+> permanently unreadable — the server checks a fingerprint and refuses to start
+> rather than let that pass silently. To manage the key yourself, pin it
+> **before the very first launch**; otherwise it lives in the data volume at
+> `.encryption_key`, so a volume backup already includes it. See
+> [Container keeps restarting](#container-keeps-restarting--exits-immediately)
+> if you hit a mismatch.
 
 ---
 
@@ -155,13 +155,42 @@ it in one click; Render will then prompt you for the two required values
 
 ## Reverse proxy & HTTPS
 
-Put a reverse proxy in front to terminate TLS. Caddy and Nginx examples are in
-the [main README](../README.md#reverse-proxy). Two reminders:
+This section is for a proxy you run yourself. If you don't have one,
+`docker-compose.tls.yml` ([Quick deploy](#quick-deploy-vps--any-docker-host))
+brings its own Caddy and there is nothing to configure here.
 
-- Set `client_max_body_size` (Nginx) / request body limits to at least
-  `MAX_CHUNKED_FILE_SIZE` (default 500 MB) so large uploads aren't rejected.
+**Caddy** — certificates handled for you, `X-Forwarded-For` set on its own:
+
+```caddyfile
+secret.example.com {
+    reverse_proxy localhost:3000
+}
+```
+
+**Nginx:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name secret.example.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 150M;
+    }
+}
+```
+
+Two reminders:
+
+- The body limit must clear `BODY_SIZE_LIMIT` (~101 MB) — not
+  `MAX_CHUNKED_FILE_SIZE`, since large uploads are split into 4 MB chunks and no
+  single request comes close to it.
 - Update `APP_URL` in `.env` to your `https://` domain.
-- Make rate limiting see real client addresses — see below.
 
 ### Making rate limiting work behind a proxy
 
@@ -218,37 +247,19 @@ DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
 
 ---
 
-## Deploying from CI
+## API keys (for the SDK)
 
-The GitHub Actions workflow in this repository builds the image, scans it, then
-deploys over SSH. Two details are worth copying into any pipeline of your own.
+Reads are open; writes are not. Browsers solve a Proof-of-Work challenge —
+anything scripted (the [JS SDK](https://www.npmjs.com/package/@largerio/secret-sdk),
+a backup job) needs a key you issue in `.env`:
 
-**Deploy the digest, not the tag.** `:latest` and `:main` move. Between the scan
-and the rollout, or between two rollouts, the tag can point somewhere else — and
-once it has moved there is nothing left to roll back to. The workflow passes the
-digest it just built and scanned:
-
-```bash
-SECRET_IMAGE="ghcr.io/largerio/secret@sha256:..." docker compose up -d
+```env
+API_KEY=<openssl rand -base64 32>   # 32 characters minimum
+# API_KEY_1=…                       # one per client, to revoke them separately
 ```
 
-Your compose file needs to accept it, with a default so manual runs still work:
-
-```yaml
-image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
-```
-
-**Wait for healthy, and roll back if it never is.** A container that starts and
-then fails every request is a successful `docker compose up` — the exit code
-says nothing about whether the app works. The workflow polls the health status
-and, if it does not turn healthy, prints the last 50 log lines and restores the
-image that was running before.
-
-That is also why `docker image prune -f` is scoped: an unfiltered prune deletes
-the previous image, which is the one a rollback needs.
-
-A complete reference file is in
-[`docs/examples/docker-compose.prod.yml`](examples/docker-compose.prod.yml).
+Then `docker compose up -d --force-recreate`. A key authorises writes only — it
+grants no read access others don't have, and no ability to decrypt.
 
 ---
 
@@ -293,10 +304,12 @@ docker compose up -d
 docker compose stop
 
 # …then extract the backup into that same <volume>
+# `./.[!.]*` too — the generated key is a dotfile, and leaving the fresh one
+# behind next to restored notes stops the container from starting.
 docker run --rm \
   -v <volume>:/data \
   -v "$PWD":/backup \
-  alpine sh -c "cd /data && rm -rf ./* && tar xzf /backup/secret-backup.tgz"
+  alpine sh -c "cd /data && rm -rf ./* ./.[!.]* && tar xzf /backup/secret-backup.tgz"
 
 docker compose start
 ```
@@ -315,6 +328,49 @@ docker image prune -f   # clean up old layers
 ```
 
 Your data lives in the volume, so updates never delete notes.
+
+`docker-compose.yml` tracks `:latest` — the tip of `main`. In production, pin the
+minor tag instead to get fixes without unreleased changes:
+
+```yaml
+image: ghcr.io/largerio/secret:1.0
+```
+
+Full tag list: [Pinning a version](../README.md#pinning-a-version).
+
+---
+
+## Deploying from CI
+
+The GitHub Actions workflow in this repository builds the image, scans it, then
+deploys over SSH. Two details are worth copying into any pipeline of your own.
+
+**Deploy the digest, not the tag.** `:latest` and `:main` move. Between the scan
+and the rollout, or between two rollouts, the tag can point somewhere else — and
+once it has moved there is nothing left to roll back to. The workflow passes the
+digest it just built and scanned:
+
+```bash
+SECRET_IMAGE="ghcr.io/largerio/secret@sha256:..." docker compose up -d
+```
+
+Your compose file needs to accept it, with a default so manual runs still work:
+
+```yaml
+image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
+```
+
+**Wait for healthy, and roll back if it never is.** A container that starts and
+then fails every request is a successful `docker compose up` — the exit code
+says nothing about whether the app works. The workflow polls the health status
+and, if it does not turn healthy, prints the last 50 log lines and restores the
+image that was running before.
+
+That is also why `docker image prune -f` is scoped: an unfiltered prune deletes
+the previous image, which is the one a rollback needs.
+
+A complete reference file is in
+[`docs/examples/docker-compose.prod.yml`](examples/docker-compose.prod.yml).
 
 ---
 
@@ -387,10 +443,15 @@ Check `docker compose logs` for the underlying error, and verify the health
 endpoint from inside the host:
 
 ```bash
-curl http://localhost:3000/api/health    # should return {"status":"ok"}
+curl http://localhost:3000/api/health
+# {"status":"ok","checks":{"database":"ok","storage":"ok"}}
 ```
+
+A failing check answers `503` and names the subsystem — `database` (the volume)
+or `storage` (`FILES_PATH`, or the S3 credentials). The error itself is in the
+logs, prefixed `[health]`.
 
 ### Uploads fail behind a reverse proxy
 
 Increase the proxy's request body limit (`client_max_body_size` in Nginx) to at
-least `MAX_CHUNKED_FILE_SIZE` — see [Reverse proxy & HTTPS](#reverse-proxy--https).
+least `BODY_SIZE_LIMIT` — see [Reverse proxy & HTTPS](#reverse-proxy--https).
