@@ -9,7 +9,7 @@
 	},
 	"devDependencies": {
 		"@axe-core/playwright": "^4.12.1",
-		"@playwright/test": "^1.62.0",
+		"@playwright/test": "^1.62.1",
 		"typescript": "^6.0.3",
 		"@types/node": "^26.1.2"
 	}
