@@ -2,6 +2,7 @@ import { eq, lte } from "drizzle-orm";
 import { runWithConcurrency } from "./concurrency.js";
 import type { AppDatabase } from "./db/index.js";
 import { pendingDeletions } from "./db/schema.js";
+import { log } from "./logger.js";
 import type { StorageBackend } from "./storage/index.js";
 
 const RETRY_BACKOFF_MS: readonly number[] = [
@@ -79,9 +80,7 @@ export async function deleteOrSchedule(
 		await tryDelete(storage, target);
 	} catch (err: unknown) {
 		const detail = Error.isError(err) ? err.message : String(err);
-		console.error(
-			`[deletions] Storage delete failed for note ${target.noteId}, scheduling retry: ${detail}`,
-		);
+		log.error("storage delete failed, scheduling retry", { noteId: target.noteId, detail });
 		scheduleRow(db, target);
 	}
 }
@@ -120,9 +119,11 @@ export async function drainPendingDeletions(
 			const nextAttempts = row.attempts + 1;
 
 			if (nextAttempts >= MAX_ATTEMPTS) {
-				console.error(
-					`[deletions] Giving up on note ${row.noteId} after ${String(nextAttempts)} attempts: ${detail}`,
-				);
+				log.error("giving up on pending deletion", {
+					noteId: row.noteId,
+					attempts: nextAttempts,
+					detail,
+				});
 				db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
 				failed++;
 				return;

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AppDatabase } from "./db/index.js";
+import { log } from "./logger.js";
 import { getStorageUsedBytes } from "./quota.js";
 import type { StorageBackend } from "./storage/index.js";
 
@@ -48,14 +49,14 @@ export function createHealthCheck(
 			usedBytes = getStorageUsedBytes(db);
 		} catch (err) {
 			database = "error";
-			console.error("[health] database probe failed:", Error.isError(err) ? err.message : err);
+			log.error("database probe failed", { detail: Error.isError(err) ? err.message : err });
 		}
 
 		try {
 			await storage.probe?.();
 		} catch (err) {
 			storageStatus = "error";
-			console.error("[health] storage probe failed:", Error.isError(err) ? err.message : err);
+			log.error("storage probe failed", { detail: Error.isError(err) ? err.message : err });
 		}
 
 		const ok = database === "ok" && storageStatus === "ok";

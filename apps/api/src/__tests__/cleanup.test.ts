@@ -148,7 +148,9 @@ describe("startCleanupJob", () => {
 		const remaining = db.select().from(notes).all();
 		expect(remaining).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note faildelete01, scheduling retry: disk error",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"faildelete01","detail":"disk error"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -188,8 +190,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[cleanup] Failed to process note isofail00001:",
-			"insert failed",
+			expect.stringContaining(
+				'"msg":"cleanup of note failed","noteId":"isofail00001","detail":"insert failed"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -227,8 +230,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[cleanup] Failed to process note isofailstr01:",
-			"insert string failure",
+			expect.stringContaining(
+				'"msg":"cleanup of note failed","noteId":"isofailstr01","detail":"insert string failure"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -245,7 +249,9 @@ describe("startCleanupJob", () => {
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		clearInterval(timer);
 
-		expect(consoleSpy).toHaveBeenCalledWith("[cleanup] Cleanup job failed:", "database locked");
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"cleanup job failed","detail":"database locked"'),
+		);
 		consoleSpy.mockRestore();
 	});
 
@@ -261,7 +267,9 @@ describe("startCleanupJob", () => {
 		await new Promise((resolve) => setTimeout(resolve, 250));
 		clearInterval(timer);
 
-		expect(consoleSpy).toHaveBeenCalledWith("[cleanup] Cleanup job failed:", "string error");
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"cleanup job failed","detail":"string error"'),
+		);
 		consoleSpy.mockRestore();
 	});
 
@@ -286,7 +294,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note failstring01, scheduling retry: string-error",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"failstring01","detail":"string-error"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -330,7 +340,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note chunkstr001, scheduling retry: string chunk error",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"chunkstr001","detail":"string chunk error"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -353,7 +365,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note chunkfail01, scheduling retry: chunk delete failed",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"chunkfail01","detail":"chunk delete failed"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -417,7 +431,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note uploadnote02, scheduling retry: upload chunk error",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"uploadnote02","detail":"upload chunk error"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -450,7 +466,9 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note uploadnote03, scheduling retry: string-upload-error",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"uploadnote03","detail":"string-upload-error"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -477,7 +495,7 @@ describe("startCleanupJob", () => {
 
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("[cleanup] pending deletions drained="),
+			expect.stringContaining('"msg":"pending deletions drained"'),
 		);
 		consoleSpy.mockRestore();
 	});

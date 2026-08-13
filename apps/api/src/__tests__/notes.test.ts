@@ -802,7 +802,9 @@ describe("GET /api/v1/notes/:id", () => {
 		// The row is gone but its chunks are not: the failure must be recorded for
 		// retry, otherwise the objects are orphaned in storage forever.
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk fail error`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk fail error"`,
+			),
 		);
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(1);
 		consoleSpy.mockRestore();
@@ -1904,7 +1906,9 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: stream chunk fail string`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"stream chunk fail string"`,
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1948,7 +1952,9 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: stream chunk error obj`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"stream chunk error obj"`,
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -2187,7 +2193,9 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk cleanup failure`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk cleanup failure"`,
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -2219,7 +2227,9 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await res.arrayBuffer();
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: string delete error`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"string delete error"`,
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -2548,7 +2558,9 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 		expect(json.deleted).toBe(true);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`[deletions] Storage delete failed for note ${id}, scheduling retry: chunk delete failure`,
+			expect.stringContaining(
+				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk delete failure"`,
+			),
 		);
 		consoleSpy.mockRestore();
 	});

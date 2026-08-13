@@ -7,6 +7,7 @@ import { compress } from "hono/compress";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
 import { createHealthCheck } from "./health.js";
+import { type Logger, log } from "./logger.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
 import {
@@ -15,6 +16,7 @@ import {
 	type NotesRateClass,
 	type RateLimitResult,
 } from "./middleware/rateLimit.js";
+import { createRequestId, createRequestLogger } from "./middleware/requestContext.js";
 import {
 	createCors,
 	createDocsSecurityHeaders,
@@ -34,6 +36,7 @@ export interface AppEnv {
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
 		storageQuotaBytes: number;
+		requestId: string;
 	};
 }
 
@@ -42,6 +45,8 @@ export interface CreateAppDeps {
 	readonly serverKey: Buffer;
 	readonly storage: StorageBackend;
 	readonly config: AppConfig;
+	/** Injectable for tests; defaults to the process-wide structured logger. */
+	readonly logger?: Logger;
 }
 
 export interface CreatedApp {
@@ -58,12 +63,19 @@ export interface CreatedApp {
  */
 export function createApp(deps: CreateAppDeps): CreatedApp {
 	const { db, serverKey, storage, config } = deps;
+	const logger = deps.logger ?? log;
 
 	const app = new Hono<AppEnv>();
 
-	app.onError(createErrorHandler({ debug: config.debug }));
+	app.onError(createErrorHandler({ debug: config.debug, logger }));
 
 	app.notFound((c) => c.json({ error: "Not found" }, 404));
+
+	// First so every later middleware, handler and the error handler can
+	// correlate their log lines with this request. Health probes are skipped:
+	// an orchestrator polling every few seconds would drown the log.
+	app.use("*", createRequestId());
+	app.use("*", createRequestLogger(logger, { skipPaths: ["/api/health"] }));
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
 	app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));

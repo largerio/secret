@@ -87,7 +87,9 @@ describe("createApp — unversioned routes", () => {
 			checks: { database: "ok", storage: "error" },
 			storage: { usedBytes: 0, quotaBytes: null },
 		});
-		expect(consoleSpy).toHaveBeenCalledWith("[health] storage probe failed:", "bucket unreachable");
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"storage probe failed","detail":"bucket unreachable"'),
+		);
 		consoleSpy.mockRestore();
 	});
 

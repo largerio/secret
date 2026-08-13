@@ -121,7 +121,7 @@ describe("assertServerKeyMatches", () => {
 	it("adopts the new key when the operator opts in, with a warning", () => {
 		assertServerKeyMatches(db, KEY_A);
 		insertNote();
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const warnSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
 		expect(() => assertServerKeyMatches(db, KEY_B, { allowChange: true })).not.toThrow();
 
@@ -134,7 +134,7 @@ describe("assertServerKeyMatches", () => {
 
 	it("does not warn when opting in on an empty database", () => {
 		assertServerKeyMatches(db, KEY_A);
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const warnSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
 		assertServerKeyMatches(db, KEY_B, { allowChange: true });
 
