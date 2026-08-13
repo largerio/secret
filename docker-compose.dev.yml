@@ -17,6 +17,7 @@ services:
       - MAX_EXPIRY=${MAX_EXPIRY:-}
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-}
       - MAX_FILES_PER_NOTE=${MAX_FILES_PER_NOTE:-}
+      - STORAGE_QUOTA_BYTES=${STORAGE_QUOTA_BYTES:-}
       - PORT=3001
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files

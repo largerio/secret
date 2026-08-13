@@ -40,6 +40,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			maxReads,
 			fileCount,
 			salt: salt ?? null,
+			quotaBytes: c.get("storageQuotaBytes"),
 		});
 
 		return c.json(result, 201);
@@ -93,6 +94,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			maxReads,
 			fileCount,
 			salt: salt ?? null,
+			quotaBytes: c.get("storageQuotaBytes"),
 		});
 
 		return c.json(result, 201);

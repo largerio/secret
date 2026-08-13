@@ -53,6 +53,7 @@ describe("parseConfig", () => {
 				storageBackend: "local",
 				maxFileSize: MAX_FILE_SIZE,
 				maxFilesPerNote: MAX_FILES_PER_NOTE,
+				storageQuotaBytes: 0,
 				chunkSize: DEFAULT_CHUNK_SIZE,
 				maxChunkedFileSize: DEFAULT_MAX_CHUNKED_SIZE,
 				trustedProxies: [],
@@ -70,6 +71,11 @@ describe("parseConfig", () => {
 		it("honors an explicit APP_URL over the derived default", () => {
 			const config = parseConfig(baseEnv({ APP_URL: "https://secret.example" }));
 			expect(config.appUrl).toBe("https://secret.example");
+		});
+
+		it("accepts an explicit storage quota", () => {
+			const config = parseConfig(baseEnv({ STORAGE_QUOTA_BYTES: "1073741824" }));
+			expect(config.storageQuotaBytes).toBe(1_073_741_824);
 		});
 	});
 
@@ -217,6 +223,14 @@ describe("parseConfig", () => {
 			[{ MAX_FILE_SIZE: "1.5" }, "MAX_FILE_SIZE must be a positive integer"],
 			[{ MAX_FILES_PER_NOTE: "0" }, "MAX_FILES_PER_NOTE must be a positive integer"],
 			[{ MAX_FILES_PER_NOTE: "2.2" }, "MAX_FILES_PER_NOTE must be a positive integer"],
+			[
+				{ STORAGE_QUOTA_BYTES: "-1" },
+				"STORAGE_QUOTA_BYTES must be a non-negative integer (0 disables the quota)",
+			],
+			[
+				{ STORAGE_QUOTA_BYTES: "1.5" },
+				"STORAGE_QUOTA_BYTES must be a non-negative integer (0 disables the quota)",
+			],
 			[{ CHUNK_SIZE: "0" }, "CHUNK_SIZE must be a positive number"],
 			[{ CHUNK_SIZE: "x" }, "CHUNK_SIZE must be a positive number"],
 			[{ MAX_CHUNKED_FILE_SIZE: "0" }, "MAX_CHUNKED_FILE_SIZE must be a positive number"],

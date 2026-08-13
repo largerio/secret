@@ -19,6 +19,7 @@ export const notes = sqliteTable(
 		createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 		chunkCount: integer("chunk_count"),
 		streamHeader: text("stream_header"),
+		sizeBytes: integer("size_bytes").notNull().default(0),
 	},
 	(t) => [
 		index("idx_notes_expires_at").on(t.expiresAt),
@@ -54,6 +55,7 @@ export const uploadChunks = sqliteTable(
 			.notNull()
 			.references(() => uploads.id, { onDelete: "cascade" }),
 		chunkIndex: integer("chunk_index").notNull(),
+		sizeBytes: integer("size_bytes").notNull().default(0),
 	},
 	(t) => [primaryKey({ columns: [t.uploadId, t.chunkIndex] })],
 );

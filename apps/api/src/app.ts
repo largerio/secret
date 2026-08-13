@@ -33,6 +33,7 @@ export interface AppEnv {
 		maxChunkedFileSize: number;
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
+		storageQuotaBytes: number;
 	};
 }
 
@@ -159,12 +160,15 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		c.set("maxChunkedFileSize", config.maxChunkedFileSize);
 		c.set("maxExpirySeconds", config.maxExpirySeconds);
 		c.set("maxFilesPerNote", config.maxFilesPerNote);
+		c.set("storageQuotaBytes", config.storageQuotaBytes);
 		await next();
 	});
 
 	// --- Unversioned routes ---
 
-	const checkHealth = createHealthCheck(db, storage);
+	const checkHealth = createHealthCheck(db, storage, {
+		quotaBytes: config.storageQuotaBytes,
+	});
 	app.get("/api/health", async (c) => {
 		c.header("Cache-Control", "no-store");
 		const report = await checkHealth();

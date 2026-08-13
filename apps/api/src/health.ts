@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AppDatabase } from "./db/index.js";
+import { getStorageUsedBytes } from "./quota.js";
 import type { StorageBackend } from "./storage/index.js";
 
 export interface HealthReport {
@@ -7,6 +8,11 @@ export interface HealthReport {
 	readonly checks: {
 		readonly database: "ok" | "error";
 		readonly storage: "ok" | "error";
+	};
+	/** Accounted payload bytes and the operator's quota (null = unlimited). */
+	readonly storage: {
+		readonly usedBytes: number;
+		readonly quotaBytes: number | null;
 	};
 }
 
@@ -23,10 +29,11 @@ const CACHE_TTL_MS = 10_000;
 export function createHealthCheck(
 	db: AppDatabase,
 	storage: StorageBackend,
-	options?: { ttlMs?: number; now?: () => number },
+	options?: { ttlMs?: number; now?: () => number; quotaBytes?: number },
 ): () => Promise<HealthReport> {
 	const ttlMs = options?.ttlMs ?? CACHE_TTL_MS;
 	const now = options?.now ?? Date.now;
+	const quotaBytes = options?.quotaBytes ?? 0;
 
 	let cached: { at: number; report: HealthReport } | undefined;
 	let inFlight: Promise<HealthReport> | undefined;
@@ -34,9 +41,11 @@ export function createHealthCheck(
 	async function probe(): Promise<HealthReport> {
 		let database: "ok" | "error" = "ok";
 		let storageStatus: "ok" | "error" = "ok";
+		let usedBytes = 0;
 
 		try {
 			db.get(sql`SELECT 1`);
+			usedBytes = getStorageUsedBytes(db);
 		} catch (err) {
 			database = "error";
 			console.error("[health] database probe failed:", Error.isError(err) ? err.message : err);
@@ -50,7 +59,11 @@ export function createHealthCheck(
 		}
 
 		const ok = database === "ok" && storageStatus === "ok";
-		return { status: ok ? "ok" : "degraded", checks: { database, storage: storageStatus } };
+		return {
+			status: ok ? "ok" : "degraded",
+			checks: { database, storage: storageStatus },
+			storage: { usedBytes, quotaBytes: quotaBytes > 0 ? quotaBytes : null },
+		};
 	}
 
 	return async function check(): Promise<HealthReport> {

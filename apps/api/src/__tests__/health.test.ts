@@ -56,7 +56,22 @@ describe("createHealthCheck", () => {
 		expect(await check()).toEqual({
 			status: "ok",
 			checks: { database: "ok", storage: "ok" },
+			storage: { usedBytes: 0, quotaBytes: null },
 		});
+	});
+
+	it("reports the configured quota and current usage", async () => {
+		sqlite
+			.prepare(
+				`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, expires_at, created_at, size_bytes)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run("quota-note", Buffer.alloc(0), "iv", "nonce", "token", 9999999999999, 1, 1234);
+
+		const check = createHealthCheck(db, makeStorage(), { quotaBytes: 5000 });
+		const report = await check();
+
+		expect(report.storage).toEqual({ usedBytes: 1234, quotaBytes: 5000 });
 	});
 
 	it("treats a backend without a probe as healthy", async () => {
@@ -73,6 +88,7 @@ describe("createHealthCheck", () => {
 		expect(await createHealthCheck(db, storage)()).toEqual({
 			status: "degraded",
 			checks: { database: "ok", storage: "error" },
+			storage: { usedBytes: 0, quotaBytes: null },
 		});
 		expect(errorSpy).toHaveBeenCalledWith("[health] storage probe failed:", "no bucket");
 		errorSpy.mockRestore();
