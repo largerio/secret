@@ -30,6 +30,7 @@ Monorepo with pnpm workspaces:
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
   - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
   - Database: SQLite via Node's built-in `node:sqlite` (`DatabaseSync`) + Drizzle ORM (`drizzle-orm/node-sqlite`) (`src/db/`)
+  - Migrations: versioned via `PRAGMA user_version`, applied at boot (`src/db/migrations.ts`); a downgrade (DB newer than the build) refuses to start. Schema changes: edit `schema.ts`, run `pnpm db:generate` (drizzle-kit) in `apps/api`, embed the emitted SQL as a new `MIGRATIONS` entry
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
