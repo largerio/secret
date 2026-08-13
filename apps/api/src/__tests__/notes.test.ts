@@ -2292,7 +2292,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
 
 		// Return a buffer that passes the IV+tag length check but fails AES-GCM
-		// authentication, exercising the catch in the ReadableStream start().
+		// authentication, exercising the catch in the ReadableStream pull().
 		const garbage = Buffer.alloc(64);
 		const corruptStorage: StorageBackend = {
 			save: (noteId, data) => realStorage.save(noteId, data),
@@ -2307,6 +2307,132 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
 		await expect(res.arrayBuffer()).rejects.toThrow();
+	});
+
+	it("applies backpressure: reads at most the prefetch window until the client consumes", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const chunkCount = 12;
+		const { id } = await createChunkedNoteViaApp(
+			createAppWithCustomStorage(db, realStorage),
+			chunkCount,
+		);
+
+		const readChunkCalls: number[] = [];
+		const countingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => {
+				readChunkCalls.push(idx);
+				return realStorage.readChunk(noteId, idx);
+			},
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const countingApp = createAppWithCustomStorage(db, countingStorage);
+
+		const res = await countingApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+
+		// Without consuming the body, only the pre-flight read plus the read-ahead
+		// window may hit storage. The old start()-loop implementation read all 12
+		// chunks here regardless of the client.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(readChunkCalls.length).toBeLessThanOrEqual(5);
+
+		// Consuming the body drains the remaining chunks, in order and intact.
+		const body = new Uint8Array(await res.arrayBuffer());
+		const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+		const frames: string[] = [];
+		let offset = 0;
+		while (offset < body.byteLength) {
+			const len = view.getUint32(offset);
+			offset += 4;
+			frames.push(Buffer.from(body.subarray(offset, offset + len)).toString());
+			offset += len;
+		}
+		expect(frames).toEqual(Array.from({ length: chunkCount }, (_, i) => `chunk-data-${String(i)}`));
+	});
+
+	it("runs burn-after-read cleanup when the client cancels mid-stream", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 4);
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		const deleteChunks = vi.fn().mockResolvedValue(undefined);
+		const spyStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
+			deleteChunks,
+		};
+		const spyApp = createAppWithCustomStorage(db, spyStorage);
+
+		const res = await spyApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+
+		const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+		await reader.read();
+		await reader.cancel();
+
+		expect(deleteChunks).toHaveBeenCalledTimes(1);
+		expect(deleteChunks).toHaveBeenCalledWith(id, 4);
+	});
+
+	it("finalizes exactly once when cancel races an in-flight chunk read", async () => {
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		// Chunk 1 read stays pending until released, keeping a pull() in flight
+		// while the client cancels; releasing garbage then makes that pull fail
+		// after cancellation already finalized the stream.
+		let releaseChunk1: (data: Buffer) => void = () => {};
+		const pendingChunk1 = new Promise<Buffer>((resolve) => {
+			releaseChunk1 = resolve;
+		});
+		const deleteChunks = vi.fn().mockResolvedValue(undefined);
+		const racingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) => realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => (idx === 0 ? realStorage.readChunk(noteId, idx) : pendingChunk1),
+			deleteChunks,
+		};
+		const racingApp = createAppWithCustomStorage(db, racingStorage);
+
+		const res = await racingApp.request(`/api/v1/notes/${id}/stream`);
+		expect(res.status).toBe(200);
+
+		// Drain chunk 0 (length prefix + data) so the next pull() awaits chunk 1.
+		const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+		await reader.read();
+		await reader.read();
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		await reader.cancel();
+		expect(deleteChunks).toHaveBeenCalledTimes(1);
+
+		// Release the in-flight read; its pull() fails past cancellation and must
+		// not run the cleanup a second time.
+		releaseChunk1(Buffer.alloc(64));
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(deleteChunks).toHaveBeenCalledTimes(1);
 	});
 });
 

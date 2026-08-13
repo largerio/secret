@@ -296,52 +296,74 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 				(reason: unknown) => ({ ok: false as const, reason }),
 			);
 
+		const readAhead: Promise<ChunkRead>[] = [];
+		let nextToFetch = 0;
+		let delivered = 0;
+
+		// The consume transaction already committed (the read is burned), so the
+		// storage cleanup must run exactly once whether the stream completes,
+		// errors, or is cancelled — cancel() can race a pull() that is still
+		// awaiting a chunk read, hence the flag.
+		let finalized = false;
+		const finalize = async (): Promise<void> => {
+			if (finalized) return;
+			finalized = true;
+			if (result.shouldDelete) {
+				await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
+			}
+		};
+
+		// Backpressure: the delivery loop lives in pull(), which the runtime only
+		// invokes while the internal queue has room (desiredSize > 0). A slow
+		// client suspends storage reads instead of accumulating the whole note in
+		// memory — at most the read-ahead window is ever in flight.
 		const stream = new ReadableStream({
-			async start(controller) {
+			async pull(controller) {
 				try {
-					const readAhead: Promise<ChunkRead>[] = [];
-					let nextToFetch = 0;
-
-					for (let i = 0; i < chunkCount; i++) {
-						// Top up the read-ahead window.
-						while (nextToFetch < chunkCount && readAhead.length < PREFETCH_CHUNKS) {
-							readAhead.push(readChunkSafe(nextToFetch));
-							nextToFetch += 1;
-						}
-
-						const chunkRead = await (readAhead.shift() as Promise<ChunkRead>);
-						if (!chunkRead.ok) {
-							controller.error(chunkRead.reason);
-							return;
-						}
-
-						const storedData = chunkRead.data;
-						const iv = storedData.subarray(0, IV_LENGTH);
-						const encrypted = storedData.subarray(IV_LENGTH);
-
-						// Verify minimum size for auth tag
-						if (encrypted.length < AUTH_TAG_LENGTH) {
-							controller.error(new Error("Invalid chunk data"));
-							return;
-						}
-
-						const clientChunk = serverDecrypt(encrypted, iv, serverKey, Buffer.from(id));
-
-						// Length-prefix framing: 4 bytes big-endian length + chunk data
-						const lengthBuf = Buffer.alloc(4);
-						lengthBuf.writeUInt32BE(clientChunk.length);
-						controller.enqueue(new Uint8Array(lengthBuf));
-						controller.enqueue(new Uint8Array(clientChunk));
+					// Top up the read-ahead window.
+					while (nextToFetch < chunkCount && readAhead.length < PREFETCH_CHUNKS) {
+						readAhead.push(readChunkSafe(nextToFetch));
+						nextToFetch += 1;
 					}
 
-					controller.close();
+					const chunkRead = await (readAhead.shift() as Promise<ChunkRead>);
+					if (!chunkRead.ok) {
+						controller.error(chunkRead.reason);
+						await finalize();
+						return;
+					}
+
+					const storedData = chunkRead.data;
+					const iv = storedData.subarray(0, IV_LENGTH);
+					const encrypted = storedData.subarray(IV_LENGTH);
+
+					// Verify minimum size for auth tag
+					if (encrypted.length < AUTH_TAG_LENGTH) {
+						controller.error(new Error("Invalid chunk data"));
+						await finalize();
+						return;
+					}
+
+					const clientChunk = serverDecrypt(encrypted, iv, serverKey, Buffer.from(id));
+
+					// Length-prefix framing: 4 bytes big-endian length + chunk data
+					const lengthBuf = Buffer.alloc(4);
+					lengthBuf.writeUInt32BE(clientChunk.length);
+					controller.enqueue(new Uint8Array(lengthBuf));
+					controller.enqueue(new Uint8Array(clientChunk));
+
+					delivered += 1;
+					if (delivered === chunkCount) {
+						controller.close();
+						await finalize();
+					}
 				} catch (err) {
 					controller.error(err);
-				} finally {
-					if (result.shouldDelete) {
-						await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
-					}
+					await finalize();
 				}
+			},
+			async cancel() {
+				await finalize();
 			},
 		});
 
