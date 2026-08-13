@@ -1096,6 +1096,7 @@ describe("storage.delete error resilience", () => {
 				maxReads: 1,
 				fileCount: 1,
 				salt: null,
+				quotaBytes: 0,
 			}),
 		).rejects.toThrow("database or disk is full");
 
@@ -1112,6 +1113,7 @@ describe("storage.delete error resilience", () => {
 				maxReads: 1,
 				fileCount: 0,
 				salt: null,
+				quotaBytes: 0,
 			}),
 		).rejects.toThrow("database or disk is full");
 

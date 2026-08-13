@@ -1,0 +1,491 @@
+{
+	"version": "7",
+	"dialect": "sqlite",
+	"id": "4b6a3bbb-cdb6-4784-b49b-ff1fa71a4ea1",
+	"prevIds": ["d00ce0b3-e035-4964-9a38-366a625210b8"],
+	"ddl": [
+		{
+			"name": "meta",
+			"entityType": "tables"
+		},
+		{
+			"name": "notes",
+			"entityType": "tables"
+		},
+		{
+			"name": "pending_deletions",
+			"entityType": "tables"
+		},
+		{
+			"name": "upload_chunks",
+			"entityType": "tables"
+		},
+		{
+			"name": "uploads",
+			"entityType": "tables"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "key",
+			"entityType": "columns",
+			"table": "meta"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "value",
+			"entityType": "columns",
+			"table": "meta"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "id",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "blob",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "encrypted_data",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "server_nonce",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "client_nonce",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "false",
+			"generated": null,
+			"name": "has_password",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "salt",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "false",
+			"generated": null,
+			"name": "burn_after_read",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "0",
+			"generated": null,
+			"name": "file_count",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "delete_token",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "file_path",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "expires_at",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "0",
+			"generated": null,
+			"name": "read_count",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "max_reads",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "chunk_count",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "stream_header",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "0",
+			"generated": null,
+			"name": "size_bytes",
+			"entityType": "columns",
+			"table": "notes"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": true,
+			"default": null,
+			"generated": null,
+			"name": "id",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "note_id",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "file_path",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "chunk_count",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "0",
+			"generated": null,
+			"name": "attempts",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "next_retry_at",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "pending_deletions"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "upload_id",
+			"entityType": "columns",
+			"table": "upload_chunks"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "chunk_index",
+			"entityType": "columns",
+			"table": "upload_chunks"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "0",
+			"generated": null,
+			"name": "size_bytes",
+			"entityType": "columns",
+			"table": "upload_chunks"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "id",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "metadata",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "chunk_count",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "note_id",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "delete_token",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "expires_at",
+			"entityType": "columns",
+			"table": "uploads"
+		},
+		{
+			"columns": ["upload_id"],
+			"tableTo": "uploads",
+			"columnsTo": ["id"],
+			"onUpdate": "NO ACTION",
+			"onDelete": "CASCADE",
+			"nameExplicit": false,
+			"name": "fk_upload_chunks_upload_id_uploads_id_fk",
+			"entityType": "fks",
+			"table": "upload_chunks"
+		},
+		{
+			"columns": ["upload_id", "chunk_index"],
+			"nameExplicit": false,
+			"name": "upload_chunks_pk",
+			"entityType": "pks",
+			"table": "upload_chunks"
+		},
+		{
+			"columns": ["key"],
+			"nameExplicit": false,
+			"name": "meta_pk",
+			"table": "meta",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["id"],
+			"nameExplicit": false,
+			"name": "notes_pk",
+			"table": "notes",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["id"],
+			"nameExplicit": false,
+			"name": "pending_deletions_pk",
+			"table": "pending_deletions",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["id"],
+			"nameExplicit": false,
+			"name": "uploads_pk",
+			"table": "uploads",
+			"entityType": "pks"
+		},
+		{
+			"columns": [
+				{
+					"value": "expires_at",
+					"isExpression": false
+				}
+			],
+			"isUnique": false,
+			"where": null,
+			"origin": "manual",
+			"name": "idx_notes_expires_at",
+			"entityType": "indexes",
+			"table": "notes"
+		},
+		{
+			"columns": [
+				{
+					"value": "delete_token",
+					"isExpression": false
+				}
+			],
+			"isUnique": false,
+			"where": null,
+			"origin": "manual",
+			"name": "idx_notes_delete_token",
+			"entityType": "indexes",
+			"table": "notes"
+		},
+		{
+			"columns": [
+				{
+					"value": "next_retry_at",
+					"isExpression": false
+				}
+			],
+			"isUnique": false,
+			"where": null,
+			"origin": "manual",
+			"name": "idx_pending_deletions_next_retry",
+			"entityType": "indexes",
+			"table": "pending_deletions"
+		},
+		{
+			"columns": [
+				{
+					"value": "expires_at",
+					"isExpression": false
+				}
+			],
+			"isUnique": false,
+			"where": null,
+			"origin": "manual",
+			"name": "idx_uploads_expires_at",
+			"entityType": "indexes",
+			"table": "uploads"
+		}
+	],
+	"renames": []
+}

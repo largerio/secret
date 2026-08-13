@@ -192,6 +192,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
+| `STORAGE_QUOTA_BYTES` | `0` | Total storage budget for encrypted payloads. Writes beyond it get HTTP 507 until notes expire or are deleted; `0` = unlimited. Usage is reported by `/api/health` |
 | `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |

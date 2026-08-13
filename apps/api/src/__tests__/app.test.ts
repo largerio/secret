@@ -69,6 +69,7 @@ describe("createApp — unversioned routes", () => {
 		expect(await res.json()).toEqual({
 			status: "ok",
 			checks: { database: "ok", storage: "ok" },
+			storage: { usedBytes: 0, quotaBytes: null },
 		});
 	});
 
@@ -84,6 +85,7 @@ describe("createApp — unversioned routes", () => {
 		expect(await res.json()).toEqual({
 			status: "degraded",
 			checks: { database: "ok", storage: "error" },
+			storage: { usedBytes: 0, quotaBytes: null },
 		});
 		expect(consoleSpy).toHaveBeenCalledWith("[health] storage probe failed:", "bucket unreachable");
 		consoleSpy.mockRestore();

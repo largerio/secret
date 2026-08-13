@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import type { AppDatabase } from "../../db/index.js";
 import { notes } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
+import { assertStorageQuota } from "../../quota.js";
 import type { StorageBackend } from "../../storage/index.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 
@@ -21,6 +22,7 @@ export interface NotesEnv {
 		maxChunkedFileSize: number;
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
+		storageQuotaBytes: number;
 		uploadId: string;
 	};
 }
@@ -121,6 +123,7 @@ export async function insertNote(
 		maxReads: number;
 		fileCount: number;
 		salt: string | null;
+		quotaBytes: number;
 	},
 ) {
 	// Generate the id first so it can be bound to the server-layer ciphertext as
@@ -131,6 +134,11 @@ export async function insertNote(
 		serverKey,
 		Buffer.from(id),
 	);
+
+	// Checked against the stored size (post-encryption) before anything is
+	// written, so a full instance refuses cleanly with 507 instead of failing
+	// half-way with a stranded blob.
+	assertStorageQuota(db, params.quotaBytes, serverBlob.length);
 
 	const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
 	const now = new Date();
@@ -161,6 +169,7 @@ export async function insertNote(
 				expiresAt,
 				maxReads: params.maxReads,
 				createdAt: now,
+				sizeBytes: serverBlob.length,
 			})
 			.run();
 	} catch (err) {

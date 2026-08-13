@@ -10,10 +10,11 @@ import {
 	UPLOAD_SESSION_TTL,
 	uploadSessionMetadataSchema,
 } from "@largerio/secret-shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { notes, uploadChunks, uploads } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
+import { assertStorageQuota } from "../../quota.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 import {
 	assertWithinPolicy,
@@ -61,6 +62,10 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		);
 
 		const db = c.get("db");
+
+		// Refuse to open a session on a full instance — every chunk would be
+		// rejected anyway. Individual chunks are then checked as they arrive.
+		assertStorageQuota(db, c.get("storageQuotaBytes"), 0);
 		const uploadId = nanoid(UPLOAD_ID_LENGTH);
 		const noteId = nanoid(NOTE_ID_LENGTH);
 		const deleteToken = nanoid(DELETE_TOKEN_LENGTH);
@@ -147,12 +152,19 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		);
 		const storedData = Buffer.concat([iv, encrypted]);
 
+		assertStorageQuota(db, c.get("storageQuotaBytes"), storedData.length);
+
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
+		// Upsert (not do-nothing): a re-uploaded chunk replaces the stored file,
+		// so its recorded size must follow.
 		db.insert(uploadChunks)
-			.values({ uploadId: uploadId, chunkIndex: index })
-			.onConflictDoNothing()
+			.values({ uploadId: uploadId, chunkIndex: index, sizeBytes: storedData.length })
+			.onConflictDoUpdate({
+				target: [uploadChunks.uploadId, uploadChunks.chunkIndex],
+				set: { sizeBytes: storedData.length },
+			})
 			.run();
 
 		return c.json({ received: true as const });
@@ -207,6 +219,15 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 				return { error: "Upload already completed" as const };
 			}
 
+			// The session's chunk rows are about to cascade away with the uploads
+			// row; their total moves onto the note so usage accounting follows the
+			// bytes wherever they live. A scalar SELECT always yields one row.
+			const chunkTotal = tx
+				.select({ total: sql<number>`COALESCE(SUM(${uploadChunks.sizeBytes}), 0)` })
+				.from(uploadChunks)
+				.where(eq(uploadChunks.uploadId, uploadId))
+				.get() as { total: number };
+
 			tx.insert(notes)
 				.values({
 					id: session.noteId,
@@ -224,6 +245,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 					createdAt: now,
 					chunkCount: session.chunkCount,
 					streamHeader: meta.streamHeader,
+					sizeBytes: chunkTotal.total,
 				})
 				.run();
 

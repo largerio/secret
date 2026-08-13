@@ -145,8 +145,25 @@ const baseline: Migration = {
 	},
 };
 
+// Storage accounting for quotas: every stored payload records its size so the
+// current usage is a SUM over two small tables (see quota.ts) instead of a
+// running counter that could drift.
+const storageAccounting: Migration = {
+	version: 2,
+	name: "storage-accounting",
+	apply(sqlite) {
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`);
+		sqlite.exec(`ALTER TABLE upload_chunks ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0`);
+
+		// Backfill what can be known without touching the storage backend: inline
+		// notes carry their payload in the row. Pre-existing file/chunk notes stay
+		// at 0 and age out as they expire (30-day retention ceiling).
+		sqlite.exec(`UPDATE notes SET size_bytes = length(encrypted_data) WHERE file_path IS NULL`);
+	},
+};
+
 /** Ordered, append-only. Versions are contiguous and start at 1. */
-export const MIGRATIONS: readonly Migration[] = [baseline];
+export const MIGRATIONS: readonly Migration[] = [baseline, storageAccounting];
 
 export function getSchemaVersion(sqlite: DatabaseSync): number {
 	const row = sqlite.prepare("PRAGMA user_version").get() as { user_version: number };

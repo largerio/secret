@@ -64,6 +64,8 @@ export interface AppConfig {
 	readonly storage: StorageConfig;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
+	/** Total bytes of stored encrypted payloads; 0 disables the quota. */
+	readonly storageQuotaBytes: number;
 	/** Operator-enforced retention ceiling; cannot exceed MAX_EXPIRY_SECONDS. */
 	readonly maxExpirySeconds: number;
 	readonly chunkSize: number;
@@ -147,6 +149,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		env["MAX_FILES_PER_NOTE"],
 		Number(String(MAX_FILES_PER_NOTE)),
 	);
+	const storageQuotaBytes = readEnvNumber(env["STORAGE_QUOTA_BYTES"], Number("0"));
 	const maxExpirySeconds = readEnvNumber(env["MAX_EXPIRY"], Number(String(MAX_EXPIRY_SECONDS)));
 	const chunkSize = readEnvNumber(env["CHUNK_SIZE"], Number(String(DEFAULT_CHUNK_SIZE)));
 	const maxChunkedFileSize = readEnvNumber(env["MAX_CHUNKED_FILE_SIZE"], DEFAULT_MAX_CHUNKED_SIZE);
@@ -214,6 +217,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	if (maxFilesPerNote > MAX_FILES_PER_NOTE) {
 		throw new ConfigError(
 			`MAX_FILES_PER_NOTE cannot exceed the protocol limit of ${String(MAX_FILES_PER_NOTE)}`,
+		);
+	}
+
+	if (!Number.isInteger(storageQuotaBytes) || storageQuotaBytes < 0) {
+		throw new ConfigError(
+			"STORAGE_QUOTA_BYTES must be a non-negative integer (0 disables the quota)",
 		);
 	}
 
@@ -287,6 +296,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		storage,
 		maxFileSize,
 		maxFilesPerNote,
+		storageQuotaBytes,
 		maxExpirySeconds,
 		chunkSize,
 		maxChunkedFileSize,
