@@ -35,6 +35,7 @@ Monorepo with pnpm workspaces:
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
   - Error handling: Business logic errors use `HTTPException`, validation via `defaultHook`
+  - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`)
   - Entry point: `src/index.ts`
 

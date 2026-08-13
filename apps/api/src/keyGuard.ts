@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "./db/index.js";
 import { meta, notes } from "./db/schema.js";
+import { log } from "./logger.js";
 
 const FINGERPRINT_ROW = "server_key_fingerprint";
 
@@ -74,8 +75,8 @@ export function assertServerKeyMatches(
 	}
 
 	if (hasNotes) {
-		console.warn(
-			"[startup] SERVER_ENCRYPTION_KEY changed and ALLOW_SERVER_KEY_CHANGE is set — existing notes are now unreadable.",
+		log.warn(
+			"SERVER_ENCRYPTION_KEY changed and ALLOW_SERVER_KEY_CHANGE is set — existing notes are now unreadable",
 		);
 	}
 

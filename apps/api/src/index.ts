@@ -6,13 +6,11 @@ import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
+import { log } from "./logger.js";
 import { createStorageBackend } from "./storage/index.js";
 
 function fail(message: string, hint?: string): never {
-	console.error(`ERROR: ${message}`);
-	if (hint) {
-		console.error(hint);
-	}
+	log.error("startup failed", { error: message, ...(hint ? { hint } : {}) });
 	process.exit(1);
 }
 
@@ -60,11 +58,11 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 // An unhandled rejection would otherwise terminate the process with no usable
 // log line; surface it, then let the normal shutdown path run.
 process.on("unhandledRejection", (reason) => {
-	console.error("[fatal] Unhandled promise rejection:", reason);
+	log.error("unhandled promise rejection", { reason });
 	shutdown(1);
 });
 process.on("uncaughtException", (err) => {
-	console.error("[fatal] Uncaught exception:", err);
+	log.error("uncaught exception", { error: err });
 	shutdown(1);
 });
 
@@ -76,7 +74,7 @@ function shutdown(exitCode = 0): void {
 	if (shuttingDown) return;
 	shuttingDown = true;
 
-	console.log("[shutdown] Graceful shutdown initiated");
+	log.info("graceful shutdown initiated");
 	clearInterval(cleanupTimer);
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
@@ -86,7 +84,7 @@ function shutdown(exitCode = 0): void {
 	// sqlite.close() still runs before SIGKILL; the compose file raises that
 	// grace period to 30s to leave room for in-flight requests to drain.
 	const forceExit = setTimeout(() => {
-		console.error("[shutdown] Timed out waiting for connections to close");
+		log.error("shutdown timed out waiting for connections to close");
 		sqlite.close();
 		process.exit(exitCode || 1);
 	}, 8_000);
@@ -96,7 +94,9 @@ function shutdown(exitCode = 0): void {
 		try {
 			await storage.close?.();
 		} catch (err) {
-			console.error("[shutdown] storage close failed:", Error.isError(err) ? err.message : err);
+			log.error("storage close failed during shutdown", {
+				detail: Error.isError(err) ? err.message : err,
+			});
 		}
 		sqlite.close();
 		process.exit(exitCode);
@@ -108,9 +108,11 @@ process.on("SIGINT", () => shutdown());
 
 const rateLimitWarning = describeRateLimitScope(config);
 if (rateLimitWarning) {
-	console.warn(rateLimitWarning);
+	log.warn(rateLimitWarning);
 }
 
-console.log(
-	`Secret API listening on ${config.host}:${String(config.port)} [storage=${config.storageBackend}]`,
-);
+log.info("secret api listening", {
+	host: config.host,
+	port: config.port,
+	storage: config.storageBackend,
+});

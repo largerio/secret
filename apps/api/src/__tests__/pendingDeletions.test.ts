@@ -109,7 +109,9 @@ describe("deleteOrSchedule", () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.noteId).toBe("fail0001");
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Storage delete failed for note fail0001, scheduling retry: boom",
+			expect.stringContaining(
+				'"msg":"storage delete failed, scheduling retry","noteId":"fail0001","detail":"boom"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});
@@ -274,7 +276,9 @@ describe("drainPendingDeletions", () => {
 		expect(result).toEqual({ drained: 0, failed: 1 });
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			"[deletions] Giving up on note giveup001 after 6 attempts: permafail",
+			expect.stringContaining(
+				'"msg":"giving up on pending deletion","noteId":"giveup001","attempts":6,"detail":"permafail"',
+			),
 		);
 		consoleSpy.mockRestore();
 	});

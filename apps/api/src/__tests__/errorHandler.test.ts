@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createErrorHandler, sanitizeError } from "../middleware/errorHandler.js";
+import { createRequestId } from "../middleware/requestContext.js";
 
 describe("sanitizeError", () => {
 	it("returns only the error name for Error instances", () => {
@@ -35,6 +36,11 @@ describe("createErrorHandler", () => {
 		consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 	});
 
+	function lastLogEntry(): Record<string, unknown> {
+		const [line] = consoleSpy.mock.calls.at(-1) ?? [];
+		return JSON.parse(line as string) as Record<string, unknown>;
+	}
+
 	it("returns HTTPException body and does not log", async () => {
 		const app = new Hono();
 		app.onError(createErrorHandler({ debug: false }));
@@ -59,10 +65,12 @@ describe("createErrorHandler", () => {
 		const res = await app.request("/x");
 		expect(res.status).toBe(500);
 		expect(await res.json()).toEqual({ error: "Failed to decrypt note" });
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining("Failed to decrypt note"),
-			cause,
-		);
+
+		const entry = lastLogEntry();
+		expect(entry["msg"]).toBe("http exception");
+		expect(entry["status"]).toBe(500);
+		expect(entry["message"]).toBe("Failed to decrypt note");
+		expect(entry["cause"]).toMatchObject({ name: "Error", message: "real decryption failure" });
 	});
 
 	it("does not log an HTTPException without a cause under debug", async () => {
@@ -93,8 +101,13 @@ describe("createErrorHandler", () => {
 		expect(body.errorId).toMatch(/^[0-9a-f-]{36}$/);
 
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
-		const [, payload] = consoleSpy.mock.calls[0] ?? [];
-		expect(payload).toEqual({ name: "Error" });
+		const entry = lastLogEntry();
+		expect(entry["msg"]).toBe("unhandled error");
+		expect(entry["errorId"]).toBe(body.errorId);
+		expect(entry["route"]).toBe("/x");
+		expect(entry["name"]).toBe("Error");
+		expect(JSON.stringify(entry)).not.toContain("leak:");
+		expect(JSON.stringify(entry)).not.toContain("sensitive-cause");
 	});
 
 	it("logs the full error object when debug is enabled", async () => {
@@ -108,6 +121,23 @@ describe("createErrorHandler", () => {
 		const res = await app.request("/x");
 		expect(res.status).toBe(500);
 
-		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("[error]"), raw);
+		const entry = lastLogEntry();
+		expect(entry["error"]).toMatchObject({ name: "Error", message: "debug-me" });
+		expect((entry["error"] as { stack?: string }).stack).toBeDefined();
+	});
+
+	it("correlates the log line with the request id", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: false }));
+		app.use("*", createRequestId());
+		app.get("/x", () => {
+			throw new Error("boom");
+		});
+
+		const res = await app.request("/x");
+		expect(res.status).toBe(500);
+
+		const entry = lastLogEntry();
+		expect(entry["requestId"]).toBe(res.headers.get("X-Request-Id"));
 	});
 });

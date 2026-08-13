@@ -2,6 +2,7 @@ import { lt } from "drizzle-orm";
 import { runWithConcurrency } from "./concurrency.js";
 import type { AppDatabase } from "./db/index.js";
 import { notes, uploads } from "./db/schema.js";
+import { log } from "./logger.js";
 import { deleteOrSchedule, drainPendingDeletions } from "./pendingDeletions.js";
 import type { StorageBackend } from "./storage/index.js";
 
@@ -15,10 +16,10 @@ async function safeDelete(task: () => Promise<void>, noteId: string): Promise<vo
 	try {
 		await task();
 	} catch (err: unknown) {
-		console.error(
-			`[cleanup] Failed to process note ${noteId}:`,
-			Error.isError(err) ? err.message : err,
-		);
+		log.error("cleanup of note failed", {
+			noteId,
+			detail: Error.isError(err) ? err.message : err,
+		});
 	}
 }
 
@@ -60,7 +61,7 @@ export function startCleanupJob(
 						note.id,
 					),
 				);
-				console.log(`[cleanup] ${String(expired.length)} expired notes deleted`);
+				log.info("expired notes deleted", { count: expired.length });
 			}
 
 			const expiredUploads = db.transaction((tx) => {
@@ -91,17 +92,18 @@ export function startCleanupJob(
 						session.noteId,
 					),
 				);
-				console.log(`[cleanup] ${String(expiredUploads.length)} expired upload sessions deleted`);
+				log.info("expired upload sessions deleted", { count: expiredUploads.length });
 			}
 
 			const drainResult = await drainPendingDeletions(db, storage, CLEANUP_CONCURRENCY);
 			if (drainResult.drained > 0 || drainResult.failed > 0) {
-				console.log(
-					`[cleanup] pending deletions drained=${String(drainResult.drained)} failed=${String(drainResult.failed)}`,
-				);
+				log.info("pending deletions drained", {
+					drained: drainResult.drained,
+					failed: drainResult.failed,
+				});
 			}
 		} catch (err: unknown) {
-			console.error("[cleanup] Cleanup job failed:", Error.isError(err) ? err.message : err);
+			log.error("cleanup job failed", { detail: Error.isError(err) ? err.message : err });
 		}
 	}, intervalMs);
 }

@@ -90,7 +90,9 @@ describe("createHealthCheck", () => {
 			checks: { database: "ok", storage: "error" },
 			storage: { usedBytes: 0, quotaBytes: null },
 		});
-		expect(errorSpy).toHaveBeenCalledWith("[health] storage probe failed:", "no bucket");
+		expect(errorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"storage probe failed","detail":"no bucket"'),
+		);
 		errorSpy.mockRestore();
 	});
 
@@ -100,7 +102,9 @@ describe("createHealthCheck", () => {
 
 		await createHealthCheck(db, storage)();
 
-		expect(errorSpy).toHaveBeenCalledWith("[health] storage probe failed:", "plain string");
+		expect(errorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"storage probe failed","detail":"plain string"'),
+		);
 		errorSpy.mockRestore();
 	});
 
@@ -113,7 +117,7 @@ describe("createHealthCheck", () => {
 
 		expect(report.status).toBe("degraded");
 		expect(report.checks.database).toBe("error");
-		expect(errorSpy).toHaveBeenCalledWith("[health] database probe failed:", expect.any(String));
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('"msg":"database probe failed"'));
 		errorSpy.mockRestore();
 	});
 
@@ -127,7 +131,9 @@ describe("createHealthCheck", () => {
 
 		await createHealthCheck(failingDb, makeStorage())();
 
-		expect(errorSpy).toHaveBeenCalledWith("[health] database probe failed:", "db exploded");
+		expect(errorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"database probe failed","detail":"db exploded"'),
+		);
 		errorSpy.mockRestore();
 	});
 
