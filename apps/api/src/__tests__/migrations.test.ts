@@ -12,6 +12,7 @@ import {
 } from "../db/migrations.js";
 
 const TEST_DB_PATH = "./data/test-migrations.db";
+const LATEST = (MIGRATIONS[MIGRATIONS.length - 1] as Migration).version;
 
 function removeTestDb(): void {
 	rmSync(TEST_DB_PATH, { force: true });
@@ -61,10 +62,16 @@ function provisionLegacyDatabase(): void {
 	`);
 	sqlite
 		.prepare(
-			`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, expires_at, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, file_path, expires_at, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
-		.run("legacy-note-1", Buffer.from("blob"), "iv", "nonce", "token", 9999999999999, 1);
+		.run("legacy-note-1", Buffer.from("blob"), "iv", "nonce", "token", null, 9999999999999, 1);
+	sqlite
+		.prepare(
+			`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, file_path, expires_at, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		)
+		.run("legacy-note-2", Buffer.alloc(0), "iv", "nonce", "token", "files/x", 9999999999999, 1);
 	sqlite.close();
 }
 
@@ -84,13 +91,14 @@ describe("applyMigrations", () => {
 	it("brings a fresh database to the latest version with the full schema", () => {
 		const { sqlite } = createDatabase(TEST_DB_PATH);
 
-		expect(getSchemaVersion(sqlite)).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version);
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
 		expect(tableNames(sqlite)).toEqual(
 			expect.arrayContaining(["notes", "meta", "uploads", "upload_chunks", "pending_deletions"]),
 		);
 		expect(columnNames(sqlite, "notes")).toEqual(
-			expect.arrayContaining(["chunk_count", "stream_header"]),
+			expect.arrayContaining(["chunk_count", "stream_header", "size_bytes"]),
 		);
+		expect(columnNames(sqlite, "upload_chunks")).toContain("size_bytes");
 		expect(indexNames(sqlite)).toEqual([
 			"idx_notes_delete_token",
 			"idx_notes_expires_at",
@@ -105,7 +113,7 @@ describe("applyMigrations", () => {
 
 		const { sqlite } = createDatabase(TEST_DB_PATH);
 
-		expect(getSchemaVersion(sqlite)).toBe(1);
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
 		expect(columnNames(sqlite, "notes")).toEqual(
 			expect.arrayContaining(["chunk_count", "stream_header"]),
 		);
@@ -116,11 +124,27 @@ describe("applyMigrations", () => {
 		sqlite.close();
 	});
 
+	it("backfills size_bytes for inline notes only (file sizes are unknowable offline)", () => {
+		provisionLegacyDatabase();
+
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+
+		const sizes = sqlite.prepare(`SELECT id, size_bytes FROM notes ORDER BY id`).all() as Array<{
+			id: string;
+			size_bytes: number;
+		}>;
+		expect(sizes).toEqual([
+			{ id: "legacy-note-1", size_bytes: 4 },
+			{ id: "legacy-note-2", size_bytes: 0 },
+		]);
+		sqlite.close();
+	});
+
 	it("is a no-op on an already-migrated database", () => {
 		createDatabase(TEST_DB_PATH).sqlite.close();
 
 		const { sqlite } = createDatabase(TEST_DB_PATH);
-		expect(getSchemaVersion(sqlite)).toBe(1);
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
 		sqlite.close();
 	});
 
@@ -135,7 +159,7 @@ describe("applyMigrations", () => {
 		} catch (err) {
 			const versionError = err as DatabaseVersionError;
 			expect(versionError.message).toContain("999");
-			expect(versionError.message).toContain("newer than this build supports (1)");
+			expect(versionError.message).toContain(`newer than this build supports (${String(LATEST)})`);
 			expect(versionError.hint).toContain("newer version of Secret");
 		}
 	});
@@ -144,7 +168,7 @@ describe("applyMigrations", () => {
 		const { sqlite } = createDatabase(TEST_DB_PATH);
 
 		const broken: Migration = {
-			version: 2,
+			version: LATEST + 1,
 			name: "broken",
 			apply(database) {
 				database.exec("CREATE TABLE partial (id INTEGER)");
@@ -158,12 +182,12 @@ describe("applyMigrations", () => {
 		} catch (err) {
 			const migrationError = err as MigrationError;
 			expect(migrationError.message).toBe(
-				"Database migration 2 (broken) failed and was rolled back.",
+				`Database migration ${String(LATEST + 1)} (broken) failed and was rolled back.`,
 			);
 			expect(migrationError.hint).toBe("disk exploded");
 		}
 
-		expect(getSchemaVersion(sqlite)).toBe(1);
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
 		expect(tableNames(sqlite)).not.toContain("partial");
 		sqlite.close();
 	});
@@ -172,7 +196,7 @@ describe("applyMigrations", () => {
 		const { sqlite } = createDatabase(TEST_DB_PATH);
 
 		const broken: Migration = {
-			version: 2,
+			version: LATEST + 1,
 			name: "broken-string",
 			apply() {
 				throw "string failure";
@@ -192,7 +216,7 @@ describe("applyMigrations", () => {
 		const { sqlite } = createDatabase(TEST_DB_PATH);
 
 		const addTable: Migration = {
-			version: 2,
+			version: LATEST + 1,
 			name: "add-table",
 			apply(database) {
 				database.exec("CREATE TABLE extra (id INTEGER PRIMARY KEY)");
@@ -201,7 +225,7 @@ describe("applyMigrations", () => {
 
 		applyMigrations(sqlite, [...MIGRATIONS, addTable]);
 
-		expect(getSchemaVersion(sqlite)).toBe(2);
+		expect(getSchemaVersion(sqlite)).toBe(LATEST + 1);
 		expect(tableNames(sqlite)).toContain("extra");
 		sqlite.close();
 	});
