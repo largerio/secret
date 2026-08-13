@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { startCleanupJob } from "./cleanup.js";
 import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
+import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { createStorageBackend } from "./storage/index.js";
 
@@ -26,7 +27,17 @@ try {
 }
 
 const serverKey = parseServerKey(config.serverKey);
-const { db, sqlite } = createDatabase(config.databasePath);
+
+let database: ReturnType<typeof createDatabase>;
+try {
+	database = createDatabase(config.databasePath);
+} catch (err) {
+	if (err instanceof DatabaseVersionError || err instanceof MigrationError) {
+		fail(err.message, err.hint);
+	}
+	throw err;
+}
+const { db, sqlite } = database;
 
 try {
 	assertServerKeyMatches(db, serverKey, { allowChange: config.allowServerKeyChange });

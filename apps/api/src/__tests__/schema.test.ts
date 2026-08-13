@@ -17,4 +17,29 @@ describe("db schema", () => {
 		expect(getTableConfig(meta).name).toBe("meta");
 		expect(getTableConfig(pendingDeletions).name).toBe("pending_deletions");
 	});
+
+	it("declares the indexes the migrations create", () => {
+		// drizzle-kit diffs future migrations against this schema, so the declared
+		// indexes must match what the baseline migration actually creates.
+		const indexNames = (table: Parameters<typeof getTableConfig>[0]) =>
+			getTableConfig(table)
+				.indexes.map((index) => index.config.name)
+				.sort();
+
+		expect(indexNames(notes)).toEqual(["idx_notes_delete_token", "idx_notes_expires_at"]);
+		expect(indexNames(uploads)).toEqual(["idx_uploads_expires_at"]);
+		expect(indexNames(pendingDeletions)).toEqual(["idx_pending_deletions_next_retry"]);
+	});
+
+	it("cascades upload_chunks rows when their upload session is deleted", () => {
+		const { foreignKeys } = getTableConfig(uploadChunks);
+		expect(foreignKeys).toHaveLength(1);
+
+		const foreignKey = foreignKeys[0];
+		expect(foreignKey?.onDelete).toBe("cascade");
+
+		const reference = foreignKey?.reference();
+		expect(reference?.columns.map((column) => column.name)).toEqual(["upload_id"]);
+		expect(reference?.foreignColumns.map((column) => column.name)).toEqual(["id"]);
+	});
 });
