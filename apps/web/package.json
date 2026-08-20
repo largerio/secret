@@ -21,7 +21,7 @@
 	},
 	"dependencies": {
 		"@cap.js/wasm": "^0.0.7",
-		"@cap.js/widget": "^0.1.56",
+		"@cap.js/widget": "^0.1.57",
 		"@largerio/secret-sdk": "workspace:*",
 		"@largerio/secret-shared": "workspace:*",
 		"isomorphic-dompurify": "^3.22.0",
@@ -37,8 +37,8 @@
 		"@types/node": "^26.2.0",
 		"@types/qrcode": "^1.5.6",
 		"jsdom": "^30.0.1",
-		"svelte": "^5.56.8",
-		"svelte-check": "^4.7.5",
+		"svelte": "^5.56.9",
+		"svelte-check": "^4.7.6",
 		"tailwindcss": "^4.3.3",
 		"typescript": "^6.0.3",
 		"vite": "^8.2.1"
