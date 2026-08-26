@@ -78,11 +78,14 @@ jobs:
       # Publishing authenticates via OIDC against the npm trusted publisher
       # configured for @largerio/secret-sdk — no NPM_TOKEN secret involved.
       - name: Create Version Packages PR or publish
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          version: pnpm version-packages
-          publish: pnpm release
-          commit: "chore: version packages"
-          title: "chore: version packages"
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          version-script: pnpm version-packages
+          publish-script: pnpm release
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+          # v2 dropped the GITHUB_TOKEN env var: a custom token is only read
+          # from this input now. Passing it via env silently fell back to the
+          # job's default token, which would have cost the App identity (and
+          # with it, CI on the Version Packages PR — see the comment above).
+          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
