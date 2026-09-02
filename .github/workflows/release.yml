@@ -76,7 +76,9 @@ jobs:
       #     ahead of what's on npm        → runs `publish`
       # So this only ships when there is genuinely a new version to release.
       # Publishing authenticates via OIDC against the npm trusted publisher
-      # configured for @largerio/secret-sdk — no NPM_TOKEN secret involved.
+      # configured for @largerio/secret-sdk and @largerio/secret-cli — no NPM_TOKEN
+      # secret involved. A brand-new package cannot be created through OIDC: its
+      # first version is published by hand, then a trusted publisher is added.
       - name: Create Version Packages PR or publish
         uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:

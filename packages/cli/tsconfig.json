@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"lib": ["ES2025", "DOM"],
+		"types": ["node"],
+		"noEmit": true,
+		"ignoreDeprecations": "6.0"
+	},
+	"include": ["src", "package.json"]
+}

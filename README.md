@@ -7,12 +7,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 [![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
+[![npm](https://img.shields.io/npm/v/@largerio/secret-cli?color=blue&label=%40largerio%2Fsecret-cli)](https://www.npmjs.com/package/@largerio/secret-cli)
 
 Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no tracking, no logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
-**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
+**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK & CLI](#sdk--cli) &nbsp;·&nbsp; [Security](SECURITY.md)
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Compose a secret, encrypt it in the browser, and get a one-time share link whose key never reaches the server" width="100%" />
@@ -33,7 +34,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - [Features](#features)
 - [Comparison](#comparison)
 - [Quick Start](#quick-start)
-- [SDK](#sdk)
+- [SDK & CLI](#sdk--cli)
 - [How It Works](#how-it-works)
 - [Configuration](#configuration)
   - [S3 Storage (optional)](#s3-storage-optional)
@@ -73,7 +74,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
 | Read limits (N reads)  | Yes                 | No                  | No                  | No                  |
 | Password protection    | Yes (Argon2id)      | Yes (PBKDF2)        | Yes (passphrase)    | Yes                 |
-| Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
+| Official SDK + CLI     | Yes (JS/TS + CLI)   | No                  | REST API only       | CLI only            |
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
 
@@ -136,7 +137,7 @@ docker compose up -d
 For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, see the
 [Self-Hosting guide](docs/self-hosting.md).
 
-## SDK
+## SDK & CLI
 
 Read from any Secret instance programmatically, and write to the ones where you hold an API key
 (writes require an API key or a Proof-of-Work token — see the
@@ -162,6 +163,21 @@ const shareUrl = client.buildShareUrl(id, keyFragment);
 const parsed = SecretClient.parseShareUrl(shareUrl);
 const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
 console.log(payload.text); // "Hello, World!"
+```
+
+The same flows from a terminal, with the `secret` binary ([CLI README](packages/cli/README.md)).
+It wraps the SDK — no crypto or HTTP of its own — and needs an API key for writes, like any
+non-browser client:
+
+```bash
+npm install -g @largerio/secret-cli
+export SECRET_SERVER_URL=https://secret.example.com SECRET_API_KEY=your-api-key
+
+echo "Hello, World!" | secret send                  # prints the share URL (with #key)
+secret send report.pdf --password hunter2 --expires 2h
+secret get "https://secret.example.com/note/aBcDeFgHiJkL#K7pQ…"   # text on stdout, files saved
+secret check "$URL"                                 # metadata, without consuming a read
+secret delete "$URL" "$DELETE_TOKEN"
 ```
 
 ## How It Works
@@ -303,6 +319,7 @@ apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
 apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4)
 apps/e2e/         Playwright end-to-end tests (incl. axe-core a11y gate)
 packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
+packages/cli/     `secret` command-line client (wraps the SDK)
 packages/crypto/  libsodium + AES-256-GCM encryption
 packages/shared/  Zod schemas, types, constants, crypto test vectors
 messages/         i18n (10 languages)
@@ -312,12 +329,13 @@ messages/         i18n (10 languages)
 > and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
 > older version.
 
-### Publishing the SDK
+### Publishing the SDK and the CLI
 
-Only **`@largerio/secret-sdk`** is published to npm. Its build (tsup) bundles the
-internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages, which
-stay private — so consumers install a single self-contained package. Releases go
-through [changesets](https://github.com/changesets/changesets):
+Two packages are published to npm: **`@largerio/secret-sdk`** and **`@largerio/secret-cli`**.
+The SDK build (tsup) bundles the internal `@largerio/secret-crypto` and
+`@largerio/secret-shared` packages, which stay private — so consumers install a single
+self-contained package. The CLI build (also tsup) bundles only its own code and keeps the SDK as
+a regular dependency. Releases go through [changesets](https://github.com/changesets/changesets):
 
 ```bash
 pnpm changeset          # describe the change + pick the version bump
@@ -326,7 +344,7 @@ pnpm release            # build (bundles internals), then publish to npm
 ```
 
 In development everything resolves to TypeScript sources (`exports` → `./src`);
-the bundled `dist/` is produced only when the SDK is packed/published.
+the bundled `dist/` is produced only when a package is packed/published.
 
 CI publishes via **npm trusted publishing (OIDC)** — see
 [`.github/workflows/release.yml`](.github/workflows/release.yml). Merging a

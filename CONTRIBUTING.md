@@ -93,6 +93,7 @@ apps/api/           Backend (Hono, Node.js 26, SQLite)
 apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
 apps/e2e/           Playwright end-to-end tests (incl. the axe-core a11y gate)
 packages/sdk-js/    JS/TS SDK (SecretClient, encrypt/decrypt flows)
+packages/cli/       `secret` command-line client (wraps the SDK)
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)
 packages/shared/    Shared types, Zod schemas, constants
 messages/           i18n translations (10 languages)
@@ -105,6 +106,7 @@ messages/           i18n translations (10 languages)
 - **New type** — `packages/shared/src/types.ts` (export from `index.ts`)
 - **New constant** — `packages/shared/src/constants.ts` (export from `index.ts`)
 - **New SDK feature** — `packages/sdk-js/src/`
+- **New CLI command or option** — `packages/cli/src/` (argument parsing + I/O only; crypto and HTTP stay in the SDK)
 - **New crypto function** — `packages/crypto/src/`
 - **New UI component** — `apps/web/src/lib/components/`
 - **New translation key** — `messages/en.json` and `messages/fr.json`
@@ -175,15 +177,15 @@ Dropping a JSON file in `messages/` is not enough; register it in three places:
 ## Releases
 
 Releases are driven by [changesets](https://github.com/changesets/changesets). Add one in the
-same PR as any user-visible change to the SDK:
+same PR as any user-visible change to the SDK or the CLI:
 
 ```bash
 pnpm changeset
 ```
 
 On merge to `main`, the Release workflow collects pending changesets into a
-"chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` to
-npm via OIDC trusted publishing — no token is stored.
+"chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` and
+`@largerio/secret-cli` to npm via OIDC trusted publishing — no token is stored.
 
 The workflow opens that PR as a GitHub App rather than with the default
 `GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions

@@ -49,6 +49,12 @@ jobs:
       - name: Verify the publishable SDK artifact
         run: pnpm --filter @largerio/secret-sdk verify-package
 
+      # Same idea for the CLI: its tests stub the SDK, so a bin without its
+      # shebang or a bundle that inlined (or cannot import) the SDK would
+      # only surface after publishing.
+      - name: Verify the publishable CLI artifact
+        run: pnpm --filter @largerio/secret-cli verify-package
+
   # A workflow file that fails to parse does not fail loudly: GitHub silently
   # runs nothing. A bad `if:` expression took the Release workflow out of
   # service and the only visible symptom was a run with zero jobs.
