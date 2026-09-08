@@ -42,9 +42,12 @@ function normalizeServerUrl(raw: string, source: string): string {
 }
 
 /**
- * Flags win over the environment, which wins over the instance a note URL
- * points at. Only writes need a key: a missing one is not an error here — the
- * command that needs it asks with {@link requireApiKey}.
+ * A flag wins over everything. Below it, the instance a note URL points at
+ * wins over the environment: the URL says where that note lives, and a
+ * SECRET_SERVER_URL set for one's own instance must not redirect a link
+ * pasted from another. The environment is what `send` uses, having no URL.
+ * Only writes need a key: a missing one is not an error here — the command
+ * that needs it asks with {@link requireApiKey}.
  */
 export function resolveConnection(
 	options: ConnectionOptions,
@@ -56,10 +59,10 @@ export function resolveConnection(
 	let serverUrl: string | undefined;
 	if (flagServer !== undefined) {
 		serverUrl = normalizeServerUrl(flagServer, "--server");
-	} else if (envServer !== undefined && envServer !== "") {
-		serverUrl = normalizeServerUrl(envServer, ENV_SERVER_URL);
 	} else if (noteServerUrl !== undefined) {
 		serverUrl = noteServerUrl;
+	} else if (envServer !== undefined && envServer !== "") {
+		serverUrl = normalizeServerUrl(envServer, ENV_SERVER_URL);
 	}
 
 	const apiKey = options.apiKey ?? env[ENV_API_KEY];

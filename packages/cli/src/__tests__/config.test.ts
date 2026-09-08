@@ -8,12 +8,16 @@ describe("resolveConnection", () => {
 		expect(resolveConnection({}, {})).toEqual({});
 	});
 
-	it("prefers the flag over the environment over the note URL", () => {
+	it("prefers the flag over the note URL over the environment", () => {
 		const env = { SECRET_SERVER_URL: "https://env.example", SECRET_API_KEY: "env-key" };
 		expect(
 			resolveConnection({ server: "https://flag.example" }, env, "https://note.example"),
 		).toEqual({ serverUrl: "https://flag.example", apiKey: "env-key" });
 		expect(resolveConnection({}, env, "https://note.example")).toEqual({
+			serverUrl: "https://note.example",
+			apiKey: "env-key",
+		});
+		expect(resolveConnection({}, env)).toEqual({
 			serverUrl: "https://env.example",
 			apiKey: "env-key",
 		});

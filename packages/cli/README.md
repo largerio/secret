@@ -106,7 +106,7 @@ Needs an API key. The URL may be given with or without its `#key` fragment; a ba
 | `-s, --server <url>` | `SECRET_SERVER_URL` | The Secret instance to talk to |
 | `-k, --api-key <key>` | `SECRET_API_KEY` | API key; required by `send` and `delete` |
 
-A flag wins over the environment. For `get`, `check` and `delete`, the instance is taken from the note URL when neither is set, so a pasted share link is enough.
+A flag wins over everything. For `get`, `check` and `delete`, the instance is then taken from the note URL — a pasted share link is enough, and a `SECRET_SERVER_URL` set for your own instance does not redirect a link from another one. The environment is what `send` uses, having no URL to go by.
 
 `send` writes and therefore needs both. The instance operator sets the key (`API_KEY=…` in the instance's environment, 32 characters minimum); running your own takes three lines:
 
@@ -126,6 +126,17 @@ echo "hello" | secret send
 
 See the [self-hosting guide](https://github.com/largerio/secret/blob/main/docs/self-hosting.md) for a real deployment.
 
+## Developing in the monorepo
+
+The published binary resolves `@largerio/secret-sdk` from npm; inside the workspace the SDK resolves to its TypeScript sources, so `dist/cli.js` cannot run there. Use the source entry instead:
+
+```bash
+pnpm --filter @largerio/secret-cli dev --help
+echo "hi" | pnpm --filter @largerio/secret-cli dev send --server http://localhost:3000 --api-key …
+```
+
+`pnpm --filter @largerio/secret-cli verify-package` packs the CLI and the SDK into a clean project and runs the real binary.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -139,7 +150,8 @@ Errors are printed on stderr, prefixed with `secret:`.
 ## Security notes
 
 - The key is in the URL. Anyone who sees the link (shell history, a terminal scrollback, a chat log) can read the note until it burns or expires.
-- A password given on the command line ends up in your shell history. Prefer `read -s pw; secret send -p "$pw" …` or an environment variable.
+- A password or API key given on the command line ends up in your shell history and is visible to other processes in `ps`. Prefer `SECRET_API_KEY` for the key, and `read -s pw; secret send -p "$pw" …` for a password.
+- `get` forwards `--password` only when the note actually has one: on a note without, the SDK would fail after the download, spending the read for nothing.
 - File names inside a note are chosen by whoever created it. `get` keeps only the final path segment, so `../../.ssh/authorized_keys` is saved as `authorized_keys` in the output directory.
 
 ## License

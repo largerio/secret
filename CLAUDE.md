@@ -46,7 +46,7 @@ Monorepo with pnpm workspaces:
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
   - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
 
-- **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; the **only published npm package**
+- **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; one of the **two published npm packages** (with the CLI below)
   - `SecretClient` class: create, read, check, delete notes
   - Handles full encrypt→send and receive→decrypt flows
   - Progress callbacks for uploads (XHR in browser) and downloads (streaming fetch)
@@ -56,6 +56,17 @@ Monorepo with pnpm workspaces:
     self-contained package; `libsodium-wrappers-sumo` + `@msgpack/msgpack` stay external.
     `crypto` and `shared` are `private` (never published), but still compiled to `dist`
     via `tsc` because the API runtime imports them.
+
+- **`packages/cli`** (`@largerio/secret-cli`) — the `secret` command-line client; the other published package
+  - Wraps the SDK only: argument parsing (`node:util` `parseArgs`, no extra dependency) plus terminal and
+    filesystem I/O. **No crypto and no HTTP of its own** — everything goes through `SecretClient`.
+  - Commands: `send`, `get`, `check`, `delete`. Writes need an API key (`--api-key` / `SECRET_API_KEY`);
+    the PoW path is browser-only. For reads the instance is derived from the note URL.
+  - `get` calls `checkNote` before `readNote` so a missing password (or a `--password` on a note without one)
+    never spends the read; existing files get a numbered name unless `--force`.
+  - Built with tsup like the SDK (shebang banner, SDK kept external). In the workspace the SDK resolves to
+    `src/`, so `dist/cli.js` cannot run there: use `pnpm --filter @largerio/secret-cli dev <args>` (tsx).
+    `verify-package` packs CLI + SDK into a clean project and runs the real binary (also run in CI).
 
 - **`packages/crypto`** — Encryption library
   - Client: XChaCha20-Poly1305 via libsodium-wrappers-sumo

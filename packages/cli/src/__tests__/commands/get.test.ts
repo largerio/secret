@@ -73,6 +73,18 @@ describe("get", () => {
 		});
 	});
 
+	it("ignores --password on a note without one, so the read is not wasted", async () => {
+		const { client } = stubClient();
+		client.checkNote.mockResolvedValue(INFO);
+		client.readNote.mockResolvedValue({ payload: { text: "open" } });
+		const io = createFakeIo();
+
+		await get({ url: URL, password: "pw", force: false }, io);
+
+		expect(client.readNote).toHaveBeenCalledWith("noteId", "k3y", { chunked: false });
+		expect(io.err).toEqual(["Note: this note has no password; --password ignored\n"]);
+	});
+
 	it("adds a newline for a terminal only when the text lacks one", async () => {
 		const { client } = stubClient();
 		client.checkNote.mockResolvedValue(INFO);

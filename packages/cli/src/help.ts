@@ -41,7 +41,7 @@ Options:
   -h, --help             Show this help
 
 ${CONNECTION_HELP}
-  The instance is taken from the URL when --server and ${ENV_SERVER_URL} are unset.
+  The instance is taken from the note URL unless --server is given.
 
 Example:
   secret get "https://secret.example.com/note/aBcDeFgHiJkL#K7pQ…" --out ./downloads`,
@@ -55,7 +55,7 @@ Options:
   -h, --help             Show this help
 
 ${CONNECTION_HELP}
-  The instance is taken from the URL when --server and ${ENV_SERVER_URL} are unset.`,
+  The instance is taken from the note URL unless --server is given.`,
 	delete: `Usage: secret delete <url> <deleteToken> [options]
 
 Delete a note before it expires, using the delete token printed by send.
@@ -64,7 +64,7 @@ Options:
   -h, --help             Show this help
 
 ${CONNECTION_HELP}
-  The instance is taken from the URL when --server and ${ENV_SERVER_URL} are unset.`,
+  The instance is taken from the note URL unless --server is given.`,
 };
 
 const GENERAL_HELP = `Usage: secret <command> [options]

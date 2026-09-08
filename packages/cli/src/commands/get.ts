@@ -42,9 +42,15 @@ export async function get(args: GetArgs, io: Io): Promise<number> {
 		);
 	}
 
+	// Only forward the password when the note has one: on a note without, the
+	// SDK finds no salt and fails after the download — the read is spent and a
+	// burn-after-read note lost. Ignoring the flag costs nothing.
+	if (args.password !== undefined && !info.hasPassword) {
+		io.writeErr("Note: this note has no password; --password ignored\n");
+	}
 	const { payload } = await client.readNote(note.id, note.keyFragment, {
 		chunked: info.chunked,
-		...(args.password !== undefined ? { password: args.password } : {}),
+		...(info.hasPassword ? { password: args.password } : {}),
 	});
 
 	if (payload.text !== undefined) {
