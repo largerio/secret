@@ -24,7 +24,7 @@
 		"@cap.js/widget": "^0.1.57",
 		"@largerio/secret-sdk": "workspace:*",
 		"@largerio/secret-shared": "workspace:*",
-		"isomorphic-dompurify": "^3.22.0",
+		"isomorphic-dompurify": "^4.3.0",
 		"marked": "^18.0.13",
 		"qrcode": "^1.5.4"
 	},
