@@ -187,7 +187,8 @@ server {
 
 Two reminders:
 
-- The body limit must clear `BODY_SIZE_LIMIT` (~101 MB) — not
+- The body limit must clear the largest single upload request,
+  `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default) — not
   `MAX_CHUNKED_FILE_SIZE`, since large uploads are split into 4 MB chunks and no
   single request comes close to it.
 - Update `APP_URL` in `.env` to your `https://` domain.
@@ -455,4 +456,5 @@ logs, prefixed `[health]`.
 ### Uploads fail behind a reverse proxy
 
 Increase the proxy's request body limit (`client_max_body_size` in Nginx) to at
-least `BODY_SIZE_LIMIT` — see [Reverse proxy & HTTPS](#reverse-proxy--https).
+least `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default) — see
+[Reverse proxy & HTTPS](#reverse-proxy--https).
