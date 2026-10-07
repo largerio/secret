@@ -33,7 +33,7 @@ export default defineConfig({
 				"**/index.ts",
 				"packages/crypto/src/client.ts",
 				// Frontend: gate the logic modules + utils, but exclude route
-				// loaders and server-only modules (`$env`/SSR SDK) that need a
+				// loaders and server-only modules (`$app/env`/SSR SDK) that need a
 				// SvelteKit harness to exercise. (`.svelte` components are already
 				// outside the `*.ts` include above.)
 				"apps/web/src/routes/**",

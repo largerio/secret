@@ -1,8 +1,8 @@
-import { env } from "$env/dynamic/private";
+import { API_URL } from "$app/env/private";
 
 const DEFAULT_API_TARGET = "http://localhost:3001";
 
-const rawApiUrl = env["API_URL"];
+const rawApiUrl = API_URL;
 
 // Fail fast on an explicitly-set but malformed API_URL so misconfiguration
 // surfaces at startup rather than as opaque proxy failures at request time.

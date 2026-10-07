@@ -9,6 +9,7 @@ import {
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressConfig } from "../clientAddress.js";
+import { ORIGIN_HOST_HEADER, ORIGIN_PROTOCOL_HEADER } from "../origin.js";
 import { createRequestListener, parseApiTarget, type SvelteKitHandler } from "../server.js";
 
 interface Received {
@@ -97,8 +98,9 @@ const servers: Server[] = [];
 async function startWeb(
 	address: AddressConfig = { addressHeader: "", xffDepth: 1 },
 	target = apiTarget,
+	origin: URL | undefined = undefined,
 ): Promise<string> {
-	const web = createServer(createRequestListener({ handler, apiTarget: target, address }));
+	const web = createServer(createRequestListener({ handler, apiTarget: target, address, origin }));
 	servers.push(web);
 
 	return listen(web);
@@ -278,6 +280,28 @@ describe("page requests", () => {
 
 		expect(res.body.toString()).toBe("page");
 		expect(received).toHaveLength(0);
+	});
+
+	it("carry the configured origin to SvelteKit, whatever the client claimed", async () => {
+		const web = await startWeb(undefined, apiTarget, new URL("http://nas.local:3000"));
+
+		await rawRequest(web, {
+			path: "/",
+			headers: { [ORIGIN_PROTOCOL_HEADER]: "https", [ORIGIN_HOST_HEADER]: "evil.example" },
+		});
+
+		const [req] = handler.mock.calls[0] ?? [];
+		expect(req?.headers[ORIGIN_PROTOCOL_HEADER]).toBe("http");
+		expect(req?.headers[ORIGIN_HOST_HEADER]).toBe("nas.local:3000");
+	});
+
+	it("leave the origin to adapter-node when none is configured", async () => {
+		const web = await startWeb();
+
+		await rawRequest(web, { path: "/" });
+
+		const [req] = handler.mock.calls[0] ?? [];
+		expect(req?.headers[ORIGIN_HOST_HEADER]).toBeUndefined();
 	});
 
 	it("are resolved like a browser would before routing", async () => {

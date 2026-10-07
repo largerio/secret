@@ -1,9 +1,9 @@
 <script lang="ts">
 import { fly } from "svelte/transition";
-import Icon from "$lib/components/Icon.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { getFileCategory } from "$lib/utils/fileType";
-import { formatSize } from "$lib/utils/format";
+import Icon from "#lib/components/Icon.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
+import { getFileCategory } from "#lib/utils/fileType.js";
+import { formatSize } from "#lib/utils/format.js";
 
 interface Props {
 	name: string;

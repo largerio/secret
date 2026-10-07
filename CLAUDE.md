@@ -39,13 +39,15 @@ Monorepo with pnpm workspaces:
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`)
   - Entry point: `src/index.ts`
 
-- **`apps/web`** — SvelteKit 2 frontend (Svelte 5, Tailwind CSS 4)
+- **`apps/web`** — SvelteKit 3 frontend (Svelte 5, Tailwind CSS 4)
+  - Config (adapter-node, CSP): the `sveltekit({...})` plugin in `vite.config.ts` — SvelteKit 3 refuses a `svelte.config.js`
+  - Server env vars: declared in `src/env.ts` (`defineEnvVars`), read from `$app/env/private` — undeclared variables are invisible to the app
   - Create page: `src/routes/+page.svelte`
   - View page: `src/routes/note/[id]/+page.svelte`
   - SDK client singleton: `src/lib/client.ts` — lazy-initialized `SecretClient`
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
   - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
-  - Production server: `src/server/` (compiled by `tsconfig.server.json` to `dist/server/`, started by `entrypoint.sh`) — a Node server in front of SvelteKit. `/api/*`, `/robots.txt` and `/sitemap.xml` stream straight to the API (`apiProxy.ts`, with `X-Forwarded-For` rewritten from `ADDRESS_HEADER`/`XFF_DEPTH` in `clientAddress.ts`); everything else goes to adapter-node's `build/handler.js`. API requests never cross SvelteKit, so its form CSRF check keeps guarding the app without blocking API clients that send no `Origin` (the SDK from Node). In dev, Vite's `server.proxy` plays this role
+  - Production server: `src/server/` (compiled by `tsconfig.server.json` to `dist/server/`, started by `entrypoint.sh`) — a Node server in front of SvelteKit. `/api/*`, `/robots.txt` and `/sitemap.xml` stream straight to the API (`apiProxy.ts`, with `X-Forwarded-For` rewritten from `ADDRESS_HEADER`/`XFF_DEPTH` in `clientAddress.ts`); everything else goes to adapter-node's `build/handler.js`, with the public origin fixed from `ORIGIN` (`origin.ts`; `entrypoint.sh` sets it from `APP_URL`) since adapter-node 6 dropped that variable. API requests never cross SvelteKit, so its form CSRF check keeps guarding the app without blocking API clients that send no `Origin` (the SDK from Node). In dev, Vite's `server.proxy` plays this role
 
 - **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; the **only published npm package**
   - `SecretClient` class: create, read, check, delete notes
@@ -95,6 +97,7 @@ Monorepo with pnpm workspaces:
 - **Svelte 5 reactive modules**: Files using `$state`/`$derived` outside components must use the `.svelte.ts` extension (e.g. `config.svelte.ts`, `index.svelte.ts`).
 - **Biome + Svelte**: `biome.json` has overrides for `**/*.svelte` that disable `noUnusedVariables`, `noUnusedImports`, and `organizeImports` — Biome doesn't understand Svelte template references and produces false positives.
 - **Uint8Array in TS 6**: `new Blob([uint8array])` fails because `Uint8Array<ArrayBufferLike>` isn't assignable to `BlobPart`. Cast with `as BlobPart[]`.
+- **`#lib` imports (web)**: SvelteKit 3 dropped `$lib`; `#lib/*` is a package.json subpath import, so the extension is mandatory — `#lib/utils/format.js` for `format.ts`, `#lib/theme.svelte.js` for `theme.svelte.ts`, `#lib/components/Icon.svelte` for components.
 
 ## Environment
 
@@ -127,9 +130,9 @@ Monorepo with pnpm workspaces:
 
 100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules — the gate runs in CI via `pnpm test:coverage`. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
 
-The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, `**/index.ts` (barrel re-exports), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
+The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, `**/index.ts` (barrel re-exports), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$app/env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
 
-Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
+Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$app/env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
 
 Run `pnpm test` before committing. New features must include tests.
 

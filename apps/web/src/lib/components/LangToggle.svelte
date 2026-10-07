@@ -1,7 +1,7 @@
 <script lang="ts">
-import { getLocale, setLocale, type Locale } from "$lib/i18n/index.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { setPreferenceCookie } from "$lib/utils/cookies";
+import { getLocale, setLocale, type Locale } from "#lib/i18n/index.svelte.js";
+import { t } from "#lib/i18n/index.svelte.js";
+import { setPreferenceCookie } from "#lib/utils/cookies.js";
 
 const LANGS: { code: Locale; label: string }[] = [
 	{ code: "en", label: "English" },

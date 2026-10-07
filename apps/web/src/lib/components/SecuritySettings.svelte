@@ -1,9 +1,9 @@
 <script lang="ts">
-import Icon from "$lib/components/Icon.svelte";
-import { getConfig } from "$lib/config.svelte";
-import { allowedExpirationOptions } from "$lib/server-config";
-import { t } from "$lib/i18n/index.svelte";
-import { generatePassword, getPasswordStrength } from "$lib/utils/password";
+import Icon from "#lib/components/Icon.svelte";
+import { getConfig } from "#lib/config.svelte.js";
+import { allowedExpirationOptions } from "#lib/server-config.js";
+import { t } from "#lib/i18n/index.svelte.js";
+import { generatePassword, getPasswordStrength } from "#lib/utils/password.js";
 
 interface Props {
 	password: string;

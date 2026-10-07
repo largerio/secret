@@ -13,6 +13,9 @@
 	"license": "MIT",
 	"author": "Larger.io",
 	"type": "module",
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && tsc -p tsconfig.server.json",
@@ -29,8 +32,8 @@
 		"qrcode": "^1.5.4"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-node": "^5.5.7",
-		"@sveltejs/kit": "^2.70.3",
+		"@sveltejs/adapter-node": "^6.0.0",
+		"@sveltejs/kit": "^3.0.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
 		"@tailwindcss/vite": "^4.3.3",

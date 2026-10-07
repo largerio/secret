@@ -1,5 +1,5 @@
-import type { Handle } from "@sveltejs/kit";
-import { type Locale, parseAcceptLanguage } from "$lib/i18n/index.svelte";
+import type { Handle } from "@sveltejs/kit/hooks";
+import { type Locale, parseAcceptLanguage } from "#lib/i18n/index.svelte.js";
 
 const SUPPORTED_LOCALES: Locale[] = ["en", "fr", "es", "de", "pt", "it", "ja", "zh", "ru", "ko"];
 

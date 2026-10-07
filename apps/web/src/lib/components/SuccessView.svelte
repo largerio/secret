@@ -1,9 +1,9 @@
 <script lang="ts">
 import { EXPIRATION_OPTIONS } from "@largerio/secret-shared";
-import Icon from "$lib/components/Icon.svelte";
-import { getConfig } from "$lib/config.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { copyWithFeedback } from "$lib/utils/clipboard";
+import Icon from "#lib/components/Icon.svelte";
+import { getConfig } from "#lib/config.svelte.js";
+import { t } from "#lib/i18n/index.svelte.js";
+import { copyWithFeedback } from "#lib/utils/clipboard.js";
 
 interface Props {
 	shareUrl: string;

@@ -1,6 +1,6 @@
 <script lang="ts">
-import { getMode, toggleMode } from "$lib/theme.svelte";
-import { t } from "$lib/i18n/index.svelte";
+import { getMode, toggleMode } from "#lib/theme.svelte.js";
+import { t } from "#lib/i18n/index.svelte.js";
 
 const mode = $derived(getMode());
 </script>

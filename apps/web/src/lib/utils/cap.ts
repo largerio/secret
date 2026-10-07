@@ -1,4 +1,4 @@
-import { t } from "$lib/i18n/index.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
 
 export async function solveCap(): Promise<string> {
 	window.CAP_CUSTOM_WASM_URL = "/wasm/cap_wasm_bg.wasm";

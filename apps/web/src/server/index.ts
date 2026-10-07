@@ -1,7 +1,16 @@
 import { createServer } from "node:http";
 import process from "node:process";
 import { parseAddressConfig } from "./clientAddress.js";
+import { ORIGIN_ADAPTER_ENV, parseOrigin } from "./origin.js";
 import { createRequestListener, parseApiTarget, type SvelteKitHandler } from "./server.js";
+
+const origin = parseOrigin(process.env["ORIGIN"]);
+
+// adapter-node reads these when it loads, so they must be in place before the
+// import below.
+if (origin) {
+	Object.assign(process.env, ORIGIN_ADAPTER_ENV);
+}
 
 // Written by adapter-node at build time. A computed specifier keeps the
 // typechecker from resolving a file that only exists after `vite build`.
@@ -13,6 +22,7 @@ const server = createServer(
 		handler,
 		apiTarget: parseApiTarget(process.env["API_URL"]),
 		address: parseAddressConfig(process.env),
+		origin,
 	}),
 );
 

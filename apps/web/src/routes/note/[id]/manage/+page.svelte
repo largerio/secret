@@ -1,10 +1,10 @@
 <script lang="ts">
 import { page } from "$app/state";
-import Icon from "$lib/components/Icon.svelte";
-import { getClient } from "$lib/client";
-import { getConfig } from "$lib/config.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { solveCap } from "$lib/utils/cap";
+import Icon from "#lib/components/Icon.svelte";
+import { getClient } from "#lib/client.js";
+import { getConfig } from "#lib/config.svelte.js";
+import { t } from "#lib/i18n/index.svelte.js";
+import { solveCap } from "#lib/utils/cap.js";
 
 const { data } = $props();
 

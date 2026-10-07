@@ -1,7 +1,7 @@
 <script lang="ts">
 import { page } from "$app/state";
-import Icon from "$lib/components/Icon.svelte";
-import { t } from "$lib/i18n/index.svelte";
+import Icon from "#lib/components/Icon.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
 </script>
 
 <svelte:head>
