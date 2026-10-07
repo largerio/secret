@@ -188,11 +188,17 @@ npm via OIDC trusted publishing — no token is stored.
 The workflow opens that PR as a GitHub App rather than with the default
 `GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions
 taken by `GITHUB_TOKEN`: the version PR would otherwise reach `main` with no CI
-run at all. Maintainers configuring a fork need an App installed on the
-repository with two repository permissions — Contents (read/write) and Pull
-requests (read/write) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets.
-Without them the workflow falls back to `GITHUB_TOKEN` and still releases; only
-the CI run on the version PR is lost.
+run at all. The same App arms auto-merge on Dependabot PRs
+(`dependabot-delayed-merge.yml`): a merge made with `GITHUB_TOKEN` starts no
+workflow on `main`, so nothing would be built, scanned or deployed.
+
+Maintainers configuring a fork need an App installed on the repository with
+three repository permissions — Contents (read/write), Pull requests
+(read/write) and Workflows (read/write, so it can merge the GitHub Actions
+bumps) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets. Each workflow
+scopes its token down to what it needs. Without the App both workflows fall back
+to `GITHUB_TOKEN`: releases still ship, but the version PR gets no CI run and
+Dependabot merges never reach the CI/CD pipeline.
 
 ## License
 
