@@ -1,44 +1,21 @@
 import type { Handle, ResolveOptions } from "@sveltejs/kit";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("$lib/server/env", () => ({ API_TARGET: "http://api.test" }));
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { handle } = (await import("../hooks.server.js")) as { handle: Handle };
 
 interface FakeEventInit {
-	pathname?: string;
-	search?: string;
-	method?: string;
 	headers?: Record<string, string>;
 	cookies?: Record<string, string>;
-	body?: BodyInit;
-	clientAddress?: string;
-	clientAddressThrows?: boolean;
 }
 
 function makeEvent(init: FakeEventInit = {}) {
-	const { pathname = "/", search = "", method = "GET", headers = {}, cookies = {}, body } = init;
-	const url = new URL(`http://localhost${pathname}${search}`);
-	const request = new Request(url, {
-		method,
-		headers,
-		...(body !== undefined ? { body } : {}),
-	});
+	const { headers = {}, cookies = {} } = init;
+	const url = new URL("http://localhost/");
 	return {
 		url,
-		request,
+		request: new Request(url, { headers }),
 		locals: {} as Record<string, unknown>,
 		cookies: { get: (name: string) => cookies[name] },
-		getClientAddress: () => {
-			if (init.clientAddressThrows) {
-				// What adapter-node does when ADDRESS_HEADER is set and the header
-				// is absent — every request that skips the reverse proxy.
-				throw new Error(
-					"Address header was specified with ADDRESS_HEADER=x-forwarded-for but is absent from request",
-				);
-			}
-			return init.clientAddress ?? "203.0.113.7";
-		},
 		// biome-ignore lint/suspicious/noExplicitAny: minimal SvelteKit event stub for unit testing
 	} as any;
 }
@@ -47,10 +24,6 @@ const resolve = vi.fn(async (_event: unknown, _opts?: ResolveOptions) => new Res
 
 beforeEach(() => {
 	resolve.mockClear();
-});
-
-afterEach(() => {
-	vi.unstubAllGlobals();
 });
 
 describe("locale and theme resolution", () => {
@@ -95,119 +68,6 @@ describe("locale and theme resolution", () => {
 	});
 });
 
-describe("API proxying", () => {
-	it("forwards proxied paths to API_TARGET and strips stale encoding headers", async () => {
-		const fetchMock = vi.fn(
-			async (_url: string, _init?: RequestInit) =>
-				new Response("proxied-body", {
-					status: 201,
-					headers: {
-						"content-encoding": "gzip",
-						"content-length": "999",
-						"x-custom": "kept",
-					},
-				}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		const event = makeEvent({
-			pathname: "/api/v1/notes",
-			search: "?foo=bar",
-			method: "POST",
-			body: "payload",
-		});
-		const res = await handle({ event, resolve });
-
-		expect(resolve).not.toHaveBeenCalled();
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const [target, requestInit] = fetchMock.mock.calls[0] ?? [];
-		expect(target).toBe("http://api.test/api/v1/notes?foo=bar");
-		expect(requestInit?.method).toBe("POST");
-		expect(requestInit?.body).toBeInstanceOf(ArrayBuffer);
-
-		expect(res.status).toBe(201);
-		expect(await res.text()).toBe("proxied-body");
-		expect(res.headers.get("x-custom")).toBe("kept");
-		expect(res.headers.get("content-encoding")).toBeNull();
-		expect(res.headers.get("content-length")).toBeNull();
-	});
-
-	it("replaces a client-supplied X-Forwarded-For with the resolved address", async () => {
-		// Every browser request reaches the API through this proxy, so the API can
-		// only tell clients apart by this header. Forwarding the client's own value
-		// would let anyone mint unlimited rate-limit buckets.
-		const fetchMock = vi.fn(
-			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		const event = makeEvent({
-			pathname: "/api/v1/notes",
-			headers: { "x-forwarded-for": "1.2.3.4", "x-real-ip": "5.6.7.8" },
-			clientAddress: "198.51.100.9",
-		});
-		await handle({ event, resolve });
-
-		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-		const headers = requestInit?.headers as Headers;
-		expect(headers.get("x-forwarded-for")).toBe("198.51.100.9");
-		expect(headers.get("x-real-ip")).toBeNull();
-	});
-
-	it("keeps proxying when the client address cannot be resolved", async () => {
-		// This exact case took production down: with ADDRESS_HEADER set,
-		// adapter-node throws on any request that did not come through the
-		// reverse proxy — starting with the container health check. The
-		// exception propagated, the health check failed, the orchestrator pulled
-		// the container from the pool and the whole site 404'd.
-		const fetchMock = vi.fn(
-			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		const event = makeEvent({ pathname: "/api/health", clientAddressThrows: true });
-		const res = await handle({ event, resolve });
-
-		expect(res.status).toBe(200);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-	});
-
-	it("drops a client-supplied X-Forwarded-For when the address is unknown", async () => {
-		// Falling back to the incoming header would hand the rate limiter a value
-		// the client chose — the spoofing this proxy exists to prevent.
-		const fetchMock = vi.fn(
-			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		const event = makeEvent({
-			pathname: "/api/v1/notes",
-			headers: { "x-forwarded-for": "1.2.3.4", "x-real-ip": "5.6.7.8" },
-			clientAddressThrows: true,
-		});
-		await handle({ event, resolve });
-
-		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-		const headers = requestInit?.headers as Headers;
-		expect(headers.get("x-forwarded-for")).toBeNull();
-		expect(headers.get("x-real-ip")).toBeNull();
-	});
-
-	it("does not attach a body for GET proxied requests", async () => {
-		const fetchMock = vi.fn(
-			async (_url: string, _init?: RequestInit) => new Response("ok", { status: 200 }),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		const event = makeEvent({ pathname: "/robots.txt" });
-		await handle({ event, resolve });
-
-		const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-		expect(requestInit?.body).toBeNull();
-		expect(resolve).not.toHaveBeenCalled();
-	});
-});
-
 describe("document security headers", () => {
 	it("sets HSTS, Referrer-Policy, nosniff, Permissions-Policy and COOP on HTML", async () => {
 		const res = await handle({ event: makeEvent(), resolve });
@@ -219,16 +79,5 @@ describe("document security headers", () => {
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		expect(res.headers.get("permissions-policy")).toContain("camera=()");
 		expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
-	});
-
-	it("leaves proxied API responses untouched (the API sets its own)", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () => new Response("ok", { status: 200 })),
-		);
-
-		const res = await handle({ event: makeEvent({ pathname: "/api/health" }), resolve });
-
-		expect(res.headers.get("strict-transport-security")).toBeNull();
 	});
 });

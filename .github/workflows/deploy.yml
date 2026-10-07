@@ -224,6 +224,17 @@ jobs:
           echo "--- and its proxy must reach the API ---"
           curl -fsS http://localhost:10000/api/health | grep -q '"status":"ok"' \
             || { echo "FAIL: the web app cannot reach the API"; docker logs smoke; exit 1; }
+          # What the SDK sends from Node: no Origin header. SvelteKit's form CSRF
+          # check answered these with a 403 before the API saw them; unauthenticated,
+          # the API itself must answer 401.
+          echo "--- API writes must reach the API, not SvelteKit's CSRF check ---"
+          for probe in "-X POST -F probe=1 http://localhost:10000/api/v1/notes/upload" \
+                       "-X DELETE http://localhost:10000/api/v1/notes/AAAAAAAAAAAA"; do
+            # shellcheck disable=SC2086 # $probe is a list of curl arguments
+            code=$(curl -s -o /dev/null -w '%{http_code}' $probe)
+            [ "$code" = "401" ] \
+              || { echo "FAIL: curl $probe answered $code, expected 401"; docker logs smoke; exit 1; }
+          done
           docker rm -f smoke
 
   deploy:

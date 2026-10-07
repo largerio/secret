@@ -15,9 +15,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build",
+		"build": "vite build && tsc -p tsconfig.server.json",
 		"preview": "vite preview",
-		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.server.json --noEmit"
 	},
 	"dependencies": {
 		"@cap.js/wasm": "^0.0.8",

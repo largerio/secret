@@ -45,6 +45,7 @@ Monorepo with pnpm workspaces:
   - SDK client singleton: `src/lib/client.ts` — lazy-initialized `SecretClient`
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
   - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
+  - Production server: `src/server/` (compiled by `tsconfig.server.json` to `dist/server/`, started by `entrypoint.sh`) — a Node server in front of SvelteKit. `/api/*`, `/robots.txt` and `/sitemap.xml` stream straight to the API (`apiProxy.ts`, with `X-Forwarded-For` rewritten from `ADDRESS_HEADER`/`XFF_DEPTH` in `clientAddress.ts`); everything else goes to adapter-node's `build/handler.js`. API requests never cross SvelteKit, so its form CSRF check keeps guarding the app without blocking API clients that send no `Origin` (the SDK from Node). In dev, Vite's `server.proxy` plays this role
 
 - **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; the **only published npm package**
   - `SecretClient` class: create, read, check, delete notes
@@ -128,7 +129,7 @@ Monorepo with pnpm workspaces:
 
 The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, `**/index.ts` (barrel re-exports), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
 
-Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
+Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
 
 Run `pnpm test` before committing. New features must include tests.
 

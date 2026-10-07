@@ -83,6 +83,7 @@ COPY --from=builder /build/packages/crypto/dist packages/crypto/dist
 COPY --from=builder /build/packages/sdk-js/dist packages/sdk-js/dist
 COPY --from=builder /build/apps/api/dist apps/api/dist
 COPY --from=builder /build/apps/web/build apps/web/build
+COPY --from=builder /build/apps/web/dist apps/web/dist
 COPY entrypoint.sh ./
 
 RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
