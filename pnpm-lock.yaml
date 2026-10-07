@@ -9,6 +9,7 @@ overrides:
   esbuild@<0.28.1: ^0.28.1
   fast-xml-parser@<5.7.0: ^5.7.0
   js-yaml@<4.3.1: ^4.3.1
+  postcss-selector-parser@<7.1.6: ^7.1.6
   read-yaml-file@<2.0.1: ^2.1.0
   undici@<7.29.0: ^7.29.0
 
@@ -2216,8 +2217,8 @@ packages:
       yaml:
         optional: true
 
-  postcss-selector-parser@6.0.10:
-    resolution: {integrity: sha512-IQ7TZdoaqbT+LCpShg46jnZVlhWD2w6iQYAcYXfHARZ7X1t/UGhhceQDs5X0cGqKvYlHNOuv7Oa1xmb0oQuA3w==}
+  postcss-selector-parser@7.1.6:
+    resolution: {integrity: sha512-7qASPzhKF2l2KLboRZux8CCTRMdGiV08vWmyKzPz22qZ7ZjQBOeY7rNzNoCLSUiftJ7HUq0GERHmxw/t0dCdMw==}
     engines: {node: '>=4'}
 
   postcss@8.5.28:
@@ -2309,8 +2310,8 @@ packages:
   set-cookie-parser@3.1.2:
     resolution: {integrity: sha512-5/r/lTwbJ3zQ+qwdUFZYeRNqda7P5HD8zQKqlSjdGt1/S0cjLAphHusj4Y58ahDtWn/g32xrIS58/ikOvwl0Lw==}
 
-  shell-quote@1.10.0:
-    resolution: {integrity: sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==}
+  shell-quote@1.12.0:
+    resolution: {integrity: sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==}
     engines: {node: '>= 0.4'}
 
   siginfo@2.0.0:
@@ -3545,7 +3546,7 @@ snapshots:
 
   '@tailwindcss/typography@0.5.20(tailwindcss@4.3.3)':
     dependencies:
-      postcss-selector-parser: 6.0.10
+      postcss-selector-parser: 7.1.6
       tailwindcss: 4.3.3
 
   '@tailwindcss/vite@4.3.3(vite@8.3.1(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))':
@@ -4028,7 +4029,7 @@ snapshots:
   launch-editor@2.14.1:
     dependencies:
       picocolors: 1.1.1
-      shell-quote: 1.10.0
+      shell-quote: 1.12.0
 
   lefthook-darwin-arm64@2.1.14:
     optional: true
@@ -4319,7 +4320,7 @@ snapshots:
       tsx: 4.23.15
       yaml: 2.9.1
 
-  postcss-selector-parser@6.0.10:
+  postcss-selector-parser@7.1.6:
     dependencies:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
@@ -4461,7 +4462,7 @@ snapshots:
 
   set-cookie-parser@3.1.2: {}
 
-  shell-quote@1.10.0: {}
+  shell-quote@1.12.0: {}
 
   siginfo@2.0.0: {}
 
