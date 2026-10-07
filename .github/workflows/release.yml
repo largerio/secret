@@ -37,9 +37,10 @@ jobs:
       # before the App is installed): releases keep working, just without CI on
       # the version PR, exactly as before.
       #
-      # Setup: a GitHub App installed on this repo with only two repository
-      # permissions — Contents: read/write, Pull requests: read/write — and its
-      # App ID / private key stored as the APP_ID and APP_PRIVATE_KEY secrets.
+      # Setup: a GitHub App installed on this repo with three repository
+      # permissions — Contents: read/write, Pull requests: read/write, and
+      # Workflows: read/write (used only by dependabot-delayed-merge.yml) — and
+      # its App ID / private key stored as the APP_ID and APP_PRIVATE_KEY secrets.
       - name: Mint a GitHub App token
         id: app-token
         if: env.HAS_RELEASE_APP == 'true'
@@ -47,6 +48,11 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # Only what the version PR needs. The App also holds Workflows (write)
+          # for dependabot-delayed-merge.yml; this job runs third-party code
+          # (pnpm install, changesets) and must not inherit it.
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

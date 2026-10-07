@@ -21,10 +21,38 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    env:
+      # Same pattern as release.yml: `secrets` is not available to a step-level
+      # `if`, so resolve it once at job level.
+      HAS_RELEASE_APP: ${{ secrets.APP_ID != '' }}
     steps:
+      # An auto-merge armed with GITHUB_TOKEN lands on main as github-actions,
+      # and GitHub never starts workflows for pushes made with that token: every
+      # Dependabot merge reached main with no CI/CD run, so nothing was built,
+      # scanned or deployed, and :latest silently fell behind main. Arming as
+      # the release App gives the merge an identity that does trigger them.
+      #
+      # Workflows (write) is needed to merge the github-actions bumps, which
+      # edit .github/workflows/. The token is scoped to this job only; release.yml
+      # mints its own without it.
+      - name: Mint a GitHub App token
+        id: app-token
+        if: env.HAS_RELEASE_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
       - name: Arm auto-merge for eligible PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only the merge needs the App identity; listing and reading checks
+          # stay on GITHUB_TOKEN. Forks without the App fall back to it, and
+          # their merges skip CI/CD exactly as before.
+          MERGE_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           cutoff=$(date -u -d '48 hours ago' +%s)
@@ -39,7 +67,7 @@ jobs:
             # checks pass, non-zero when any are pending or failing.
             if gh pr checks "$number" --repo "$REPO"; then
               echo "Arming auto-merge for PR #$number"
-              gh pr merge "$number" --repo "$REPO" --auto --squash
+              GH_TOKEN="$MERGE_TOKEN" gh pr merge "$number" --repo "$REPO" --auto --squash
             else
               echo "Skipping PR #$number: checks not green yet"
             fi
