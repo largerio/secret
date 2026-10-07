@@ -248,8 +248,9 @@ deploys, pin a published release tag on the `image:` line instead:
 | Image tag | Tracks |
 |-----------|--------|
 | `ghcr.io/largerio/secret:latest` | tip of `main` (newest, may include unreleased changes) |
-| `ghcr.io/largerio/secret:1.0` | latest `1.0.x` patch — **recommended**, gets fixes without breaking changes |
-| `ghcr.io/largerio/secret:1.0.0` | that exact release, fully reproducible |
+| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended**, gets fixes and features without breaking changes |
+| `ghcr.io/largerio/secret:1.1` | latest `1.1.x` patch only |
+| `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible |
 
 After changing the tag, run `docker compose pull && docker compose up -d`. The
 [Releases](https://github.com/largerio/secret/releases) page doubles as the

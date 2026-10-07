@@ -330,10 +330,11 @@ docker image prune -f   # clean up old layers
 Your data lives in the volume, so updates never delete notes.
 
 `docker-compose.yml` tracks `:latest` — the tip of `main`. In production, pin the
-minor tag instead to get fixes without unreleased changes:
+major tag instead to get every release (fixes included) without unreleased or
+breaking changes:
 
 ```yaml
-image: ghcr.io/largerio/secret:1.0
+image: ghcr.io/largerio/secret:1
 ```
 
 Full tag list: [Pinning a version](../README.md#pinning-a-version).
