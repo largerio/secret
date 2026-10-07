@@ -1,11 +1,11 @@
 <script lang="ts">
 import "../app.css";
-import Icon from "$lib/components/Icon.svelte";
-import LangToggle from "$lib/components/LangToggle.svelte";
-import StepIndicator from "$lib/components/StepIndicator.svelte";
-import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-import { getConfig } from "$lib/config.svelte";
-import { getLocale, t } from "$lib/i18n/index.svelte";
+import Icon from "#lib/components/Icon.svelte";
+import LangToggle from "#lib/components/LangToggle.svelte";
+import StepIndicator from "#lib/components/StepIndicator.svelte";
+import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+import { getConfig } from "#lib/config.svelte.js";
+import { getLocale, t } from "#lib/i18n/index.svelte.js";
 
 const { children } = $props();
 

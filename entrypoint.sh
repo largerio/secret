@@ -50,7 +50,8 @@ api_pid=$!
 # Web server (exposed): API paths stream straight to the API, everything else
 # goes to SvelteKit (apps/web/src/server/). Uploads never cross SvelteKit, so
 # its request body limit no longer needs raising: the API enforces its own,
-# derived from MAX_FILE_SIZE and MAX_FILES_PER_NOTE.
+# derived from MAX_FILE_SIZE and MAX_FILES_PER_NOTE. ORIGIN is the app's public
+# origin, read by that server (adapter-node 6 no longer supports it).
 PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \
 	API_URL="${API_URL:-http://127.0.0.1:$api_port}" \
 	node apps/web/dist/server/index.js &

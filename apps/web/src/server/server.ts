@@ -1,6 +1,7 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import { isApiPath, proxyToApi } from "./apiProxy.js";
 import { type AddressConfig, resolveClientAddress } from "./clientAddress.js";
+import { applyOrigin } from "./origin.js";
 
 /** adapter-node's documented custom-server entry point, `build/handler.js`. */
 export type SvelteKitHandler = (
@@ -13,6 +14,8 @@ export interface ServerOptions {
 	readonly handler: SvelteKitHandler;
 	readonly apiTarget: string;
 	readonly address: AddressConfig;
+	/** The instance's public origin (ORIGIN), or undefined to let adapter-node derive it. */
+	readonly origin: URL | undefined;
 }
 
 /**
@@ -49,6 +52,10 @@ export function createRequestListener(options: ServerOptions): RequestListener {
 				clientAddress: resolveClientAddress(req, options.address),
 			});
 			return;
+		}
+
+		if (options.origin) {
+			applyOrigin(req, options.origin);
 		}
 
 		options.handler(req, res, () => {

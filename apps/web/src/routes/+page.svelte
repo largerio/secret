@@ -2,20 +2,20 @@
 import type { ContentMode } from "@largerio/secret-shared";
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
 import type { ProgressInfo, UploadPhase } from "@largerio/secret-sdk";
-import EncryptionBadge from "$lib/components/EncryptionBadge.svelte";
-import FileDropZone from "$lib/components/FileDropZone.svelte";
-import Icon from "$lib/components/Icon.svelte";
-import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
-import PasswordGenerator from "$lib/components/PasswordGenerator.svelte";
-import SecuritySettings from "$lib/components/SecuritySettings.svelte";
-import StepProgress from "$lib/components/StepProgress.svelte";
-import SuccessView from "$lib/components/SuccessView.svelte";
-import { getClient } from "$lib/client";
-import { getConfig } from "$lib/config.svelte";
-import { defaultExpiration } from "$lib/server-config";
-import { t } from "$lib/i18n/index.svelte";
-import { setStep } from "$lib/steps.svelte";
-import { solveCap } from "$lib/utils/cap";
+import EncryptionBadge from "#lib/components/EncryptionBadge.svelte";
+import FileDropZone from "#lib/components/FileDropZone.svelte";
+import Icon from "#lib/components/Icon.svelte";
+import MarkdownEditor from "#lib/components/MarkdownEditor.svelte";
+import PasswordGenerator from "#lib/components/PasswordGenerator.svelte";
+import SecuritySettings from "#lib/components/SecuritySettings.svelte";
+import StepProgress from "#lib/components/StepProgress.svelte";
+import SuccessView from "#lib/components/SuccessView.svelte";
+import { getClient } from "#lib/client.js";
+import { getConfig } from "#lib/config.svelte.js";
+import { defaultExpiration } from "#lib/server-config.js";
+import { t } from "#lib/i18n/index.svelte.js";
+import { setStep } from "#lib/steps.svelte.js";
+import { solveCap } from "#lib/utils/cap.js";
 
 let mounted = $state(false);
 $effect(() => {

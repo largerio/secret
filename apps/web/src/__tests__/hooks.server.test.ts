@@ -1,4 +1,4 @@
-import type { Handle, ResolveOptions } from "@sveltejs/kit";
+import type { Handle, ResolveOptions } from "@sveltejs/kit/hooks";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { handle } = (await import("../hooks.server.js")) as { handle: Handle };

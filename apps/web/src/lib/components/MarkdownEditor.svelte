@@ -1,7 +1,7 @@
 <script lang="ts">
-import Icon from "$lib/components/Icon.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { renderMarkdown } from "$lib/utils/markdown";
+import Icon from "#lib/components/Icon.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
+import { renderMarkdown } from "#lib/utils/markdown.js";
 
 interface Props {
 	value: string;

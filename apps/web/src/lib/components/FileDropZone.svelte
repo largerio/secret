@@ -1,7 +1,7 @@
 <script lang="ts">
-import Icon from "$lib/components/Icon.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { formatSize } from "$lib/utils/format";
+import Icon from "#lib/components/Icon.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
+import { formatSize } from "#lib/utils/format.js";
 
 interface Props {
 	files: File[];

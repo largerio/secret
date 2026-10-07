@@ -1,5 +1,5 @@
 import type { ServerLoad } from "@sveltejs/kit";
-import { getServerClient } from "$lib/server/client";
+import { getServerClient } from "#lib/server/client.js";
 
 export const load: ServerLoad = async ({ params }) => {
 	const id = params["id"];

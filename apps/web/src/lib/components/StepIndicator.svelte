@@ -1,6 +1,6 @@
 <script lang="ts">
-import { getStep } from "$lib/steps.svelte";
-import { t } from "$lib/i18n/index.svelte";
+import { getStep } from "#lib/steps.svelte.js";
+import { t } from "#lib/i18n/index.svelte.js";
 
 const step = $derived(getStep());
 

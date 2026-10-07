@@ -4,16 +4,16 @@ import type { NotePayload } from "@largerio/secret-shared";
 import { onMount } from "svelte";
 import { fade, fly } from "svelte/transition";
 import { page } from "$app/state";
-import FileCard from "$lib/components/FileCard.svelte";
-import Icon from "$lib/components/Icon.svelte";
-import StepProgress from "$lib/components/StepProgress.svelte";
-import { getClient } from "$lib/client";
-import { getConfig } from "$lib/config.svelte";
-import { formatDateTime, t } from "$lib/i18n/index.svelte";
-import { setStep } from "$lib/steps.svelte";
-import { copyWithFeedback } from "$lib/utils/clipboard";
-import { isPreviewable } from "$lib/utils/fileType";
-import { renderMarkdown } from "$lib/utils/markdown";
+import FileCard from "#lib/components/FileCard.svelte";
+import Icon from "#lib/components/Icon.svelte";
+import StepProgress from "#lib/components/StepProgress.svelte";
+import { getClient } from "#lib/client.js";
+import { getConfig } from "#lib/config.svelte.js";
+import { formatDateTime, t } from "#lib/i18n/index.svelte.js";
+import { setStep } from "#lib/steps.svelte.js";
+import { copyWithFeedback } from "#lib/utils/clipboard.js";
+import { isPreviewable } from "#lib/utils/fileType.js";
+import { renderMarkdown } from "#lib/utils/markdown.js";
 
 interface NoteInfo {
 	hasPassword: boolean;

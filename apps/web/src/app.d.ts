@@ -1,5 +1,5 @@
-import type { Locale } from "$lib/i18n/index.svelte";
-import type { ThemeMode } from "$lib/theme.svelte";
+import type { Locale } from "#lib/i18n/index.svelte.js";
+import type { ThemeMode } from "#lib/theme.svelte.js";
 
 declare global {
 	namespace App {

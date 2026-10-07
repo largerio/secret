@@ -1,6 +1,6 @@
 import type { ServerLoad } from "@sveltejs/kit";
-import { env } from "$env/dynamic/private";
-import { buildServerConfig } from "$lib/server-config";
+import { buildServerConfig } from "#lib/server-config.js";
+import * as env from "$app/env/private";
 
 export const load: ServerLoad = ({ url, locals }) => {
 	const config = buildServerConfig(env, `${url.protocol}//${url.host}`);

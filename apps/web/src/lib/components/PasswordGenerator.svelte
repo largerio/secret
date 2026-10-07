@@ -1,9 +1,9 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import Icon from "$lib/components/Icon.svelte";
-import { t } from "$lib/i18n/index.svelte";
-import { copyWithFeedback } from "$lib/utils/clipboard";
-import { generatePassword } from "$lib/utils/password";
+import Icon from "#lib/components/Icon.svelte";
+import { t } from "#lib/i18n/index.svelte.js";
+import { copyWithFeedback } from "#lib/utils/clipboard.js";
+import { generatePassword } from "#lib/utils/password.js";
 
 interface Props {
 	value: string;
