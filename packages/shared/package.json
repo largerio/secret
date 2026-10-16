@@ -35,9 +35,9 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"zod": "^4.6.5"
+		"zod": "^4.6.6"
 	},
 	"devDependencies": {
-		"@types/node": "^26.6.3"
+		"@types/node": "^26.6.5"
 	}
 }
