@@ -17,6 +17,10 @@ const API_PORT = Number(process.env["E2E_API_PORT"] ?? 4001);
 // Absolute paths so they resolve the same regardless of each pnpm script's cwd.
 const TMP_DIR = path.resolve(import.meta.dirname, ".e2e-tmp");
 
+// Smaller than the SDK's 4 MiB default, on both servers: a chunked upload only
+// works if the web app hands the instance's chunk size to the SDK.
+const CHUNK_SIZE = String(1024 * 1024);
+
 // Keep Proof-of-Work trivial so the in-browser Cap widget solves instantly.
 const apiEnv = {
 	SERVER_ENCRYPTION_KEY: TEST_SERVER_ENCRYPTION_KEY,
@@ -26,6 +30,7 @@ const apiEnv = {
 	// shared by all 26 tests running back to back. Without this the later ones
 	// get 429s that surface as "Service unavailable".
 	RATE_LIMIT_MULTIPLIER: "50",
+	CHUNK_SIZE,
 	DATABASE_PATH: path.join(TMP_DIR, "secret.db"),
 	FILES_PATH: path.join(TMP_DIR, "files"),
 	PORT: String(API_PORT),
@@ -63,7 +68,7 @@ export default defineConfig({
 			port: WEB_PORT,
 			// The web dev server proxies to the API; without this it falls back to
 			// the hardcoded http://localhost:3001 default.
-			env: { API_URL: `http://localhost:${String(API_PORT)}` },
+			env: { API_URL: `http://localhost:${String(API_PORT)}`, CHUNK_SIZE },
 			reuseExistingServer: !process.env["CI"],
 			timeout: 120_000,
 		},
