@@ -5,7 +5,6 @@
 	"text_label": "Contenu texte",
 	"text_placeholder": "Entrez votre note secrète ici...",
 	"files_label": "Fichiers",
-	"files_drop": "Glissez-déposez des fichiers ici ou cliquez pour parcourir",
 	"password_label": "Mot de passe (optionnel)",
 	"password_placeholder": "Ajoutez un mot de passe pour plus de sécurité",
 	"expires_label": "Expire dans",

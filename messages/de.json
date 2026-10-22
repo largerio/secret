@@ -5,7 +5,6 @@
 	"text_label": "Textinhalt",
 	"text_placeholder": "Gib hier deine geheime Notiz ein...",
 	"files_label": "Dateien",
-	"files_drop": "Dateien hierher ziehen oder klicken zum Durchsuchen",
 	"password_label": "Passwort (optional)",
 	"password_placeholder": "Passwort für zusätzliche Sicherheit hinzufügen",
 	"expires_label": "Läuft ab in",

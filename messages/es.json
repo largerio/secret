@@ -5,7 +5,6 @@
 	"text_label": "Contenido de texto",
 	"text_placeholder": "Escribe tu nota secreta aquí...",
 	"files_label": "Archivos",
-	"files_drop": "Arrastra archivos aquí o haz clic para explorar",
 	"password_label": "Contraseña (opcional)",
 	"password_placeholder": "Añade una contraseña para mayor seguridad",
 	"expires_label": "Expira en",

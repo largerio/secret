@@ -5,7 +5,6 @@
 	"text_label": "텍스트 내용",
 	"text_placeholder": "비밀 노트를 여기에 입력하세요...",
 	"files_label": "파일",
-	"files_drop": "파일을 드래그 앤 드롭하거나 클릭하여 선택",
 	"password_label": "비밀번호 (선택사항)",
 	"password_placeholder": "보안 강화를 위해 비밀번호 추가",
 	"expires_label": "만료 시간",
