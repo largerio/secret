@@ -38,6 +38,11 @@ creates a persistent Docker volume for your data, and serves the app on port
 `3000`.
 Open `http://<your-host>:3000` and you're live.
 
+Plain HTTP is fine to try it out on a local network, but put HTTPS in front
+before sharing real secrets: over HTTP the link, and so the decryption key,
+crosses the network in clear, and browsers keep some features (one-click copy
+among them) for secure pages.
+
 **On your own domain, with HTTPS.** `docker-compose.tls.yml` adds Caddy, which
 obtains and renews the certificate for you:
 
