@@ -1,5 +1,4 @@
 {
-	"app_name": "Secret",
 	"app_description": "Intercambio cifrado zero-knowledge",
 	"create_title": "Crear una nota segura",
 	"create_description": "Tu contenido se cifra en tu navegador antes de enviarse al servidor. El servidor nunca ve tus datos.",
@@ -97,7 +96,7 @@
 	"md_write": "Escribir",
 	"md_preview": "Vista previa",
 	"md_preview_empty": "Nada que previsualizar",
-	"seo_title": "Secret — Intercambio seguro de notas y archivos cifrados zero-knowledge",
+	"seo_title": "{app} — Intercambio seguro de notas y archivos cifrados zero-knowledge",
 	"seo_description": "Comparte contraseñas, notas y archivos de forma segura con cifrado de extremo a extremo. Tus datos se cifran en el navegador — el servidor nunca ve tu contenido. Gratuito, código abierto, sin necesidad de cuenta.",
 	"seo_keywords": "notas cifradas, intercambio seguro de archivos, cifrado zero-knowledge, compartir contraseñas, destruir tras lectura, cifrado de extremo a extremo, autoalojado, privacidad, compartir secretos",
 	"manage_title": "Gestionar nota",

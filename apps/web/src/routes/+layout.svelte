@@ -26,7 +26,6 @@ const localeToOg: Record<string, string> = {
 
 const config = $derived(getConfig());
 const locale = $derived(getLocale());
-const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 </script>
 
 <svelte:head>
@@ -43,11 +42,10 @@ const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 		<meta name="twitter:image" content={config.ogImageUrl} />
 	{/if}
 	<meta name="twitter:card" content="summary_large_image" />
-	<meta name="twitter:site" content="@largerio" />
 	{#each Object.keys(localeToOg) as code}
-		<link rel="alternate" hreflang={code} href={appUrl} />
+		<link rel="alternate" hreflang={code} href={config.appUrl} />
 	{/each}
-	<link rel="alternate" hreflang="x-default" href={appUrl} />
+	<link rel="alternate" hreflang="x-default" href={config.appUrl} />
 </svelte:head>
 
 <div class="relative z-[1] flex min-h-screen flex-col">
@@ -84,14 +82,9 @@ const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 				>
 					<Icon name="lock" size={15} />
 				</span>
-				<span class="flex items-baseline gap-1.5">
-					<span class="serif" style:font-size="22px" style:letter-spacing="-0.02em"
-						>{config.appName.toLowerCase()}</span
-					>
-					<span class="mono hidden sm:inline" style:color="var(--muted-2)" style:font-size="11px"
-						>.larger.io</span
-					>
-				</span>
+				<span class="serif" style:font-size="22px" style:letter-spacing="-0.02em"
+					>{config.appName.toLowerCase()}</span
+				>
 			</a>
 			<div class="flex items-center gap-1.5 sm:gap-2">
 				<LangToggle />
@@ -149,7 +142,7 @@ const appUrl = $derived(config.appUrl || "https://secret.larger.io");
 				target="_blank"
 				rel="noopener noreferrer"
 				class="underline-offset-2 hover:underline"
-				style:color="var(--muted)">{config.appName}</a
+				style:color="var(--muted)">Secret</a
 			>
 			<span style:margin="0 8px">·</span>
 			<span>{t("footer_tagline")}</span>

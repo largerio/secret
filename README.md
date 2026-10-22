@@ -188,7 +188,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
-| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for footer and social image) |
+| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: the built-in red). See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |

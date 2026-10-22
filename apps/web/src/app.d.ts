@@ -9,6 +9,8 @@ declare global {
 		interface Locals {
 			locale: Locale;
 			theme: ThemeMode;
+			/** APP_PRIMARY_COLOR as accent variables, set by the root layout's loader. */
+			accent?: string;
 		}
 	}
 }
