@@ -69,3 +69,31 @@ test("multiple files are all listed and downloadable", async ({ page, context })
 	// One Download button per attachment.
 	await expect(reader.getByRole("button", { name: /Download/i })).toHaveCount(2);
 });
+
+test("a large file uploads in the instance's chunk size and downloads intact", async ({
+	page,
+	context,
+}) => {
+	// Above the SDK's 4 MiB default chunk, while the e2e instance sets CHUNK_SIZE
+	// to 1 MiB (playwright.config.ts): the upload goes chunked, in 1 MiB chunks.
+	const contents = Buffer.alloc(5 * 1024 * 1024 + 123);
+	for (let i = 0; i < contents.length; i++) contents[i] = (i * 31 + 7) % 251;
+	const filePath = path.join(fixtureDir, "large.bin");
+	writeFileSync(filePath, contents);
+
+	const shareUrl = await createNote(page, {
+		text: "large attachment",
+		files: [filePath],
+		maxReads: 3,
+	});
+
+	const reader = await context.newPage();
+	await revealNote(reader, shareUrl);
+	await expect(reader.getByText("large.bin")).toBeVisible({ timeout: 30_000 });
+
+	const downloadPromise = reader.waitForEvent("download");
+	await reader.getByRole("button", { name: /Download/i }).click();
+	const download = await downloadPromise;
+
+	expect(readFileSync(await download.path()).equals(contents)).toBe(true);
+});
