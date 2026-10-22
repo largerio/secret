@@ -98,6 +98,9 @@ async function handleSubmit() {
 			expiresIn,
 			maxReads: parsedMaxReads,
 			capToken,
+			// The instance's CHUNK_SIZE: the API refuses any chunk larger than it,
+			// and the SDK knows only its own 4 MiB default.
+			chunkSize: config.chunkSize,
 			onUploadProgress: (p) => {
 				uploadProgress = p * 100;
 			},

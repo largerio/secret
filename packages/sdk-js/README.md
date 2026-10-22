@@ -116,7 +116,7 @@ const { id, keyFragment } = await client.createNote({
 In the browser, turn a picked `File` into that shape with
 `{ name: file.name, type: file.type, data: new Uint8Array(await file.arrayBuffer()) }`.
 
-Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does.
+Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`.
 
 ## Errors
 
