@@ -81,12 +81,13 @@ export interface AppConfig {
 /**
  * Warn when per-IP rate limiting cannot actually tell clients apart.
  *
- * In the bundled image every browser request reaches the API through the web
- * app's proxy, so the peer address is always 127.0.0.1. Without TRUSTED_PROXIES
- * the API has no reason to believe the forwarded address, and correctly falls
- * back to the peer — which means *every* user shares a single bucket. The
- * limits still apply, they just apply to the whole instance at once, and
- * nothing about that is visible from the outside.
+ * Behind any proxy the peer address is the proxy's. Without TRUSTED_PROXIES the
+ * API has no reason to believe the forwarded address, and correctly falls back
+ * to the peer — which means *every* user shares a single bucket. The limits
+ * still apply, they just apply to the whole instance at once, and nothing about
+ * that is visible from the outside. The Docker image's entrypoint trusts its
+ * own web app (127.0.0.1/32) unless told otherwise, so this mostly concerns
+ * the API run outside the image.
  *
  * Returns null when the configuration can distinguish clients (or when the API
  * is exposed directly, where the peer address is the real one).
@@ -100,11 +101,12 @@ export function describeRateLimitScope(config: {
 
 	return [
 		"WARNING: TRUSTED_PROXIES is empty, so per-IP rate limits are shared by all",
-		"users behind any proxy — including the web app bundled in this image.",
-		"If this instance sits behind a reverse proxy, set:",
+		"users behind any proxy, including the bundled web app. If a proxy sits in",
+		"front of this API, list its address, e.g. for the web app on this host:",
 		"  TRUSTED_PROXIES=127.0.0.1/32",
 		"and, on the web app, ADDRESS_HEADER=X-Forwarded-For plus XFF_DEPTH=<number",
-		"of proxies in front of it>. See docs/self-hosting.md#reverse-proxy--https.",
+		"of proxies in front of it>. See",
+		"docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
 		"Ignore this if the API is exposed directly, with no proxy in front.",
 	].join("\n");
 }

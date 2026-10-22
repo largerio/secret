@@ -4,6 +4,7 @@ import {
 	buildTrustedBlockList,
 	classifyNotesPath,
 	createRateLimit,
+	ipv6Prefix64,
 } from "../middleware/rateLimit.js";
 
 function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
@@ -349,8 +350,8 @@ describe("createRateLimit", () => {
 		rl.cleanup();
 	});
 
-	it("returns 429 when store exceeds MAX_STORE_SIZE for new IPs", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 100 });
+	it("drops the oldest entry instead of refusing a new client when the store is full", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -360,13 +361,98 @@ describe("createRateLimit", () => {
 			await app.request("/test", {}, mockEnv(ip));
 		}
 
-		const res = await app.request("/test", {}, mockEnv("255.255.255.255"));
-		expect(res.status).toBe(429);
+		// A full store used to answer every newcomer with a 429.
+		const newcomer = await app.request("/test", {}, mockEnv("255.255.255.255"));
+		expect(newcomer.status).toBe(200);
 
-		const res2 = await app.request("/test", {}, mockEnv("0.0.0.0"));
-		expect(res2.status).toBe(200);
+		// The first address tracked made room for it, so its counter starts over...
+		const evicted = await app.request("/test", {}, mockEnv("0.0.0.0"));
+		expect(evicted.status).toBe(200);
+
+		// ...while the most recent ones are still limited.
+		const tracked = await app.request("/test", {}, mockEnv("0.0.39.15"));
+		expect(tracked.status).toBe(429);
 
 		rl.cleanup();
+	});
+
+	it("tells a limited client when to retry", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		await app.request("/test", {}, mockEnv("1.1.1.1"));
+		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
+
+		expect(res.status).toBe(429);
+		const retryAfter = Number(res.headers.get("Retry-After"));
+		expect(retryAfter).toBeGreaterThanOrEqual(1);
+		expect(retryAfter).toBeLessThanOrEqual(60);
+
+		rl.cleanup();
+	});
+
+	it("shares one bucket across an IPv6 /64", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		expect((await app.request("/test", {}, mockEnv("2001:db8:0:1::1"))).status).toBe(200);
+		// Another address in the same /64: the same subscriber.
+		expect((await app.request("/test", {}, mockEnv("2001:db8:0:1:ffff::2"))).status).toBe(429);
+		// The next /64 is someone else.
+		expect((await app.request("/test", {}, mockEnv("2001:db8:0:2::1"))).status).toBe(200);
+
+		rl.cleanup();
+	});
+
+	it("aggregates forwarded IPv6 clients by /64 too", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1, trustedProxies: ["127.0.0.1"] });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		const from = (client: string) =>
+			app.request("/test", { headers: { "X-Forwarded-For": client } }, mockEnv("127.0.0.1"));
+		const fromRealIp = (client: string) =>
+			app.request("/test", { headers: { "X-Real-IP": client } }, mockEnv("127.0.0.1"));
+
+		expect((await from("2001:db8:0:1::5")).status).toBe(200);
+		expect((await from("2001:db8:0:1::6")).status).toBe(429);
+		expect((await fromRealIp("2001:db8:0:3::5")).status).toBe(200);
+		expect((await fromRealIp("2001:db8:0:3::6")).status).toBe(429);
+
+		rl.cleanup();
+	});
+
+	it("keeps the full address for IPv6 forms with an embedded IPv4", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.1"))).status).toBe(200);
+		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.2"))).status).toBe(200);
+
+		rl.cleanup();
+	});
+});
+
+describe("ipv6Prefix64", () => {
+	it("keeps the first four groups of an address written in full", () => {
+		expect(ipv6Prefix64("2001:0db8:0000:0001:0000:0000:0000:0001")).toBe("2001:db8:0:1::/64");
+	});
+
+	it("expands a compressed run in the middle, at the start or at the end", () => {
+		expect(ipv6Prefix64("fe80::1:2:3:4")).toBe("fe80:0:0:0::/64");
+		expect(ipv6Prefix64("::1")).toBe("0:0:0:0::/64");
+		expect(ipv6Prefix64("2001:db8::")).toBe("2001:db8:0:0::/64");
+	});
+
+	it("gives up on an embedded IPv4", () => {
+		expect(ipv6Prefix64("64:ff9b::192.0.2.1")).toBeNull();
 	});
 });
 
