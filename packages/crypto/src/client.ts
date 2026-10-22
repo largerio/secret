@@ -27,6 +27,7 @@ export {
 	initSodium,
 	keyFromBase64Url,
 	keyToBase64Url,
+	sha256Hex,
 	toBase64,
 	zeroMemory,
 } from "./keys.js";
