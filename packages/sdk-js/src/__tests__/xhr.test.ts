@@ -184,15 +184,17 @@ describe("postFormDataXhr", () => {
 		await expect(promise).rejects.toThrow("Invalid response");
 	});
 
-	test("rejects with Network error on XHR error event", async () => {
+	test("rejects with a SecretNetworkError on XHR error event, like the fetch path", async () => {
 		const { xhr, triggerEvent } = createMockXhr();
 		installXhr(xhr);
 		const { postFormDataXhr } = await import("../xhr.js");
+		const { SecretNetworkError } = await import("../errors.js");
 
 		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
 		triggerEvent("error");
 
-		await expect(promise).rejects.toThrow("Network error");
+		await expect(promise).rejects.toBeInstanceOf(SecretNetworkError);
+		await expect(promise).rejects.toThrow("Network request failed");
 	});
 
 	test("rejects with Upload cancelled on XHR abort event", async () => {

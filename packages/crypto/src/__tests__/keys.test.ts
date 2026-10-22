@@ -9,6 +9,7 @@ import {
 	initSodium,
 	keyFromBase64Url,
 	keyToBase64Url,
+	sha256Hex,
 	toBase64,
 	zeroMemory,
 } from "../keys.js";
@@ -168,5 +169,21 @@ describe("zeroMemory", () => {
 	it("handles empty buffer", () => {
 		const buf = new Uint8Array(0);
 		expect(() => zeroMemory(buf)).not.toThrow();
+	});
+});
+
+describe("sha256Hex", () => {
+	it("matches the FIPS 180-2 test vectors", () => {
+		expect(sha256Hex(new TextEncoder().encode("abc"))).toBe(
+			"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+		);
+		expect(sha256Hex(new Uint8Array(0))).toBe(
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		);
+	});
+
+	it("hashes only the bytes of a view, not its whole buffer", () => {
+		const backing = new TextEncoder().encode("xxabcxx");
+		expect(sha256Hex(backing.subarray(2, 5))).toBe(sha256Hex(new TextEncoder().encode("abc")));
 	});
 });

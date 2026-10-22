@@ -42,6 +42,13 @@ fi
 api_port="${API_PORT:-3001}"
 web_port="${PORT:-3000}"
 
+# The API's peer is the web server in this container, which always replaces
+# X-Forwarded-For with the client address it resolved, dropping whatever the
+# client sent. Trusting the loopback lets the API tell clients apart: left
+# empty, every visitor of the instance shared a single rate-limit bucket.
+TRUSTED_PROXIES="${TRUSTED_PROXIES:-127.0.0.1/32}"
+export TRUSTED_PROXIES
+
 # API server: loopback only, since its one caller is the web server in this same
 # container. API_HOST=0.0.0.0 exposes it.
 PORT="$api_port" HOST="${API_HOST:-127.0.0.1}" node apps/api/dist/index.js &

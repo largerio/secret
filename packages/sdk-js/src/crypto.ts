@@ -21,6 +21,8 @@ import {
 import { SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { ContentMode, NotePayload } from "./types.js";
 
+export { sha256Hex } from "@largerio/secret-crypto/client";
+
 function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
 	const result = new Uint8Array(totalLen);
@@ -319,8 +321,20 @@ export async function decryptNoteChunked(
 		const headerData = decoded;
 		const fileMeta = headerData.files ?? [];
 
-		// If header was the only chunk (text-only note or note with 0-byte files)
-		if (headerIsFinal || encryptedChunks.length === 1) {
+		// The stream must end on its FINAL chunk, and nothing may follow it.
+		// secretstream authenticates every chunk and their order, but only the
+		// FINAL tag proves none were dropped from the end: without this check a
+		// server serving the header chunk alone handed back empty files.
+		const isLastChunk = encryptedChunks.length === 1;
+		if (headerIsFinal !== isLastChunk) {
+			throw new Error("Encrypted stream is truncated or extended");
+		}
+
+		// The header was the only chunk (text-only note or note with 0-byte files)
+		if (headerIsFinal) {
+			if (fileMeta.some((f) => f.size > 0)) {
+				throw new Error("Encrypted stream is truncated or extended");
+			}
 			return buildPayload(
 				headerData,
 				fileMeta.map((f) => ({
@@ -334,8 +348,13 @@ export async function decryptNoteChunked(
 
 		// Decrypt remaining chunks and concatenate all file bytes
 		const dataChunks: Uint8Array[] = [];
-		for (const chunk of encryptedChunks.slice(1)) {
-			const { decrypted } = cryptoDecryptChunk(state, chunk);
+		const lastIndex = encryptedChunks.length - 1;
+		for (const [index, chunk] of encryptedChunks.entries()) {
+			if (index === 0) continue;
+			const { decrypted, isFinal } = cryptoDecryptChunk(state, chunk);
+			if (isFinal !== (index === lastIndex)) {
+				throw new Error("Encrypted stream is truncated or extended");
+			}
 			dataChunks.push(decrypted);
 		}
 

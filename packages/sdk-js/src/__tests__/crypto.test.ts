@@ -285,6 +285,93 @@ describe("SDK crypto", () => {
 		).rejects.toThrow("does not match the declared size");
 	});
 
+	test("decryptNoteChunked rejects a stream cut down to its header chunk", async () => {
+		await ensureInit();
+
+		const payload: NotePayload = {
+			text: "with a file",
+			files: [
+				{
+					name: "a.bin",
+					type: "application/octet-stream",
+					size: 200,
+					data: new Uint8Array(200).fill(7),
+				},
+			],
+		};
+		const encrypted = await encryptNoteChunked(payload, 64);
+		expect(encrypted.chunks.length).toBeGreaterThan(2);
+
+		// Used to return the file with its declared size and no data, without error.
+		await expect(
+			decryptNoteChunked(encrypted.chunks.slice(0, 1), encrypted.header, encrypted.keyFragment),
+		).rejects.toThrow("truncated or extended");
+	});
+
+	test("decryptNoteChunked rejects a stream missing its last chunk", async () => {
+		await ensureInit();
+
+		const payload: NotePayload = {
+			files: [
+				{
+					name: "a.bin",
+					type: "application/octet-stream",
+					size: 200,
+					data: new Uint8Array(200).fill(7),
+				},
+			],
+		};
+		const encrypted = await encryptNoteChunked(payload, 64);
+
+		await expect(
+			decryptNoteChunked(encrypted.chunks.slice(0, -1), encrypted.header, encrypted.keyFragment),
+		).rejects.toThrow("truncated or extended");
+	});
+
+	test("decryptNoteChunked rejects chunks after the FINAL one", async () => {
+		await ensureInit();
+
+		const forge = (headerIsFinal: boolean, dataIsFinal: boolean) => {
+			const baseKey = generateKey();
+			const { state, header } = initStreamEncrypt(baseKey);
+			const headerBytes = encodeRaw({ files: [{ name: "a.txt", type: "text/plain", size: 4 }] });
+			const chunks = [
+				encryptChunk(state, headerBytes, headerIsFinal),
+				encryptChunk(state, new TextEncoder().encode("data"), dataIsFinal),
+				encryptChunk(state, new TextEncoder().encode("more"), false),
+			];
+			return { chunks, header: toBase64(header), key: keyToBase64Url(baseKey) };
+		};
+
+		// FINAL on the header, then more chunks.
+		const early = forge(true, false);
+		await expect(
+			decryptNoteChunked(early.chunks.slice(0, 2), early.header, early.key),
+		).rejects.toThrow("truncated or extended");
+
+		// FINAL on a data chunk, then one more.
+		const extended = forge(false, true);
+		await expect(
+			decryptNoteChunked(extended.chunks, extended.header, extended.key),
+		).rejects.toThrow("truncated or extended");
+	});
+
+	test("decryptNoteChunked rejects a FINAL header that declares file data", async () => {
+		await ensureInit();
+
+		const baseKey = generateKey();
+		const { state, header } = initStreamEncrypt(baseKey);
+		const headerBytes = encodeRaw({ files: [{ name: "a.txt", type: "text/plain", size: 4 }] });
+
+		await expect(
+			decryptNoteChunked(
+				[encryptChunk(state, headerBytes, true)],
+				toBase64(header),
+				keyToBase64Url(baseKey),
+			),
+		).rejects.toThrow("truncated or extended");
+	});
+
 	test("is compatible with test vectors", async () => {
 		await ensureInit();
 
