@@ -2,7 +2,7 @@ name: Scheduled security scan
 
 # The audit and Trivy jobs in deploy.yml only run on push/PR, so a CVE disclosed
 # while the repo is quiet is never noticed — and self-hosters keep pulling the
-# same :latest image. This re-scans the published artifacts daily and opens an
+# same :1 image. This re-scans the published artifacts daily and opens an
 # issue when something turns up.
 on:
   schedule:
@@ -45,14 +45,28 @@ jobs:
       contents: read
       packages: read
     outputs:
-      failed: ${{ steps.trivy.outcome == 'failure' }}
+      failed: ${{ steps.trivy-release.outcome == 'failure' || steps.trivy-main.outcome == 'failure' }}
     steps:
-      - name: Scan the published image
-        id: trivy
+      # :1 is the release line self-hosters are told to run; :main is the
+      # unreleased tip. A release is only rebuilt when a new one is tagged, so
+      # the two drift apart between releases and each needs its own scan.
+      - name: Scan the release line (:1)
+        id: trivy-release
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/largerio/secret:latest
+          image-ref: ghcr.io/largerio/secret:1
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Scan the tip of main (:main)
+        id: trivy-main
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/largerio/secret:main
           format: table
           exit-code: "1"
           ignore-unfixed: true
