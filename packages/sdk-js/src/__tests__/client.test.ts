@@ -211,6 +211,69 @@ describe("SecretClient", () => {
 		expect(result.keyFragment).toBe("myKey");
 	});
 
+	test("parseShareUrl reports a malformed escape as an invalid share URL", () => {
+		const err = (() => {
+			try {
+				return SecretClient.parseShareUrl("https://example.com/note/aBcDeFgHiJkL#%E0%A4%A");
+			} catch (e) {
+				return e;
+			}
+		})();
+		expect(err).toBeInstanceOf(SecretValidationError);
+		expect((err as Error).message).toBe("Invalid share URL");
+	});
+
+	test("ignores a trailing slash on baseUrl", async () => {
+		const http = await getHttpMocks();
+		http.checkNote.mockResolvedValue({ exists: false });
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com/" });
+		await client.checkNote("aBcDeFgHiJkL");
+
+		expect(http.checkNote).toHaveBeenCalledWith(
+			expect.objectContaining({ baseUrl: "https://example.com/api/v1" }),
+			"aBcDeFgHiJkL",
+		);
+		expect(client.buildShareUrl("aBcDeFgHiJkL", "k")).toBe(
+			"https://example.com/note/aBcDeFgHiJkL#k",
+		);
+	});
+
+	test("readNote lets a missing salt through instead of calling it a wrong password", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "h",
+			chunkCount: 1,
+			chunks: [new Uint8Array([1])],
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+		const missingSalt = new SecretValidationError(
+			"The note requires a password but the server did not return its salt",
+		);
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockRejectedValue(missingSalt);
+		crypto.decryptNoteChunked.mockRejectedValue(missingSalt);
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		for (const chunked of [false, true]) {
+			await expect(
+				client.readNote("noteId123456", "key", { password: "pw", chunked }),
+			).rejects.toBe(missingSalt);
+		}
+	});
+
 	test("parseShareUrl throws on invalid URL", () => {
 		expect(() => SecretClient.parseShareUrl("https://example.com/other")).toThrow(
 			"missing note ID",

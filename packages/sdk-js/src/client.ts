@@ -39,11 +39,35 @@ const PROGRESS = {
 	downloadSpan: 0.7,
 } as const;
 
+/**
+ * The error a failed decryption surfaces as.
+ *
+ * Wrong password, wrong key and tampered ciphertext all become the same
+ * SecretDecryptionError: telling them apart would make reads a password
+ * oracle. A SecretValidationError (the server sent no salt for a password
+ * note, typically a proxy stripping X-Salt) is not a decryption failure and
+ * keeps its own type, so the caller can report what actually went wrong.
+ */
+function uniformDecryptionError(err: unknown): Error {
+	if (err instanceof SecretValidationError) return err;
+	return new SecretDecryptionError();
+}
+
+/** decodeURIComponent, with a malformed escape reported as an invalid share URL. */
+function decodeUrlPart(part: string): string {
+	try {
+		return decodeURIComponent(part);
+	} catch {
+		throw new SecretValidationError("Invalid share URL");
+	}
+}
+
 export class SecretClient {
 	private readonly httpConfig: HttpClientConfig;
 
 	private constructor(config: SecretClientConfig) {
-		const baseUrl = config.baseUrl ?? "";
+		// A trailing slash ("https://secret.example.com/") built "//api/v1" URLs.
+		const baseUrl = (config.baseUrl ?? "").replace(/\/+$/, "");
 		this.httpConfig = {
 			baseUrl: `${baseUrl}/api/v1`,
 			fetch: config.fetch ?? globalThis.fetch.bind(globalThis),
@@ -403,10 +427,8 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch {
-			// Uniform error: never reveal whether the password/key was wrong or
-			// the ciphertext was tampered with (avoids a decryption oracle).
-			throw new SecretDecryptionError();
+		} catch (err) {
+			throw uniformDecryptionError(err);
 		}
 
 		options?.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });
@@ -435,10 +457,8 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch {
-			// Uniform error: never reveal whether the password/key was wrong or
-			// the ciphertext was tampered with (avoids a decryption oracle).
-			throw new SecretDecryptionError();
+		} catch (err) {
+			throw uniformDecryptionError(err);
 		}
 
 		return {
@@ -477,10 +497,8 @@ export class SecretClient {
 				options?.password,
 				response.salt,
 			);
-		} catch {
-			// Uniform error: never reveal whether the password/key was wrong or
-			// the ciphertext was tampered with (avoids a decryption oracle).
-			throw new SecretDecryptionError();
+		} catch (err) {
+			throw uniformDecryptionError(err);
 		}
 
 		options?.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });
@@ -544,11 +562,11 @@ export class SecretClient {
 			throw new SecretValidationError("Invalid share URL: missing note ID");
 		}
 
-		const keyFragment = decodeURIComponent(parsed.hash.slice(1));
+		const keyFragment = decodeUrlPart(parsed.hash.slice(1));
 		if (!keyFragment) {
 			throw new SecretValidationError("Invalid share URL: missing key fragment");
 		}
 
-		return { id: decodeURIComponent(id), keyFragment };
+		return { id: decodeUrlPart(id), keyFragment };
 	}
 }

@@ -7,6 +7,26 @@ const UINT32_SIZE = 4;
 const MAX_REASONABLE_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB sanity limit
 const MAX_REASONABLE_CHUNK_COUNT = 10_000;
 
+/**
+ * Reading a note spends one of its reads as soon as the server answers, and on
+ * a burn-after-read note destroys it. A retry after a timeout or a 5xx could
+ * spend a second read, or turn the real error into a 404: these requests are
+ * never retried, whatever `maxRetries` says.
+ */
+const CONSUMING_READ = false;
+
+/**
+ * Read a response body, reporting a connection lost mid-download as the
+ * transport failure it is rather than a raw TypeError.
+ */
+async function readBody<T>(read: () => Promise<T>): Promise<T> {
+	try {
+		return await read();
+	} catch (err) {
+		throw new SecretNetworkError("Connection lost while downloading the note", { cause: err });
+	}
+}
+
 function extractErrorMessage(body: unknown, status: number): string {
 	if (typeof body === "object" && body !== null && "error" in body) {
 		const error = (body as Record<string, unknown>)["error"];
@@ -184,12 +204,13 @@ export async function getJson<T>(
 	config: HttpClientConfig,
 	path: string,
 	onProgress?: (progress: number) => void,
+	idempotent = true,
 ): Promise<T> {
 	const res = await requestWithPolicy(
 		config,
 		`${config.baseUrl}${path}`,
 		{ headers: authHeaders(config.apiKey) },
-		true,
+		idempotent,
 	);
 
 	if (!res.ok) {
@@ -242,7 +263,7 @@ export async function getNoteRaw(
 		config,
 		`${config.baseUrl}/notes/${id}/raw`,
 		{ headers: authHeaders(config.apiKey) },
-		true,
+		CONSUMING_READ,
 	);
 
 	if (!res.ok) {
@@ -258,31 +279,25 @@ export async function getNoteRaw(
 	const expiresAt = getRequiredHeader(headers, "X-Expires-At");
 	const salt = headers.get("X-Salt") ?? undefined;
 
-	let data: ArrayBuffer;
-	if (onProgress && res.body) {
-		const contentLength = headers.get("Content-Length");
-		const total = parsePositiveInt(contentLength, 0);
+	const data = await readBody(async () => {
+		const body = res.body;
+		const total = parsePositiveInt(headers.get("Content-Length"), 0);
+		if (!onProgress || !body || total === 0) return res.arrayBuffer();
 
-		if (total > 0) {
-			const reader = res.body.getReader();
-			const chunks: Uint8Array[] = [];
-			let loaded = 0;
+		const reader = body.getReader();
+		const chunks: Uint8Array[] = [];
+		let loaded = 0;
 
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				chunks.push(value);
-				loaded += value.length;
-				onProgress(loaded / total);
-			}
-
-			data = await new Blob(chunks as BlobPart[]).arrayBuffer();
-		} else {
-			data = await res.arrayBuffer();
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			chunks.push(value);
+			loaded += value.length;
+			onProgress(loaded / total);
 		}
-	} else {
-		data = await res.arrayBuffer();
-	}
+
+		return new Blob(chunks as BlobPart[]).arrayBuffer();
+	});
 
 	const nonceBytes = safeAtob(clientNonce);
 
@@ -302,7 +317,7 @@ export async function getNote(
 	id: string,
 	onProgress?: (progress: number) => void,
 ): Promise<ReadNoteResponse> {
-	return getJson<ReadNoteResponse>(config, `/notes/${id}`, onProgress);
+	return getJson<ReadNoteResponse>(config, `/notes/${id}`, onProgress, CONSUMING_READ);
 }
 
 export async function checkNote(config: HttpClientConfig, id: string): Promise<NoteInfo> {
@@ -453,7 +468,7 @@ export async function getNoteStream(
 		config,
 		`${config.baseUrl}/notes/${id}/stream`,
 		{ headers: authHeaders(config.apiKey) },
-		true,
+		CONSUMING_READ,
 	);
 
 	if (!res.ok) {
@@ -474,7 +489,7 @@ export async function getNoteStream(
 	const salt = headers.get("X-Salt") ?? undefined;
 
 	// Read entire body then parse length-prefixed chunks
-	const bodyData = await res.arrayBuffer();
+	const bodyData = await readBody(() => res.arrayBuffer());
 	const view = new DataView(bodyData);
 	const chunks: Uint8Array[] = [];
 	let offset = 0;
