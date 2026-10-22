@@ -1,4 +1,10 @@
 <script lang="ts">
+// Fonts are bundled and served by the app itself: a font CDN would see the IP
+// of every visitor, including on the page that carries the decryption key.
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource/instrument-serif/400.css";
+import "@fontsource/instrument-serif/400-italic.css";
 import "../app.css";
 import Icon from "#lib/components/Icon.svelte";
 import LangToggle from "#lib/components/LangToggle.svelte";
