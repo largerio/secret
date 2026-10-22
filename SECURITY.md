@@ -25,14 +25,37 @@ The following are in scope:
 Secret uses a double-encryption model:
 
 1. **Client-side**: XChaCha20-Poly1305 (libsodium) with keys derived via Argon2id
-2. **Server-side**: AES-256-GCM (Node.js crypto) as defense-in-depth
+2. **Server-side**: AES-256-GCM (Node.js crypto) at rest, as an extra layer — see [what it covers](#what-the-server-can-see)
 
 The decryption key is stored in the URL fragment (`#key`), which browsers never send to the server. The server never has access to plaintext content.
+
+## What the Server Can See
+
+Zero-knowledge covers the content, not the metadata. This is what the operator,
+or anyone holding the server's database and storage, can and cannot learn:
+
+| Data | Visible to the server |
+|------|-----------------------|
+| Text, file contents, file names and types | No — encrypted in the browser before upload |
+| Decryption key and password | No — the key stays in the URL fragment, the password never leaves the browser |
+| Size | Yes — ciphertext is not padded, so it gives the size of the content to within a few bytes. Chunked uploads also reveal each file's size, since every file starts on a new chunk |
+| Number of files, password set or not, read limit and reads so far, expiry, creation time | Yes — stored in clear to enforce them |
+| When a note is created, read and deleted | Yes |
+| IP addresses | Seen for rate limiting and kept in memory for about a minute; never written to the app's logs. Your reverse proxy may log them |
+| Note IDs | Appear in cleanup and deletion-retry logs, never in request logs |
+
+The at-rest layer uses `SERVER_ENCRYPTION_KEY`. Left empty, that key is generated
+on first start and stored in the data volume (`.encryption_key`), so a copy of the
+volume, or of a backup of it, holds both the key and the data: the layer then only
+protects a leaked database or S3 bucket on its own. To cover a stolen volume too,
+set `SERVER_ENCRYPTION_KEY` from a secret store and keep it out of the volume and
+its backups. Either way, the content stays protected by the end-to-end layer.
 
 ## Security Measures
 
 - Timing-safe token comparison (`crypto.timingSafeEqual`)
-- Key memory zeroing after use (`sodium.memzero`)
+- Key buffers zeroed after use (`sodium.memzero`) — a best effort: JavaScript
+  strings and libsodium's internal WASM copies are not wiped
 - Strict Content Security Policy (CSP)
 - Per-IP rate limiting on all endpoints
 - Zod validation on all inputs with max length constraints
@@ -90,9 +113,11 @@ The decryption key is stored in the URL fragment (`#key`), which browsers never 
   authentication. It is rate-limited but
   is not zero-knowledge with respect to existence/metadata. Note IDs are long and
   random, so enumeration is impractical, but the leak is acknowledged.
-- **In-memory rate limiting is single-instance.** Counters live in process memory,
-  so limits are per-replica. Running multiple instances behind a load balancer
-  weakens the global rate limit; use a shared store or sticky routing if you scale out.
+- **One instance only.** SQLite, the proof-of-work challenges and the rate-limit
+  counters all live in a single process, and none of them can be shared. Run exactly
+  one replica (on Kubernetes: `replicas: 1`, the `Recreate` strategy and a
+  `ReadWriteOnce` volume). A second replica would reject the proof-of-work tokens
+  issued by the first and split every rate limit in two.
 - **`SERVER_ENCRYPTION_KEY` is not rotatable.** It is mixed into every stored note;
   changing it renders all existing notes permanently undecryptable. There is no
   re-encryption/rotation path today.
@@ -104,4 +129,6 @@ The decryption key is stored in the URL fragment (`#key`), which browsers never 
 
 ## Supported Versions
 
-Only the latest version is supported with security updates.
+Security fixes ship in a new release of the current major line (1.x). The
+`ghcr.io/largerio/secret:1` image tag always points to that release; older
+releases are not patched, so follow `:1` rather than an exact version.

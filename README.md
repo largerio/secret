@@ -8,7 +8,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 [![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
 
-Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no tracking, no logs.
+Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no analytics, and no content, keys or IP addresses in the logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
@@ -47,7 +47,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 
 ## Features
 
-- **Zero-knowledge encryption** — XChaCha20-Poly1305 (client) + AES-256-GCM (server)
+- **Zero-knowledge encryption** — XChaCha20-Poly1305 in the browser, plus an AES-256-GCM layer at rest on the server
 - **Text & files** — Notes, documents, images, any file type. Up to 10 files per note, drag & drop.
 - **Burn after read** — Destroyed after the first view
 - **Password protection** — Optional, Argon2id key derivation
@@ -55,7 +55,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Read limits** — Auto-delete after N reads
 - **Delete token** — Manually delete a note at any time
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
-- **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
+- **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
@@ -67,7 +67,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 |------------------------|---------------------|---------------------|---------------------|---------------------|
 | Zero-knowledge         | Yes                 | Yes                 | No (server-side)    | Yes                 |
 | Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | —                   | OpenPGP             |
-| Server-side encryption | Yes (AES-256-GCM)   | No                  | Yes                 | No                  |
+| Encryption at rest     | Yes (AES-256-GCM)¹  | No                  | Yes                 | No                  |
 | File attachments       | Up to 10, 500 MB    | Single, opt-in      | No                  | Single, streaming   |
 | File previews          | Image/PDF/AV        | Image/PDF/media     | No                  | No                  |
 | Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
@@ -76,6 +76,8 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
+
+¹ A server-held key, on top of the end-to-end layer. It protects a leaked database or S3 bucket on its own, not a stolen data volume when the key is stored on that volume — which is the zero-config default. See [what the server can see](SECURITY.md#what-the-server-can-see).
 
 > Comparison reflects publicly documented features at the time of writing. See each project's docs for the latest details.
 
@@ -340,12 +342,12 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Layer | Details |
 |-------|---------|
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
-| Server encryption | AES-256-GCM (defense-in-depth) |
+| Server encryption | AES-256-GCM at rest, bound to the note ID. Guards a leaked database or bucket; keep `SERVER_ENCRYPTION_KEY` off the data volume to guard a stolen volume too |
 | Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
-| Key hygiene | Cleared from the WASM heap after use (`sodium.memzero`). The key still lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
-| Privacy | No IP logging, no tracking. Two first-party preference cookies (language, theme). |
+| Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
+| Privacy | No analytics, no IP addresses or note content in logs. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
