@@ -11,7 +11,7 @@ const DEFAULT_CONFIG: ServerConfig = {
 	appName: "Secret",
 	appDescription: "Zero-knowledge encrypted sharing",
 	appUrl: "",
-	primaryColor: "#6366f1",
+	primaryColor: "",
 	footerText: "",
 	ogImageUrl: "",
 	maxFileSize: MAX_FILE_SIZE,

@@ -1,5 +1,4 @@
 {
-	"app_name": "Secret",
 	"app_description": "Zero-knowledge encrypted sharing",
 	"create_title": "Create a secure note",
 	"create_description": "Your content is encrypted in your browser before being sent to the server. The server never sees your data.",
@@ -99,7 +98,7 @@
 	"md_write": "Write",
 	"md_preview": "Preview",
 	"md_preview_empty": "Nothing to preview",
-	"seo_title": "Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing",
+	"seo_title": "{app} — Secure, Zero-Knowledge Encrypted Note & File Sharing",
 	"seo_description": "Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser — the server never sees your content. Free, open-source, no account required.",
 	"seo_keywords": "encrypted notes, secure file sharing, zero-knowledge encryption, password sharing, burn after reading, end-to-end encryption, self-hosted, privacy, secret sharing, encrypted messaging",
 	"manage_title": "Manage note",

@@ -16,7 +16,7 @@ services:
       - APP_URL=${APP_URL:-http://localhost:3000}
       - APP_NAME=${APP_NAME:-Secret}
       - APP_DESCRIPTION=${APP_DESCRIPTION:-Secure zero-knowledge note and file sharing}
-      - APP_PRIMARY_COLOR=${APP_PRIMARY_COLOR:-#6366f1}
+      - APP_PRIMARY_COLOR=${APP_PRIMARY_COLOR:-}
       - APP_FOOTER_TEXT=${APP_FOOTER_TEXT:-}
       - APP_OG_IMAGE_URL=${APP_OG_IMAGE_URL:-}
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10485760}

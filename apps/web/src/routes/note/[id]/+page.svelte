@@ -505,7 +505,8 @@ async function handleDecrypt() {
 							style:font-family="var(--font-mono)"
 							style:font-size="14px"
 							style:color="var(--text)"
-							style:line-height="1.5">{status.payload.text}</code
+							style:line-height="1.5"
+							data-testid="note-secret">{status.payload.text}</code
 						>
 					{:else}
 						<pre
