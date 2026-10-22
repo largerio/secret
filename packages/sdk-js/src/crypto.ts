@@ -21,6 +21,8 @@ import {
 import { SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { ContentMode, NotePayload } from "./types.js";
 
+export { sha256Hex } from "@largerio/secret-crypto/client";
+
 function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
 	const result = new Uint8Array(totalLen);

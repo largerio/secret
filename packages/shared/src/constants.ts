@@ -1,4 +1,8 @@
 export const MAX_TEXT_SIZE = 102_400;
+// Ceiling for a note without files, the only kind stored inline in the database
+// and read there synchronously. MAX_TEXT_SIZE UTF-16 code units take at most
+// 3 UTF-8 bytes each (~300 KB), plus the MessagePack envelope and the AEAD tag.
+export const MAX_INLINE_ENCRYPTED_SIZE = 524_288;
 export const MAX_FILE_SIZE = 10_485_760;
 export const S3_MAX_FILE_SIZE = 104_857_600;
 export const MAX_FILES_PER_NOTE = 10;

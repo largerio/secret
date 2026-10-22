@@ -24,7 +24,7 @@
 
 services:
   app:
-    image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
+    image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:1}
     restart: always
     volumes:
       - secret-data:/app/data

@@ -10,7 +10,7 @@ services:
     name: secret
     runtime: image
     image:
-      url: ghcr.io/largerio/secret:latest
+      url: ghcr.io/largerio/secret:1
     envVars:
       - key: SERVER_ENCRYPTION_KEY
         sync: false

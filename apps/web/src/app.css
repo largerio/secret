@@ -4,9 +4,9 @@
 /* ---------- Design tokens — Editorial direction ---------- */
 @theme {
 	--font-sans:
-		"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+		"Inter Variable", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	--font-serif: "Instrument Serif", Georgia, serif;
-	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
 
 	--color-bg: var(--bg);
 	--color-bg-2: var(--bg-2);
