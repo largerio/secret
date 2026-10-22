@@ -239,6 +239,20 @@ describe("SecretClient", () => {
 		);
 	});
 
+	test("strips any number of trailing slashes, and only those", async () => {
+		const many = await SecretClient.create({ baseUrl: "https://example.com/base///" });
+		expect(many.buildShareUrl("aBcDeFgHiJkL", "k")).toBe(
+			"https://example.com/base/note/aBcDeFgHiJkL#k",
+		);
+
+		// The input that made the previous regex backtrack quadratically.
+		const slashes = `${"/".repeat(50_000)}x`;
+		const started = performance.now();
+		const odd = await SecretClient.create({ baseUrl: slashes });
+		expect(performance.now() - started).toBeLessThan(500);
+		expect(odd.buildShareUrl("id", "k")).toBe(`${slashes}/note/id#k`);
+	});
+
 	test("readNote lets a missing salt through instead of calling it a wrong password", async () => {
 		const http = await getHttpMocks();
 		http.getNoteRaw.mockResolvedValue({

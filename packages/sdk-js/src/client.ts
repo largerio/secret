@@ -53,6 +53,16 @@ function uniformDecryptionError(err: unknown): Error {
 	return new SecretDecryptionError();
 }
 
+/**
+ * The URL without its trailing slashes. A loop rather than `/\/+$/`, which
+ * backtracks quadratically on a long run of slashes followed by anything else.
+ */
+function withoutTrailingSlashes(url: string): string {
+	let end = url.length;
+	while (end > 0 && url[end - 1] === "/") end--;
+	return url.slice(0, end);
+}
+
 /** decodeURIComponent, with a malformed escape reported as an invalid share URL. */
 function decodeUrlPart(part: string): string {
 	try {
@@ -67,7 +77,7 @@ export class SecretClient {
 
 	private constructor(config: SecretClientConfig) {
 		// A trailing slash ("https://secret.example.com/") built "//api/v1" URLs.
-		const baseUrl = (config.baseUrl ?? "").replace(/\/+$/, "");
+		const baseUrl = withoutTrailingSlashes(config.baseUrl ?? "");
 		this.httpConfig = {
 			baseUrl: `${baseUrl}/api/v1`,
 			fetch: config.fetch ?? globalThis.fetch.bind(globalThis),
