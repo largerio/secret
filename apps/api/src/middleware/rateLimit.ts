@@ -60,6 +60,32 @@ function getPeerIp(c: Context): { readonly ip: string; readonly type: IpType } |
 	return normalizeIp(remote);
 }
 
+/**
+ * The /64 network an IPv6 address belongs to, e.g. `2001:db8:0:1::/64`.
+ *
+ * A single IPv6 subscriber is routinely handed a whole /64, so keying on the
+ * full address would give one client 2^64 buckets: enough to dodge every limit
+ * and to fill the store. Returns null for forms it does not expand (embedded
+ * IPv4 such as `64:ff9b::192.0.2.1`), which then keep their full address.
+ */
+export function ipv6Prefix64(ip: string): string | null {
+	if (ip.includes(".")) return null;
+
+	const [head = "", tail] = ip.split("::");
+	const left = head === "" ? [] : head.split(":");
+	const right = tail === undefined || tail === "" ? [] : tail.split(":");
+	const zeros = Array.from({ length: 8 - left.length - right.length }, () => "0");
+	const groups = tail === undefined ? left : [...left, ...zeros, ...right];
+
+	const prefix = groups.slice(0, 4).map((group) => Number.parseInt(group, 16).toString(16));
+	return `${prefix.join(":")}::/64`;
+}
+
+function bucketKey(address: { readonly ip: string; readonly type: IpType }): string {
+	if (address.type === "ipv4") return address.ip;
+	return ipv6Prefix64(address.ip) ?? address.ip;
+}
+
 function resolveClientIp(c: Context, trusted: BlockList): string {
 	const peer = getPeerIp(c);
 	if (peer === null) return "unknown";
@@ -81,14 +107,19 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 			const normalized = normalizeIp(hop.trim());
 			// A malformed hop makes everything to its left unverifiable.
 			if (!normalized) break;
-			if (!trusted.check(normalized.ip, normalized.type)) return normalized.ip;
+			if (!trusted.check(normalized.ip, normalized.type)) return bucketKey(normalized);
 		}
 		const realIp = c.req.header("x-real-ip")?.trim();
 		const realIpNormalized = realIp ? normalizeIp(realIp) : null;
-		if (realIpNormalized) return realIpNormalized.ip;
+		if (realIpNormalized) return bucketKey(realIpNormalized);
 	}
 
-	return peer.ip;
+	return bucketKey(peer);
+}
+
+function tooManyRequests(c: Context, resetAt: number, now: number): Response {
+	c.header("Retry-After", String(Math.max(1, Math.ceil((resetAt - now) / 1000))));
+	return c.json({ error: "Too many requests" }, 429);
 }
 
 export type NotesRateClass = "create" | "read" | "exists" | "chunks";
@@ -135,15 +166,22 @@ export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 		if (existing === undefined || existing.resetAt <= now) {
 			if (store.size >= MAX_STORE_SIZE && existing === undefined) {
 				// Bulk-evict every expired entry in one sweep: freeing all reusable
-				// slots at once (instead of one per request) keeps a full store from
-				// rejecting new clients under sustained traffic.
+				// slots at once (instead of one per request) keeps the store small
+				// under sustained traffic.
 				for (const [key, entry] of store) {
 					if (entry.resetAt <= now) {
 						store.delete(key);
 					}
 				}
+				// Still full: drop the oldest entry rather than refuse the newcomer.
+				// Refusing let whoever filled the store lock every new client out of
+				// the instance; dropping the oldest only resets one counter early.
 				if (store.size >= MAX_STORE_SIZE) {
-					return c.json({ error: "Too many requests" }, 429);
+					// Maps iterate in insertion order: the first key is the oldest.
+					for (const key of store.keys()) {
+						store.delete(key);
+						break;
+					}
 				}
 			}
 			store.set(ip, { hits: 1, resetAt: now + options.windowMs });
@@ -152,7 +190,7 @@ export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 		}
 
 		if (existing.hits >= options.max) {
-			return c.json({ error: "Too many requests" }, 429);
+			return tooManyRequests(c, existing.resetAt, now);
 		}
 
 		store.set(ip, { hits: existing.hits + 1, resetAt: existing.resetAt });

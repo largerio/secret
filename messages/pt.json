@@ -47,6 +47,8 @@
 	"link_incomplete_description": "Falta a chave de desencriptação nesta ligação. Copie a ligação completa, incluindo tudo o que vem depois do sinal #.",
 	"unavailable_title": "Serviço indisponível",
 	"unavailable_description": "Não foi possível aceder à nota. É um problema de ligação, não uma nota eliminada — tente novamente daqui a pouco.",
+	"rate_limited_title": "Demasiados pedidos",
+	"rate_limited_description": "Foram abertas demasiadas notas a partir da sua rede no último minuto. Nada foi lido nem eliminado — aguarde um minuto e volte a carregar esta página.",
 	"error_wrong_password": "Palavra-passe incorreta ou chave inválida",
 	"error_empty_content": "Por favor, introduza texto ou carregue ficheiros.",
 	"error_text_too_long": "O texto é demasiado longo. Máximo {max} KB.",

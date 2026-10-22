@@ -27,6 +27,7 @@ type NoteStatus =
 	| { state: "not_found" }
 	| { state: "link_incomplete" }
 	| { state: "unavailable" }
+	| { state: "rate_limited" }
 	| { state: "ready"; info: NoteInfo }
 	| { state: "downloading"; progress: number }
 	| { state: "decrypting" }
@@ -40,7 +41,9 @@ let status = $state<NoteStatus>(
 		? { state: "ready", info: data.noteInfo }
 		: data.unavailable
 			? { state: "unavailable" }
-			: { state: "not_found" },
+			: data.rateLimited
+				? { state: "rate_limited" }
+				: { state: "not_found" },
 );
 let mounted = $state(false);
 let password = $state("");
@@ -202,13 +205,15 @@ async function handleDecrypt() {
 	<meta property="og:description" content={t("view_description")} />
 </svelte:head>
 
-{#if status.state === "not_found" || status.state === "link_incomplete" || status.state === "unavailable"}
+{#if status.state === "not_found" || status.state === "link_incomplete" || status.state === "unavailable" || status.state === "rate_limited"}
 	{@const copy =
 		status.state === "link_incomplete"
 			? { title: t("link_incomplete_title"), body: t("link_incomplete_description") }
 			: status.state === "unavailable"
 				? { title: t("unavailable_title"), body: t("unavailable_description") }
-				: { title: t("not_found_title"), body: t("not_found_description") }}
+				: status.state === "rate_limited"
+					? { title: t("rate_limited_title"), body: t("rate_limited_description") }
+					: { title: t("not_found_title"), body: t("not_found_description") }}
 	<section
 		class="rounded-2xl border"
 		style:background="var(--bg-2)"

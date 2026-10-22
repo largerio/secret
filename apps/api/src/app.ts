@@ -150,7 +150,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	};
 	const notesRateLimit: MiddlewareHandler = (c, next) =>
 		byClass[classifyNotesPath(c.req.path)](c, next);
-	app.use(notesPrefix, notesRateLimit);
+	// A single registration: Hono's `/notes/*` also matches `/notes` itself, so
+	// adding `app.use(notesPrefix, …)` as well counted every JSON create twice
+	// and halved its bound.
 	app.use(`${notesPrefix}/*`, notesRateLimit);
 
 	// Reads return note ciphertext that may be burn-after-read: a 200 without

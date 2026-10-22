@@ -47,6 +47,8 @@
 	"link_incomplete_description": "A questo link manca la chiave di decifratura. Copia il link completo, incluso tutto ciò che segue il simbolo #.",
 	"unavailable_title": "Servizio non disponibile",
 	"unavailable_description": "Impossibile raggiungere la nota. È un problema di connessione, non una nota eliminata — riprova tra un momento.",
+	"rate_limited_title": "Troppe richieste",
+	"rate_limited_description": "Nell'ultimo minuto sono state aperte troppe note dalla tua rete. Non è stato letto né eliminato nulla — attendi un minuto, poi ricarica questa pagina.",
 	"error_wrong_password": "Password errata o chiave non valida",
 	"error_empty_content": "Inserisci del testo o carica dei file.",
 	"error_text_too_long": "Il testo è troppo lungo. Massimo {max} KB.",

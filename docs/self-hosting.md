@@ -195,26 +195,29 @@ Two reminders:
 
 ### Making rate limiting work behind a proxy
 
-By default **every user shares a single rate-limit bucket**. The limits still
-apply; they just apply to your whole instance at once, so one busy visitor can
-exhaust them for everybody. The API logs a warning about this at startup.
+Behind a reverse proxy, **every user shares the proxy's rate-limit bucket**
+until you tell the web app where the client address is. The limits still apply;
+they just apply to your whole instance at once, so one busy visitor can exhaust
+them for everybody.
 
-The cause is structural: inside the container the web app proxies `/api` to the
-API, so the API only ever sees `127.0.0.1` as its peer. It will not believe a
-forwarded address unless you tell it which proxies to trust.
+Inside the container the web app proxies `/api` to the API and passes on the
+client address it resolved. The API trusts it out of the box (`TRUSTED_PROXIES`
+defaults to `127.0.0.1/32` in the image). What the web app cannot guess is that
+a reverse proxy sits in front of it: without being told, it sees that proxy's
+address as the client's.
 
-Three variables fix it:
+Two variables fix it:
 
 ```env
-# The API: trust the address forwarded by the bundled web app.
-TRUSTED_PROXIES=127.0.0.1/32
-
 # The web app: derive the client address from the header your proxy sets,
 # and say how many proxies sit in front of it (1 for a single Nginx/Traefik/
 # Caddy/Cloudflare hop, 2 if Cloudflare fronts your own proxy, and so on).
 ADDRESS_HEADER=X-Forwarded-For
 XFF_DEPTH=1
 ```
+
+Exposed directly, with no proxy in front, the instance already tells clients
+apart and needs neither.
 
 `XFF_DEPTH` matters: `X-Forwarded-For` is a list a client can prefill, and only
 the last entries — the ones your own proxies appended — are trustworthy. Set it
