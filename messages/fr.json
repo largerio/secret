@@ -47,6 +47,8 @@
 	"link_incomplete_description": "Il manque la clé de déchiffrement à ce lien. Copiez le lien entier, y compris tout ce qui suit le signe #.",
 	"unavailable_title": "Service indisponible",
 	"unavailable_description": "La note n'a pas pu être contactée. C'est un problème de connexion, pas une note supprimée — réessayez dans un instant.",
+	"rate_limited_title": "Trop de requêtes",
+	"rate_limited_description": "Trop de notes ont été ouvertes depuis votre réseau au cours de la dernière minute. Rien n'a été lu ni supprimé — attendez une minute, puis rechargez cette page.",
 	"error_wrong_password": "Mot de passe incorrect ou clé invalide",
 	"error_empty_content": "Veuillez entrer du texte ou ajouter des fichiers.",
 	"error_text_too_long": "Le texte est trop long. Maximum {max} Ko.",
