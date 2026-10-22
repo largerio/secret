@@ -8,6 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { type AppConfig, parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
+import { DEFAULT_BODY_LIMIT } from "../middleware/bodyLimit.js";
 import { LocalStorage } from "../storage/local.js";
 
 // Avoid initializing the real Cap PoW subsystem; app assembly only needs the
@@ -206,6 +207,28 @@ describe("createApp — body limits", () => {
 		});
 		expect(res.status).toBe(413);
 		expect(await res.json()).toEqual({ error: "Payload too large" });
+	});
+
+	it("rejects an oversized upload init with 413", async () => {
+		const res = await makeApp().request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Cap-Token": "valid" },
+			body: "x".repeat(DEFAULT_BODY_LIMIT + 1),
+		});
+		expect(res.status).toBe(413);
+		expect(await res.json()).toEqual({ error: "Payload too large" });
+	});
+
+	it("rejects an oversized Cap request before reading it", async () => {
+		const res = await makeApp().request("/api/cap/redeem", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Content-Length": String(DEFAULT_BODY_LIMIT + 1),
+			},
+			body: "x".repeat(DEFAULT_BODY_LIMIT + 1),
+		});
+		expect(res.status).toBe(413);
 	});
 
 	it("rejects an oversized chunk with 413", async () => {
