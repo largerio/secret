@@ -106,7 +106,7 @@
 	"manage_description": "Puoi eliminare questa nota usando il pulsante qui sotto.",
 	"manage_invalid_token": "Nessun token di eliminazione trovato. Il link potrebbe essere incompleto.",
 	"back_home": "Torna alla home",
-	"enc_badge": "CIFRATO E2E · AES-256-GCM",
+	"enc_badge": "CIFRATO E2E · XCHACHA20-POLY1305",
 	"theme_toggle": "Cambia tema",
 	"theme_dark": "Scuro",
 	"theme_light": "Chiaro",
