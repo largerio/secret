@@ -33,8 +33,9 @@ curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.ym
 docker compose up -d
 ```
 
-The container pulls `ghcr.io/largerio/secret:latest`, creates a persistent
-Docker volume for your data, and serves the app on port `3000`.
+The container pulls `ghcr.io/largerio/secret:1` (the latest 1.x release),
+creates a persistent Docker volume for your data, and serves the app on port
+`3000`.
 Open `http://<your-host>:3000` and you're live.
 
 **On your own domain, with HTTPS.** `docker-compose.tls.yml` adds Caddy, which
@@ -79,7 +80,7 @@ docker run -d --name secret -p 3000:3000 \
   -v secret-data:/app/data \
   -e SERVER_ENCRYPTION_KEY="$KEY" \
   -e APP_URL=http://localhost:3000 \
-  ghcr.io/largerio/secret:latest
+  ghcr.io/largerio/secret:1
 ```
 
 For a real deployment, set `APP_URL` to your public `https://` domain and put a
@@ -89,7 +90,7 @@ reverse proxy in front (see below).
 
 Coolify gives you automatic HTTPS through its built-in proxy.
 
-1. **New Resource** → **Docker Image** → `ghcr.io/largerio/secret:latest`
+1. **New Resource** → **Docker Image** → `ghcr.io/largerio/secret:1`
    (or **Docker Compose** and paste this repo's `docker-compose.yml`).
 2. **Environment variables:** set `SERVER_ENCRYPTION_KEY` (generate one) and
    `APP_URL` to the domain Coolify assigns.
@@ -107,7 +108,7 @@ Coolify gives you automatic HTTPS through its built-in proxy.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
 
-Deploy directly from the image `ghcr.io/largerio/secret:latest`. A
+Deploy directly from the image `ghcr.io/largerio/secret:1`. A
 [`render.yaml`](../render.yaml) blueprint is included — the button above deploys
 it in one click; Render will then prompt you for the two required values
 (`SERVER_ENCRYPTION_KEY` and `APP_URL`).
@@ -134,7 +135,7 @@ it in one click; Render will then prompt you for the two required values
 3. **Create the project.** Container Manager → **Project** → **Create** →
    set the path to `docker/secret` and import the existing `docker-compose.yml`.
 4. **Run it.** Build/Start the project — Container Manager pulls
-   `ghcr.io/largerio/secret:latest` automatically.
+   `ghcr.io/largerio/secret:1` automatically.
 5. **Access it.** Port `3000` is mapped to the NAS; browse to `http://<NAS-IP>:3000`.
 
 ### Synology notes & caveats
@@ -330,13 +331,9 @@ docker image prune -f   # clean up old layers
 
 Your data lives in the volume, so updates never delete notes.
 
-`docker-compose.yml` tracks `:latest` — the tip of `main`. In production, pin the
-major tag instead to get every release (fixes included) without unreleased or
-breaking changes:
-
-```yaml
-image: ghcr.io/largerio/secret:1
-```
+`docker-compose.yml` tracks `:1`, the major tag: every release (fixes included)
+without unreleased or breaking changes. Pin an exact release such as
+`ghcr.io/largerio/secret:1.2.1` for a fully reproducible deployment.
 
 Full tag list: [Pinning a version](../README.md#pinning-a-version).
 
@@ -347,7 +344,7 @@ Full tag list: [Pinning a version](../README.md#pinning-a-version).
 The GitHub Actions workflow in this repository builds the image, scans it, then
 deploys over SSH. Two details are worth copying into any pipeline of your own.
 
-**Deploy the digest, not the tag.** `:latest` and `:main` move. Between the scan
+**Deploy the digest, not the tag.** `:1` and `:main` move. Between the scan
 and the rollout, or between two rollouts, the tag can point somewhere else — and
 once it has moved there is nothing left to roll back to. The workflow passes the
 digest it just built and scanned:
@@ -359,7 +356,7 @@ SECRET_IMAGE="ghcr.io/largerio/secret@sha256:..." docker compose up -d
 Your compose file needs to accept it, with a default so manual runs still work:
 
 ```yaml
-image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:latest}
+image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:1}
 ```
 
 **Wait for healthy, and roll back if it never is.** A container that starts and

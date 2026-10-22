@@ -89,7 +89,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 mkdir secret && cd secret
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
 
-docker compose up -d      # pulls ghcr.io/largerio/secret:latest
+docker compose up -d      # pulls ghcr.io/largerio/secret:1
 ```
 
 That's it — on first launch the server encryption key is generated automatically and
@@ -120,7 +120,7 @@ If something doesn't work, run `docker compose logs -f` — see
 | Platform | How |
 |----------|-----|
 | **Render** | Click the button above ([guide](docs/self-hosting.md#railway--render-paas)) |
-| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:latest` ([guide](docs/self-hosting.md#coolify)) |
+| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:1` ([guide](docs/self-hosting.md#coolify)) |
 | **Portainer** | Stacks → paste `docker-compose.yml` ([guide](docs/self-hosting.md#portainer)) |
 | **Synology NAS** | Container Manager project ([guide](docs/self-hosting.md#synology-nas-dsm-7--container-manager)) |
 
@@ -244,15 +244,16 @@ Data lives in a Docker volume — updates never delete your notes.
 
 ### Pinning a version
 
-`docker-compose.yml` tracks `:latest` (the tip of `main`). For reproducible
-deploys, pin a published release tag on the `image:` line instead:
+`docker-compose.yml` tracks `:1`, the latest `1.x` release. For reproducible
+deploys, pin an exact release tag on the `image:` line instead:
 
 | Image tag | Tracks |
 |-----------|--------|
-| `ghcr.io/largerio/secret:latest` | tip of `main` (newest, may include unreleased changes) |
-| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended**, gets fixes and features without breaking changes |
+| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended** (the default), gets fixes and features without breaking changes |
 | `ghcr.io/largerio/secret:1.1` | latest `1.1.x` patch only |
 | `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible |
+| `ghcr.io/largerio/secret:latest` | newest release of any major version — moves to `2.x` and its breaking changes when it ships |
+| `ghcr.io/largerio/secret:main` | tip of `main`, unreleased and unreviewed changes included — for testing only |
 
 After changing the tag, run `docker compose pull && docker compose up -d`. The
 [Releases](https://github.com/largerio/secret/releases) page doubles as the
