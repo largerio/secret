@@ -113,7 +113,24 @@ export function proxyToApi(req: IncomingMessage, res: ServerResponse, target: Pr
 
 	const upstream = httpRequest(target.url, { method: req.method, headers });
 
+	// A client that leaves before the API answers calls the request off: the
+	// answer would have nowhere to go, and the API connection is freed now.
+	const callOff = () => upstream.destroy();
+	res.once("close", callOff);
+
 	upstream.on("response", (upstreamRes) => {
+		// From here on, the response pipeline handles a client that leaves.
+		res.off("close", callOff);
+
+		// pipeline() throws on a closed `res` instead of calling back, and
+		// thrown from this listener it takes the whole server down. Should an
+		// answer still find nobody to take it, drop it with its connection
+		// rather than read a body for no one.
+		if (res.headersSent || res.destroyed) {
+			upstreamRes.destroy();
+			return;
+		}
+
 		// Always set on a response received by an http client.
 		res.writeHead(upstreamRes.statusCode as number, endToEndHeaders(upstreamRes.headers));
 		// A client that disconnects mid-download destroys the upstream response
