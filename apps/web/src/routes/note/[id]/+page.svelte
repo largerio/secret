@@ -74,10 +74,10 @@ $effect(() => {
 	else setStep(3);
 });
 
-const isBurn = $derived.by(() => {
-	if (status.state === "ready") return status.info.maxReads === 1;
-	return false;
-});
+// From the loader, not from `status`: a failed read is handled once `status` has
+// moved on to "downloading", and that branch must still know the note was
+// single-read — otherwise it offers a retry on a note that no longer exists.
+const isBurn = $derived(data.noteInfo?.maxReads === 1);
 
 const needsPassword = $derived.by(() => {
 	if (status.state === "ready") return status.info.hasPassword;
