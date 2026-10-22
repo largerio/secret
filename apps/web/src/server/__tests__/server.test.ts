@@ -5,6 +5,7 @@ import {
 	type IncomingMessage,
 	request,
 	type Server,
+	type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +35,10 @@ let uploadStarted: Promise<void>;
 let reportUploadStarted: () => void;
 let abortedUpload: Promise<boolean>;
 let reportAbortedUpload: (complete: boolean) => void;
+let slowAnswer: Promise<ServerResponse>;
+let reportSlowAnswer: (res: ServerResponse) => void;
+let slowConnectionClosed: Promise<void>;
+let reportSlowConnectionClosed: () => void;
 
 function listen(server: Server): Promise<string> {
 	return new Promise((resolve) => {
@@ -114,6 +119,13 @@ beforeAll(async () => {
 			return;
 		}
 
+		if (req.url === "/api/v1/notes/slow") {
+			// Answered whenever the test decides.
+			req.socket.on("close", () => reportSlowConnectionClosed());
+			reportSlowAnswer(res);
+			return;
+		}
+
 		const body = await readBody(req);
 		received.push({
 			method: req.method as string,
@@ -146,6 +158,12 @@ beforeEach(() => {
 	});
 	abortedUpload = new Promise((resolve) => {
 		reportAbortedUpload = resolve;
+	});
+	slowAnswer = new Promise((resolve) => {
+		reportSlowAnswer = resolve;
+	});
+	slowConnectionClosed = new Promise((resolve) => {
+		reportSlowConnectionClosed = resolve;
 	});
 });
 
@@ -258,6 +276,26 @@ describe("API requests", () => {
 		req.destroy();
 
 		expect(await abortedUpload).toBe(false);
+	});
+
+	it("are called off at the API when the client leaves before the answer", async () => {
+		// The late answer used to be piped into the closed response: pipeline()
+		// threw ERR_STREAM_UNABLE_TO_PIPE out of an event listener, and every
+		// client that gave up on a slow answer took the whole server down.
+		const web = await startWeb();
+		const clientGone = new Promise((resolve) => {
+			servers.at(-1)?.once("request", (_req, res) => res.once("close", resolve));
+		});
+		const req = request(`${web}/api/v1/notes/slow`);
+		req.on("error", () => {});
+		req.end();
+
+		const answer = await slowAnswer;
+		req.destroy();
+		await clientGone;
+		answer.end("too late");
+
+		await slowConnectionClosed;
 	});
 
 	it("answer 502 when the API is unreachable", async () => {

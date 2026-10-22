@@ -1,7 +1,10 @@
 // @vitest-environment node
-import type { ServerResponse } from "node:http";
+import { once } from "node:events";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { Readable, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { endToEndHeaders, handleUpstreamError, isApiPath } from "../apiProxy.js";
+import { endToEndHeaders, handleUpstreamError, isApiPath, proxyToApi } from "../apiProxy.js";
 
 describe("isApiPath", () => {
 	it.each(["/api", "/api/health", "/api/v1/notes/abc", "/robots.txt", "/sitemap.xml"])(
@@ -85,5 +88,37 @@ describe("handleUpstreamError", () => {
 		handleUpstreamError(res as unknown as ServerResponse, new Error("aborted"));
 
 		expect(res.writeHead).not.toHaveBeenCalled();
+	});
+});
+
+describe("proxyToApi", () => {
+	it("drops an answer that finds the response already closed", async () => {
+		// The request to the API is called off as the client leaves, which a
+		// response closed before the proxy even started never signals. Piping
+		// into it would throw instead of calling back, and crash the server.
+		let apiConnectionClosed: () => void = () => {};
+		const closed = new Promise<void>((resolve) => {
+			apiConnectionClosed = resolve;
+		});
+		const api = createServer((req, res) => {
+			req.socket.on("close", apiConnectionClosed);
+			res.end("late");
+		});
+		api.listen(0, "127.0.0.1");
+		await once(api, "listening");
+		const url = `http://127.0.0.1:${(api.address() as AddressInfo).port}/`;
+		const req = Object.assign(Readable.from([]), { method: "GET", headers: {} });
+		const res = Object.assign(new Writable(), { headersSent: false, writeHead: vi.fn() });
+		res.destroy();
+		await once(res, "close");
+
+		proxyToApi(req as unknown as IncomingMessage, res as unknown as ServerResponse, {
+			url,
+			clientAddress: undefined,
+		});
+
+		await closed;
+		expect(res.writeHead).not.toHaveBeenCalled();
+		api.close();
 	});
 });
