@@ -190,7 +190,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
-| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for footer and social image) |
+| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: the built-in red). See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
@@ -199,7 +199,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
-| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
+| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
 

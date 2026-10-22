@@ -172,7 +172,6 @@ async function copy(text: string, setFlag: (v: boolean) => void) {
 				style:padding="12px 18px"
 				style:font-size="13px"
 				style:font-weight="500"
-				aria-label={t("ok_copy")}
 			>
 				<Icon name={copied ? "check" : "copy"} size={15} />
 				<span>{copied ? t("copied") : t("ok_copy")}</span>

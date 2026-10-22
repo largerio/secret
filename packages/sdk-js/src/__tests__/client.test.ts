@@ -41,6 +41,7 @@ vi.mock("../crypto.js", () => ({
 	decryptNoteChunked: vi.fn(() =>
 		Promise.resolve({ text: "decrypted chunked text", contentMode: "text" }),
 	),
+	sha256Hex: vi.fn((data: Uint8Array) => `sha256-of-${data.join(",")}`),
 }));
 
 async function getHttpMocks() {
@@ -208,6 +209,83 @@ describe("SecretClient", () => {
 		const result = SecretClient.parseShareUrl("https://secret.example.com/note/aBcDeFgHiJkL#myKey");
 		expect(result.id).toBe("aBcDeFgHiJkL");
 		expect(result.keyFragment).toBe("myKey");
+	});
+
+	test("parseShareUrl reports a malformed escape as an invalid share URL", () => {
+		const err = (() => {
+			try {
+				return SecretClient.parseShareUrl("https://example.com/note/aBcDeFgHiJkL#%E0%A4%A");
+			} catch (e) {
+				return e;
+			}
+		})();
+		expect(err).toBeInstanceOf(SecretValidationError);
+		expect((err as Error).message).toBe("Invalid share URL");
+	});
+
+	test("ignores a trailing slash on baseUrl", async () => {
+		const http = await getHttpMocks();
+		http.checkNote.mockResolvedValue({ exists: false });
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com/" });
+		await client.checkNote("aBcDeFgHiJkL");
+
+		expect(http.checkNote).toHaveBeenCalledWith(
+			expect.objectContaining({ baseUrl: "https://example.com/api/v1" }),
+			"aBcDeFgHiJkL",
+		);
+		expect(client.buildShareUrl("aBcDeFgHiJkL", "k")).toBe(
+			"https://example.com/note/aBcDeFgHiJkL#k",
+		);
+	});
+
+	test("strips any number of trailing slashes, and only those", async () => {
+		const many = await SecretClient.create({ baseUrl: "https://example.com/base///" });
+		expect(many.buildShareUrl("aBcDeFgHiJkL", "k")).toBe(
+			"https://example.com/base/note/aBcDeFgHiJkL#k",
+		);
+
+		// The input that made the previous regex backtrack quadratically.
+		const slashes = `${"/".repeat(50_000)}x`;
+		const started = performance.now();
+		const odd = await SecretClient.create({ baseUrl: slashes });
+		expect(performance.now() - started).toBeLessThan(500);
+		expect(odd.buildShareUrl("id", "k")).toBe(`${slashes}/note/id#k`);
+	});
+
+	test("readNote lets a missing salt through instead of calling it a wrong password", async () => {
+		const http = await getHttpMocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+		http.getNoteStream.mockResolvedValue({
+			streamHeader: "h",
+			chunkCount: 1,
+			chunks: [new Uint8Array([1])],
+			hasPassword: true,
+			fileCount: 0,
+			createdAt: "2024-01-01",
+			expiresAt: "2099-01-01",
+		});
+		const missingSalt = new SecretValidationError(
+			"The note requires a password but the server did not return its salt",
+		);
+		const crypto = await getCryptoMocks();
+		crypto.decryptNoteBytes.mockRejectedValue(missingSalt);
+		crypto.decryptNoteChunked.mockRejectedValue(missingSalt);
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		for (const chunked of [false, true]) {
+			await expect(
+				client.readNote("noteId123456", "key", { password: "pw", chunked }),
+			).rejects.toBe(missingSalt);
+		}
 	});
 
 	test("parseShareUrl throws on invalid URL", () => {
@@ -740,8 +818,10 @@ describe("SecretClient", () => {
 		expect(initMeta["hasPassword"]).toBe(false);
 		expect(initMeta["fileCount"]).toBe(0);
 
-		// Two chunks uploaded
+		// Two chunks uploaded, each with the hash of its own bytes
 		expect(http.uploadChunk).toHaveBeenCalledTimes(2);
+		expect(http.uploadChunk.mock.calls[0]?.[4]).toBe("sha256-of-1,2,3");
+		expect(http.uploadChunk.mock.calls[1]?.[4]).toBe("sha256-of-4,5,6");
 		expect(http.completeChunkedUpload).toHaveBeenCalledOnce();
 	});
 

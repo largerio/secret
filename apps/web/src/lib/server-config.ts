@@ -40,7 +40,7 @@ export function buildServerConfig(
 		appName: env["APP_NAME"] ?? "Secret",
 		appDescription: env["APP_DESCRIPTION"] ?? "Zero-knowledge encrypted sharing",
 		appUrl,
-		primaryColor: env["APP_PRIMARY_COLOR"] ?? "#6366f1",
+		primaryColor: env["APP_PRIMARY_COLOR"] ?? "",
 		footerText: env["APP_FOOTER_TEXT"] ?? "",
 		ogImageUrl: env["APP_OG_IMAGE_URL"] || `${appUrl}/og.png`,
 		maxFileSize: readPositiveInt(env["MAX_FILE_SIZE"], MAX_FILE_SIZE),

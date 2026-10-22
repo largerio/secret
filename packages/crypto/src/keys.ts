@@ -60,3 +60,12 @@ export function fromBase64(encoded: string): Uint8Array {
 export function zeroMemory(buf: Uint8Array): void {
 	sodium.memzero(buf);
 }
+
+/**
+ * Lower-case hex SHA-256. From libsodium rather than `crypto.subtle`, which
+ * browsers only expose in a secure context: an instance reached over plain HTTP
+ * on a LAN address would otherwise fail every chunked upload.
+ */
+export function sha256Hex(data: Uint8Array): string {
+	return sodium.to_hex(sodium.crypto_hash_sha256(data));
+}

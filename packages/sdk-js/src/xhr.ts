@@ -1,5 +1,5 @@
 import { type CreateNoteResponse, createNoteResponseSchema } from "@largerio/secret-shared";
-import { SecretApiError } from "./errors.js";
+import { SecretApiError, SecretNetworkError } from "./errors.js";
 
 export function postFormDataXhr(
 	url: string,
@@ -52,7 +52,9 @@ export function postFormDataXhr(
 			}
 		});
 
-		xhr.addEventListener("error", () => reject(new SecretApiError("Network error", 0)));
+		// Same contract as the fetch path: a request that never got a response is a
+		// SecretNetworkError, which callers can tell from a server rejection.
+		xhr.addEventListener("error", () => reject(new SecretNetworkError("Network request failed")));
 		xhr.addEventListener("abort", () => reject(new SecretApiError("Upload cancelled", 0)));
 
 		xhr.send(formData);

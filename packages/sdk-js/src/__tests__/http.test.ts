@@ -1293,3 +1293,84 @@ describe("request policy (timeout + retry)", () => {
 		}
 	});
 });
+
+describe("reads that consume the note", () => {
+	const policy = (fetchMock: typeof fetch): HttpClientConfig => ({
+		baseUrl: "https://api.example.com",
+		fetch: fetchMock,
+		maxRetries: 3,
+		retryBackoffMs: () => 0,
+	});
+
+	test.each([
+		["getNote", (config: HttpClientConfig) => getNote(config, "noteId123456")],
+		["getNoteRaw", (config: HttpClientConfig) => getNoteRaw(config, "noteId123456")],
+		["getNoteStream", (config: HttpClientConfig) => getNoteStream(config, "noteId123456")],
+	])("%s is never retried, even with maxRetries", async (_name, read) => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(503, { error: "down" })),
+		);
+
+		const err = await catchApiError(read(policy(fetchMock)));
+
+		// A retry could spend a second read, or answer 404 in place of the real error.
+		expect(err.status).toBe(503);
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	test("checkNote, which reads nothing, is still retried", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(errorResponse(503, { error: "down" }))
+			.mockResolvedValueOnce(okResponse({ exists: false }));
+
+		await checkNote(policy(fetchMock), "noteId123456");
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("a connection lost mid-download", () => {
+	const brokenBody = (headers: Record<string, string>): Response => {
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new Uint8Array([1, 2]));
+				controller.error(new TypeError("terminated"));
+			},
+		});
+		return new Response(body, { status: 200, headers });
+	};
+
+	const rawHeaders = {
+		"X-Client-Nonce": btoa("nonce"),
+		"X-Has-Password": "false",
+		"X-File-Count": "0",
+		"X-Created-At": "2024-01-01T00:00:00Z",
+		"X-Expires-At": "2099-01-01T00:00:00Z",
+	};
+
+	test("surfaces as a SecretNetworkError on the raw read, with or without progress", async () => {
+		for (const onProgress of [undefined, vi.fn()]) {
+			const headers = { ...rawHeaders, "Content-Length": "10" };
+			const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(brokenBody(headers)));
+
+			const err = await getNoteRaw(createConfig(fetchMock), "noteId123456", onProgress).catch(
+				(e: unknown) => e,
+			);
+
+			expect(err).toBeInstanceOf(SecretNetworkError);
+			expect((err as SecretNetworkError).cause).toBeInstanceOf(TypeError);
+		}
+	});
+
+	test("surfaces as a SecretNetworkError on the stream read", async () => {
+		const headers = { ...rawHeaders, "X-Stream-Header": "aGVhZGVy", "X-Chunk-Count": "1" };
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(brokenBody(headers)));
+
+		const err = await getNoteStream(createConfig(fetchMock), "noteId123456").catch(
+			(e: unknown) => e,
+		);
+
+		expect(err).toBeInstanceOf(SecretNetworkError);
+	});
+});

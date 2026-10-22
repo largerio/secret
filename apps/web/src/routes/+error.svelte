@@ -1,11 +1,12 @@
 <script lang="ts">
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
+import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
 </script>
 
 <svelte:head>
-	<title>{page.status} | {t("app_name")}</title>
+	<title>{page.status} | {getConfig().appName}</title>
 </svelte:head>
 
 <div class="flex flex-col items-center justify-center py-20 text-center">
