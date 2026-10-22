@@ -11,6 +11,7 @@ import {
 	encryptNote,
 	encryptNoteChunked,
 	ensureInit,
+	sha256Hex,
 } from "./crypto.js";
 import { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { HttpClientConfig } from "./http.js";
@@ -37,16 +38,6 @@ const PROGRESS = {
 	// Read: download spans this fraction, decryption fills the remainder.
 	downloadSpan: 0.7,
 } as const;
-
-async function sha256hex(data: Uint8Array): Promise<string> {
-	const hashBuffer = await crypto.subtle.digest(
-		"SHA-256",
-		data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
-	);
-	return Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
 
 export class SecretClient {
 	private readonly httpConfig: HttpClientConfig;
@@ -267,7 +258,7 @@ export class SecretClient {
 			const chunk = encrypted.chunks[i];
 			/* v8 ignore next */
 			if (!chunk) break;
-			const hash = await sha256hex(chunk);
+			const hash = sha256Hex(chunk);
 			await http.uploadChunk(this.httpConfig, uploadId, i, chunk, hash);
 
 			const chunkProgress = (i + 1) / totalChunks;

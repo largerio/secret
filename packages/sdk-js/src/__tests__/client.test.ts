@@ -41,6 +41,7 @@ vi.mock("../crypto.js", () => ({
 	decryptNoteChunked: vi.fn(() =>
 		Promise.resolve({ text: "decrypted chunked text", contentMode: "text" }),
 	),
+	sha256Hex: vi.fn((data: Uint8Array) => `sha256-of-${data.join(",")}`),
 }));
 
 async function getHttpMocks() {
@@ -740,8 +741,10 @@ describe("SecretClient", () => {
 		expect(initMeta["hasPassword"]).toBe(false);
 		expect(initMeta["fileCount"]).toBe(0);
 
-		// Two chunks uploaded
+		// Two chunks uploaded, each with the hash of its own bytes
 		expect(http.uploadChunk).toHaveBeenCalledTimes(2);
+		expect(http.uploadChunk.mock.calls[0]?.[4]).toBe("sha256-of-1,2,3");
+		expect(http.uploadChunk.mock.calls[1]?.[4]).toBe("sha256-of-4,5,6");
 		expect(http.completeChunkedUpload).toHaveBeenCalledOnce();
 	});
 

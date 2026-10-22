@@ -36,7 +36,10 @@ export default defineConfig({
 					// so 'none' costs nothing and closes the exfiltration path a note
 					// author could otherwise build with injected markup.
 					"form-action": ["none"],
-					"upgrade-insecure-requests": true,
+					// No upgrade-insecure-requests: it rewrites every same-origin asset
+					// to https, so an instance served over plain HTTP on a LAN address
+					// (a NAS on http://<ip>:3000) never loaded its scripts or styles.
+					// Over HTTPS the app already sends HSTS.
 				},
 			},
 		}),
