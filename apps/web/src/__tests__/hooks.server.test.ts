@@ -61,10 +61,24 @@ describe("locale and theme resolution", () => {
 
 		const options = resolve.mock.calls[0]?.[1];
 		const html = await options?.transformPageChunk?.({
-			html: '<html lang="%lang%" data-mode="%theme%">',
+			html: '<html lang="%lang%" data-mode="%theme%" style="%accent%">',
 			done: false,
 		});
-		expect(html).toBe('<html lang="fr" data-mode="light">');
+		expect(html).toBe('<html lang="fr" data-mode="light" style="">');
+	});
+
+	it("injects the accent the root layout computed, read when the page is rendered", async () => {
+		const event = makeEvent();
+		await handle({ event, resolve });
+		// The loader runs between resolve() and the page chunk.
+		event.locals.accent = "--accent:#1d4ed8";
+
+		const options = resolve.mock.calls[0]?.[1];
+		const html = await options?.transformPageChunk?.({
+			html: '<html style="%accent%">',
+			done: false,
+		});
+		expect(html).toBe('<html style="--accent:#1d4ed8">');
 	});
 });
 

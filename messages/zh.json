@@ -1,5 +1,4 @@
 {
-	"app_name": "Secret",
 	"app_description": "零知识加密分享",
 	"create_title": "创建安全笔记",
 	"create_description": "您的内容在发送到服务器之前会在浏览器中加密。服务器永远无法看到您的数据。",
@@ -99,7 +98,7 @@
 	"md_write": "编辑",
 	"md_preview": "预览",
 	"md_preview_empty": "没有可预览的内容",
-	"seo_title": "Secret — 零知识加密安全笔记与文件分享",
+	"seo_title": "{app} — 零知识加密安全笔记与文件分享",
 	"seo_description": "通过端到端加密安全分享密码、笔记和文件。数据在浏览器中加密，服务器永远无法看到您的内容。免费、开源、无需注册。",
 	"seo_keywords": "加密笔记, 安全文件分享, 零知识加密, 密码分享, 阅后即焚, 端到端加密, 自托管, 隐私, 秘密分享",
 	"manage_title": "管理笔记",

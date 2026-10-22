@@ -1,5 +1,4 @@
 {
-	"app_name": "Secret",
 	"app_description": "Zero-Knowledge-verschlüsseltes Teilen",
 	"create_title": "Sichere Notiz erstellen",
 	"create_description": "Dein Inhalt wird in deinem Browser verschlüsselt, bevor er an den Server gesendet wird. Der Server sieht deine Daten nie.",
@@ -99,7 +98,7 @@
 	"md_write": "Schreiben",
 	"md_preview": "Vorschau",
 	"md_preview_empty": "Nichts zum Anzeigen",
-	"seo_title": "Secret — Sicheres, zero-knowledge-verschlüsseltes Teilen von Notizen und Dateien",
+	"seo_title": "{app} — Sicheres, zero-knowledge-verschlüsseltes Teilen von Notizen und Dateien",
 	"seo_description": "Teile Passwörter, Notizen und Dateien sicher mit Ende-zu-Ende-Verschlüsselung. Deine Daten werden im Browser verschlüsselt — der Server sieht deinen Inhalt nie. Kostenlos, Open Source, kein Konto erforderlich.",
 	"seo_keywords": "verschlüsselte Notizen, sicheres Dateiteilen, Zero-Knowledge-Verschlüsselung, Passwörter teilen, nach Lesen vernichten, Ende-zu-Ende-Verschlüsselung, selbst gehostet, Datenschutz, Geheimnisse teilen",
 	"manage_title": "Notiz verwalten",
