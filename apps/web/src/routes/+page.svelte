@@ -29,6 +29,9 @@ $effect(() => {
 // Form state
 let contentMode = $state<ContentMode>("text");
 let text = $state("");
+// The Password tab keeps its own value: the generator fills it on mount, and
+// sharing `text` with the other tabs overwrote whatever had been typed there.
+let generatedSecret = $state("");
 let files = $state<File[]>([]);
 let password = $state("");
 let expiresIn = $state(defaultExpiration(getConfig().maxExpiry));
@@ -62,9 +65,17 @@ const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxFilesPerNote = $derived(config.maxFilesPerNote);
 
-const canSubmit = $derived(!!(text.trim() || files.length > 0));
+// What a submit sends, for the tab on screen. The drop zone is hidden on the
+// Password tab, so files attached on another tab stay there, unsent.
+const isSecretMode = $derived(contentMode === "secret");
+const submittedText = $derived(isSecretMode ? generatedSecret : text);
+const submittedFiles = $derived(isSecretMode ? [] : files);
+
+const canSubmit = $derived(!!(submittedText.trim() || submittedFiles.length > 0));
 
 async function handleSubmit() {
+	const text = submittedText;
+	const files = submittedFiles;
 	if (!text && files.length === 0) {
 		error = t("error_empty_content");
 		return;
@@ -132,6 +143,7 @@ async function handleSubmit() {
 function reset() {
 	contentMode = "text";
 	text = "";
+	generatedSecret = "";
 	files = [];
 	password = "";
 	expiresIn = defaultExpiration(getConfig().maxExpiry);
@@ -276,7 +288,7 @@ const TABS: {
 		<!-- Editor -->
 		<div class="mb-6">
 			{#if contentMode === "secret"}
-				<PasswordGenerator bind:value={text} />
+				<PasswordGenerator bind:value={generatedSecret} />
 			{:else if contentMode === "markdown"}
 				<div class="relative">
 					<MarkdownEditor
