@@ -240,3 +240,21 @@ describe("createApp — body limits", () => {
 		expect(await res.json()).toEqual({ error: "Chunk too large" });
 	});
 });
+
+describe("createApp — rate limits", () => {
+	it("counts a JSON create once against the create bound", async () => {
+		// The create bound is 30 a minute; a 0.1 multiplier rounds it up to 3.
+		const app = makeApp(buildConfig({ rateLimitMultiplier: 0.1 }));
+		const create = () =>
+			app.request("/api/v1/notes", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: "{}",
+			});
+
+		for (let i = 0; i < 3; i++) {
+			expect((await create()).status).not.toBe(429);
+		}
+		expect((await create()).status).toBe(429);
+	});
+});

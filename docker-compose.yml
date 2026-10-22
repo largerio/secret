@@ -2,7 +2,7 @@ services:
   app:
     # Pulls the prebuilt image published by CI — no clone or local build needed.
     # To build from source instead, comment out `image:` and uncomment `build: .`.
-    image: ghcr.io/largerio/secret:latest
+    image: ghcr.io/largerio/secret:1
     # build: .
     ports:
       - "${PORT:-3000}:3000"
@@ -38,8 +38,10 @@ services:
       - API_KEY_3=${API_KEY_3:-}
       - CAP_DIFFICULTY=${CAP_DIFFICULTY:-4}
       - CAP_CHALLENGE_COUNT=${CAP_CHALLENGE_COUNT:-50}
-      # Rate limits only tell clients apart when all three are set.
-      # See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy
+      # Behind a reverse proxy, rate limits only tell clients apart once
+      # ADDRESS_HEADER and XFF_DEPTH are set. TRUSTED_PROXIES defaults to the
+      # web app bundled in the image. See
+      # docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
       - ADDRESS_HEADER=${ADDRESS_HEADER:-}
       - XFF_DEPTH=${XFF_DEPTH:-1}

@@ -22,10 +22,10 @@ export default defineConfig({
 				directives: {
 					"default-src": ["none"],
 					"script-src": ["self", "wasm-unsafe-eval"],
-					"style-src": ["self", "unsafe-inline", "https://fonts.googleapis.com"],
+					"style-src": ["self", "unsafe-inline"],
 					"img-src": ["self", "data:", "blob:"],
 					"connect-src": ["self"],
-					"font-src": ["self", "https://fonts.gstatic.com"],
+					"font-src": ["self"],
 					"worker-src": ["self", "blob:"],
 					"media-src": ["self", "blob:"],
 					"frame-src": ["blob:"],
