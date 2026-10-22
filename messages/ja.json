@@ -5,7 +5,6 @@
 	"text_label": "テキスト内容",
 	"text_placeholder": "秘密のノートをここに入力...",
 	"files_label": "ファイル",
-	"files_drop": "ファイルをドラッグ＆ドロップ、またはクリックして選択",
 	"password_label": "パスワード（任意）",
 	"password_placeholder": "セキュリティ強化のためパスワードを追加",
 	"expires_label": "有効期限",

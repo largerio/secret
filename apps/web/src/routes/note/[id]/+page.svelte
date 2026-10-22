@@ -486,7 +486,6 @@ async function handleDecrypt() {
 						style:color={copied ? "var(--accent)" : "var(--muted)"}
 						style:padding="4px 8px"
 						style:font-size="12px"
-						aria-label={t("copy_button")}
 					>
 						<Icon name={copied ? "check" : "copy"} size={13} />
 						<span>{copied ? t("copied") : t("rv_copy")}</span>

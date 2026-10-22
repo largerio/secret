@@ -5,7 +5,6 @@
 	"text_label": "Contenuto testuale",
 	"text_placeholder": "Scrivi la tua nota segreta qui...",
 	"files_label": "File",
-	"files_drop": "Trascina i file qui o clicca per sfogliare",
 	"password_label": "Password (opzionale)",
 	"password_placeholder": "Aggiungi una password per maggiore sicurezza",
 	"expires_label": "Scade tra",

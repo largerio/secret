@@ -98,7 +98,6 @@ function removeFile(index: number) {
 		style:background={isDragging ? "var(--accent-soft)" : "var(--bg-2)"}
 		style:border={`1px dashed ${isDragging ? "var(--accent)" : "var(--line-2)"}`}
 		style:padding="20px"
-		aria-label={t("files_drop")}
 	>
 		<input
 			id="file-upload"
