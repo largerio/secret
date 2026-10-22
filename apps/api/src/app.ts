@@ -2,13 +2,13 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-shared";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono, type MiddlewareHandler } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
 import { createHealthCheck } from "./health.js";
 import { type Logger, log } from "./logger.js";
 import { createWriteAuth } from "./middleware/auth.js";
+import { createBodyLimits } from "./middleware/bodyLimit.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
 import {
 	classifyNotesPath,
@@ -82,31 +82,11 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	app.use("*", createCors([config.appUrl]));
 	app.use("*", compress());
 
-	// Hono matches `app.use(path)` against the exact path (not as a prefix), so
-	// the JSON create endpoint (/api/v1/notes) and the multipart upload endpoint
-	// (/api/v1/notes/upload) each need their own body-limit rule. Individual chunk
-	// uploads get a tighter limit from the wildcard rule registered after them.
-	const maxBodySize = config.maxFileSize * config.maxFilesPerNote + 1024 * 1024;
 	app.use(
-		"/api/v1/notes",
-		bodyLimit({
-			maxSize: maxBodySize,
-			onError: (c) => c.json({ error: "Payload too large" }, 413),
-		}),
-	);
-	app.use(
-		"/api/v1/notes/upload",
-		bodyLimit({
-			maxSize: maxBodySize,
-			onError: (c) => c.json({ error: "Payload too large" }, 413),
-		}),
-	);
-	const chunkBodySize = config.chunkSize + 1024; // chunk + overhead
-	app.use(
-		"/api/v1/notes/upload/*/chunks/*",
-		bodyLimit({
-			maxSize: chunkBodySize,
-			onError: (c) => c.json({ error: "Chunk too large" }, 413),
+		"*",
+		createBodyLimits({
+			note: config.maxFileSize * config.maxFilesPerNote + 1024 * 1024,
+			chunk: config.chunkSize + 1024, // chunk + overhead
 		}),
 	);
 
@@ -150,7 +130,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	};
 	const notesRateLimit: MiddlewareHandler = (c, next) =>
 		byClass[classifyNotesPath(c.req.path)](c, next);
-	app.use(notesPrefix, notesRateLimit);
+	// A single registration: Hono's `/notes/*` also matches `/notes` itself, so
+	// adding `app.use(notesPrefix, …)` as well counted every JSON create twice
+	// and halved its bound.
 	app.use(`${notesPrefix}/*`, notesRateLimit);
 
 	// Reads return note ciphertext that may be burn-after-read: a 200 without

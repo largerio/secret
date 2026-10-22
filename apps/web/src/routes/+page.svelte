@@ -29,6 +29,9 @@ $effect(() => {
 // Form state
 let contentMode = $state<ContentMode>("text");
 let text = $state("");
+// The Password tab keeps its own value: the generator fills it on mount, and
+// sharing `text` with the other tabs overwrote whatever had been typed there.
+let generatedSecret = $state("");
 let files = $state<File[]>([]);
 let password = $state("");
 let expiresIn = $state(defaultExpiration(getConfig().maxExpiry));
@@ -62,9 +65,17 @@ const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 const maxFilesPerNote = $derived(config.maxFilesPerNote);
 
-const canSubmit = $derived(!!(text.trim() || files.length > 0));
+// What a submit sends, for the tab on screen. The drop zone is hidden on the
+// Password tab, so files attached on another tab stay there, unsent.
+const isSecretMode = $derived(contentMode === "secret");
+const submittedText = $derived(isSecretMode ? generatedSecret : text);
+const submittedFiles = $derived(isSecretMode ? [] : files);
+
+const canSubmit = $derived(!!(submittedText.trim() || submittedFiles.length > 0));
 
 async function handleSubmit() {
+	const text = submittedText;
+	const files = submittedFiles;
 	if (!text && files.length === 0) {
 		error = t("error_empty_content");
 		return;
@@ -98,6 +109,9 @@ async function handleSubmit() {
 			expiresIn,
 			maxReads: parsedMaxReads,
 			capToken,
+			// The instance's CHUNK_SIZE: the API refuses any chunk larger than it,
+			// and the SDK knows only its own 4 MiB default.
+			chunkSize: config.chunkSize,
 			onUploadProgress: (p) => {
 				uploadProgress = p * 100;
 			},
@@ -132,6 +146,7 @@ async function handleSubmit() {
 function reset() {
 	contentMode = "text";
 	text = "";
+	generatedSecret = "";
 	files = [];
 	password = "";
 	expiresIn = defaultExpiration(getConfig().maxExpiry);
@@ -159,20 +174,20 @@ const TABS: {
 </script>
 
 <svelte:head>
-	<title>{t("seo_title")}</title>
+	<title>{t("seo_title", { app: config.appName })}</title>
 	<meta name="description" content={t("seo_description")} />
 	<meta name="keywords" content={t("seo_keywords")} />
-	<link rel="canonical" href={config.appUrl || "https://secret.larger.io"} />
-	<meta property="og:title" content={t("seo_title")} />
+	<link rel="canonical" href={config.appUrl} />
+	<meta property="og:title" content={t("seo_title", { app: config.appName })} />
 	<meta property="og:description" content={t("seo_description")} />
-	<meta property="og:url" content={config.appUrl || "https://secret.larger.io"} />
-	<meta name="twitter:title" content={t("seo_title")} />
+	<meta property="og:url" content={config.appUrl} />
+	<meta name="twitter:title" content={t("seo_title", { app: config.appName })} />
 	<meta name="twitter:description" content={t("seo_description")} />
 	{@html `<script type="application/ld+json">${JSON.stringify({
 		"@context": "https://schema.org",
 		"@type": "WebApplication",
 		name: config.appName,
-		url: config.appUrl || "https://secret.larger.io",
+		url: config.appUrl,
 		description: t("seo_description"),
 		applicationCategory: "SecurityApplication",
 		operatingSystem: "Any",
@@ -276,7 +291,7 @@ const TABS: {
 		<!-- Editor -->
 		<div class="mb-6">
 			{#if contentMode === "secret"}
-				<PasswordGenerator bind:value={text} />
+				<PasswordGenerator bind:value={generatedSecret} />
 			{:else if contentMode === "markdown"}
 				<div class="relative">
 					<MarkdownEditor

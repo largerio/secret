@@ -60,7 +60,7 @@ $effect(() => {
 		style:transition="all 0.15s"
 		aria-haspopup="listbox"
 		aria-expanded={open}
-		aria-label={t("lang_toggle")}
+		aria-label={`${t("lang_toggle")}: ${currentLabel}`}
 	>
 		<span>{currentLabel}</span>
 		<svg

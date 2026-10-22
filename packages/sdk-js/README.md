@@ -116,7 +116,7 @@ const { id, keyFragment } = await client.createNote({
 In the browser, turn a picked `File` into that shape with
 `{ name: file.name, type: file.type, data: new Uint8Array(await file.arrayBuffer()) }`.
 
-Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does.
+Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`.
 
 ## Errors
 
@@ -126,7 +126,7 @@ Every failure path is typed, so you can branch on the cause:
 |---|---|---|
 | `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work |
 | `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout). A missing or wrong `apiKey` on a write surfaces here as `401` |
-| `SecretNetworkError` | The request never reached the server | DNS, offline, connection reset, CORS. `.cause` holds the original error |
+| `SecretNetworkError` | The request failed in transit | DNS, offline, connection reset, CORS, or a connection lost mid-download. `.cause` holds the original error |
 | `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle |
 
 ```ts
@@ -136,7 +136,7 @@ try {
   await client.readNote(id, keyFragment, { password });
 } catch (err) {
   if (err instanceof SecretDecryptionError) return showWrongPassword();
-  if (err instanceof SecretNetworkError) return showOffline();   // safe to retry
+  if (err instanceof SecretNetworkError) return showOffline();   // checkNote before retrying: a dropped download may have spent the read
   if (err instanceof SecretApiError && err.status === 404) return showGone();
   throw err;
 }
@@ -151,13 +151,13 @@ await SecretClient.create({
   baseUrl: "https://secret.example.com",  // default: "" (relative — browser, same origin)
   apiKey: "…",                            // sent as `Authorization: Bearer …`
   timeoutMs: 30_000,                      // default: none
-  maxRetries: 2,                          // default: 0 — reads and chunk PUTs only
+  maxRetries: 2,                          // default: 0 — checkNote and chunk PUTs only
   retryBackoffMs: (attempt) => attempt * 500, // ms before retry N (1-based). Default: 2 ** N * 250
   fetch: customFetch,                     // defaults to globalThis.fetch
 });
 ```
 
-Note creation and deletion are deliberately never retried: a retried `createNote` could store the note twice.
+Note creation, deletion and `readNote` are deliberately never retried: a retried `createNote` could store the note twice, and a retried read could spend a second read — or destroy a burn-after-read note before you see it.
 
 ## Reference
 

@@ -91,7 +91,7 @@ export function buildNoteHeaders(note: {
 }
 
 export function httpError(
-	status: 400 | 401 | 403 | 404 | 500,
+	status: 400 | 401 | 403 | 404 | 413 | 500,
 	message: string,
 	cause?: unknown,
 ): never {

@@ -76,6 +76,14 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
 		if (first) await expect(page.getByText(basename(first))).toBeVisible();
 	}
 
+	return submitNote(page);
+}
+
+/**
+ * Submits the create form as it stands and returns the full share URL. For
+ * tests that fill the form themselves; createNote() covers the usual cases.
+ */
+export async function submitNote(page: Page): Promise<string> {
 	await page.getByRole("button", { name: /Encrypt and generate a link/i }).click();
 
 	const shareEl = page.getByTestId("share-url");
