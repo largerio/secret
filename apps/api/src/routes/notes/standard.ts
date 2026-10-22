@@ -1,6 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import { createNoteMultipartSchema, isValidNoteId } from "@largerio/secret-shared";
+import {
+	createNoteMultipartSchema,
+	isValidNoteId,
+	MAX_INLINE_ENCRYPTED_SIZE,
+} from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { notes } from "../../db/schema.js";
 import { deleteOrSchedule } from "../../pendingDeletions.js";
@@ -32,8 +36,15 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			{ expiresIn, fileCount },
 		);
 
+		const clientBlob = Buffer.from(encryptedData, "base64");
+		// Without files the note is stored inline in SQLite, whose reads block the
+		// event loop: keep it text-sized. Larger payloads belong in a file upload.
+		if (fileCount === 0 && clientBlob.byteLength > MAX_INLINE_ENCRYPTED_SIZE) {
+			httpError(413, "Payload too large");
+		}
+
 		const result = await insertNote(c.get("db"), c.get("serverKey"), c.get("storage"), {
-			clientBlob: Buffer.from(encryptedData, "base64"),
+			clientBlob,
 			clientNonce,
 			hasPassword,
 			expiresIn,

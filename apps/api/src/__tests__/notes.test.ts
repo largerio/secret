@@ -1,5 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, as the routes expect (the production entry point does the same).
+import "@hono/zod-openapi";
+import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -146,6 +150,45 @@ describe("POST /api/v1/notes", () => {
 		expect(res.status).toBe(401);
 		const json = await res.json();
 		expect(json.error).toBe("Unauthorized");
+	});
+
+	it("refuses a note without files beyond the inline ceiling", async () => {
+		const res = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(
+				validBody({
+					encryptedData: Buffer.alloc(MAX_INLINE_ENCRYPTED_SIZE + 1).toString("base64"),
+				}),
+			),
+		});
+		expect(res.status).toBe(413);
+		expect(await res.json()).toEqual({ error: "Payload too large" });
+	});
+
+	it("accepts a note without files at the inline ceiling", async () => {
+		const res = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(
+				validBody({ encryptedData: Buffer.alloc(MAX_INLINE_ENCRYPTED_SIZE).toString("base64") }),
+			),
+		});
+		expect(res.status).toBe(201);
+	});
+
+	it("leaves notes with files to the body limit, since they go to storage", async () => {
+		const res = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(
+				validBody({
+					encryptedData: Buffer.alloc(MAX_INLINE_ENCRYPTED_SIZE + 1).toString("base64"),
+					fileCount: 1,
+				}),
+			),
+		});
+		expect(res.status).toBe(201);
 	});
 
 	it("rejects requests with an invalid API key", async () => {

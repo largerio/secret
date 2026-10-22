@@ -29,8 +29,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.theme = cookieTheme === "light" ? "light" : "dark";
 
 	const response = await resolve(event, {
+		// Runs once the loaders are done, so the root layout has set the accent.
 		transformPageChunk: ({ html }) =>
-			html.replace("%lang%", event.locals.locale).replace("%theme%", event.locals.theme),
+			html
+				.replace("%lang%", event.locals.locale)
+				.replace("%theme%", event.locals.theme)
+				.replace("%accent%", event.locals.accent ?? ""),
 	});
 
 	// The API sets these on its own responses, but the HTML documents — the ones

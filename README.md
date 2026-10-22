@@ -8,7 +8,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 [![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
 
-Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no tracking, no logs.
+Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no analytics, and no content, keys or IP addresses in the logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
@@ -47,7 +47,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 
 ## Features
 
-- **Zero-knowledge encryption** — XChaCha20-Poly1305 (client) + AES-256-GCM (server)
+- **Zero-knowledge encryption** — XChaCha20-Poly1305 in the browser, plus an AES-256-GCM layer at rest on the server
 - **Text & files** — Notes, documents, images, any file type. Up to 10 files per note, drag & drop.
 - **Burn after read** — Destroyed after the first view
 - **Password protection** — Optional, Argon2id key derivation
@@ -55,7 +55,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Read limits** — Auto-delete after N reads
 - **Delete token** — Manually delete a note at any time
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
-- **Chunked uploads** — Stream large files in chunks with progress tracking (up to 500 MB)
+- **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
 - **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
@@ -67,7 +67,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 |------------------------|---------------------|---------------------|---------------------|---------------------|
 | Zero-knowledge         | Yes                 | Yes                 | No (server-side)    | Yes                 |
 | Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | —                   | OpenPGP             |
-| Server-side encryption | Yes (AES-256-GCM)   | No                  | Yes                 | No                  |
+| Encryption at rest     | Yes (AES-256-GCM)¹  | No                  | Yes                 | No                  |
 | File attachments       | Up to 10, 500 MB    | Single, opt-in      | No                  | Single, streaming   |
 | File previews          | Image/PDF/AV        | Image/PDF/media     | No                  | No                  |
 | Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
@@ -76,6 +76,8 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
+
+¹ A server-held key, on top of the end-to-end layer. It protects a leaked database or S3 bucket on its own, not a stolen data volume when the key is stored on that volume — which is the zero-config default. See [what the server can see](SECURITY.md#what-the-server-can-see).
 
 > Comparison reflects publicly documented features at the time of writing. See each project's docs for the latest details.
 
@@ -87,7 +89,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 mkdir secret && cd secret
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
 
-docker compose up -d      # pulls ghcr.io/largerio/secret:latest
+docker compose up -d      # pulls ghcr.io/largerio/secret:1
 ```
 
 That's it — on first launch the server encryption key is generated automatically and
@@ -118,7 +120,7 @@ If something doesn't work, run `docker compose logs -f` — see
 | Platform | How |
 |----------|-----|
 | **Render** | Click the button above ([guide](docs/self-hosting.md#railway--render-paas)) |
-| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:latest` ([guide](docs/self-hosting.md#coolify)) |
+| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:1` ([guide](docs/self-hosting.md#coolify)) |
 | **Portainer** | Stacks → paste `docker-compose.yml` ([guide](docs/self-hosting.md#portainer)) |
 | **Synology NAS** | Container Manager project ([guide](docs/self-hosting.md#synology-nas-dsm-7--container-manager)) |
 
@@ -188,7 +190,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL |
-| `APP_PRIMARY_COLOR` | `#6366f1` | Brand color (see `.env.example` for footer and social image) |
+| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: the built-in red). See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
@@ -197,7 +199,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
-| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB) |
+| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
 
@@ -242,15 +244,16 @@ Data lives in a Docker volume — updates never delete your notes.
 
 ### Pinning a version
 
-`docker-compose.yml` tracks `:latest` (the tip of `main`). For reproducible
-deploys, pin a published release tag on the `image:` line instead:
+`docker-compose.yml` tracks `:1`, the latest `1.x` release. For reproducible
+deploys, pin an exact release tag on the `image:` line instead:
 
 | Image tag | Tracks |
 |-----------|--------|
-| `ghcr.io/largerio/secret:latest` | tip of `main` (newest, may include unreleased changes) |
-| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended**, gets fixes and features without breaking changes |
+| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended** (the default), gets fixes and features without breaking changes |
 | `ghcr.io/largerio/secret:1.1` | latest `1.1.x` patch only |
 | `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible |
+| `ghcr.io/largerio/secret:latest` | newest release of any major version — moves to `2.x` and its breaking changes when it ships |
+| `ghcr.io/largerio/secret:main` | tip of `main`, unreleased and unreviewed changes included — for testing only |
 
 After changing the tag, run `docker compose pull && docker compose up -d`. The
 [Releases](https://github.com/largerio/secret/releases) page doubles as the
@@ -340,12 +343,12 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Layer | Details |
 |-------|---------|
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
-| Server encryption | AES-256-GCM (defense-in-depth) |
+| Server encryption | AES-256-GCM at rest, bound to the note ID. Guards a leaked database or bucket; keep `SERVER_ENCRYPTION_KEY` off the data volume to guard a stolen volume too |
 | Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
-| Key hygiene | Cleared from the WASM heap after use (`sodium.memzero`). The key still lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
-| Privacy | No IP logging, no tracking. Two first-party preference cookies (language, theme). |
+| Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
+| Privacy | No analytics, no IP addresses or note content in logs. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
