@@ -1,0 +1,20 @@
+name: Set up the workspace
+description: >
+  Install pnpm (the version package.json pins), Node 26 with the pnpm store
+  cached, and the workspace dependencies from the lockfile.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+    # Not node-version-file: package.json only asks for >=26, which would pick
+    # up the next major as soon as it is out.
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
