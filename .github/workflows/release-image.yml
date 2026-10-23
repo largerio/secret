@@ -1,0 +1,125 @@
+name: Release image
+
+# A release builds nothing. The image of the tagged commit was built once, when
+# that commit landed on main, and only tagged sha-<commit> after it passed the
+# scan and the smoke test (deploy.yml). This gives that very digest the release
+# tags, so :1 is byte for byte the image CI tested and production ran.
+# Rebuilding here used to produce a different image, and push it over the same
+# sha-<commit> tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    # Covers the wait for main's pipeline below, with room to spare.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      # To tell a run still going from one that ended without an image.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Only main's pipeline builds images: a tag anywhere else would wait for
+      # one that never comes.
+      - name: Check the tag is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Tag a commit of main."; exit 1; }
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # sha-<commit> exists once main's pipeline has built that commit and the
+      # image has passed its gates (deploy.yml names it, with metadata-action's
+      # default 7-character format). A tag pushed right after the merge gets
+      # here while that run is still going: wait for it, not for a run that has
+      # ended without an image.
+      - name: Find the tested image of this commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/largerio/secret:sha-${GITHUB_SHA:0:7}"
+          hint="Tag a commit whose CI/CD run is green: in practice, the tip of main."
+
+          found() {
+            local digest
+            digest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' 2> /dev/null) || return 1
+            digest=$(tr -d '"' <<< "$digest")
+            echo "$image is $digest"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          }
+
+          for attempt in $(seq 80); do
+            if found; then exit 0; fi
+
+            # Several commits pushed at once get one run, for the last of them,
+            # and a pending run is cancelled when a newer one queues: some
+            # commits of main never get an image.
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main \
+              --event push --commit "$GITHUB_SHA" --limit 1 --json status,conclusion,url \
+              --jq '.[0] | select(.) | "\(.status)|\(.conclusion)|\(.url)"')
+            IFS='|' read -r status conclusion url <<< "$run"
+            case "$status" in
+              "")
+                # GitHub may take a moment to create the run of a fresh push.
+                if [ "$attempt" -ge 4 ]; then
+                  echo "::error::$GITHUB_SHA has no CI/CD run on main, so no image. $hint"
+                  exit 1
+                fi
+                ;;
+              completed)
+                # The image may have been tagged since the first look.
+                if found; then exit 0; fi
+                echo "::error::The CI/CD run of $GITHUB_SHA ended ($conclusion) without an image: $url. $hint"
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "::error::No $image after 40 minutes."
+          exit 1
+
+      - name: Release tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/largerio/secret
+          # :latest is set explicitly below, for stable releases only.
+          flavor: |
+            latest=false
+          # A pre-release (v2.0.0-rc.1) only gets its exact tag.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Releases ship as minors, so a {{major}}.{{minor}} pin never got a
+            # single fix: :1.0 stayed on 1.0.0 for four months of CVE patches.
+            # :1 is the tag that actually follows the stable line.
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      # Scanned again although it was when built: a CVE may have been published
+      # since.
+      - name: Scan, smoke-test and tag the image
+        uses: ./.github/actions/promote-image
+        with:
+          image: ghcr.io/largerio/secret
+          digest: ${{ steps.source.outputs.digest }}
+          tags: ${{ steps.meta.outputs.tags }}

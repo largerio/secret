@@ -1,0 +1,59 @@
+name: Promote an image
+description: >
+  Tag an image already pushed by digest, once it has passed the gates every
+  published image goes through: a Trivy scan and the smoke test. The only way
+  deploy.yml, release-image.yml and rebuild-release.yml move a tag.
+
+inputs:
+  image:
+    description: Repository, without tag (ghcr.io/owner/name).
+    required: true
+  digest:
+    description: Digest of the image to promote (sha256:...).
+    required: true
+  tags:
+    description: Full references to point at the image, one per line.
+    required: true
+  vuln-type:
+    description: >
+      Package types Trivy fails on. rebuild-release.yml passes `os`: a rebuild
+      keeps the release's lockfile, so only its base differs from the image it
+      replaces.
+    required: false
+    default: os,library
+  expected-current-digest:
+    description: >
+      If set, the first tag must still point at this digest when the tags
+      move, so a tag moved by another workflow in the meantime is not
+      overwritten.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ inputs.image }}@${{ inputs.digest }}
+        format: table
+        exit-code: "1"
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        vuln-type: ${{ inputs.vuln-type }}
+
+    - name: Smoke-test the image
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}@${{ inputs.digest }}
+      run: '"$GITHUB_ACTION_PATH/smoke-test.sh" "$IMAGE"'
+
+    - name: Move the tags
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.image }}@${{ inputs.digest }}
+        TAGS: ${{ inputs.tags }}
+        EXPECTED_CURRENT_DIGEST: ${{ inputs.expected-current-digest }}
+      run: |
+        mapfile -t refs <<< "$TAGS"
+        "$GITHUB_ACTION_PATH/promote.sh" "$SOURCE" "${refs[@]}"

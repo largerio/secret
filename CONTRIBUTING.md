@@ -174,7 +174,7 @@ Dropping a JSON file in `messages/` is not enough; register it in three places:
 
 ## Releases
 
-Releases are driven by [changesets](https://github.com/changesets/changesets). Add one in the
+SDK releases are driven by [changesets](https://github.com/changesets/changesets). Add one in the
 same PR as any user-visible change to the SDK:
 
 ```bash
@@ -199,6 +199,31 @@ bumps) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets. Each workflow
 scopes its token down to what it needs. Without the App both workflows fall back
 to `GITHUB_TOKEN`: releases still ship, but the version PR gets no CI run and
 Dependabot merges never reach the CI/CD pipeline.
+
+### The app image
+
+The app is released by tagging a commit of `main` whose CI/CD run is green:
+
+```bash
+git tag v1.4.0 <commit> && git push origin v1.4.0
+```
+
+Nothing is rebuilt for a release. `deploy.yml` builds each commit of `main`
+once, pushes it by digest, scans and smoke-tests it, and only then tags it
+`sha-<commit>` and `:main`. On the tag, `release-image.yml` scans that image
+again and gives it the release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`): a
+release is byte for byte the image CI tested and production ran. Production
+follows `main` and is not redeployed. Once that run is green, write the release
+notes by hand (`gh release create`).
+
+Every week, `rebuild-release.yml` checks whether the base image of the latest
+release has a newer digest. If it has, it rebuilds that release's sources on
+it, scans the OS packages (the npm ones are those of the release) and
+smoke-tests the result, and moves `:1`, `:1.4` and `:latest` there. The exact
+tag (`:1.4.0`) stays on the released image.
+
+Every tag moves through `.github/actions/promote-image`: Trivy, the smoke
+test, then a retag that checks each tag resolves to the tested digest.
 
 ## License
 
