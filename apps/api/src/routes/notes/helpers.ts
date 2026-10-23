@@ -186,21 +186,17 @@ export async function insertNote(
 	return { id, expiresAt: expiresAt.toISOString(), deleteToken };
 }
 
-// Runs the shared consume-a-note transaction: enforces existence, expiry,
-// and max-reads atomically, schedules storage cleanup for expired rows,
-// and throws HTTPException for caller-observable errors. Returns the
-// live note plus a flag indicating whether the row was deleted because
-// readCount reached maxReads (callers finalize storage cleanup after
-// reading their payload).
+// Finds the note a read is about to be served from: enforces existence and
+// expiry, schedules storage cleanup for expired rows, and throws
+// HTTPException for caller-observable errors. It counts nothing — callers load
+// and verify the payload first, then call consumeRead.
 //
 // `expect` declares which storage shape the calling endpoint can actually
-// serve. A mismatch returns 400 BEFORE the read counter is incremented, so a
-// request aimed at the wrong endpoint never burns a read. Both directions are
-// enforced: the streaming endpoint cannot serve an inline note, and the
-// inline endpoints cannot serve a chunked note (whose `encryptedData` is an
-// empty buffer — decrypting it would throw, and the burn would already be
-// committed, destroying the note for good).
-export async function consumeNoteTx(
+// serve. A mismatch returns 400, so a request aimed at the wrong endpoint never
+// burns a read. Both directions are enforced: the streaming endpoint cannot
+// serve an inline note, and the inline endpoints cannot serve a chunked note
+// (whose `encryptedData` is an empty buffer).
+export async function findReadableNote(
 	db: AppDatabase,
 	storage: StorageBackend,
 	id: string,
@@ -239,6 +235,38 @@ export async function consumeNoteTx(
 			};
 		}
 
+		return { note };
+	});
+
+	if ("error" in result) {
+		const filePath = "filePath" in result ? result.filePath : null;
+		const chunkCount = "chunkCount" in result ? result.chunkCount : null;
+		await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount });
+		httpError(result.status as 400 | 404, result.error);
+	}
+
+	return result.note;
+}
+
+// Counts one read, deleting the row once readCount reaches maxReads (callers
+// then clean up storage). Call it only after the payload is read and
+// decrypted: counted first, a storage error or a corrupt blob would burn a
+// burn-after-read note without ever delivering it. The row is read again
+// inside the transaction, so a reader that lost the race to a concurrent burn
+// gets a 404 — the callback is synchronous on a single connection, which is
+// what keeps two readers from both being served.
+export function consumeRead(db: AppDatabase, id: string): { shouldDelete: boolean } {
+	const result = db.transaction((tx) => {
+		const note = tx
+			.select({ readCount: notes.readCount, maxReads: notes.maxReads })
+			.from(notes)
+			.where(eq(notes.id, id))
+			.get();
+
+		if (note === undefined) {
+			return undefined;
+		}
+
 		const maxReads = note.maxReads ?? 0;
 		const newReadCount = note.readCount + 1;
 		const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
@@ -249,14 +277,11 @@ export async function consumeNoteTx(
 			tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
 		}
 
-		return { note, shouldDelete };
+		return { shouldDelete };
 	});
 
-	if ("error" in result) {
-		const filePath = "filePath" in result ? result.filePath : null;
-		const chunkCount = "chunkCount" in result ? result.chunkCount : null;
-		await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount });
-		httpError(result.status as 400 | 404, result.error);
+	if (result === undefined) {
+		httpError(404, "Note not found");
 	}
 
 	return result;
@@ -268,8 +293,7 @@ export async function consumeNote(
 	storage: StorageBackend,
 	id: string,
 ) {
-	const result = await consumeNoteTx(db, storage, id, { expect: "inline" });
-	const { note } = result;
+	const note = await findReadableNote(db, storage, id, { expect: "inline" });
 	const serverIv = Buffer.from(note.serverNonce, "base64");
 
 	let clientBlob: Buffer;
@@ -289,12 +313,11 @@ export async function consumeNote(
 		// it can be surfaced in the server log under DEBUG (the client response
 		// stays the generic "Failed to decrypt note" — no decryption oracle).
 		httpError(500, "Failed to decrypt note", err);
-	} finally {
-		// Finalize storage cleanup for a burned note on both the success and
-		// error paths (the catch above always throws via httpError).
-		if (result.shouldDelete) {
-			await deleteOrSchedule(db, storage, { noteId: id, ...note });
-		}
+	}
+
+	const { shouldDelete } = consumeRead(db, id);
+	if (shouldDelete) {
+		await deleteOrSchedule(db, storage, { noteId: id, ...note });
 	}
 
 	return { clientBlob, note };
