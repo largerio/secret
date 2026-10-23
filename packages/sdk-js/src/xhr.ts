@@ -1,5 +1,17 @@
-import { type CreateNoteResponse, createNoteResponseSchema } from "@largerio/secret-shared";
+import type { CreateNoteResponse } from "@largerio/secret-shared";
 import { SecretApiError, SecretNetworkError } from "./errors.js";
+
+// A hand-written guard rather than shared's `createNoteResponseSchema`: that
+// one import pulled all of zod into the published bundle (~94% of it).
+function isCreateNoteResponse(value: unknown): value is CreateNoteResponse {
+	if (typeof value !== "object" || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		typeof v["id"] === "string" &&
+		typeof v["expiresAt"] === "string" &&
+		typeof v["deleteToken"] === "string"
+	);
+}
 
 export function postFormDataXhr(
 	url: string,
@@ -39,12 +51,11 @@ export function postFormDataXhr(
 			if (xhr.status >= 200 && xhr.status < 300) {
 				// Validate the success shape at runtime rather than trusting the cast —
 				// a malformed 2xx body should fail loudly instead of propagating.
-				const parsed = createNoteResponseSchema.safeParse(data);
-				if (!parsed.success) {
+				if (!isCreateNoteResponse(data)) {
 					reject(new SecretApiError("Invalid response", xhr.status));
 					return;
 				}
-				resolve(parsed.data);
+				resolve(data);
 			} else {
 				const error =
 					typeof data["error"] === "string" ? data["error"] : `HTTP ${String(xhr.status)}`;

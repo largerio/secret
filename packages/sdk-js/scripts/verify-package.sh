@@ -45,6 +45,17 @@ for f in dist/index.js dist/index.d.ts README.md LICENSE; do
 	}
 done
 
+# The bundle was 40 KB once zod left it, 800 KB while one schema import kept it
+# in. Twice the current size leaves room to grow and still trips on a heavy
+# dependency slipping in through crypto or shared.
+MAX_BUNDLE_BYTES=81920
+echo "→ checking the bundle stays under $MAX_BUNDLE_BYTES bytes"
+BUNDLE_BYTES=$(wc -c < node_modules/@largerio/secret-sdk/dist/index.js | tr -d ' ')
+if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
+	echo "FAIL: dist/index.js is $BUNDLE_BYTES bytes, over the $MAX_BUNDLE_BYTES budget"
+	exit 1
+fi
+
 echo "→ checking the types are self-contained"
 # Only module specifiers count — prose in a doc comment may legitimately name
 # the shared package.
