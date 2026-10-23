@@ -169,7 +169,7 @@ describe("postFormDataXhr", () => {
 		await expect(promise).rejects.toThrow("Invalid JSON response");
 	});
 
-	test("rejects when a 2xx body fails schema validation", async () => {
+	test("rejects when a 2xx body fails shape validation", async () => {
 		const { xhr, triggerEvent } = createMockXhr();
 		installXhr(xhr);
 		const { postFormDataXhr } = await import("../xhr.js");
@@ -177,6 +177,24 @@ describe("postFormDataXhr", () => {
 		xhr.status = 200;
 		// Missing expiresAt and deleteToken — a malformed success response.
 		xhr.responseText = JSON.stringify({ id: "x1" });
+
+		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
+		triggerEvent("load");
+
+		await expect(promise).rejects.toThrow("Invalid response");
+	});
+
+	test.each([
+		["a null body", null],
+		["a non-object body", "x1"],
+		["a field of the wrong type", { id: "x1", expiresAt: "2026-01-01T00:00:00Z", deleteToken: 42 }],
+	])("rejects a 2xx response with %s", async (_label, body) => {
+		const { xhr, triggerEvent } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+
+		xhr.status = 201;
+		xhr.responseText = JSON.stringify(body);
 
 		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
 		triggerEvent("load");
