@@ -1,5 +1,11 @@
 # @largerio/secret-sdk
 
+## 1.1.3
+
+### Patch Changes
+
+- a2ce1d1: The published bundle no longer ships zod: `dist/index.js` drops from 803 KB to 41 KB (127 KB to 10 KB gzipped). A single schema import, used to check the response of a multipart upload, pulled the whole library in. That check is now a plain type guard and rejects the same malformed responses with the same `SecretApiError("Invalid response")`. Nothing changes in the API.
+
 ## 1.1.2
 
 ### Patch Changes
