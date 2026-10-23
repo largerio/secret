@@ -1,0 +1,190 @@
+name: Rebuild the release
+
+# Between two releases the release line (:1, :1.3) stays on one image while its
+# base image gets security fixes: four months went by between v1.0.0 and
+# v1.1.0 with nothing rebuilt. Each week, if the base the latest release is
+# pinned to has a newer digest upstream, this rebuilds that release's own
+# sources on it, scans its OS packages and smoke-tests the result, and moves
+# the release line there. The exact tag (:1.3.1) never moves: it stays the image that was
+# released. Production runs main and is not touched.
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: rebuild-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      major: ${{ steps.release.outputs.major }}
+      minor: ${{ steps.release.outputs.minor }}
+      base: ${{ steps.pinned.outputs.name }}
+      upstream: ${{ steps.compare.outputs.upstream }}
+      line-digest: ${{ steps.compare.outputs.line-digest }}
+      stale: ${{ steps.compare.outputs.stale }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Find the latest release
+        id: release
+        run: |
+          tag=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ -z "$tag" ]; then
+            echo "::error::No vX.Y.Z tag to rebuild."
+            exit 1
+          fi
+          version=${tag#v}
+          minor=${version#*.}
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "major=${version%%.*}"
+            echo "minor=${minor%%.*}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: release
+
+      - name: Pinned base image
+        id: pinned
+        run: .github/scripts/base-image.sh release/Dockerfile >> "$GITHUB_OUTPUT"
+
+      - name: Compare with the newest base
+        id: compare
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          MAJOR: ${{ steps.release.outputs.major }}
+          BASE: ${{ steps.pinned.outputs.name }}
+          PINNED: ${{ steps.pinned.outputs.digest }}
+        run: |
+          line="ghcr.io/largerio/secret:${MAJOR}"
+          labels=$(docker buildx imagetools inspect "$line" --format '{{json (index .Image "linux/amd64").Config.Labels}}')
+
+          # The line must still serve this release. If the release was never
+          # promoted, moving the line here would release it unannounced.
+          revision=$(jq -r '."org.opencontainers.image.revision" // empty' <<< "$labels")
+          commit=$(git -C release rev-parse HEAD)
+          if [ "$revision" != "$commit" ]; then
+            echo "::error::$line is built from ${revision:-an unknown commit}, not $TAG ($commit). Was $TAG promoted (release-image.yml)?"
+            exit 1
+          fi
+
+          # Images from before the label run on the base their Dockerfile pins.
+          current=$(jq -r --arg pinned "$PINNED" '."org.opencontainers.image.base.digest" // $pinned' <<< "$labels")
+          upstream=$(docker buildx imagetools inspect "$BASE" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          {
+            echo "upstream=$upstream"
+            echo "line-digest=$(docker buildx imagetools inspect "$line" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$current" = "$upstream" ]; then
+            echo "$line already runs on $BASE@$upstream"
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$line runs on $BASE@$current; $upstream is out"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  rebuild:
+    needs: check
+    if: needs.check.outputs.stale == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      BASE: ${{ needs.check.outputs.base }}
+      UPSTREAM: ${{ needs.check.outputs.upstream }}
+    steps:
+      # This workflow's scripts come from main; the sources being rebuilt from
+      # the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+          path: release
+
+      - name: Pin the newest base
+        run: |
+          sed -i -E "s#^(FROM[[:space:]]+${BASE})@sha256:[0-9a-f]{64}#\1@${UPSTREAM}#" release/Dockerfile
+          pinned=$(.github/scripts/base-image.sh release/Dockerfile | sed -n 's/^digest=//p')
+          if [ "$pinned" != "$UPSTREAM" ]; then
+            echo "::error::release/Dockerfile still pins $pinned"
+            exit 1
+          fi
+          git -C release diff
+
+      # The released image's own labels, with a new build date and base: it is
+      # the same release, rebuilt.
+      - name: Labels
+        id: labels
+        run: |
+          {
+            echo "labels<<LABELS_EOF"
+            docker buildx imagetools inspect "ghcr.io/largerio/secret:${VERSION}" \
+              --format '{{json (index .Image "linux/amd64").Config.Labels}}' \
+              | jq -r --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg version "$VERSION" \
+                --arg base "$BASE" --arg digest "$UPSTREAM" \
+                '. + {
+                  "org.opencontainers.image.created": $created,
+                  "org.opencontainers.image.version": $version,
+                  "org.opencontainers.image.base.name": $base,
+                  "org.opencontainers.image.base.digest": $digest
+                } | to_entries[] | "\(.key)=\(.value)"'
+            echo "LABELS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # QEMU enables cross-building the linux/arm64 image on the amd64 runner.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # No cache: every layer sits on the new base, so none would match.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: release
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=ghcr.io/largerio/secret,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.labels.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Scan, smoke-test and move the release line
+        uses: ./.github/actions/promote-image
+        with:
+          image: ghcr.io/largerio/secret
+          digest: ${{ steps.build.outputs.digest }}
+          # Same lockfile as the release: its npm packages are those of the
+          # image being replaced, and the daily scan already reports them. Only
+          # the base is new, and its OS packages must be clean. Failing on an
+          # npm CVE here would also hold back the base fixes until the next
+          # release.
+          vuln-type: os
+          tags: |
+            ghcr.io/largerio/secret:${{ needs.check.outputs.major }}
+            ghcr.io/largerio/secret:${{ needs.check.outputs.major }}.${{ needs.check.outputs.minor }}
+            ghcr.io/largerio/secret:latest
+          # A release promoted while this ran owns the line now: leave it.
+          expected-current-digest: ${{ needs.check.outputs.line-digest }}

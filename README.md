@@ -251,9 +251,16 @@ deploys, pin an exact release tag on the `image:` line instead:
 |-----------|--------|
 | `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended** (the default), gets fixes and features without breaking changes |
 | `ghcr.io/largerio/secret:1.1` | latest `1.1.x` patch only |
-| `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible |
+| `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible — never moves |
 | `ghcr.io/largerio/secret:latest` | newest release of any major version — moves to `2.x` and its breaking changes when it ships |
 | `ghcr.io/largerio/secret:main` | tip of `main`, unreleased and unreviewed changes included — for testing only |
+
+A release is the image CI built and tested when its commit landed on `main`,
+promoted as is: `:1.1.0` and that commit's `sha-*` tag have the same digest.
+When the base image (`node:26-alpine`) gets a new digest, the latest release is
+rebuilt on it within a week, and `:1`, `:1.1` and `:latest` move to the
+rebuild once its OS packages pass the vulnerability scan and it passes the
+smoke test. The exact tag stays on the image that was released.
 
 After changing the tag, run `docker compose pull && docker compose up -d`. The
 [Releases](https://github.com/largerio/secret/releases) page doubles as the

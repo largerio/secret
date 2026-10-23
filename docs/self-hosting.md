@@ -340,8 +340,10 @@ docker image prune -f   # clean up old layers
 Your data lives in the volume, so updates never delete notes.
 
 `docker-compose.yml` tracks `:1`, the major tag: every release (fixes included)
-without unreleased or breaking changes. Pin an exact release such as
-`ghcr.io/largerio/secret:1.2.1` for a fully reproducible deployment.
+without unreleased or breaking changes, plus a weekly rebuild of the latest
+release whenever its base image gets a new digest. Pin an exact release such as
+`ghcr.io/largerio/secret:1.2.1` for a fully reproducible deployment: that tag
+never moves.
 
 Full tag list: [Pinning a version](../README.md#pinning-a-version).
 

@@ -32,9 +32,12 @@ updates:
       prefix: build
     labels: ["docker"]
 
-  # Actions pinned by commit SHA in .github/workflows/*.yml.
+  # Actions pinned by commit SHA in .github/workflows/*.yml, and in the local
+  # composite actions, which Dependabot only reads from the directories listed.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     groups:

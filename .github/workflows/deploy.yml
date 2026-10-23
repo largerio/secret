@@ -1,9 +1,10 @@
 name: CI/CD
 
+# Release tags (v*) build nothing: release-image.yml promotes the image this
+# workflow built and tested when the tagged commit landed on main.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -141,17 +142,22 @@ jobs:
       - name: Scan git history for leaked secrets
         run: gitleaks git . --redact --no-banner --verbose
 
+  # Builds each commit of main once. The image is pushed by digest alone and
+  # only tagged :main and sha-<commit> once it passes the gates of
+  # .github/actions/promote-image: neither tag ever points at an image that
+  # failed one. A release promotes that sha-<commit> image as is
+  # (release-image.yml), so what ships is byte for byte what was tested.
   docker:
     # Every gate must pass before an image is published: with `needs: check`
-    # alone, a tag push could build, push and deploy while e2e was still
-    # running — shipping a regression, a known CVE or a leaked secret.
+    # alone, a push could build, push and deploy while e2e was still running —
+    # shipping a regression, a known CVE or a leaked secret.
     needs: [check, e2e, audit, secrets, workflows]
     runs-on: ubuntu-latest
     outputs:
       # The exact image that was built, pushed and scanned. Deploying by tag
       # would let a later push move it between the scan and the rollout.
       digest: ${{ steps.build.outputs.digest }}
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -169,102 +175,69 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Recorded on the image so rebuild-release.yml can tell whether a newer
+      # base has come out since.
+      - name: Base image
+        id: base
+        run: .github/scripts/base-image.sh Dockerfile >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/largerio/secret
-          # :latest follows releases, never main: it is what `docker pull`
-          # without a tag fetches, and main is unreviewed edge code. The tip of
-          # main is published as :main. Set explicitly rather than relying on
-          # the action's default (latest=auto), which also tags semver releases.
+          # :latest follows releases, never main: release-image.yml sets it.
+          # Set explicitly rather than relying on the action's default
+          # (latest=auto), which would tag this build :latest.
           flavor: |
             latest=false
+          # Applied by the Promote step, once the image has passed its gates.
+          # sha-* outranks the branch so it becomes the version label: a
+          # release promotes this image unchanged, and a released image whose
+          # label said "main" would be wrong. The version is in the tag.
+          # release-image.yml looks the image up as sha-<first 7 characters of
+          # the commit>, the default format: change both together.
           tags: |
-            type=sha
+            type=sha,priority=700
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            # Releases ship as minors, so a {{major}}.{{minor}} pin never got a
-            # single fix: :1.0 stayed on 1.0.0 for four months of CVE patches.
-            # :1 is the tag that actually follows the stable line.
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.base.name=${{ steps.base.outputs.name }}
+            org.opencontainers.image.base.digest=${{ steps.base.outputs.digest }}
 
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          # By digest only, no tag yet: until the scan and the smoke test pass,
+          # nothing can pull this image by name.
+          outputs: type=image,name=ghcr.io/largerio/secret,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           sbom: true
           provenance: mode=max
 
-      # Scan the pushed image for OS/library CVEs; fail on fixable HIGH/CRITICAL.
-      - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Scan, smoke-test and tag the image
+        uses: ./.github/actions/promote-image
         with:
-          image-ref: ghcr.io/largerio/secret@${{ steps.build.outputs.digest }}
-          format: table
-          exit-code: "1"
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          image: ghcr.io/largerio/secret
+          digest: ${{ steps.build.outputs.digest }}
+          tags: ${{ steps.meta.outputs.tags }}
 
-      # Every PaaS injects PORT, and nothing else exercises the image — the e2e
-      # suite runs the dev servers.
-      - name: Smoke-test the image with an injected PORT
-        run: |
-          docker run -d --name smoke -e PORT=10000 -p 10000:10000 \
-            ghcr.io/largerio/secret@${{ steps.build.outputs.digest }}
-          for _ in $(seq 30); do
-            if curl -fsS http://localhost:10000/api/health > /dev/null 2>&1; then break; fi
-            sleep 2
-          done
-          echo "--- the site must be served on PORT, not the raw API ---"
-          curl -fsS http://localhost:10000/ | grep -q "<!doctype html" \
-            || { echo "FAIL: PORT does not serve the web app"; docker logs smoke; exit 1; }
-          echo "--- and its proxy must reach the API ---"
-          curl -fsS http://localhost:10000/api/health | grep -q '"status":"ok"' \
-            || { echo "FAIL: the web app cannot reach the API"; docker logs smoke; exit 1; }
-          # What the SDK sends from Node: no Origin header. SvelteKit's form CSRF
-          # check answered these with a 403 before the API saw them; unauthenticated,
-          # the API itself must answer 401.
-          echo "--- API writes must reach the API, not SvelteKit's CSRF check ---"
-          for probe in "-X POST -F probe=1 http://localhost:10000/api/v1/notes/upload" \
-                       "-X DELETE http://localhost:10000/api/v1/notes/AAAAAAAAAAAA"; do
-            # shellcheck disable=SC2086 # $probe is a list of curl arguments
-            code=$(curl -s -o /dev/null -w '%{http_code}' $probe)
-            [ "$code" = "401" ] \
-              || { echo "FAIL: curl $probe answered $code, expected 401"; docker logs smoke; exit 1; }
-          done
-          # adapter-node 6 dropped ORIGIN and defaults to https: on plain HTTP the
-          # app would reject its own form posts. The image derives the origin from
-          # APP_URL (here its default, http://localhost:PORT) — while SvelteKit's
-          # CSRF check must still refuse a foreign origin.
-          echo "--- the app's origin must follow APP_URL, its CSRF check must still hold ---"
-          same=$(curl -s -o /dev/null -w '%{http_code}' -X POST -F probe=1 \
-            -H "Origin: http://localhost:10000" http://localhost:10000/)
-          cross=$(curl -s -o /dev/null -w '%{http_code}' -X POST -F probe=1 \
-            -H "Origin: https://evil.example" http://localhost:10000/)
-          if [ "$same" = "403" ] || [ "$cross" != "403" ]; then
-            echo "FAIL: same-origin POST $same, cross-origin POST $cross"; docker logs smoke; exit 1
-          fi
-          docker rm -f smoke
-
+  # Production runs the tip of main. A release tag deploys nothing: it promotes
+  # an image that already went through here, and redeploying it on a tag
+  # behind main would roll production back.
   deploy:
     needs: docker
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main'
     permissions: {}
     environment: production
-    # Serialize deployments across all refs (main pushes and v* tags share one
-    # group), so concurrent merges/releases never run two SSH deploys against the
-    # same host at once. cancel-in-progress stays false: never interrupt an
-    # in-flight deploy; queue the next one and let it run to completion.
+    # Serialize deployments in one group, so concurrent merges never run two
+    # SSH deploys against the same host at once. cancel-in-progress stays
+    # false: never interrupt an in-flight deploy; queue the next one and let it
+    # run to completion.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
