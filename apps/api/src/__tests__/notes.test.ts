@@ -42,8 +42,10 @@ const TEST_SERVER_KEY = randomBytes(32);
 let db: AppDatabase;
 let app: Hono<AppEnv>;
 
-function createApp(database: AppDatabase) {
-	const storage = new LocalStorage(TEST_FILES_PATH);
+function createApp(
+	database: AppDatabase,
+	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
+) {
 	const hono = new Hono<AppEnv>();
 	hono.onError((err, c) => {
 		if (err instanceof HTTPException) {
@@ -732,9 +734,40 @@ describe("GET /api/v1/notes/:id", () => {
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
 		expect((await res.json()).error).toBe("Note not found");
+
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.readCount).toBe(0);
 	});
 
-	it("cleans up storage when decryption fails on burn-after-read file note", async () => {
+	it("keeps a burn-after-read note through a storage failure, then serves it once", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		let storageDown = true;
+		const flakyStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: (key) =>
+				storageDown ? Promise.reject(new Error("storage unavailable")) : realStorage.read(key),
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+		const flakyApp = createApp(db, flakyStorage);
+
+		const failed = await flakyApp.request(`/api/v1/notes/${id}`);
+		expect(failed.status).toBe(500);
+
+		storageDown = false;
+		const served = await flakyApp.request(`/api/v1/notes/${id}`);
+		expect(served.status).toBe(200);
+		expect((await served.json()).encryptedData).toBeDefined();
+
+		const again = await flakyApp.request(`/api/v1/notes/${id}`);
+		expect(again.status).toBe(404);
+	});
+
+	it("keeps a burn-after-read file note whose blob fails to decrypt", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
 
 		const { notes: notesTable } = await import("../db/schema.js");
@@ -754,9 +787,10 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(res.status).toBe(500);
 		expect((await res.json()).error).toBe("Failed to decrypt note");
 
-		// Note should be deleted from DB (burn-after-read transaction) and file cleaned up
+		// The read never counted: the row and its file are both still there.
 		const afterNote = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
-		expect(afterNote).toBeUndefined();
+		expect(afterNote?.readCount).toBe(0);
+		expect(existsSync(filePath)).toBe(true);
 	});
 
 	it("logs error when chunk cleanup fails for expired chunked note", async () => {
@@ -2181,10 +2215,17 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		expect(streamFailed).toBe(true);
 	});
 
-	it("handles corrupted chunk data (too small for auth tag)", async () => {
+	it("keeps a burn-after-read note whose chunk 0 is too small for an auth tag", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		// Create note using real storage first
 		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notesTable)
+			.set({ maxReads: 1, burnAfterRead: true })
+			.where(eq(notesTable.id, id))
+			.run();
 
 		// Now create an app with a storage that returns too-small chunk data
 		const corruptStorage: StorageBackend = {
@@ -2197,14 +2238,13 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		};
 		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
 
+		// Chunk 0 is decrypted before the read counts, so this fails up front.
 		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
-		expect(res.status).toBe(200); // Headers sent before stream starts
-		// The stream should error, but we can still consume and verify it errored
-		try {
-			await res.arrayBuffer();
-		} catch {
-			// Expected — stream errored with "Invalid chunk data"
-		}
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({ error: "Failed to decrypt note" });
+
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.readCount).toBe(0);
 	});
 
 	it("logs error when deleteChunks fails during burn-after-read stream", async () => {
@@ -2293,6 +2333,11 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(500);
+
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.readCount).toBe(0);
 	});
 
 	it("returns 404 when chunk 0 is missing (StorageNotFoundError)", async () => {
@@ -2315,7 +2360,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		expect(await res.json()).toEqual({ error: "Note not found" });
 	});
 
-	it("schedules cleanup when burn-after-read note has missing chunk 0", async () => {
+	it("keeps a burn-after-read note whose chunk 0 is missing", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
 
@@ -2339,22 +2384,28 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
-		expect(missingStorage.deleteChunks).toHaveBeenCalledWith(id, expect.any(Number));
+
+		// The read never counted, so nothing was burned or cleaned up.
+		expect(missingStorage.deleteChunks).not.toHaveBeenCalled();
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.readCount).toBe(0);
 	});
 
 	it("aborts the stream when chunk decryption throws inside the loop", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
 
-		// Return a buffer that passes the IV+tag length check but fails AES-GCM
-		// authentication, exercising the catch in the ReadableStream pull().
+		// Chunk 0 is genuine (it is decrypted before headers are sent); chunk 1
+		// passes the IV+tag length check but fails AES-GCM authentication,
+		// exercising the catch in the ReadableStream pull().
 		const garbage = Buffer.alloc(64);
 		const corruptStorage: StorageBackend = {
 			save: (noteId, data) => realStorage.save(noteId, data),
 			read: (key) => realStorage.read(key),
 			delete: (key) => realStorage.delete(key),
 			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: () => Promise.resolve(garbage),
+			readChunk: (noteId, idx) =>
+				idx === 0 ? realStorage.readChunk(noteId, idx) : Promise.resolve(garbage),
 			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
 		};
 		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
@@ -2748,5 +2799,31 @@ describe("burn-after-read under concurrent reads", () => {
 		]);
 
 		expect([a.status, b.status].sort()).toEqual([200, 404]);
+	});
+
+	it("answers 404 to a reader whose payload was still loading when another burned it", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+
+		// The payload is read before the read counts, so the other reader's burn
+		// can land in between: this reader has the blob but must not serve it.
+		const realStorage = new LocalStorage(TEST_FILES_PATH);
+		const racingStorage: StorageBackend = {
+			save: (noteId, data) => realStorage.save(noteId, data),
+			read: async (key) => {
+				const data = await realStorage.read(key);
+				db.delete(notesTable).where(eq(notesTable.id, id)).run();
+				return data;
+			},
+			delete: (key) => realStorage.delete(key),
+			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
+			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
+		};
+
+		const res = await createApp(db, racingStorage).request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Note not found");
 	});
 });

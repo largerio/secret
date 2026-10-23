@@ -19,8 +19,10 @@ import { StorageNotFoundError } from "../../storage/index.js";
 import {
 	assertWithinPolicy,
 	buildNoteHeaders,
-	consumeNoteTx,
+	consumeRead,
 	DELETE_TOKEN_LENGTH,
+	findReadableNote,
+	httpError,
 	type NotesEnv,
 	sanitizeHeaderValue,
 	validateUploadId,
@@ -278,8 +280,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const serverKey = c.get("serverKey");
 		const storage = c.get("storage");
 
-		const result = await consumeNoteTx(db, storage, id, { expect: "chunked" });
-		const { note } = result;
+		const note = await findReadableNote(db, storage, id, { expect: "chunked" });
 		const chunkCount = note.chunkCount as number;
 
 		const headers = buildNoteHeaders(note);
@@ -289,21 +290,40 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const IV_LENGTH = 12;
 		const AUTH_TAG_LENGTH = 16;
 
-		// Pre-flight the first chunk so a missing payload maps to a 404 before
-		// we commit to streaming a 200. Once headers are sent, any subsequent
-		// error can only break the stream mid-flight.
+		const decryptChunk = (storedData: Buffer): Buffer => {
+			const iv = storedData.subarray(0, IV_LENGTH);
+			const encrypted = storedData.subarray(IV_LENGTH);
+
+			// Verify minimum size for auth tag
+			if (encrypted.length < AUTH_TAG_LENGTH) {
+				throw new Error("Invalid chunk data");
+			}
+
+			return serverDecrypt(encrypted, iv, serverKey, Buffer.from(id));
+		};
+
+		// Pre-flight the first chunk — read AND decrypted — before the read
+		// counts, so a missing or corrupt payload maps to a 404 or a 500 and
+		// leaves the note intact. Once headers are sent, any subsequent error can
+		// only break the stream mid-flight.
 		let firstChunk: Buffer;
 		try {
 			firstChunk = await storage.readChunk(id, 0);
 		} catch (err) {
-			if (result.shouldDelete) {
-				await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
-			}
 			if (err instanceof StorageNotFoundError) {
 				return c.json({ error: "Note not found" }, 404);
 			}
 			throw err;
 		}
+
+		let firstClientChunk: Buffer;
+		try {
+			firstClientChunk = decryptChunk(firstChunk);
+		} catch (err) {
+			httpError(500, "Failed to decrypt note", err);
+		}
+
+		const { shouldDelete } = consumeRead(db, id);
 
 		// Read-ahead window: keep a few chunk reads in flight so per-chunk
 		// storage latency (one round-trip per chunk on S3) overlaps with
@@ -330,7 +350,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const finalize = async (): Promise<void> => {
 			if (finalized) return;
 			finalized = true;
-			if (result.shouldDelete) {
+			if (shouldDelete) {
 				await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
 			}
 		};
@@ -355,18 +375,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 						return;
 					}
 
-					const storedData = chunkRead.data;
-					const iv = storedData.subarray(0, IV_LENGTH);
-					const encrypted = storedData.subarray(IV_LENGTH);
-
-					// Verify minimum size for auth tag
-					if (encrypted.length < AUTH_TAG_LENGTH) {
-						controller.error(new Error("Invalid chunk data"));
-						await finalize();
-						return;
-					}
-
-					const clientChunk = serverDecrypt(encrypted, iv, serverKey, Buffer.from(id));
+					const clientChunk = delivered === 0 ? firstClientChunk : decryptChunk(chunkRead.data);
 
 					// Length-prefix framing: 4 bytes big-endian length + chunk data
 					const lengthBuf = Buffer.alloc(4);
