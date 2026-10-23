@@ -1,8 +1,8 @@
 # Stage 1: Build
-# Base image pinned by digest for reproducibility + integrity.
-# Refresh manually with: docker buildx imagetools inspect node:26-alpine
-# (or query the registry) and update the digest in BOTH stages.
-FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS builder
+# The base is pinned by digest, the same in both stages: CI refuses a mix
+# (.github/scripts/base-image.sh). Dependabot bumps it on main, and
+# rebuild-release.yml rebuilds the latest release on a newer one.
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS builder
 
 # Install corepack (not bundled in node:26-alpine) and enable it; the pnpm
 # version is resolved from package.json "packageManager", so Dependabot's npm
@@ -44,12 +44,7 @@ RUN node -e " \
   }"
 
 # Stage 2: Production
-FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS production
-
-# CVE-2026-45447: the pinned base image still ships openssl 3.5.6-r0; pull the
-# fixed 3.5.7-r0 from the Alpine repos until upstream node:26-alpine is rebuilt.
-# Remove once a refreshed digest includes openssl >= 3.5.7-r0.
-RUN apk upgrade --no-cache libssl3 libcrypto3
+FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS production
 
 RUN adduser -D -u 1001 appuser
 
