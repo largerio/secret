@@ -1,5 +1,7 @@
-name: Release
+name: Release SDK
 
+# Publishes @largerio/secret-sdk to npm. The app image is released by
+# release-image.yml.
 on:
   push:
     branches: [main]
@@ -8,39 +10,27 @@ permissions: {}
 
 # Never run two releases at once, and never cancel an in-flight publish.
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    # Canonical repo only — forks can't satisfy the npm trusted publisher and
-    # must not publish.
+    # Forks cannot satisfy the npm trusted publisher, and must not publish.
     if: github.repository == 'largerio/secret'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
-      contents: write # push the version commit / create the Version Packages PR branch
+      contents: write # push the version commit and the Version Packages PR branch
       pull-requests: write # open and update the Version Packages PR
-      id-token: write # OIDC: authenticate to npm via trusted publishing (no token)
+      id-token: write # OIDC: publish to npm through trusted publishing, with no token
     env:
-      # `secrets` is not one of the contexts available to a step-level `if`
-      # (GitHub rejects the whole file), but it is available here — so resolve
-      # it once at job level and branch on the result below.
+      # `secrets` is not available to a step-level `if`, but it is here.
       HAS_RELEASE_APP: ${{ secrets.APP_ID != '' }}
     steps:
-      # A PR opened with the default GITHUB_TOKEN never triggers `pull_request`
-      # workflows — GitHub suppresses them to avoid recursion. The "Version
-      # Packages" PR therefore reached main with no CI at all: lint, typecheck,
-      # tests, e2e and the SDK package check were all skipped for it. Acting as
-      # a GitHub App gives it a distinct identity, so the checks run.
-      #
-      # Falls back to GITHUB_TOKEN when the App secrets are absent (forks, or
-      # before the App is installed): releases keep working, just without CI on
-      # the version PR, exactly as before.
-      #
-      # Setup: a GitHub App installed on this repo with three repository
-      # permissions — Contents: read/write, Pull requests: read/write, and
-      # Workflows: read/write (used only by dependabot-delayed-merge.yml) — and
-      # its App ID / private key stored as the APP_ID and APP_PRIVATE_KEY secrets.
+      # GitHub starts no `pull_request` workflow for a PR opened with
+      # GITHUB_TOKEN, so the Version Packages PR would reach main with no CI.
+      # Opened as the release App, it gets its checks. Without the App (a
+      # fork), this falls back to GITHUB_TOKEN. Setup: CONTRIBUTING.md.
       - name: Mint a GitHub App token
         id: app-token
         if: env.HAS_RELEASE_APP == 'true'
@@ -48,50 +38,28 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          # Only what the version PR needs. The App also holds Workflows (write)
-          # for dependabot-delayed-merge.yml; this job runs third-party code
-          # (pnpm install, changesets) and must not inherit it.
+          # Not the App's Workflows permission: this job runs third-party code
+          # (pnpm install, changesets).
           permission-contents: write
           permission-pull-requests: write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # Check out with the App token too, so the version commit is attributed
-          # to the App and pushing the PR branch uses the same identity.
+          # The version commit and the PR branch are pushed as the App too.
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: ./.github/actions/setup
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # Trusted publishing (OIDC) requires npm CLI >= 11.5.1; changeset publish
-      # shells out to it. Pin it explicitly so we don't depend on the bundled
-      # version drifting.
-      - run: npm install -g npm@^11
-
-      # changesets/action picks the action based on pending changesets:
-      #   • changeset files present      → runs `version`, opens/updates the
-      #     "Version Packages" PR (does NOT publish)
-      #   • none present but versions are
-      #     ahead of what's on npm        → runs `publish`
-      # So this only ships when there is genuinely a new version to release.
-      # Publishing authenticates via OIDC against the npm trusted publisher
-      # configured for @largerio/secret-sdk — no NPM_TOKEN secret involved.
-      - name: Create Version Packages PR or publish
+      # With changesets pending, opens or updates the Version Packages PR.
+      # Without, publishes the versions npm does not have yet.
+      - name: Open the Version Packages PR or publish
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           version-script: pnpm version-packages
           publish-script: pnpm release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-          # v2 dropped the GITHUB_TOKEN env var: a custom token is only read
-          # from this input now. Passing it via env silently fell back to the
-          # job's default token, which would have cost the App identity (and
-          # with it, CI on the Version Packages PR — see the comment above).
+          # An input: v2 ignores the GITHUB_TOKEN env var, and would fall back
+          # to the job's token.
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}

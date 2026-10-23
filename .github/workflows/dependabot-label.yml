@@ -1,49 +1,43 @@
 name: Dependabot label
 
-# Label Dependabot PRs as auto-merge-eligible at open time. This workflow only
-# adds a label — the actual (delayed) merge is armed by dependabot-delayed-merge.yml.
-# Only patch/minor updates get labeled; major bumps stay for manual review.
+# Labels Dependabot's patch and minor PRs auto-merge-48h when they open:
+# dependabot-delayed-merge.yml arms the merge later. Majors stay for review.
 #
-# Uses `pull_request` (not `pull_request_target`): the latter runs with a
-# read-write token + secrets even for fork PRs and is the classic "pwn request"
-# footgun. With `pull_request`, fork PRs get a read-only token and no secrets, so
-# even if the actor guard were bypassed the job could not add a label. Dependabot
-# PRs still get write access here because the `permissions:` block grants it
-# explicitly (GitHub's documented auto-merge pattern).
+# `pull_request`, not `pull_request_target`: a fork's PR gets a read-only
+# token and no secrets, so it could not add a label even past the guard. The
+# `permissions:` block grants Dependabot's own PRs the write access.
 on: pull_request
 
 permissions: {}
 
 jobs:
   label:
-    # `dependabot[bot]` contains reserved characters ([ ]) that cannot appear in
-    # a human username, so this actor guard is not spoofable by renaming.
-    if: github.actor == 'dependabot[bot]'
+    # The PR's author, not github.actor: the actor is whoever triggered the
+    # last event, which can be Dependabot on someone else's PR.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: write
-      issues: write # creating a label goes through the issues/labels API
+      issues: write # creating a label goes through the issues API
     steps:
-      - name: Fetch Dependabot metadata
+      - name: Fetch the Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Label patch/minor updates
+      # --force creates the label or updates it, so it never fails on an
+      # existing one.
+      - name: Label patch and minor updates
         if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
-        # gh pr edit --add-label fails if the label doesn't exist, so ensure it
-        # first. `gh label create --force` is idempotent: it creates the label or
-        # updates it if already present, never erroring.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout, so no git remote to infer the repository from.
+          GH_REPO: ${{ github.repository }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           gh label create auto-merge-48h --force \
             --color 0e8a16 \
             --description "Dependabot patch/minor PR, auto-merged once >=48h old and CI is green"
           gh pr edit "$PR_URL" --add-label auto-merge-48h
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # This job has no checkout, so gh can't infer the repo from a git
-          # remote. GH_REPO points `gh label create` (which has no --repo flag)
-          # at the right repo; without it gh fails with "not a git repository".
-          GH_REPO: ${{ github.repository }}

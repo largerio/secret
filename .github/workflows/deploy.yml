@@ -1,6 +1,6 @@
 name: CI/CD
 
-# Release tags (v*) build nothing: release-image.yml promotes the image this
+# Release tags build nothing: release-image.yml promotes the image this
 # workflow built and tested when the tagged commit landed on main.
 on:
   push:
@@ -17,19 +17,15 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26
-          cache: pnpm
+          persist-credentials: false
 
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Lint
         run: pnpm lint
@@ -37,55 +33,56 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      # Runs with --coverage so the 100% thresholds in vitest.config.ts are
-      # actually enforced; `pnpm test` alone never evaluates them.
+      # `pnpm test` alone never evaluates the 100% thresholds of vitest.config.ts.
       - name: Test
         run: pnpm test:coverage
 
       - name: Build
         run: pnpm build
 
-      # Nothing else loads dist/: the unit tests import src/, so a broken bundle
-      # or a .d.ts referencing a private workspace package would ship unnoticed.
+      # The unit tests import src/ and nothing else loads dist/, where a broken
+      # bundle or a .d.ts importing a private package would otherwise ship.
       - name: Verify the publishable SDK artifact
         run: pnpm --filter @largerio/secret-sdk verify-package
 
-  # A workflow file that fails to parse does not fail loudly: GitHub silently
-  # runs nothing. A bad `if:` expression took the Release workflow out of
-  # service and the only visible symptom was a run with zero jobs.
+  # A workflow file GitHub cannot parse runs nothing and reports no failure.
   workflows:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Lint GitHub Actions workflows
-        uses: docker://rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+      # Not tracked by Dependabot: bump the version and the digest together.
+      - name: Lint the workflows
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+
+      # actionlint checks the run: blocks of workflows, not the scripts they call.
+      - name: Lint the CI scripts
+        run: find .github -name '*.sh' -print0 | xargs -0 shellcheck
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26
-          cache: pnpm
+          persist-credentials: false
 
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
-      - name: Install Playwright browser
+      - name: Install the Playwright browser
         run: pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 
-      - name: Run E2E tests
+      - name: Run the e2e suite
         run: pnpm test:e2e
 
-      - name: Upload Playwright report
+      - name: Upload the Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -95,44 +92,41 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26
-          cache: pnpm
+          persist-credentials: false
 
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
-      - name: Audit dependencies
+      - name: Audit production dependencies
         run: pnpm audit --audit-level=high --prod
 
   secrets:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      # Use the gitleaks binary directly: gitleaks-action@v2 requires a paid
-      # license for organization repositories, the CLI is free (MIT).
-      # NOTE: this binary download is not tracked by Dependabot — bump version
-      # AND checksum together (from the release's _checksums.txt) when updating.
-      # Latest: https://github.com/gitleaks/gitleaks/releases
+      # The CLI, not gitleaks-action: the action needs a paid license for an
+      # organization's repositories. Not tracked by Dependabot: bump the
+      # version and the checksum (from the release's _checksums.txt) together.
+      # https://github.com/gitleaks/gitleaks/releases
       - name: Install gitleaks
         env:
           GITLEAKS_VERSION: "8.30.1"
           GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
-          # Retry: a transient reset here fails the job, and since this gate
-          # blocks the deploy, a blip in GitHub Releases blocks a release.
+          # This job gates the deploy: retry, so a blip in GitHub Releases
+          # does not hold one back.
           curl -sSfL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 15 \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
@@ -142,61 +136,58 @@ jobs:
       - name: Scan git history for leaked secrets
         run: gitleaks git . --redact --no-banner --verbose
 
-  # Builds each commit of main once. The image is pushed by digest alone and
-  # only tagged :main and sha-<commit> once it passes the gates of
-  # .github/actions/promote-image: neither tag ever points at an image that
-  # failed one. A release promotes that sha-<commit> image as is
-  # (release-image.yml), so what ships is byte for byte what was tested.
+  # Builds each commit of main once and pushes it by digest. It is tagged
+  # sha-<commit> and :main only once it has passed the gates of
+  # .github/actions/promote-image, and a release promotes it unchanged
+  # (release-image.yml).
   docker:
-    # Every gate must pass before an image is published: with `needs: check`
-    # alone, a push could build, push and deploy while e2e was still running —
-    # shipping a regression, a known CVE or a leaked secret.
+    # Every gate: with `needs: check` alone, an image could ship while e2e
+    # was still running.
     needs: [check, e2e, audit, secrets, workflows]
-    runs-on: ubuntu-latest
-    outputs:
-      # The exact image that was built, pushed and scanned. Deploying by tag
-      # would let a later push move it between the scan and the rollout.
-      digest: ${{ steps.build.outputs.digest }}
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    outputs:
+      # Deploy this exact image: a tag could move between the scan and the
+      # rollout.
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # QEMU enables cross-building the linux/arm64 image on the amd64 runner.
+      # QEMU builds the linux/arm64 image on the amd64 runner.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Recorded on the image so rebuild-release.yml can tell whether a newer
-      # base has come out since.
-      - name: Base image
+      # Recorded on the image, so rebuild-release.yml can tell when a newer
+      # base is out.
+      - name: Read the base image
         id: base
         run: .github/scripts/base-image.sh Dockerfile >> "$GITHUB_OUTPUT"
 
-      - name: Docker metadata
+      - name: Compute the tags and labels
         id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/largerio/secret
-          # :latest follows releases, never main: release-image.yml sets it.
-          # Set explicitly rather than relying on the action's default
-          # (latest=auto), which would tag this build :latest.
+          # :latest follows releases (release-image.yml), never main. The
+          # action's default, latest=auto, would set it here.
           flavor: |
             latest=false
-          # Applied by the Promote step, once the image has passed its gates.
           # sha-* outranks the branch so it becomes the version label: a
-          # release promotes this image unchanged, and a released image whose
-          # label said "main" would be wrong. The version is in the tag.
-          # release-image.yml looks the image up as sha-<first 7 characters of
-          # the commit>, the default format: change both together.
+          # release promotes this image unchanged. release-image.yml looks it
+          # up as sha-<first 7 characters>, the default format.
           tags: |
             type=sha,priority=700
             type=ref,event=branch
@@ -204,13 +195,14 @@ jobs:
             org.opencontainers.image.base.name=${{ steps.base.outputs.name }}
             org.opencontainers.image.base.digest=${{ steps.base.outputs.digest }}
 
-      - id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          # By digest only, no tag yet: until the scan and the smoke test pass,
-          # nothing can pull this image by name.
+          # No tag yet: nothing can pull this image by name until it has
+          # passed the scan and the smoke test.
           outputs: type=image,name=ghcr.io/largerio/secret,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -225,27 +217,24 @@ jobs:
           digest: ${{ steps.build.outputs.digest }}
           tags: ${{ steps.meta.outputs.tags }}
 
-  # Production runs the tip of main. A release tag deploys nothing: it promotes
-  # an image that already went through here, and redeploying it on a tag
-  # behind main would roll production back.
+  # Production runs the tip of main. A release tag deploys nothing: on a
+  # commit behind main, it would roll production back.
   deploy:
     needs: docker
-    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions: {}
     environment: production
-    # Serialize deployments in one group, so concurrent merges never run two
-    # SSH deploys against the same host at once. cancel-in-progress stays
-    # false: never interrupt an in-flight deploy; queue the next one and let it
-    # run to completion.
+    # One deploy at a time on the host, and never cancel one in flight.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     steps:
       - name: Deploy
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         env:
           IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_SSH_PORT }}
@@ -256,8 +245,7 @@ jobs:
             set -eu
             cd /opt/secret/prod
 
-            # What is running right now — the thing to go back to if the new
-            # image never becomes healthy.
+            # What to go back to if the new image never becomes healthy.
             PREVIOUS=$(docker compose ps -q app | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null || true)
 
             SECRET_IMAGE="ghcr.io/largerio/secret@${IMAGE_DIGEST}"
@@ -267,9 +255,8 @@ jobs:
             docker compose pull
             docker compose up -d --remove-orphans
 
-            # Wait for the container to report healthy rather than assuming it.
-            # A container that boots and immediately fails every request used to
-            # count as a successful deploy.
+            # Healthy, not just started: a container can boot and then fail
+            # every request.
             HEALTH=starting
             for _ in $(seq 1 40); do
               CID=$(docker compose ps -q app)
@@ -294,6 +281,5 @@ jobs:
             fi
 
             echo "Healthy on ${SECRET_IMAGE}"
-            # Keep recent images so a manual rollback still has something to
-            # pull from; an unfiltered prune deleted the only copy.
+            # Keep a week of images, so a manual rollback has one to go back to.
             docker image prune -f --filter "until=168h"

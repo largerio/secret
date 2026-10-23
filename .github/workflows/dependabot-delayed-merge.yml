@@ -1,13 +1,9 @@
 name: Dependabot delayed merge
 
-# Arms GitHub auto-merge for Dependabot PRs that are:
-#   1. labeled auto-merge-48h (patch/minor, set by dependabot-label.yml),
-#   2. at least 48h old (so a freshly published release is never merged blind —
-#      this window lets a compromised release be yanked/flagged first), and
-#   3. already passing CI (defense-in-depth in case branch protection is missing).
-#
-# The real merge still waits for required status checks to go green, which is
-# enforced by branch protection on main (required: check, e2e, audit, secrets).
+# Arms auto-merge on the Dependabot PRs labeled auto-merge-48h
+# (dependabot-label.yml) that are at least 48 hours old, so a compromised
+# release has time to be yanked, and already green. The merge itself still
+# waits for the required checks of main's branch protection.
 on:
   schedule:
     - cron: "0 */6 * * *"
@@ -15,26 +11,25 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   arm:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     env:
-      # Same pattern as release.yml: `secrets` is not available to a step-level
-      # `if`, so resolve it once at job level.
+      # `secrets` is not available to a step-level `if`, but it is here.
       HAS_RELEASE_APP: ${{ secrets.APP_ID != '' }}
     steps:
-      # An auto-merge armed with GITHUB_TOKEN lands on main as github-actions,
-      # and GitHub never starts workflows for pushes made with that token: every
-      # Dependabot merge reached main with no CI/CD run, so nothing was built,
-      # scanned or deployed, and :main silently fell behind main. Arming as
-      # the release App gives the merge an identity that does trigger them.
-      #
-      # Workflows (write) is needed to merge the github-actions bumps, which
-      # edit .github/workflows/. The token is scoped to this job only; release.yml
-      # mints its own without it.
+      # GitHub starts no workflow for a push made with GITHUB_TOKEN: a merge
+      # armed with it would reach main with no CI/CD run, so nothing would be
+      # built, scanned or deployed. Armed as the release App, it gets one.
+      # Workflows (write) lets the App merge the bumps of .github/workflows/.
       - name: Mint a GitHub App token
         id: app-token
         if: env.HAS_RELEASE_APP == 'true'
@@ -46,28 +41,26 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      - name: Arm auto-merge for eligible PRs
+      - name: Arm auto-merge on the eligible PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Only the merge needs the App identity; listing and reading checks
-          # stay on GITHUB_TOKEN. Forks without the App fall back to it, and
-          # their merges skip CI/CD exactly as before.
+          GH_REPO: ${{ github.repository }}
+          # Only the merge needs the App. Without it (a fork), merges fall
+          # back to GITHUB_TOKEN and skip CI/CD.
           MERGE_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
         run: |
           cutoff=$(date -u -d '48 hours ago' +%s)
-          gh pr list --repo "$REPO" --state open --author "app/dependabot" \
+          gh pr list --state open --author "app/dependabot" \
             --label auto-merge-48h --json number,createdAt \
             --jq '.[] | "\(.number) \(.createdAt)"' |
           while read -r number created; do
             [ -n "$number" ] || continue
             created_ts=$(date -u -d "$created" +%s)
             [ "$created_ts" -le "$cutoff" ] || continue
-            # Only arm if CI is already green. gh pr checks exits 0 when all
-            # checks pass, non-zero when any are pending or failing.
-            if gh pr checks "$number" --repo "$REPO"; then
+            # gh pr checks exits non-zero while any check is pending or failing.
+            if gh pr checks "$number"; then
               echo "Arming auto-merge for PR #$number"
-              GH_TOKEN="$MERGE_TOKEN" gh pr merge "$number" --repo "$REPO" --auto --squash
+              GH_TOKEN="$MERGE_TOKEN" gh pr merge "$number" --auto --squash
             else
               echo "Skipping PR #$number: checks not green yet"
             fi

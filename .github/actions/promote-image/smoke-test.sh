@@ -20,9 +20,8 @@ curl -fsS http://localhost:10000/ | grep -q "<!doctype html" \
 echo "--- and its proxy must reach the API ---"
 curl -fsS http://localhost:10000/api/health | grep -q '"status":"ok"' \
 	|| { echo "FAIL: the web app cannot reach the API"; docker logs smoke; exit 1; }
-# What the SDK sends from Node: no Origin header. SvelteKit's form CSRF
-# check answered these with a 403 before the API saw them; unauthenticated,
-# the API itself must answer 401.
+# What the SDK sends from Node: no Origin header. These must reach the API,
+# which answers 401 unauthenticated, not SvelteKit's form CSRF check (403).
 echo "--- API writes must reach the API, not SvelteKit's CSRF check ---"
 for probe in "-X POST -F probe=1 http://localhost:10000/api/v1/notes/upload" \
 	"-X DELETE http://localhost:10000/api/v1/notes/AAAAAAAAAAAA"; do

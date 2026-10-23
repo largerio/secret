@@ -181,7 +181,7 @@ same PR as any user-visible change to the SDK:
 pnpm changeset
 ```
 
-On merge to `main`, the Release workflow collects pending changesets into a
+On merge to `main`, the Release SDK workflow collects pending changesets into a
 "chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` to
 npm via OIDC trusted publishing — no token is stored.
 
