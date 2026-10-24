@@ -5,6 +5,13 @@ image. Each version links to its GitHub release. The SDK has
 [its own changelog](packages/sdk-js/CHANGELOG.md), and
 [SECURITY.md](SECURITY.md#supported-versions) lists the supported versions.
 
+## [Unreleased]
+
+### Fixed
+
+- A generated password always holds a character of every class it draws from.
+  About one in five had no symbol.
+
 ## [1.3.2] - 2026-10-24
 
 ### Security
@@ -126,6 +133,7 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
+[Unreleased]: https://github.com/largerio/secret/compare/v1.3.2...HEAD
 [1.3.2]: https://github.com/largerio/secret/releases/tag/v1.3.2
 [1.3.1]: https://github.com/largerio/secret/releases/tag/v1.3.1
 [1.3.0]: https://github.com/largerio/secret/releases/tag/v1.3.0

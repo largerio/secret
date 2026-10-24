@@ -71,23 +71,33 @@ function uniformIndex(max: number): number {
 	}
 }
 
+function pick(charset: string): string {
+	return charset.charAt(uniformIndex(charset.length));
+}
+
 /**
  * Generate a random password from display-safe characters. By default every
  * character class is enabled; pass `options` to restrict the charset. If no
  * class is enabled the lowercase set is used as a safe fallback.
+ *
+ * When the length allows it, the password holds at least one character of
+ * each enabled class, each at a random position.
  */
 export function generatePassword(length = 20, options?: PasswordOptions): string {
 	const opts = options ?? { uppercase: true, lowercase: true, digits: true, symbols: true };
-	let charset = "";
-	if (opts.uppercase) charset += CHARSETS.uppercase;
-	if (opts.lowercase) charset += CHARSETS.lowercase;
-	if (opts.digits) charset += CHARSETS.digits;
-	if (opts.symbols) charset += CHARSETS.symbols;
-	if (charset.length === 0) charset = CHARSETS.lowercase;
+	const classes = (Object.keys(CHARSETS) as Array<keyof typeof CHARSETS>)
+		.filter((name) => opts[name])
+		.map((name) => CHARSETS[name]);
+	if (classes.length === 0) classes.push(CHARSETS.lowercase);
 
-	let password = "";
-	for (let i = 0; i < length; i++) {
-		password += charset[uniformIndex(charset.length)];
+	const charset = classes.join("");
+	const guaranteed = length >= classes.length ? classes : [];
+	const chars: string[] = [];
+	for (let i = guaranteed.length; i < length; i++) {
+		chars.push(pick(charset));
 	}
-	return password;
+	for (const set of guaranteed) {
+		chars.splice(uniformIndex(chars.length + 1), 0, pick(set));
+	}
+	return chars.join("");
 }

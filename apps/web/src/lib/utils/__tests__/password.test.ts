@@ -71,9 +71,33 @@ describe("generatePassword", () => {
 		expect(generatePassword()).not.toBe(generatePassword());
 	});
 
-	it("rates its own output as excellent", () => {
-		const result = getPasswordStrength(generatePassword());
-		expect(result.score).toBeGreaterThanOrEqual(4);
+	it("rates its own output as excellent, every time", () => {
+		for (let i = 0; i < 500; i++) {
+			expect(getPasswordStrength(generatePassword()).score).toBe(5);
+		}
+	});
+
+	it("holds a character of every enabled class", () => {
+		for (let i = 0; i < 500; i++) {
+			const password = generatePassword(4, { uppercase: true, digits: true, symbols: true });
+			expect(password).toMatch(/[A-Z]/);
+			expect(password).toMatch(/[2-9]/);
+			expect(password).toMatch(/[!@#$%]/);
+		}
+	});
+
+	it("puts the guaranteed characters at random positions", () => {
+		const orders = new Set<string>();
+		for (let i = 0; i < 100; i++) {
+			const password = generatePassword(2, { lowercase: true, symbols: true });
+			expect(password).toMatch(/^([a-z][!@#$%]|[!@#$%][a-z])$/);
+			orders.add(/^[a-z]/.test(password) ? "letter first" : "symbol first");
+		}
+		expect(orders.size).toBe(2);
+	});
+
+	it("guarantees no class when the length is shorter than the class count", () => {
+		expect(generatePassword(3)).toMatch(/^[A-HJ-NP-Za-hj-km-z2-9!@#$%]{3}$/);
 	});
 
 	it("restricts the charset to the requested character classes", () => {
