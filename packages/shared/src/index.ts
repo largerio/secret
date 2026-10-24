@@ -44,6 +44,7 @@ export type {
 	ServerConfig,
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
+export { withoutTrailingSlashes } from "./url.js";
 export type { UploadSessionMetadata } from "./validation.js";
 export {
 	chunkedUploadCompleteResponseSchema,

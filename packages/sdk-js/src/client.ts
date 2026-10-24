@@ -3,6 +3,7 @@ import {
 	DEFAULT_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
 	MAX_TEXT_SIZE,
+	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
 import {
 	decryptNote,
@@ -51,16 +52,6 @@ const PROGRESS = {
 function uniformDecryptionError(err: unknown): Error {
 	if (err instanceof SecretValidationError) return err;
 	return new SecretDecryptionError();
-}
-
-/**
- * The URL without its trailing slashes. A loop rather than `/\/+$/`, which
- * backtracks quadratically on a long run of slashes followed by anything else.
- */
-function withoutTrailingSlashes(url: string): string {
-	let end = url.length;
-	while (end > 0 && url[end - 1] === "/") end--;
-	return url.slice(0, end);
 }
 
 /** decodeURIComponent, with a malformed escape reported as an invalid share URL. */

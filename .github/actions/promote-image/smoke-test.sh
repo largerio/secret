@@ -8,8 +8,12 @@ set -euo pipefail
 
 IMAGE=$1
 
-# Every PaaS injects PORT.
-docker run -d --name smoke -e PORT=10000 -p 10000:10000 "$IMAGE"
+# Every PaaS injects PORT. The API key and the S3 secret are only there to be
+# looked for in the web process below: random, since written here they would
+# read as leaked keys.
+docker run -d --name smoke -e PORT=10000 -p 10000:10000 \
+	-e API_KEY_1="$(openssl rand -hex 24)" -e S3_SECRET_ACCESS_KEY="$(openssl rand -hex 16)" \
+	"$IMAGE"
 for _ in $(seq 30); do
 	if curl -fsS http://localhost:10000/api/health > /dev/null 2>&1; then break; fi
 	sleep 2
@@ -41,5 +45,23 @@ cross=$(curl -s -o /dev/null -w '%{http_code}' -X POST -F probe=1 \
 	-H "Origin: https://evil.example" http://localhost:10000/)
 if [ "$same" = "403" ] || [ "$cross" != "403" ]; then
 	echo "FAIL: same-origin POST $same, cross-origin POST $cross"; docker logs smoke; exit 1
+fi
+# The API's secrets must reach the API, and only the API.
+echo "--- the web process must not see the API's secrets ---"
+environ() {
+	# "node <script>" never appears whole in this shell's own command line, so
+	# pgrep matches the process alone. Not anchored: under emulation, the
+	# command line starts with qemu.
+	docker exec smoke sh -c 'tr "\0" "\n" < "/proc/$(pgrep -f "node $1" | head -n 1)/environ"' sh "$1"
+}
+secrets='^(SERVER_ENCRYPTION_KEY|API_KEY_1|S3_SECRET_ACCESS_KEY)='
+# Read first, so a process that is not found fails the test instead of
+# counting no secrets.
+api_env=$(environ apps/api/dist/index.js)
+web_env=$(environ apps/web/dist/server/index.js)
+api=$(grep -cE "$secrets" <<< "$api_env" || true)
+web=$(grep -cE "$secrets" <<< "$web_env" || true)
+if [ "$api" != "3" ] || [ "$web" != "0" ]; then
+	echo "FAIL: the API sees $api of its 3 secrets, the web process $web"; docker logs smoke; exit 1
 fi
 docker rm -f smoke

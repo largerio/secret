@@ -6,6 +6,7 @@ import {
 	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
 
 /**
@@ -34,7 +35,8 @@ export function buildServerConfig(
 	env: Record<string, string | undefined>,
 	origin: string,
 ): ServerConfig {
-	const appUrl = env["APP_URL"] ?? origin;
+	// Joined with paths below: "https://x.example/" would give "//og.png".
+	const appUrl = withoutTrailingSlashes(env["APP_URL"]?.trim() || origin);
 
 	return {
 		appName: env["APP_NAME"] ?? "Secret",

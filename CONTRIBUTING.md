@@ -202,28 +202,22 @@ Dependabot merges never reach the CI/CD pipeline.
 
 ### The app image
 
-The app is released by tagging a commit of `main` whose CI/CD run is green:
+The app is released by tagging a commit of `main` that has its
+[CHANGELOG.md](CHANGELOG.md) entry and a green CI/CD run:
 
 ```bash
 git tag v1.4.0 <commit> && git push origin v1.4.0
 ```
 
-Nothing is rebuilt for a release. `deploy.yml` builds each commit of `main`
-once, pushes it by digest, scans and smoke-tests it, and only then tags it
-`sha-<commit>` and `:main`. On the tag, `release-image.yml` scans that image
-again and gives it the release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`): a
-release is byte for byte the image CI tested and production ran. Production
-follows `main` and is not redeployed. Once that run is green, write the release
-notes by hand (`gh release create`).
+Nothing is rebuilt: `release-image.yml` gives the image CI tested for that
+commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
+`main` and is not redeployed. Once that run is green, publish the release
+(`gh release create`), starting its notes from the CHANGELOG entry.
 
-Every week, `rebuild-release.yml` checks whether the base image of the latest
-release has a newer digest. If it has, it rebuilds that release's sources on
-it, scans the OS packages (the npm ones are those of the release) and
-smoke-tests the result, and moves `:1`, `:1.4` and `:latest` there. The exact
-tag (`:1.4.0`) stays on the released image.
-
-Every tag moves through `.github/actions/promote-image`: Trivy, the smoke
-test, then a retag that checks each tag resolves to the tested digest.
+Every week, `rebuild-release.yml` rebuilds the latest release if its base image
+has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild. Every
+tag moves through `.github/actions/promote-image`: a Trivy scan and the smoke
+test come first.
 
 ## License
 
