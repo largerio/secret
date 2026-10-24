@@ -8,6 +8,7 @@ import {
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 	MIN_EXPIRY_SECONDS,
+	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
@@ -24,6 +25,20 @@ function readEnvNumber(value: string | undefined, fallback: number): number {
 	if (value === undefined || value.trim() === "") return fallback;
 	return Number(value);
 }
+
+/**
+ * On: "1" or "true". Off: "0", "false" or blank. Anything else is refused, so
+ * a typo such as `yes` cannot silently mean off.
+ */
+function readEnvBoolean(name: string, value: string | undefined): boolean {
+	const normalized = (value ?? "").trim().toLowerCase();
+	if (normalized === "1" || normalized === "true") return true;
+	if (normalized === "" || normalized === "0" || normalized === "false") return false;
+	throw new ConfigError(`${name} must be true or false (or 1 or 0)`);
+}
+
+/** The longest delay setInterval honors; a longer one is clamped to 1 ms. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** AES-256 server layer key size. */
 const SERVER_KEY_BYTES = 32;
@@ -53,6 +68,7 @@ export interface AppConfig {
 	readonly host: string;
 	readonly databasePath: string;
 	readonly filesPath: string;
+	/** APP_URL, normalized: always http(s), never a trailing slash. */
 	readonly appUrl: string;
 	/** Raw SERVER_ENCRYPTION_KEY; decoded into a Buffer by the entry point. */
 	readonly serverKey: string;
@@ -122,7 +138,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
 	const serverKey = env["SERVER_ENCRYPTION_KEY"];
-	const appUrl = env["APP_URL"] ?? `http://localhost:${String(port)}`;
+	const rawAppUrl = env["APP_URL"]?.trim() || `http://localhost:${String(port)}`;
 	const cleanupIntervalMs = readEnvNumber(
 		env["CLEANUP_INTERVAL_MS"],
 		Number(String(CLEANUP_INTERVAL_MS)),
@@ -144,7 +160,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const s3Endpoint = env["S3_ENDPOINT"];
 	const s3AccessKeyId = env["S3_ACCESS_KEY_ID"] ?? "";
 	const s3SecretAccessKey = env["S3_SECRET_ACCESS_KEY"] ?? "";
-	const s3ForcePathStyle = env["S3_FORCE_PATH_STYLE"] === "true";
+	const s3ForcePathStyle = readEnvBoolean("S3_FORCE_PATH_STYLE", env["S3_FORCE_PATH_STYLE"]);
+	const allowServerKeyChange = readEnvBoolean(
+		"ALLOW_SERVER_KEY_CHANGE",
+		env["ALLOW_SERVER_KEY_CHANGE"],
+	);
+	const debug = readEnvBoolean("DEBUG", env["DEBUG"]);
 
 	const maxFileSize = readEnvNumber(env["MAX_FILE_SIZE"], Number(String(MAX_FILE_SIZE)));
 	const maxFilesPerNote = readEnvNumber(
@@ -188,12 +209,23 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		);
 	}
 
-	if (Number.isNaN(port) || port <= 0) {
-		throw new ConfigError("PORT must be a positive number");
+	if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+		throw new ConfigError("PORT must be an integer between 1 and 65535");
+	}
+
+	const appUrl = URL.parse(rawAppUrl);
+	if (!appUrl || (appUrl.protocol !== "http:" && appUrl.protocol !== "https:")) {
+		throw new ConfigError("APP_URL must be an http:// or https:// URL");
 	}
 
 	if (Number.isNaN(cleanupIntervalMs) || cleanupIntervalMs <= 0) {
 		throw new ConfigError("CLEANUP_INTERVAL_MS must be a positive number");
+	}
+
+	if (cleanupIntervalMs > MAX_TIMER_DELAY_MS) {
+		throw new ConfigError(
+			`CLEANUP_INTERVAL_MS cannot exceed ${String(MAX_TIMER_DELAY_MS)} (about 24 days)`,
+		);
 	}
 
 	if (!Number.isInteger(capDifficulty) || capDifficulty < 1 || capDifficulty > 6) {
@@ -288,7 +320,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		host,
 		databasePath,
 		filesPath,
-		appUrl,
+		appUrl: withoutTrailingSlashes(appUrl.href),
 		serverKey,
 		cleanupIntervalMs,
 		capDifficulty,
@@ -304,8 +336,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		maxChunkedFileSize,
 		trustedProxies,
 		rateLimitMultiplier,
-		allowServerKeyChange:
-			env["ALLOW_SERVER_KEY_CHANGE"] === "1" || env["ALLOW_SERVER_KEY_CHANGE"] === "true",
-		debug: env["DEBUG"] === "1" || env["DEBUG"] === "true",
+		allowServerKeyChange,
+		debug,
 	};
 }

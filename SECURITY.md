@@ -129,6 +129,10 @@ its backups. Either way, the content stays protected by the end-to-end layer.
 
 ## Supported Versions
 
-Security fixes ship in a new release of the current major line (1.x). The
-`ghcr.io/largerio/secret:1` image tag always points to that release; older
-releases are not patched, so follow `:1` rather than an exact version.
+Fixes ship in new 1.x releases; older releases are not patched. Run `:1`: it
+follows every 1.x release and picks up base-image (OS and Node) fixes between
+releases. An exact tag such as `:1.3.2` never changes, so it gets neither. See
+[Pinning a version](README.md#pinning-a-version) for every tag, and
+[CHANGELOG.md](CHANGELOG.md) for what each release changes.
+
+The SDK (`@largerio/secret-sdk`) is supported in its latest 1.x version.

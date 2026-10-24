@@ -80,9 +80,9 @@ describe("S3Storage", () => {
 	});
 
 	it("passes a custom endpoint through and enables path style", () => {
-		new S3Storage({ ...config, endpoint: "https://minio.local:9000", forcePathStyle: true });
+		new S3Storage({ ...config, endpoint: "https://s3.local:9000", forcePathStyle: true });
 		expect(clientConfigs.at(-1)).toMatchObject({
-			endpoint: "https://minio.local:9000",
+			endpoint: "https://s3.local:9000",
 			forcePathStyle: true,
 		});
 	});

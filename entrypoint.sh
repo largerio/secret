@@ -59,9 +59,24 @@ api_pid=$!
 # its request body limit no longer needs raising: the API enforces its own,
 # derived from MAX_FILE_SIZE and MAX_FILES_PER_NOTE. ORIGIN is the app's public
 # origin, read by that server (adapter-node 6 no longer supports it).
-PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \
-	API_URL="${API_URL:-http://127.0.0.1:$api_port}" \
-	node apps/web/dist/server/index.js &
+#
+# The web server gets none of the API's secrets, so a compromised dependency
+# that dumps process.env finds nothing. This is not isolation: both processes
+# run as the same user.
+#
+# Docker sends SIGKILL 10 seconds after SIGTERM: like the API, the web server
+# drains for at most 8.
+(
+	unset SERVER_ENCRYPTION_KEY API_KEY S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY \
+		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+	for name in $(env | sed -n 's/^\(API_KEY_[0-9][0-9]*\)=.*/\1/p'); do
+		unset "$name"
+	done
+	exec env PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \
+		API_URL="${API_URL:-http://127.0.0.1:$api_port}" \
+		SHUTDOWN_TIMEOUT="${SHUTDOWN_TIMEOUT:-8}" \
+		node apps/web/dist/server/index.js
+) &
 web_pid=$!
 
 # Exit as soon as either process exits, then signal the other and reap both.

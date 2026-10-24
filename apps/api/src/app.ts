@@ -79,7 +79,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
 	app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
-	app.use("*", createCors([config.appUrl]));
+	app.use("*", createCors([new URL(config.appUrl).origin]));
 	app.use("*", compress());
 
 	app.use(

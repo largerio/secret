@@ -124,6 +124,19 @@ describe("createApp — unversioned routes", () => {
 		expect(body).toContain("<loc>https://secret.test/</loc>");
 	});
 
+	it("allows CORS from APP_URL's origin, whatever its trailing slash", async () => {
+		const config = parseConfig({
+			SERVER_ENCRYPTION_KEY: TEST_SERVER_KEY.toString("base64"),
+			APP_URL: "https://secret.test/",
+		} as NodeJS.ProcessEnv);
+
+		const res = await makeApp(config).request("/api/v1/config", {
+			headers: { Origin: "https://secret.test" },
+		});
+
+		expect(res.headers.get("access-control-allow-origin")).toBe("https://secret.test");
+	});
+
 	it("returns a JSON 404 for unknown routes", async () => {
 		const res = await makeApp().request("/does-not-exist");
 		expect(res.status).toBe(404);

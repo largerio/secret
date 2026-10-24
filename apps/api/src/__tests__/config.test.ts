@@ -73,6 +73,15 @@ describe("parseConfig", () => {
 			expect(config.appUrl).toBe("https://secret.example");
 		});
 
+		it.each([
+			["https://secret.example/", "https://secret.example"],
+			["https://secret.example//", "https://secret.example"],
+			["https://secret.example/sub/", "https://secret.example/sub"],
+			["  http://192.168.1.10:3000  ", "http://192.168.1.10:3000"],
+		])("normalizes APP_URL %j to %j", (value, expected) => {
+			expect(parseConfig(baseEnv({ APP_URL: value })).appUrl).toBe(expected);
+		});
+
 		it("accepts an explicit storage quota", () => {
 			const config = parseConfig(baseEnv({ STORAGE_QUOTA_BYTES: "1073741824" }));
 			expect(config.storageQuotaBytes).toBe(1_073_741_824);
@@ -172,29 +181,43 @@ describe("parseConfig", () => {
 		});
 	});
 
-	describe("allowServerKeyChange flag", () => {
-		it.each([
-			["1", true],
-			["true", true],
-			["0", false],
-			[undefined, false],
-		])("ALLOW_SERVER_KEY_CHANGE=%s -> %s", (value, expected) => {
-			const config = parseConfig(
-				baseEnv(value === undefined ? {} : { ALLOW_SERVER_KEY_CHANGE: value }),
-			);
-			expect(config.allowServerKeyChange).toBe(expected);
-		});
-	});
+	describe("on/off settings", () => {
+		const s3 = {
+			STORAGE_BACKEND: "s3",
+			S3_BUCKET: "b",
+			S3_ACCESS_KEY_ID: "a",
+			S3_SECRET_ACCESS_KEY: "s",
+		};
+		const read: Record<string, (config: AppConfig) => boolean | undefined> = {
+			ALLOW_SERVER_KEY_CHANGE: (config) => config.allowServerKeyChange,
+			DEBUG: (config) => config.debug,
+			S3_FORCE_PATH_STYLE: (config) => config.storage.s3?.forcePathStyle,
+		};
 
-	describe("debug flag", () => {
-		it.each([
-			["1", true],
-			["true", true],
-			["0", false],
-			[undefined, false],
-		])("DEBUG=%s -> %s", (value, expected) => {
-			const config = parseConfig(baseEnv(value === undefined ? {} : { DEBUG: value }));
-			expect(config.debug).toBe(expected);
+		describe.each(Object.keys(read))("%s", (name) => {
+			it.each([
+				["1", true],
+				["true", true],
+				["TRUE", true],
+				[" true ", true],
+				["0", false],
+				["false", false],
+				["False", false],
+				["", false],
+				[undefined, false],
+			])("reads %j as %s", (value, expected) => {
+				const config = parseConfig(
+					baseEnv({ ...s3, ...(value === undefined ? {} : { [name]: value }) }),
+				);
+				expect(read[name]?.(config)).toBe(expected);
+			});
+
+			it("refuses a value that is neither on nor off", () => {
+				expectConfigError(
+					baseEnv({ ...s3, [name]: "yes" }),
+					`${name} must be true or false (or 1 or 0)`,
+				);
+			});
 		});
 	});
 
@@ -208,11 +231,19 @@ describe("parseConfig", () => {
 		});
 
 		it.each([
-			[{ PORT: "0" }, "PORT must be a positive number"],
-			[{ PORT: "-1" }, "PORT must be a positive number"],
-			[{ PORT: "abc" }, "PORT must be a positive number"],
+			[{ PORT: "0" }, "PORT must be an integer between 1 and 65535"],
+			[{ PORT: "-1" }, "PORT must be an integer between 1 and 65535"],
+			[{ PORT: "abc" }, "PORT must be an integer between 1 and 65535"],
+			[{ PORT: "65536" }, "PORT must be an integer between 1 and 65535"],
+			[{ PORT: "3000.5" }, "PORT must be an integer between 1 and 65535"],
+			[{ APP_URL: "secret.example" }, "APP_URL must be an http:// or https:// URL"],
+			[{ APP_URL: "ftp://secret.example" }, "APP_URL must be an http:// or https:// URL"],
 			[{ CLEANUP_INTERVAL_MS: "0" }, "CLEANUP_INTERVAL_MS must be a positive number"],
 			[{ CLEANUP_INTERVAL_MS: "nope" }, "CLEANUP_INTERVAL_MS must be a positive number"],
+			[
+				{ CLEANUP_INTERVAL_MS: "2147483648" },
+				"CLEANUP_INTERVAL_MS cannot exceed 2147483647 (about 24 days)",
+			],
 			[{ CAP_DIFFICULTY: "0" }, "CAP_DIFFICULTY must be an integer between 1 and 6"],
 			[{ CAP_DIFFICULTY: "7" }, "CAP_DIFFICULTY must be an integer between 1 and 6"],
 			[{ CAP_DIFFICULTY: "2.5" }, "CAP_DIFFICULTY must be an integer between 1 and 6"],
@@ -328,6 +359,7 @@ describe("blank environment values", () => {
 	// checks and aborted startup with a message that never mentioned the blank.
 	it.each([
 		"PORT",
+		"APP_URL",
 		"CLEANUP_INTERVAL_MS",
 		"CAP_DIFFICULTY",
 		"CAP_CHALLENGE_COUNT",

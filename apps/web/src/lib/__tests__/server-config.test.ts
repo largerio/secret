@@ -59,6 +59,14 @@ describe("buildServerConfig", () => {
 		expect(config.ogImageUrl).toBe("https://pinned.example/og.png");
 	});
 
+	it("drops a trailing slash from APP_URL, and ignores a blank one", () => {
+		const config = buildServerConfig({ APP_URL: "https://pinned.example/" }, "https://a.b");
+
+		expect(config.appUrl).toBe("https://pinned.example");
+		expect(config.ogImageUrl).toBe("https://pinned.example/og.png");
+		expect(buildServerConfig({ APP_URL: " " }, "https://a.b").appUrl).toBe("https://a.b");
+	});
+
 	it("keeps an explicit og image", () => {
 		const config = buildServerConfig(
 			{ APP_OG_IMAGE_URL: "https://cdn.example/x.png" },

@@ -56,7 +56,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Delete token** — Manually delete a note at any time
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
 - **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
-- **S3 storage** — Optional S3-compatible backend (AWS, MinIO, R2) for large files
+- **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
 - **Self-hostable** — Single Docker container, customizable branding
@@ -189,7 +189,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 |----------|---------|-------------|
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
-| `APP_URL` | `http://localhost:3000` | Public URL |
+| `APP_URL` | `http://localhost:3000` | Public URL (`http://` or `https://`) |
 | `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: the built-in red). See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
@@ -203,6 +203,8 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
 
+On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`, `DEBUG`) accept `true` or `1` for on, and `false`, `0` or blank for off. Any other value, like any invalid setting, stops the server at startup.
+
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. The server stores a fingerprint of the key and **refuses to start** if it changes while notes exist, so a mistake fails loudly instead of silently bricking your data. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key; read it back with `docker compose exec app cat /app/data/.encryption_key`.
 
 ### S3 Storage (optional)
@@ -213,14 +215,16 @@ Files are stored locally by default. For larger files, enable S3-compatible stor
 STORAGE_BACKEND=s3
 S3_BUCKET=my-bucket
 S3_REGION=us-east-1
-S3_ENDPOINT=http://minio:9000    # MinIO / R2
+S3_ENDPOINT=http://rustfs:9000   # Omit for AWS S3
 S3_ACCESS_KEY_ID=your-key
 S3_SECRET_ACCESS_KEY=your-secret
-S3_FORCE_PATH_STYLE=true         # Required for MinIO
+S3_FORCE_PATH_STYLE=true         # Required by self-hosted servers
 MAX_FILE_SIZE=104857600           # 100 MB
 ```
 
-Compatible with AWS S3, MinIO, and Cloudflare R2.
+Works with AWS S3, Cloudflare R2, and self-hosted servers such as
+[RustFS](https://github.com/rustfs/rustfs) or [Garage](https://garagehq.deuxfleurs.fr).
+With Garage, set `S3_REGION` to its region (`garage` by default).
 
 ## Self-Hosting
 
@@ -255,17 +259,12 @@ deploys, pin an exact release tag on the `image:` line instead:
 | `ghcr.io/largerio/secret:latest` | newest release of any major version — moves to `2.x` and its breaking changes when it ships |
 | `ghcr.io/largerio/secret:main` | tip of `main`, unreleased and unreviewed changes included — for testing only |
 
-A release is the image CI built and tested when its commit landed on `main`,
-promoted as is: `:1.1.0` and that commit's `sha-*` tag have the same digest.
-When the base image (`node:26-alpine`) gets a new digest, the latest release is
-rebuilt on it within a week, and `:1`, `:1.1` and `:latest` move to the
-rebuild once its OS packages pass the vulnerability scan and it passes the
-smoke test. The exact tag stays on the image that was released.
+Between releases, `:1`, `:1.1` and `:latest` are rebuilt within a week of
+each base image (`node:26-alpine`) update, after a vulnerability scan and a
+smoke test. Exact tags never change.
 
-After changing the tag, run `docker compose pull && docker compose up -d`. The
-[Releases](https://github.com/largerio/secret/releases) page doubles as the
-changelog — read it (especially any **Upgrade notes**) before moving to a new
-major version.
+After changing the tag, run `docker compose pull && docker compose up -d`. Read
+the **Upgrade notes** in [CHANGELOG.md](CHANGELOG.md) before upgrading.
 
 ## Reverse Proxy
 
