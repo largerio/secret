@@ -57,10 +57,6 @@ function hasColumn(sqlite: DatabaseSync, table: string, column: string): boolean
 	return rows.some((row) => row.name === column);
 }
 
-// chunks_received is legacy: pre-#26 uploads stored the received chunk list
-// as a JSON string here. New code uses the upload_chunks table instead, but
-// the column is kept to stay compatible with databases provisioned before
-// the migration. It can be dropped once all deployments have rolled over.
 const BASELINE_TABLES: readonly string[] = [
 	`CREATE TABLE IF NOT EXISTS notes (
 		id TEXT PRIMARY KEY,
@@ -162,8 +158,20 @@ const storageAccounting: Migration = {
 	},
 };
 
+// Nothing reads these: max_reads = 1 decides a burn, deletes look notes up by
+// id, and upload_chunks holds the received chunks.
+const dropUnusedColumns: Migration = {
+	version: 3,
+	name: "drop-unused-columns",
+	apply(sqlite) {
+		sqlite.exec(`DROP INDEX IF EXISTS idx_notes_delete_token`);
+		sqlite.exec(`ALTER TABLE notes DROP COLUMN burn_after_read`);
+		sqlite.exec(`ALTER TABLE uploads DROP COLUMN chunks_received`);
+	},
+};
+
 /** Ordered, append-only. Versions are contiguous and start at 1. */
-export const MIGRATIONS: readonly Migration[] = [baseline, storageAccounting];
+export const MIGRATIONS: readonly Migration[] = [baseline, storageAccounting, dropUnusedColumns];
 
 export function getSchemaVersion(sqlite: DatabaseSync): number {
 	const row = sqlite.prepare("PRAGMA user_version").get() as { user_version: number };

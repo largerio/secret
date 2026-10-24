@@ -98,9 +98,10 @@ describe("applyMigrations", () => {
 		expect(columnNames(sqlite, "notes")).toEqual(
 			expect.arrayContaining(["chunk_count", "stream_header", "size_bytes"]),
 		);
+		expect(columnNames(sqlite, "notes")).not.toContain("burn_after_read");
+		expect(columnNames(sqlite, "uploads")).not.toContain("chunks_received");
 		expect(columnNames(sqlite, "upload_chunks")).toContain("size_bytes");
 		expect(indexNames(sqlite)).toEqual([
-			"idx_notes_delete_token",
 			"idx_notes_expires_at",
 			"idx_pending_deletions_next_retry",
 			"idx_uploads_expires_at",
@@ -136,6 +137,38 @@ describe("applyMigrations", () => {
 		expect(sizes).toEqual([
 			{ id: "legacy-note-1", size_bytes: 4 },
 			{ id: "legacy-note-2", size_bytes: 0 },
+		]);
+		sqlite.close();
+	});
+
+	it("drops the unused columns of a version 2 database and keeps its rows", () => {
+		const legacy = new DatabaseSync(TEST_DB_PATH);
+		applyMigrations(legacy, MIGRATIONS.slice(0, 2));
+		legacy
+			.prepare(
+				`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, burn_after_read, expires_at, max_reads, created_at)
+				 VALUES ('v2-note', x'00', 'iv', 'nonce', 'token', 1, 9999999999999, 1, 1)`,
+			)
+			.run();
+		legacy
+			.prepare(
+				`INSERT INTO uploads (id, metadata, chunk_count, chunks_received, note_id, delete_token, created_at, expires_at)
+				 VALUES ('v2-upload', '{}', 2, '[0]', 'v2-note', 'token', 1, 9999999999999)`,
+			)
+			.run();
+		legacy.close();
+
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
+		expect(columnNames(sqlite, "notes")).not.toContain("burn_after_read");
+		expect(columnNames(sqlite, "uploads")).not.toContain("chunks_received");
+		expect(indexNames(sqlite)).not.toContain("idx_notes_delete_token");
+		expect(sqlite.prepare(`SELECT id, max_reads FROM notes`).all()).toEqual([
+			{ id: "v2-note", max_reads: 1 },
+		]);
+		expect(sqlite.prepare(`SELECT id, chunk_count FROM uploads`).all()).toEqual([
+			{ id: "v2-upload", chunk_count: 2 },
 		]);
 		sqlite.close();
 	});
@@ -227,6 +260,18 @@ describe("applyMigrations", () => {
 
 		expect(getSchemaVersion(sqlite)).toBe(LATEST + 1);
 		expect(tableNames(sqlite)).toContain("extra");
+		sqlite.close();
+	});
+});
+
+describe("createDatabase", () => {
+	it("opens the database in WAL mode with foreign keys and secure delete", () => {
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+		const pragma = (name: string) => sqlite.prepare(`PRAGMA ${name}`).get()?.[name];
+
+		expect(pragma("journal_mode")).toBe("wal");
+		expect(pragma("foreign_keys")).toBe(1);
+		expect(pragma("secure_delete")).toBe(1);
 		sqlite.close();
 	});
 });

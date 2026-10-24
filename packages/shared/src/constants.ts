@@ -4,7 +4,6 @@ export const MAX_TEXT_SIZE = 102_400;
 // 3 UTF-8 bytes each (~300 KB), plus the MessagePack envelope and the AEAD tag.
 export const MAX_INLINE_ENCRYPTED_SIZE = 524_288;
 export const MAX_FILE_SIZE = 10_485_760;
-export const S3_MAX_FILE_SIZE = 104_857_600;
 export const MAX_FILES_PER_NOTE = 10;
 export const DEFAULT_EXPIRY_SECONDS = 86_400;
 export const MAX_EXPIRY_SECONDS = 2_592_000;

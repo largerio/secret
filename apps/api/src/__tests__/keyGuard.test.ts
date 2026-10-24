@@ -33,7 +33,6 @@ function insertNote(id = "note-1"): void {
 			hasPassword: false,
 			salt: null,
 			deleteToken: "token",
-			burnAfterRead: false,
 			fileCount: 0,
 			filePath: null,
 			expiresAt: new Date(Date.now() + 60_000),

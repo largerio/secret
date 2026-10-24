@@ -1556,7 +1556,6 @@ describe("Chunked upload flow", () => {
 				clientNonce: "nonce",
 				hasPassword: false,
 				deleteToken: "tok",
-				burnAfterRead: false,
 				fileCount: 0,
 				filePath: null,
 				expiresAt: new Date(Date.now() + 3_600_000),
@@ -2222,10 +2221,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		// Now create an app with a storage that returns too-small chunk data
 		const corruptStorage: StorageBackend = {
@@ -2264,10 +2260,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		// Update to burn-after-read
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -2298,10 +2291,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const { id } = await createChunkedNoteViaApp(failApp);
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -2366,10 +2356,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const { StorageNotFoundError } = await import("../storage/errors.js");
 		const missingStorage: StorageBackend = {
@@ -2466,10 +2453,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const deleteChunks = vi.fn().mockResolvedValue(undefined);
 		const spyStorage: StorageBackend = {
@@ -2499,10 +2483,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ maxReads: 1, burnAfterRead: true })
-			.where(eq(notesTable.id, id))
-			.run();
+		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		// Chunk 1 read stays pending until released, keeping a pull() in flight
 		// while the client cancels; releasing garbage then makes that pull fail

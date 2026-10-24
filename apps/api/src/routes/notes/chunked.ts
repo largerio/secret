@@ -239,7 +239,6 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 					hasPassword: meta.hasPassword,
 					salt: meta.salt ?? null,
 					deleteToken: session.deleteToken,
-					burnAfterRead: meta.maxReads === 1,
 					fileCount: meta.fileCount,
 					filePath: null,
 					expiresAt,

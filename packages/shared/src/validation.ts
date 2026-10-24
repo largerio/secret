@@ -98,11 +98,6 @@ export const deleteNoteResponseSchema = z.object({
 	deleted: z.literal(true),
 });
 
-export const errorResponseSchema = z.object({
-	error: z.string(),
-	errorId: z.string().optional(),
-});
-
 // --- Chunked upload schemas ---
 
 /**

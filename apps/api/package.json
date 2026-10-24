@@ -29,14 +29,14 @@
 		"@largerio/secret-crypto": "workspace:*",
 		"@largerio/secret-shared": "workspace:*",
 		"@scalar/hono-api-reference": "^0.12.13",
-		"drizzle-orm": "1.0.0-rc.5-5935859",
+		"drizzle-orm": "1.0.0-rc.5",
 		"hono": "^4.13.13",
 		"nanoid": "^6.0.2",
 		"zod": "^4.6.7"
 	},
 	"devDependencies": {
 		"@types/node": "^26.6.5",
-		"drizzle-kit": "1.0.0-rc.5-5935859",
+		"drizzle-kit": "1.0.0-rc.5",
 		"tsx": "^4.23.15"
 	}
 }

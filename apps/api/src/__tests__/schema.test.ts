@@ -26,7 +26,7 @@ describe("db schema", () => {
 				.indexes.map((index) => index.config.name)
 				.sort();
 
-		expect(indexNames(notes)).toEqual(["idx_notes_delete_token", "idx_notes_expires_at"]);
+		expect(indexNames(notes)).toEqual(["idx_notes_expires_at"]);
 		expect(indexNames(uploads)).toEqual(["idx_uploads_expires_at"]);
 		expect(indexNames(pendingDeletions)).toEqual(["idx_pending_deletions_next_retry"]);
 	});
