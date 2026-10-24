@@ -10,15 +10,11 @@ import { z } from "zod";
 
 const cap = new Cap({ noFSState: true });
 
-// Cap's redeem/verify payloads are an internal (undocumented) contract, so the
-// schemas live here rather than in @largerio/secret-shared.
+// Cap's redeem payload is an internal (undocumented) contract, so the schema
+// lives here rather than in @largerio/secret-shared.
 const redeemSchema = z.object({
 	token: z.string(),
 	solutions: z.array(z.number()),
-});
-
-const verifySchema = z.object({
-	token: z.string(),
 });
 
 export interface CapChallengeConfig {
@@ -72,24 +68,6 @@ export function createCapRoutes(
 		}
 
 		return c.json({ success: true, token: result.token, expires: result.expires });
-	});
-
-	app.post("/verify", async (c) => {
-		let body: unknown;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ success: false, message: "Invalid JSON" }, 400);
-		}
-
-		const parsed = verifySchema.safeParse(body);
-		if (!parsed.success) {
-			return c.json({ success: false, message: "Invalid request" }, 400);
-		}
-
-		const result = await capInstance.validateToken(parsed.data.token);
-
-		return c.json({ success: result.success });
 	});
 
 	return app;

@@ -16,7 +16,6 @@ export {
 	MAX_TEXT_SIZE,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
-	S3_MAX_FILE_SIZE,
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 } from "./constants.js";
@@ -55,7 +54,6 @@ export {
 	createNoteResponseSchema,
 	createNoteSchema,
 	deleteNoteResponseSchema,
-	errorResponseSchema,
 	isValidNoteId,
 	noteExistsResponseSchema,
 	noteIdSchema,

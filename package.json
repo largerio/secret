@@ -15,13 +15,11 @@
 		"typecheck": "pnpm -r typecheck",
 		"changeset": "changeset",
 		"version-packages": "changeset version",
-		"release": "pnpm build && changeset publish",
-		"prepare": "lefthook install || true"
+		"release": "pnpm build && changeset publish"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
-			"esbuild",
-			"lefthook"
+			"esbuild"
 		],
 		"overrides": {
 			"cookie@<0.7.0": "^0.7.2",
@@ -41,7 +39,6 @@
 		"@biomejs/biome": "^2.5.15",
 		"@changesets/cli": "^3.0.3",
 		"@vitest/coverage-v8": "^4.1.12",
-		"lefthook": "^2.2.2",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.12"
 	}

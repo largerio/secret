@@ -163,7 +163,6 @@ export async function insertNote(
 				hasPassword: params.hasPassword,
 				salt: params.salt,
 				deleteToken,
-				burnAfterRead: params.maxReads === 1,
 				fileCount: params.fileCount,
 				filePath,
 				expiresAt,

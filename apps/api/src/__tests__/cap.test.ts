@@ -22,9 +22,6 @@ const mockCap = {
 
 		return { success: false, message: "Challenge invalid or expired" };
 	},
-	validateToken: async (token: string) => ({
-		success: token === "redeemed-token",
-	}),
 };
 
 // biome-ignore lint/suspicious/noExplicitAny: test mock
@@ -151,46 +148,5 @@ describe("rate limiting", () => {
 		expect(await blocked.json()).toEqual({ error: "Too many requests" });
 
 		rl.cleanup();
-	});
-});
-
-describe("POST /verify", () => {
-	it("rejects invalid JSON", async () => {
-		const res = await mockApp.request("/verify", {
-			method: "POST",
-			body: "not json",
-		});
-		expect(res.status).toBe(400);
-	});
-
-	it("rejects invalid token", async () => {
-		const res = await mockApp.request("/verify", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ token: "invalid-token" }),
-		});
-		const json = await res.json();
-		expect(json.success).toBe(false);
-	});
-
-	it("accepts valid token", async () => {
-		const res = await mockApp.request("/verify", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ token: "redeemed-token" }),
-		});
-		const json = await res.json();
-		expect(json.success).toBe(true);
-	});
-
-	it("rejects missing token", async () => {
-		const res = await mockApp.request("/verify", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
-		expect(res.status).toBe(400);
-		const json = await res.json();
-		expect(json).toEqual({ success: false, message: "Invalid request" });
 	});
 });

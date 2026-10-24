@@ -28,10 +28,15 @@ export default defineConfig({
 				"**/__tests__/**",
 				"**/types.ts",
 				// Barrels: `export … from` statements are hoisted, so v8 reports 0%
-				// for a file that runs no code of its own. `packages/crypto/src/client.ts`
-				// is one despite not being named index.ts.
-				"**/index.ts",
+				// for a file that runs no code of its own.
+				"packages/crypto/src/index.ts",
 				"packages/crypto/src/client.ts",
+				"packages/sdk-js/src/index.ts",
+				"packages/shared/src/index.ts",
+				// Entry points that start a server on import. The image smoke test
+				// runs both.
+				"apps/api/src/index.ts",
+				"apps/web/src/server/index.ts",
 				// Frontend: gate the logic modules + utils, but exclude route
 				// loaders and server-only modules (`$app/env`/SSR SDK) that need a
 				// SvelteKit harness to exercise. (`.svelte` components are already

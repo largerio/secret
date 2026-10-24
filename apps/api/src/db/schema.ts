@@ -9,7 +9,6 @@ export const notes = sqliteTable(
 		clientNonce: text("client_nonce").notNull(),
 		hasPassword: integer("has_password", { mode: "boolean" }).notNull().default(false),
 		salt: text("salt"),
-		burnAfterRead: integer("burn_after_read", { mode: "boolean" }).notNull().default(false),
 		fileCount: integer("file_count").notNull().default(0),
 		deleteToken: text("delete_token").notNull(),
 		filePath: text("file_path"),
@@ -21,10 +20,7 @@ export const notes = sqliteTable(
 		streamHeader: text("stream_header"),
 		sizeBytes: integer("size_bytes").notNull().default(0),
 	},
-	(t) => [
-		index("idx_notes_expires_at").on(t.expiresAt),
-		index("idx_notes_delete_token").on(t.deleteToken),
-	],
+	(t) => [index("idx_notes_expires_at").on(t.expiresAt)],
 );
 
 // Small key/value table for instance-level bookkeeping that must survive

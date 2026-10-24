@@ -12,6 +12,15 @@ image. Each version links to its GitHub release. The SDK has
 - A generated password always holds a character of every class it draws from.
   About one in five had no symbol.
 
+### Removed
+
+- `POST /api/cap/verify`, which nothing called.
+
+### Upgrade notes
+
+- Migration 3 drops two unused columns and an index. Back up the data volume
+  first: once migrated, the database no longer starts on 1.3.2 or older.
+
 ## [1.3.2] - 2026-10-24
 
 ### Security

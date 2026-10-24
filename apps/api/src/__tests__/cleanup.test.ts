@@ -27,7 +27,6 @@ function insertNote(id: string, overrides: Partial<Record<string, unknown>> = {}
 			clientNonce: "test",
 			hasPassword: false,
 			deleteToken: "test-token",
-			burnAfterRead: false,
 			fileCount: 0,
 			filePath: null,
 			expiresAt: new Date(Date.now() - 10_000),
