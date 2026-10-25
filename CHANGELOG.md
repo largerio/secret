@@ -7,6 +7,13 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Security
+
+- Images are signed (cosign, keyless) and carry a SLSA build provenance
+  attestation, from the workflow that built them and only once they have
+  passed the scan and the smoke test. A release only tags a signed image. See
+  [Verifying the image](docs/self-hosting.md#verifying-the-image).
+
 ### Fixed
 
 - A generated password always holds a character of every class it draws from.

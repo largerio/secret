@@ -216,8 +216,11 @@ commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
 
 Every week, `rebuild-release.yml` rebuilds the latest release if its base image
 has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild. Every
-tag moves through `.github/actions/promote-image`: a Trivy scan and the smoke
-test come first.
+tag moves through `.github/actions/promote-image`: a Trivy scan, the smoke test
+and a signature check come first. The two workflows that build an image sign it
+there and attest its provenance; a release only checks the signature
+`deploy.yml` left. Renaming either of them changes the signing identity
+self-hosters verify ([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
 
 ## License
 

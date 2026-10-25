@@ -112,7 +112,8 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
-      # Scanned again: a CVE may have been published since the build.
+      # Scanned again: a CVE may have been published since the build. Not
+      # signed again: the signature check finds the one deploy.yml left.
       - name: Scan, smoke-test and tag the image
         uses: ./.github/actions/promote-image
         with:

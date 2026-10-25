@@ -150,6 +150,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless signing and the provenance attestation (promote-image).
+      id-token: write
+      attestations: write
     outputs:
       # Deploy this exact image: a tag could move between the scan and the
       # rollout.
@@ -210,12 +213,13 @@ jobs:
           sbom: true
           provenance: mode=max
 
-      - name: Scan, smoke-test and tag the image
+      - name: Scan, smoke-test, sign and tag the image
         uses: ./.github/actions/promote-image
         with:
           image: ghcr.io/largerio/secret
           digest: ${{ steps.build.outputs.digest }}
           tags: ${{ steps.meta.outputs.tags }}
+          sign: "true"
 
   # Production runs the tip of main. A release tag deploys nothing: on a
   # commit behind main, it would roll production back.

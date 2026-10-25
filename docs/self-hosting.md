@@ -13,6 +13,7 @@ and runs as a single container.
 
 Once it is up: [API keys](#api-keys-for-the-sdk) ·
 [Backup & restore](#backup--restore) · [Updating](#updating) ·
+[Verifying the image](#verifying-the-image) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
 > **Image architecture:** the official image is multi-arch (`linux/amd64` and
@@ -348,10 +349,64 @@ Full tag list: [Pinning a version](../README.md#pinning-a-version).
 
 ---
 
+## Verifying the image
+
+Every image this repository publishes is signed by the GitHub Actions workflow
+that built it, once the image has passed the vulnerability scan and the smoke
+test. It also carries a [SLSA](https://slsa.dev) build provenance attestation:
+the workflow, commit and run that produced it. Both are keyless
+[Sigstore](https://www.sigstore.dev) signatures: there is no public key to
+fetch, the signing certificate names the workflow, and each signature is
+recorded in the public Rekor transparency log.
+
+Verify a digest, then deploy that same digest: a tag can move between two
+commands.
+
+```bash
+IMAGE=ghcr.io/largerio/secret
+DIGEST=$(docker buildx imagetools inspect "$IMAGE:1" --format '{{.Manifest.Digest}}')
+SIGNER='^https://github\.com/largerio/secret/\.github/workflows/(deploy|rebuild-release)\.yml@refs/heads/main$'
+
+# The signature, with cosign 3
+cosign verify "$IMAGE@$DIGEST" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "$SIGNER"
+
+# The build provenance, with the GitHub CLI (logged in)
+gh attestation verify "oci://$IMAGE@$DIGEST" --repo largerio/secret \
+  --cert-identity-regex "$SIGNER"
+```
+
+Then deploy `ghcr.io/largerio/secret@sha256:…`, the digest you verified: on the
+`image:` line of `docker-compose.yml`, or as `SECRET_IMAGE` (see
+[Deploying from CI](#deploying-from-ci)).
+
+**What the identity pins.** Two workflows build images, both from `main`:
+`deploy.yml` builds `main`, and so every release; `rebuild-release.yml`
+rebuilds the release line on a newer base image each week. A rebuild's
+provenance names that workflow and the `main` commit it ran from; the release
+it rebuilt is in the image's `org.opencontainers.image.revision` label.
+
+**The SBOM is covered too.** The signature is over the image index, which lists
+the SBOM and BuildKit's own provenance by digest:
+
+```bash
+docker buildx imagetools inspect ghcr.io/largerio/secret:1 --format '{{json .SBOM}}'
+```
+
+On Kubernetes, an admission policy (Kyverno, Sigstore policy-controller) can
+require the same issuer and identity before a pod starts.
+
+`1.3.2` and older were published unsigned. `:1` and `:latest` move to a signed
+image with the next release or the next weekly rebuild.
+
+---
+
 ## Deploying from CI
 
-The GitHub Actions workflow in this repository builds the image, scans it, then
-deploys over SSH. Two details are worth copying into any pipeline of your own.
+The GitHub Actions workflow in this repository builds the image, scans,
+smoke-tests and signs it, then deploys over SSH. Two details are worth copying
+into any pipeline of your own.
 
 **Deploy the digest, not the tag.** `:1` and `:main` move. Between the scan
 and the rollout, or between two rollouts, the tag can point somewhere else — and

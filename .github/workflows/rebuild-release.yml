@@ -3,9 +3,9 @@ name: Rebuild release image
 # Between two releases, the release line (:1, :1.3) stays on one image while
 # its base image gets security fixes. Each week, if the base the latest
 # release is pinned to has a newer digest upstream, this rebuilds that
-# release's sources on it, scans the OS packages, smoke-tests the result and
-# moves the release line there. The exact tag (:1.3.1) never moves, and
-# production, which runs main, is not touched.
+# release's sources on it, scans the OS packages, smoke-tests and signs the
+# result and moves the release line there. The exact tag (:1.3.1) never
+# moves, and production, which runs main, is not touched.
 on:
   schedule:
     - cron: "41 5 * * 1"
@@ -110,6 +110,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless signing and the provenance attestation (promote-image).
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.check.outputs.version }}
       BASE: ${{ needs.check.outputs.base }}
@@ -179,11 +182,12 @@ jobs:
           sbom: true
           provenance: mode=max
 
-      - name: Scan, smoke-test and move the release line
+      - name: Scan, smoke-test, sign and move the release line
         uses: ./.github/actions/promote-image
         with:
           image: ghcr.io/largerio/secret
           digest: ${{ steps.build.outputs.digest }}
+          sign: "true"
           # Only the base is new: the npm packages are those of the image being
           # replaced, which the daily scan already reports. Failing on them
           # would hold back the base fixes until the next release.
