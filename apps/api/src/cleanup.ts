@@ -4,6 +4,7 @@ import { runWithConcurrency } from "./concurrency.js";
 import type { AppDatabase, Transaction } from "./db/index.js";
 import { notes, uploads } from "./db/schema.js";
 import { log } from "./logger.js";
+import type { AppMetrics } from "./metrics.js";
 import {
 	drainPendingDeletions,
 	enqueueDeletion,
@@ -55,11 +56,19 @@ async function deleteInBatches(
 	}
 }
 
+/** What the cleanup job reports to the metrics. */
+export type CleanupMetrics = Pick<AppMetrics, "notesExpired" | "deletionsAbandoned">;
+
+export interface CleanupOptions {
+	readonly batchSize?: number;
+	readonly metrics?: CleanupMetrics | undefined;
+}
+
 /** One pass: expired notes and upload sessions, then the purges left to retry. */
 export async function runCleanup(
 	db: AppDatabase,
 	storage: StorageBackend,
-	batchSize = CLEANUP_BATCH_SIZE,
+	{ batchSize = CLEANUP_BATCH_SIZE, metrics }: CleanupOptions = {},
 ): Promise<void> {
 	try {
 		const now = new Date();
@@ -88,6 +97,7 @@ export async function runCleanup(
 		});
 
 		if (expiredNotes > 0) {
+			metrics?.notesExpired(expiredNotes);
 			log.info("expired notes deleted", { count: expiredNotes });
 		}
 
@@ -115,6 +125,9 @@ export async function runCleanup(
 		}
 
 		const drainResult = await drainPendingDeletions(db, storage, CLEANUP_CONCURRENCY);
+		if (drainResult.abandoned > 0) {
+			metrics?.deletionsAbandoned(drainResult.abandoned);
+		}
 		if (drainResult.drained > 0 || drainResult.failed > 0) {
 			log.info("pending deletions drained", {
 				drained: drainResult.drained,
@@ -132,6 +145,7 @@ export function startCleanupJob(
 	db: AppDatabase,
 	storage: StorageBackend,
 	intervalMs: number,
+	metrics?: CleanupMetrics,
 ): ReturnType<typeof setInterval> {
 	// A pass slower than the interval (a large backlog, a slow storage) would
 	// otherwise start the next one on top of it, draining the same rows twice.
@@ -141,7 +155,7 @@ export function startCleanupJob(
 			return;
 		}
 		running = true;
-		await runCleanup(db, storage);
+		await runCleanup(db, storage, { metrics });
 		running = false;
 	}, intervalMs);
 }

@@ -37,7 +37,10 @@ Monorepo with pnpm workspaces:
   - Error handling: Business logic errors use `HTTPException`, validation via `defaultHook`
   - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`). Storage purges go through the `pending_deletions` outbox (`src/pendingDeletions.ts`): enqueued in the transaction that deletes the row, run after commit, retried by the job. A daily sweep (`src/reconcile.ts`) purges stored objects no row points to, only on storage no other database has claimed
-  - Entry point: `src/index.ts`
+  - Health and metrics: `/api/health/live` (process up), `/api/health/ready` (database + storage, `503` once shutdown starts), `/api/health` (readiness plus version and revision, from `src/buildInfo.ts`). `/api/metrics` (Prometheus text, `src/metrics.ts` + `src/prometheus.ts`, zero-dependency) exists only when `METRICS_TOKEN` is set; labels hold route patterns and bounded values, never note ids
+  - Secrets: each one can come from `NAME_FILE` instead of `NAME` (`readSecret` in `src/config.ts`); `entrypoint.sh` keeps the API's secrets and their `_FILE` variables out of the web process
+  - Backup: `node apps/api/dist/backup.js <destination>` (`src/db/backup.ts`) takes a hot copy with `VACUUM INTO`
+  - Entry points: `src/index.ts` (server), `src/backup.ts` (backup command)
 
 - **`apps/web`** — SvelteKit 3 frontend (Svelte 5, Tailwind CSS 4)
   - Config (adapter-node, CSP): the `sveltekit({...})` plugin in `vite.config.ts` — SvelteKit 3 refuses a `svelte.config.js`
@@ -130,7 +133,7 @@ Monorepo with pnpm workspaces:
 
 100% coverage enforced (statements, branches, functions, lines) across the backend **and** the frontend logic modules — the gate runs in CI via `pnpm test:coverage`. Vitest runs two projects (`vitest.config.ts`): a `node` project for `packages/*` + `apps/api`, and a jsdom + Svelte `web` project (`apps/web/vitest.config.ts`) for `apps/web`.
 
-The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, the package barrels (`packages/*/src/index.ts`, `packages/crypto/src/client.ts`), the two server entry points (`apps/api/src/index.ts`, `apps/web/src/server/index.ts`), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$app/env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
+The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, the package barrels (`packages/*/src/index.ts`, `packages/crypto/src/client.ts`), the entry points (`apps/api/src/index.ts`, `apps/api/src/backup.ts`, `apps/web/src/server/index.ts`), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$app/env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
 
 Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$app/env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
 

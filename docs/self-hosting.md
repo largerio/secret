@@ -291,6 +291,7 @@ and give the file's path.
 | `API_KEY`, `API_KEY_1`… | `API_KEY_FILE`, `API_KEY_1_FILE`… |
 | `S3_ACCESS_KEY_ID` | `S3_ACCESS_KEY_ID_FILE` |
 | `S3_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY_FILE` |
+| `METRICS_TOKEN` | `METRICS_TOKEN_FILE` |
 
 The file holds the value alone; line breaks at its end are ignored. A variable
 set together with its `_FILE`, or a file that is missing, unreadable or empty,

@@ -252,6 +252,39 @@ describe("runCleanup", () => {
 		expect(db.select().from(pendingDeletions).all()[0]?.attempts).toBe(0);
 	});
 
+	it("reports the notes it expired and the purges it gave up on to the metrics", async () => {
+		const failing = stubStorage({ purge: vi.fn().mockRejectedValue(new Error("down")) });
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const metrics = { notesExpired: vi.fn(), deletionsAbandoned: vi.fn() };
+		insertNote("expired00001");
+		insertNote("expired00002");
+		// One failure short of the last attempt.
+		db.insert(pendingDeletions)
+			.values({
+				noteId: "lastchance01",
+				attempts: 5,
+				nextRetryAt: new Date(Date.now() - 1000),
+				createdAt: new Date(),
+			})
+			.run();
+
+		await runCleanup(db, failing, { metrics });
+
+		expect(metrics.notesExpired).toHaveBeenCalledExactlyOnceWith(2);
+		expect(metrics.deletionsAbandoned).toHaveBeenCalledExactlyOnceWith(1);
+	});
+
+	it("reports nothing to the metrics when nothing expired or was given up on", async () => {
+		const metrics = { notesExpired: vi.fn(), deletionsAbandoned: vi.fn() };
+		insertNote("stillgood001", { expiresAt: new Date(Date.now() + 3_600_000) });
+
+		await runCleanup(db, storage, { metrics });
+
+		expect(metrics.notesExpired).not.toHaveBeenCalled();
+		expect(metrics.deletionsAbandoned).not.toHaveBeenCalled();
+	});
+
 	it("logs and survives a database failure", async () => {
 		const failingDb = {
 			transaction: () => {
@@ -316,7 +349,7 @@ describe("runCleanup in batches", () => {
 		insertExpiredFileNotes(5);
 		insertNote("stillgood001", { expiresAt: new Date(Date.now() + 3_600_000) });
 
-		await runCleanup(db, tracked, 2);
+		await runCleanup(db, tracked, { batchSize: 2 });
 
 		// Two, two, then a short batch of one ends the pass.
 		expect(notesLeftAtPurge).toEqual({
@@ -338,7 +371,7 @@ describe("runCleanup in batches", () => {
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		insertExpiredFileNotes(4);
 
-		await runCleanup(db, tracked, 2);
+		await runCleanup(db, tracked, { batchSize: 2 });
 
 		expect(noteIds()).toEqual([]);
 		expect(tracked.purge).toHaveBeenCalledTimes(4);
@@ -355,7 +388,7 @@ describe("runCleanup in batches", () => {
 		const tracked = stubStorage();
 		insertExpiredFileNotes(5);
 
-		await runCleanup(db, tracked, 2);
+		await runCleanup(db, tracked, { batchSize: 2 });
 
 		expect(tracked.purge).toHaveBeenCalledTimes(2);
 		expect(tracked.purge).toHaveBeenCalledWith("batched00001");
@@ -377,7 +410,7 @@ describe("runCleanup in batches", () => {
 			);
 		}
 
-		await runCleanup(db, tracked, 2);
+		await runCleanup(db, tracked, { batchSize: 2 });
 
 		expect(db.select().from(uploads).all()).toHaveLength(0);
 		expect(tracked.purge).toHaveBeenCalledTimes(3);
@@ -396,7 +429,7 @@ describe("runCleanup in batches", () => {
 			notesLeftWhenRun = db.select().from(notes).all().length;
 		});
 
-		await runCleanup(db, stubStorage(), 1);
+		await runCleanup(db, stubStorage(), { batchSize: 1 });
 
 		expect(notesLeftWhenRun).toBe(2);
 		expect(noteIds()).toEqual([]);
@@ -436,6 +469,19 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(db.select().from(notes).all()).toHaveLength(0);
+	});
+
+	it("hands its metrics to every pass", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const metrics = { notesExpired: vi.fn(), deletionsAbandoned: vi.fn() };
+		insertNote("expired00001");
+
+		const timer = startCleanupJob(db, storage, 100, metrics);
+		await vi.advanceTimersByTimeAsync(100);
+		clearInterval(timer);
+
+		expect(metrics.notesExpired).toHaveBeenCalledExactlyOnceWith(1);
 	});
 
 	it("skips a tick while the previous pass is still running", async () => {

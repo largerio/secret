@@ -233,7 +233,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		env["ALLOW_SERVER_KEY_CHANGE"],
 	);
 	const debug = readEnvBoolean("DEBUG", env["DEBUG"]);
-	const metricsToken = env["METRICS_TOKEN"]?.trim() ?? "";
+	const metricsToken = readSecret(env, "METRICS_TOKEN")?.trim() ?? "";
 	const shutdownTimeout = readEnvNumber(env["SHUTDOWN_TIMEOUT"], DEFAULT_SHUTDOWN_TIMEOUT);
 
 	const maxFileSize = readEnvNumber(env["MAX_FILE_SIZE"], Number(String(MAX_FILE_SIZE)));

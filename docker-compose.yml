@@ -57,6 +57,7 @@ services:
       - CLEANUP_INTERVAL_MS=${CLEANUP_INTERVAL_MS:-300000}
       # Turns on /api/metrics. See docs/self-hosting.md#monitoring
       - METRICS_TOKEN=${METRICS_TOKEN:-}
+      - METRICS_TOKEN_FILE=${METRICS_TOKEN_FILE:-}
       # Raise it with a stop_grace_period a couple of seconds longer.
       - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-}
       - DEBUG=${DEBUG:-0}

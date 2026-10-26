@@ -56,7 +56,7 @@ const storage = countPurges(createStorageBackend(config.storage), metrics);
 
 const { app, rateLimiters, drain } = createApp({ db, serverKey, storage, config, metrics, build });
 
-const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs);
+const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs, metrics);
 // Claimed whether this instance sweeps or not, so a sweeping one sharing the
 // storage by mistake stops instead of taking these notes for orphans.
 void claimStorage(db, storage);

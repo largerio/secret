@@ -48,8 +48,8 @@ The at-rest layer uses `SERVER_ENCRYPTION_KEY`. Left empty, that key is generate
 on first start and stored in the data volume (`.encryption_key`), so a copy of the
 volume, or of a backup of it, holds both the key and the data: the layer then only
 protects a leaked database or S3 bucket on its own. To cover a stolen volume too,
-set `SERVER_ENCRYPTION_KEY` from a secret store and keep it out of the volume and
-its backups. Either way, the content stays protected by the end-to-end layer.
+set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
+`SERVER_ENCRYPTION_KEY_FILE`, and keep it out of the volume and its backups. Either way, the content stays protected by the end-to-end layer.
 
 ## Security Measures
 

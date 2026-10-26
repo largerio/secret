@@ -433,15 +433,24 @@ describe("secrets in files", () => {
 		expect(config.storage.s3).toMatchObject({ accessKeyId: "akid", secretAccessKey: "s3cr3t" });
 	});
 
-	it.each(["SERVER_ENCRYPTION_KEY", "API_KEY", "API_KEY_7", "S3_SECRET_ACCESS_KEY"])(
-		"refuses %s set both ways",
-		(name) => {
-			expectConfigError(
-				baseEnv({ [name]: `${apiKey}x`, [`${name}_FILE`]: secretFile(`${apiKey}y`) }),
-				`Set ${name} or ${name}_FILE, not both.`,
-			);
-		},
-	);
+	it("reads the metrics token from a file", () => {
+		const token = "m".repeat(32);
+		const config = parseConfig(baseEnv({ METRICS_TOKEN_FILE: secretFile(`${token}\n`) }));
+		expect(config.metricsToken).toBe(token);
+	});
+
+	it.each([
+		"SERVER_ENCRYPTION_KEY",
+		"API_KEY",
+		"API_KEY_7",
+		"S3_SECRET_ACCESS_KEY",
+		"METRICS_TOKEN",
+	])("refuses %s set both ways", (name) => {
+		expectConfigError(
+			baseEnv({ [name]: `${apiKey}x`, [`${name}_FILE`]: secretFile(`${apiKey}y`) }),
+			`Set ${name} or ${name}_FILE, not both.`,
+		);
+	});
 
 	it("takes a blank variable next to its _FILE for unset, as compose passes one", () => {
 		const env = { SERVER_ENCRYPTION_KEY: "", SERVER_ENCRYPTION_KEY_FILE: secretFile(TEST_KEY) };

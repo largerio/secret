@@ -8,17 +8,19 @@ set -euo pipefail
 
 IMAGE=$1
 
-# Every PaaS injects PORT. The API keys and the S3 secret are only there to be
-# looked for in the web process below: random, since written here they would
-# read as leaked keys. API_KEY_2 comes from a file, as a Docker secret would,
+# Every PaaS injects PORT. The API keys, the S3 secret and the metrics token
+# are only there to be looked for in the web process below: random, since
+# written here they would read as leaked keys. API_KEY_2 comes from a file, as a Docker secret would,
 # readable by the container's uid 1001.
 key_file=$(mktemp)
 trap 'rm -f "$key_file"' EXIT
 openssl rand -hex 24 > "$key_file"
 chmod 644 "$key_file"
+metrics_token=$(openssl rand -hex 24)
 docker run -d --name smoke -e PORT=10000 -p 10000:10000 \
 	-e API_KEY_1="$(openssl rand -hex 24)" -e S3_SECRET_ACCESS_KEY="$(openssl rand -hex 16)" \
 	-e API_KEY_2_FILE=/run/secrets/api_key -v "$key_file:/run/secrets/api_key:ro" \
+	-e METRICS_TOKEN="$metrics_token" \
 	"$IMAGE"
 for _ in $(seq 30); do
 	if curl -fsS http://localhost:10000/api/health > /dev/null 2>&1; then break; fi
@@ -46,6 +48,19 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer 
 	-H "Content-Type: application/json" -d '{}' http://localhost:10000/api/v1/notes)
 [ "$code" = "400" ] \
 	|| { echo "FAIL: a write with API_KEY_2_FILE's key answered $code"; docker logs smoke; exit 1; }
+echo "--- the probes must answer, the metrics only with their token ---"
+for probe in /api/health/live /api/health/ready; do
+	curl -fsS "http://localhost:10000$probe" > /dev/null \
+		|| { echo "FAIL: $probe is not ready"; docker logs smoke; exit 1; }
+done
+code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:10000/api/metrics)
+[ "$code" = "401" ] \
+	|| { echo "FAIL: /api/metrics without its token answered $code"; docker logs smoke; exit 1; }
+# Read whole first: grep -q leaving early would break curl's pipe.
+metrics=$(curl -fsS -H "Authorization: Bearer $metrics_token" http://localhost:10000/api/metrics) \
+	|| { echo "FAIL: /api/metrics refused its token"; docker logs smoke; exit 1; }
+grep -q '^secret_build_info{' <<< "$metrics" \
+	|| { echo "FAIL: /api/metrics has no build info"; docker logs smoke; exit 1; }
 # adapter-node 6 dropped ORIGIN and defaults to https: on plain HTTP the
 # app would reject its own form posts. The image derives the origin from
 # APP_URL (here its default, http://localhost:PORT) — while SvelteKit's
@@ -67,16 +82,16 @@ environ() {
 	# command line starts with qemu.
 	docker exec smoke sh -c 'tr "\0" "\n" < "/proc/$(pgrep -f "node $1" | head -n 1)/environ"' sh "$1"
 }
-secrets='^(SERVER_ENCRYPTION_KEY|SERVER_ENCRYPTION_KEY_FILE|API_KEY_1|API_KEY_2_FILE|S3_SECRET_ACCESS_KEY)='
+secrets='^(SERVER_ENCRYPTION_KEY|SERVER_ENCRYPTION_KEY_FILE|API_KEY_1|API_KEY_2_FILE|S3_SECRET_ACCESS_KEY|METRICS_TOKEN)='
 # Read first, so a process that is not found fails the test instead of
 # counting no secrets.
 api_env=$(environ apps/api/dist/index.js)
 web_env=$(environ apps/web/dist/server/index.js)
 api=$(grep -cE "$secrets" <<< "$api_env" || true)
 web=$(grep -cE "$secrets" <<< "$web_env" || true)
-# 4: the key's file, API_KEY_1, API_KEY_2's file and the S3 secret. A fifth
-# would be the key itself.
-if [ "$api" != "4" ] || [ "$web" != "0" ]; then
-	echo "FAIL: the API sees $api of its 4 secrets, the web process $web"; docker logs smoke; exit 1
+# 5: the key's file, API_KEY_1, API_KEY_2's file, the S3 secret and the
+# metrics token. A sixth would be the key itself.
+if [ "$api" != "5" ] || [ "$web" != "0" ]; then
+	echo "FAIL: the API sees $api of its 5 secrets, the web process $web"; docker logs smoke; exit 1
 fi
 docker rm -f smoke
