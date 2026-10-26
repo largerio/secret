@@ -7,6 +7,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-26
+
 ### Security
 
 - Note IDs no longer appear in the logs. The cleanup job and the deletion
@@ -32,6 +34,10 @@ image. Each version links to its GitHub release. The SDK has
   is being saved, and for a chunk that lands after its upload session expired.
   Such a chunk used to get a `500` and stay; it is now removed and gets a
   `404`, or a `409` if the upload was completed in the meantime.
+- The Content Security Policy blocked one of the interface's fonts (the
+  monospace font's Cyrillic Extended range), which the build had inlined as a
+  `data:` URI: browsers logged a violation and fell back to another font for
+  those characters. Every font now ships as a file.
 
 ### Upgrade notes
 
@@ -238,7 +244,8 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/largerio/secret/releases/tag/v1.4.1
 [1.4.0]: https://github.com/largerio/secret/releases/tag/v1.4.0
 [1.3.2]: https://github.com/largerio/secret/releases/tag/v1.3.2
 [1.3.1]: https://github.com/largerio/secret/releases/tag/v1.3.1
