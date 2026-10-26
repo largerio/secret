@@ -9,7 +9,7 @@ import {
 	hasStoredPayload,
 	runDeletion,
 } from "./pendingDeletions.js";
-import type { StorageBackend } from "./storage/index.js";
+import { describeStorageError, type StorageBackend } from "./storage/index.js";
 
 const CLEANUP_CONCURRENCY = 8;
 
@@ -75,7 +75,9 @@ export async function runCleanup(db: AppDatabase, storage: StorageBackend): Prom
 			});
 		}
 	} catch (err: unknown) {
-		log.error("cleanup job failed", { detail: Error.isError(err) ? err.message : err });
+		// Never the message: a failed query quotes its parameters, note ids
+		// included.
+		log.error("cleanup job failed", { detail: describeStorageError(err) });
 	}
 }
 
@@ -84,7 +86,15 @@ export function startCleanupJob(
 	storage: StorageBackend,
 	intervalMs: number,
 ): ReturnType<typeof setInterval> {
-	return setInterval(() => {
-		void runCleanup(db, storage);
+	// A pass slower than the interval (a large batch, a slow storage) would
+	// otherwise start the next one on top of it, draining the same rows twice.
+	let running = false;
+	return setInterval(async () => {
+		if (running) {
+			return;
+		}
+		running = true;
+		await runCleanup(db, storage);
+		running = false;
 	}, intervalMs);
 }

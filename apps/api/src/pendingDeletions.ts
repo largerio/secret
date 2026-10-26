@@ -1,9 +1,9 @@
 import { eq, lte } from "drizzle-orm";
 import { runWithConcurrency } from "./concurrency.js";
-import type { AppDatabase } from "./db/index.js";
+import type { AppDatabase, Transaction } from "./db/index.js";
 import { pendingDeletions } from "./db/schema.js";
 import { log } from "./logger.js";
-import type { StorageBackend } from "./storage/index.js";
+import { describeStorageError, type StorageBackend } from "./storage/index.js";
 
 const RETRY_BACKOFF_MS: readonly number[] = [
 	30_000, // 30s (also the initial delay before the first retry)
@@ -16,9 +16,6 @@ const RETRY_BACKOFF_MS: readonly number[] = [
 const INITIAL_BACKOFF_MS = RETRY_BACKOFF_MS[0] as number;
 const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length;
 const DRAIN_BATCH_LIMIT = 1000;
-
-/** An open `db.transaction` callback's handle. */
-export type Transaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
 /** A purge owed for a note's stored payload, recorded in `pending_deletions`. */
 export interface PendingDeletion {
@@ -67,6 +64,22 @@ export function cancelDeletion(tx: Transaction, deletion: PendingDeletion): void
 	tx.delete(pendingDeletions).where(eq(pendingDeletions.id, deletion.id)).run();
 }
 
+// Purge, then drop the row. Returns why it failed, worded for a log line, or
+// undefined once done.
+async function settle(
+	db: AppDatabase,
+	storage: StorageBackend,
+	deletion: PendingDeletion,
+): Promise<string | undefined> {
+	try {
+		await storage.purge(deletion.noteId);
+		db.delete(pendingDeletions).where(eq(pendingDeletions.id, deletion.id)).run();
+		return undefined;
+	} catch (err: unknown) {
+		return describeStorageError(err);
+	}
+}
+
 /**
  * Purge now, then drop the row. Never rejects: on failure the row stays and
  * the cleanup job retries it with backoff. Logs carry the row id, never the
@@ -77,14 +90,20 @@ export async function runDeletion(
 	storage: StorageBackend,
 	deletion: PendingDeletion,
 ): Promise<void> {
+	const failure = await settle(db, storage, deletion);
+	if (failure === undefined) {
+		return;
+	}
+	log.error("storage purge failed, retry scheduled", { deletionId: deletion.id, detail: failure });
 	try {
-		await storage.purge(deletion.noteId);
-		db.delete(pendingDeletions).where(eq(pendingDeletions.id, deletion.id)).run();
-	} catch (err: unknown) {
-		log.error("storage purge failed, retry scheduled", {
-			deletionId: deletion.id,
-			detail: Error.isError(err) ? err.message : String(err),
-		});
+		// The delay it was queued with only had to cover this attempt, which
+		// has now failed: retry on the backoff schedule, not a day from now.
+		db.update(pendingDeletions)
+			.set({ nextRetryAt: new Date(Date.now() + INITIAL_BACKOFF_MS) })
+			.where(eq(pendingDeletions.id, deletion.id))
+			.run();
+	} catch {
+		// The database is failing too: the row keeps its first delay.
 	}
 }
 
@@ -106,35 +125,26 @@ export async function drainPendingDeletions(
 	let failed = 0;
 
 	await runWithConcurrency(due, concurrency, async (row) => {
-		try {
-			await storage.purge(row.noteId);
-			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+		const failure = await settle(db, storage, row);
+		if (failure === undefined) {
 			drained++;
 			return;
-		} catch (err: unknown) {
-			const detail = Error.isError(err) ? err.message : String(err);
-			const nextAttempts = row.attempts + 1;
-
-			if (nextAttempts >= MAX_ATTEMPTS) {
-				// The storage sweep (reconcile.ts) picks the object up once this
-				// row is gone.
-				log.error("giving up on pending deletion", {
-					deletionId: row.id,
-					attempts: nextAttempts,
-					detail,
-				});
-				db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
-				failed++;
-				return;
-			}
-
-			const backoff = RETRY_BACKOFF_MS[nextAttempts] as number;
-			db.update(pendingDeletions)
-				.set({ attempts: nextAttempts, nextRetryAt: new Date(Date.now() + backoff) })
-				.where(eq(pendingDeletions.id, row.id))
-				.run();
-			failed++;
 		}
+		failed++;
+
+		const attempts = row.attempts + 1;
+		if (attempts >= MAX_ATTEMPTS) {
+			// The storage sweep (reconcile.ts) picks the object up once this row
+			// is gone.
+			log.error("giving up on pending deletion", { deletionId: row.id, attempts, detail: failure });
+			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+			return;
+		}
+
+		db.update(pendingDeletions)
+			.set({ attempts, nextRetryAt: new Date(Date.now() + (RETRY_BACKOFF_MS[attempts] as number)) })
+			.where(eq(pendingDeletions.id, row.id))
+			.run();
 	});
 
 	return { drained, failed };

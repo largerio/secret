@@ -30,3 +30,6 @@ export function createDatabase(dbPath: string): {
 }
 
 export type AppDatabase = ReturnType<typeof createDatabase>["db"];
+
+/** The handle a `db.transaction` callback receives. */
+export type Transaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];

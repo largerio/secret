@@ -3,6 +3,7 @@ import { LocalStorage } from "./local.js";
 import { S3Storage } from "./s3.js";
 
 export {
+	describeStorageError,
 	StorageError,
 	StorageInvalidKeyError,
 	StorageNotFoundError,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { StorageError, StorageInvalidKeyError, StorageNotFoundError } from "../storage/errors.js";
+import {
+	describeStorageError,
+	StorageError,
+	StorageInvalidKeyError,
+	StorageNotFoundError,
+} from "../storage/errors.js";
 
 describe("storage errors", () => {
 	it("StorageError carries a name and message", () => {
@@ -33,5 +38,31 @@ describe("storage errors", () => {
 	it("StorageNotFoundError accepts a custom message", () => {
 		const err = new StorageNotFoundError("custom");
 		expect(err.message).toBe("custom");
+	});
+});
+
+describe("describeStorageError", () => {
+	it("keeps the message of the storage layer's own errors", () => {
+		expect(
+			describeStorageError(new StorageError("S3 refused to delete 1 object(s): AccessDenied")),
+		).toBe("S3 refused to delete 1 object(s): AccessDenied");
+	});
+
+	it("gives a system error's code, never its message and the path in it", () => {
+		const err = Object.assign(new Error("EROFS: read-only file system, rmdir '/data/abc'"), {
+			code: "EROFS",
+		});
+		expect(describeStorageError(err)).toBe("EROFS");
+	});
+
+	it("gives the name of any other error", () => {
+		const err = new Error("The specified key notes/abc does not exist.");
+		err.name = "NoSuchKey";
+		expect(describeStorageError(err)).toBe("NoSuchKey");
+	});
+
+	it("gives the type of a non-Error rejection", () => {
+		expect(describeStorageError("notes/abc")).toBe("string");
+		expect(describeStorageError(undefined)).toBe("undefined");
 	});
 });

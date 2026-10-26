@@ -1,7 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
-import { mkdir, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { StorageInvalidKeyError, StorageNotFoundError } from "../storage/errors.js";
 import type { StoredNote } from "../storage/interface.js";
 import { LocalStorage } from "../storage/local.js";
@@ -190,10 +190,14 @@ describe("LocalStorage listing and claims", () => {
 	const storageDir = `${TEST_DIR}/listing`;
 	const fileNoteId = "fileNote_001";
 	const chunkedNoteId = "chunkNote_01";
+	let storage: LocalStorage;
+
+	beforeEach(() => {
+		rmSync(storageDir, { recursive: true, force: true });
+		storage = new LocalStorage(storageDir);
+	});
 
 	it("lists each stored note once, with its last write", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
 		await storage.save(fileNoteId, Buffer.from("file"));
 		await storage.saveChunk(chunkedNoteId, 0, Buffer.from("c0"));
 		await storage.saveChunk(chunkedNoteId, 1, Buffer.from("c1"));
@@ -207,8 +211,6 @@ describe("LocalStorage listing and claims", () => {
 	});
 
 	it("skips entries that are not note ids, claims included", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
 		await storage.claim("instance-a");
 		await writeFile(join(storageDir, "notes.txt"), "not a note");
 		await storage.save("short-id", Buffer.from("x"));
@@ -217,8 +219,6 @@ describe("LocalStorage listing and claims", () => {
 	});
 
 	it("skips an entry purged while the listing runs", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
 		// A dangling link stats as missing, like an entry removed after readdir.
 		await symlink(resolve(storageDir, "gone"), join(storageDir, "gonePurged01"));
 
@@ -226,16 +226,12 @@ describe("LocalStorage listing and claims", () => {
 	});
 
 	it("rejects a listing that cannot read an entry", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
 		await symlink("loopEntry_01", join(storageDir, "loopEntry_01"));
 
 		await expect(collect(storage.list())).rejects.toMatchObject({ code: "ELOOP" });
 	});
 
 	it("records and lists claims", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
 		expect(await storage.listClaims()).toEqual([]);
 
 		await storage.claim("instance-a");
@@ -248,14 +244,10 @@ describe("LocalStorage listing and claims", () => {
 	});
 
 	it("rejects an instance id that could leave the claims directory", async () => {
-		const storage = new LocalStorage(storageDir);
 		await expect(storage.claim("../note")).rejects.toBeInstanceOf(StorageInvalidKeyError);
 	});
 
 	it("rejects a claims listing it cannot read", async () => {
-		rmSync(storageDir, { recursive: true, force: true });
-		const storage = new LocalStorage(storageDir);
-		await mkdir(storageDir, { recursive: true });
 		await writeFile(join(storageDir, ".instances"), "not a directory");
 
 		await expect(storage.listClaims()).rejects.toMatchObject({ code: "ENOTDIR" });

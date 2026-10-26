@@ -342,23 +342,33 @@ What still slips through is removed by a daily sweep: any stored file older than
 a day that no note, upload or pending deletion points to. The first sweep runs
 ten minutes after startup. It logs a line when it removes something.
 
+For its first day on a storage, a database's sweep deletes nothing: it logs how
+many stored notes it does not know (`storage sweep on trial`). A large count on
+an instance that just started means it runs on the wrong database, such as a new
+volume after a renamed compose project: stop it before the day is out.
+
 ### One storage location per instance
 
 The sweep trusts the database to know every note, so the bucket (or
 `FILES_PATH`) must belong to one instance. To enforce it, each database records
-its claim in the storage (`instances/<id>` in the bucket,
-`FILES_PATH/.instances/<id>` on disk). When the sweep finds another claim it
-deletes nothing and logs a warning instead:
+its claim in the storage at startup, whether it sweeps or not (`instances/<id>`
+in the bucket, `FILES_PATH/.instances/<id>` on disk). When the sweep finds
+another claim it deletes nothing and logs a warning instead:
 
 ```
 storage sweep skipped: another database has claimed this storage
 ```
 
 This happens when two instances share a bucket, and also when an instance starts
-on an empty database while the storage still holds the old notes: a lost
-volume, a renamed compose project, or a database backup older than the first
-sweep. Point each instance at its own bucket, or restore the right database. If
-the other database is gone for good, delete its claim; the next sweep resumes.
+on an empty database while the storage still holds the notes of a database that
+claimed it: a lost volume, a renamed compose project, or a database backup older
+than the first claim. Point each instance at its own bucket, or restore the right
+database and delete the claim the wrong one left. If the other database is gone
+for good, delete its claim; the next sweep resumes.
+
+A copy of a database carries its claim: an instance restored from another's
+volume (a staging copy of production, say) cannot be told apart and must get a
+bucket of its own.
 
 To turn the sweep off, set `STORAGE_RECONCILE=false`. Deletions are still
 retried; only the files they miss stay behind.
@@ -369,6 +379,8 @@ retried; only the files they miss stay behind.
   the ciphertext of every note stays in its earlier versions. If versioning must
   stay on, expire noncurrent versions after a day.
 - **No object lock or retention rule**: notes must be deletable at any time.
+- **Permissions.** The key needs to read, write, delete and list objects under
+  `notes/`, and to write and list them under `instances/`.
 - **A lifecycle rule** as a safety net. Incomplete multipart uploads, left when
   the server stops in the middle of a large file, are invisible to the sweep:
   abort them after a day. And since no note outlives the 30-day retention

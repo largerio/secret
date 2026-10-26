@@ -15,8 +15,10 @@ image. Each version links to its GitHub release. The SDK has
 ### Added
 
 - A daily storage sweep removes stored files that no note points to any more,
-  such as those a failed deletion left behind. It only runs on storage that no
-  other database has claimed, and `STORAGE_RECONCILE=false` turns it off. See
+  such as those a failed deletion left behind. Every instance claims its
+  storage at startup, and the sweep deletes nothing on storage another database
+  has claimed, nor during its first day on a storage, when it only logs what it
+  would delete. `STORAGE_RECONCILE=false` turns it off. See
   [Storage cleanup](docs/self-hosting.md#storage-cleanup).
 
 ### Fixed
@@ -35,12 +37,14 @@ image. Each version links to its GitHub release. The SDK has
 
 - Migration 4 drops two columns from `pending_deletions`. Back up the data
   volume first: once migrated, the database no longer starts on 1.4.0 or older.
-- The first storage sweep runs ten minutes after startup and removes files
-  older than a day that the database does not know. If several instances share
-  a bucket or `FILES_PATH`, give each its own, or set `STORAGE_RECONCILE=false`
-  on all of them, before upgrading any: an instance that has not upgraded yet
-  leaves no claim, so the others cannot tell its files from orphans.
-- On S3, turn versioning off and add the lifecycle rule in
+- A day after the upgrade, the storage sweep starts removing files older than a
+  day that the database does not know; until then it only logs their count. If
+  several instances share a bucket or `FILES_PATH`, give each its own, or set
+  `STORAGE_RECONCILE=false` on all of them, before upgrading any: an instance
+  that has not upgraded yet leaves no claim, so the others cannot tell its
+  files from orphans.
+- On S3, the key now also needs to list the bucket and to write under
+  `instances/`. Turn versioning off and add the lifecycle rule in
   [S3 bucket settings](docs/self-hosting.md#s3-bucket-settings).
 
 ## [1.4.0] - 2026-10-26

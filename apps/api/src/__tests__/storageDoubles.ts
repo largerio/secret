@@ -30,6 +30,9 @@ export function overrideStorage(
 		list: () => storage.list(),
 		claim: (instanceId) => storage.claim(instanceId),
 		listClaims: () => storage.listClaims(),
+		// Only when the backend has them: a missing probe means healthy.
+		...(storage.probe ? { probe: async () => await storage.probe?.() } : {}),
+		...(storage.close ? { close: async () => await storage.close?.() } : {}),
 		...overrides,
 	};
 }

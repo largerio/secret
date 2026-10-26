@@ -1,14 +1,18 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { utimes } from "node:fs/promises";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { meta, notes, pendingDeletions, uploads } from "../db/schema.js";
 import {
-	getInstanceId,
+	claimStorage,
+	getInstance,
 	RECONCILE_FIRST_RUN_MS,
+	RECONCILE_GRACE_MS,
 	RECONCILE_INTERVAL_MS,
+	RECONCILE_TRIAL_MS,
 	reconcileStorage,
 	startReconcileJob,
 } from "../reconcile.js";
@@ -18,7 +22,8 @@ import { stubStorage } from "./storageDoubles.js";
 
 const TEST_DB_PATH = "./data/reconcile-test.db";
 const TEST_FILES_PATH = "./data/reconcile-test-files";
-const TWO_DAYS_AGO = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+const DAY_MS = 24 * 60 * 60_000;
+const TWO_DAYS_AGO = new Date(Date.now() - 2 * DAY_MS);
 
 let db: AppDatabase;
 let storage: LocalStorage;
@@ -46,6 +51,15 @@ afterAll(() => {
 	removeTestFiles();
 });
 
+/** This database claimed its storage two days ago: past the sweep's trial day. */
+function claimedTwoDaysAgo(): void {
+	getInstance(db);
+	db.update(meta)
+		.set({ value: String(TWO_DAYS_AGO.getTime()) })
+		.where(eq(meta.key, "instance_since"))
+		.run();
+}
+
 /** A file note written two days ago, past the sweep's grace period. */
 async function storeOld(noteId: string): Promise<string> {
 	const path = await storage.save(noteId, Buffer.from("payload"));
@@ -69,18 +83,61 @@ function insertNote(id: string): void {
 		.run();
 }
 
-describe("getInstanceId", () => {
-	it("creates the id once and returns it from then on", () => {
-		const first = getInstanceId(db);
+/** A backend listing the given notes; claims and purges succeed. */
+function listing(...stored: StoredNote[]) {
+	return stubStorage({
+		list: vi.fn(async function* (): AsyncIterable<StoredNote> {
+			yield* stored;
+		}),
+	});
+}
 
-		expect(first).toMatch(/^[A-Za-z0-9_-]{21}$/);
-		expect(getInstanceId(db)).toBe(first);
-		expect(db.select().from(meta).all()).toEqual([{ key: "instance_id", value: first }]);
+describe("getInstance", () => {
+	it("creates the id and its date once, and returns them from then on", () => {
+		const before = Date.now();
+		const first = getInstance(db);
+
+		expect(first.id).toMatch(/^[A-Za-z0-9_-]{21}$/);
+		expect(first.since.getTime()).toBeGreaterThanOrEqual(before);
+		expect(first.since.getTime()).toBeLessThanOrEqual(Date.now());
+		expect(getInstance(db)).toEqual(first);
+		expect(db.select().from(meta).all()).toHaveLength(2);
+	});
+
+	it("starts over when only half of it was recorded", () => {
+		db.insert(meta).values({ key: "instance_id", value: "half-written" }).run();
+
+		const instance = getInstance(db);
+
+		expect(instance.id).not.toBe("half-written");
+		expect(getInstance(db)).toEqual(instance);
+	});
+});
+
+describe("claimStorage", () => {
+	it("claims the storage for this database", async () => {
+		await claimStorage(db, storage);
+
+		expect(await storage.listClaims()).toEqual([getInstance(db).id]);
+	});
+
+	it("warns and carries on when the claim cannot be written", async () => {
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const failing = stubStorage({
+			claim: vi.fn().mockRejectedValue(Object.assign(new Error("/data/x"), { code: "EACCES" })),
+		});
+
+		await expect(claimStorage(db, failing)).resolves.toBeUndefined();
+
+		const logged = String(consoleSpy.mock.calls[0]?.[0]);
+		expect(logged).toContain('"msg":"could not claim the storage","detail":"EACCES"');
+		expect(logged).not.toContain("/data/x");
 	});
 });
 
 describe("reconcileStorage", () => {
 	it("purges an old object no note points to", async () => {
+		claimedTwoDaysAgo();
 		const orphan = await storeOld("orphanNote01");
 
 		const result = await reconcileStorage(db, storage);
@@ -89,16 +146,22 @@ describe("reconcileStorage", () => {
 		expect(existsSync(orphan)).toBe(false);
 	});
 
-	it("keeps an object written within the grace period", async () => {
-		const recent = await storage.save("recentNote01", Buffer.from("payload"));
+	it("keeps an object until it is a full grace period old", async () => {
+		claimedTwoDaysAgo();
+		const now = new Date();
+		const swept = listing(
+			{ noteId: "justOldEnuf1", lastModified: new Date(now.getTime() - RECONCILE_GRACE_MS) },
+			{ noteId: "notYetOld001", lastModified: new Date(now.getTime() - RECONCILE_GRACE_MS + 1) },
+		);
 
-		const result = await reconcileStorage(db, storage);
+		const result = await reconcileStorage(db, swept, now);
 
-		expect(result).toMatchObject({ scanned: 1, purged: 0 });
-		expect(existsSync(recent)).toBe(true);
+		expect(result).toEqual({ status: "done", scanned: 2, purged: 1, failed: 0 });
+		expect(swept.purge).toHaveBeenCalledExactlyOnceWith("justOldEnuf1");
 	});
 
 	it("keeps what a note, an upload session or a queued purge still owns", async () => {
+		claimedTwoDaysAgo();
 		const kept = [
 			await storeOld("ownedByNote1"),
 			await storeOld("ownedByUpld1"),
@@ -133,14 +196,40 @@ describe("reconcileStorage", () => {
 		}
 	});
 
-	it("claims the storage for this database", async () => {
-		await reconcileStorage(db, storage);
+	it("only counts orphans during the first day after the claim", async () => {
+		const orphan = await storeOld("orphanNote02");
+		const since = getInstance(db).since.getTime();
 
-		expect(await storage.listClaims()).toEqual([getInstanceId(db)]);
+		const firstDay = await reconcileStorage(db, storage, new Date(since + RECONCILE_TRIAL_MS - 1));
+		expect(firstDay).toEqual({ status: "trial", scanned: 1, orphans: 1 });
+		expect(existsSync(orphan)).toBe(true);
+
+		const dayAfter = await reconcileStorage(db, storage, new Date(since + RECONCILE_TRIAL_MS));
+		expect(dayAfter).toEqual({ status: "done", scanned: 1, purged: 1, failed: 0 });
+		expect(existsSync(orphan)).toBe(false);
+	});
+
+	it("claims the storage before reading the claims, so two first sweeps see each other", async () => {
+		const order: string[] = [];
+		const tracked = stubStorage({
+			claim: vi.fn(async () => {
+				order.push("claim");
+			}),
+			listClaims: vi.fn(async () => {
+				order.push("listClaims");
+				return [];
+			}),
+		});
+
+		await reconcileStorage(db, tracked);
+
+		expect(order).toEqual(["claim", "listClaims"]);
+		expect(tracked.claim).toHaveBeenCalledWith(getInstance(db).id);
 	});
 
 	it("touches nothing when another database has claimed the storage, and claims it too", async () => {
-		const orphan = await storeOld("orphanNote02");
+		claimedTwoDaysAgo();
+		const orphan = await storeOld("orphanNote03");
 		await storage.claim("other-instance");
 
 		const result = await reconcileStorage(db, storage);
@@ -149,53 +238,43 @@ describe("reconcileStorage", () => {
 		expect(existsSync(orphan)).toBe(true);
 		// So that the other instance stops sweeping as well.
 		expect((await storage.listClaims()).sort()).toEqual(
-			[getInstanceId(db), "other-instance"].sort(),
+			[getInstance(db).id, "other-instance"].sort(),
 		);
 	});
 
-	it("counts a purge that fails and moves on to the next orphan", async () => {
-		const old = new Date(Date.now() - 2 * 24 * 60 * 60_000);
-		const failing = stubStorage({
-			list: async function* (): AsyncIterable<StoredNote> {
-				yield { noteId: "failingNote1", lastModified: old };
-				yield { noteId: "purgedNote01", lastModified: old };
-			},
-			purge: vi
-				.fn()
-				.mockRejectedValueOnce(new Error("access denied"))
-				.mockResolvedValueOnce(undefined)
-				.mockRejectedValueOnce("plain failure")
-				.mockResolvedValueOnce(undefined),
-		});
+	it("counts a purge that fails, moves on, and never logs a failure's message", async () => {
+		claimedTwoDaysAgo();
+		const swept = listing(
+			{ noteId: "failingNote1", lastModified: TWO_DAYS_AGO },
+			{ noteId: "purgedNote01", lastModified: TWO_DAYS_AGO },
+		);
+		vi.mocked(swept.purge)
+			.mockRejectedValueOnce(new Error("rmdir /data/failingNote1"))
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce("plain failure")
+			.mockResolvedValueOnce(undefined);
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		const first = await reconcileStorage(db, failing);
-		const second = await reconcileStorage(db, failing);
+		const first = await reconcileStorage(db, swept);
+		const second = await reconcileStorage(db, swept);
 
 		expect(first).toEqual({ status: "done", scanned: 2, purged: 1, failed: 1 });
 		expect(second).toEqual({ status: "done", scanned: 2, purged: 1, failed: 1 });
 		const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
-		expect(logged[0]).toContain(
-			'"msg":"storage sweep could not purge an orphan","detail":"access denied"',
-		);
-		expect(logged[1]).toContain('"detail":"plain failure"');
+		expect(logged[0]).toContain('"msg":"storage sweep could not purge an orphan","detail":"Error"');
+		expect(logged[1]).toContain('"detail":"string"');
 		expect(logged.join("\n")).not.toContain("failingNote1");
 	});
 });
 
 describe("startReconcileJob", () => {
-	const old = new Date(Date.now() - 2 * 24 * 60 * 60_000);
-
 	function orphanStorage() {
-		return stubStorage({
-			list: vi.fn(async function* (): AsyncIterable<StoredNote> {
-				yield { noteId: "orphanNote03", lastModified: old };
-			}),
-		});
+		return listing({ noteId: "orphanNote04", lastModified: TWO_DAYS_AGO });
 	}
 
 	it("sweeps shortly after boot, then once per interval", async () => {
 		vi.useFakeTimers();
+		claimedTwoDaysAgo();
 		const swept = orphanStorage();
 		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -216,7 +295,36 @@ describe("startReconcileJob", () => {
 
 	it("stays quiet when there is nothing to purge", async () => {
 		vi.useFakeTimers();
+		claimedTwoDaysAgo();
 		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const job = startReconcileJob(db, stubStorage());
+		await vi.advanceTimersByTimeAsync(RECONCILE_FIRST_RUN_MS);
+		job.stop();
+
+		expect(consoleSpy).not.toHaveBeenCalled();
+	});
+
+	it("warns, on its trial day, about the orphans it will delete", async () => {
+		vi.useFakeTimers();
+		const swept = orphanStorage();
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const job = startReconcileJob(db, swept);
+		await vi.advanceTimersByTimeAsync(RECONCILE_FIRST_RUN_MS);
+		job.stop();
+
+		expect(swept.purge).not.toHaveBeenCalled();
+		const logged = String(consoleSpy.mock.calls[0]?.[0]);
+		expect(logged).toContain('"level":"warn"');
+		expect(logged).toContain(
+			'"msg":"storage sweep on trial: nothing deleted yet","scanned":1,"orphans":1',
+		);
+	});
+
+	it("stays quiet on its trial day when nothing is orphaned", async () => {
+		vi.useFakeTimers();
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const job = startReconcileJob(db, stubStorage());
 		await vi.advanceTimersByTimeAsync(RECONCILE_FIRST_RUN_MS);
@@ -244,13 +352,11 @@ describe("startReconcileJob", () => {
 		expect(logged).toContain("instances/<id>");
 	});
 
-	it("logs a failed sweep and keeps the schedule", async () => {
+	it("logs a failed sweep without its message, and keeps the schedule", async () => {
 		vi.useFakeTimers();
+		const refused = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
 		const broken = stubStorage({
-			claim: vi
-				.fn()
-				.mockRejectedValueOnce(new Error("bucket unreachable"))
-				.mockRejectedValueOnce("plain failure"),
+			claim: vi.fn().mockRejectedValueOnce(refused).mockRejectedValueOnce("plain failure"),
 		});
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -260,14 +366,13 @@ describe("startReconcileJob", () => {
 		job.stop();
 
 		const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
-		expect(logged[0]).toContain('"msg":"storage sweep failed","detail":"bucket unreachable"');
-		expect(logged[1]).toContain('"detail":"plain failure"');
+		expect(logged[0]).toContain('"msg":"storage sweep failed","detail":"ECONNREFUSED"');
+		expect(logged[1]).toContain('"detail":"string"');
 	});
 
 	it("runs no more sweeps once stopped", async () => {
 		vi.useFakeTimers();
 		const swept = orphanStorage();
-		vi.spyOn(console, "log").mockImplementation(() => {});
 
 		const job = startReconcileJob(db, swept);
 		job.stop();
@@ -295,5 +400,14 @@ describe("startReconcileJob", () => {
 		await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS);
 
 		expect(slow.claim).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("schedule", () => {
+	it("waits a day before purging, a day after claiming, and sweeps daily", () => {
+		expect(RECONCILE_GRACE_MS).toBe(DAY_MS);
+		expect(RECONCILE_TRIAL_MS).toBe(DAY_MS);
+		expect(RECONCILE_INTERVAL_MS).toBe(DAY_MS);
+		expect(RECONCILE_FIRST_RUN_MS).toBe(10 * 60_000);
 	});
 });

@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { isValidNoteId } from "@largerio/secret-shared";
+import { runWithConcurrency } from "../concurrency.js";
 import { assertChunkIndex, assertId, StorageError, StorageNotFoundError } from "./errors.js";
 import type { StorageBackend, StoredNote } from "./interface.js";
 
@@ -26,6 +27,8 @@ export interface S3Config {
 
 const NOTES_PREFIX = "notes/";
 const CLAIMS_PREFIX = "instances/";
+// Parallel single deletes when a server refuses the batch call.
+const DELETE_CONCURRENCY = 8;
 
 // notes/<id> holds a file note; notes/<id>/chunk_<n> the chunks of a chunked one.
 const NOTE_KEY_RE = /^notes\/([A-Za-z0-9_-]+)(?:\/chunk_\d+)?$/;
@@ -158,13 +161,11 @@ export class S3Storage implements StorageBackend {
 
 	async purge(noteId: string): Promise<void> {
 		assertId(noteId);
-		const fileKey = `${NOTES_PREFIX}${noteId}`;
-		// One listing finds either shape. The prefix also matches longer ids
-		// that start with this one, hence the filter.
-		for await (const objects of this.listPages(fileKey)) {
-			const keys = objects.flatMap(({ Key: key }) =>
-				key === fileKey || key?.startsWith(`${fileKey}/`) ? [key] : [],
-			);
+		// A file note is one object, deleted without looking first: a DELETE of
+		// a missing key succeeds. A chunked note's chunks sit under its id.
+		await this.deleteKey(`${NOTES_PREFIX}${noteId}`);
+		for await (const objects of this.listPages(`${NOTES_PREFIX}${noteId}/`)) {
+			const keys = objects.flatMap(({ Key: key }) => (key ? [key] : []));
 			if (keys.length > 0) {
 				await this.deleteKeys(keys);
 			}
@@ -235,28 +236,33 @@ export class S3Storage implements StorageBackend {
 		} while (continuationToken);
 	}
 
+	private async deleteKey(key: string): Promise<void> {
+		try {
+			await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+		} catch (err) {
+			if (!isNotFoundError(err)) {
+				throw err;
+			}
+		}
+	}
+
 	// Takes at most 1000 keys, the DeleteObjects limit — one listing page.
 	private async deleteKeys(keys: string[]): Promise<void> {
-		if (keys.length === 1) {
-			// A file note's single object takes the plain DELETE, which every S3
-			// server accepts; some reject the checksum the SDK puts on a batch.
-			try {
-				await this.client.send(
-					new DeleteObjectCommand({ Bucket: this.bucket, Key: keys[0] as string }),
-				);
-			} catch (err) {
-				if (!isNotFoundError(err)) {
-					throw err;
-				}
-			}
+		let errors: Array<{ Code?: string | undefined }>;
+		try {
+			({ Errors: errors = [] } = await this.client.send(
+				new DeleteObjectsCommand({
+					Bucket: this.bucket,
+					Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
+				}),
+			));
+		} catch {
+			// The batch call needs a checksum header, and not every S3 server
+			// accepts the one the SDK sends. One DELETE per key works everywhere;
+			// a failure there is the one that counts.
+			await runWithConcurrency(keys, DELETE_CONCURRENCY, (key) => this.deleteKey(key));
 			return;
 		}
-		const { Errors: errors = [] } = await this.client.send(
-			new DeleteObjectsCommand({
-				Bucket: this.bucket,
-				Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
-			}),
-		);
 		// A refused key only shows up here, in a 200 response: unread, the
 		// purge would pass for done and the object stay behind.
 		const refused = errors.filter((error) => error.Code !== "NoSuchKey");

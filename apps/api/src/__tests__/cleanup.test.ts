@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { serverEncrypt } from "@largerio/secret-crypto";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCleanup, startCleanupJob } from "../cleanup.js";
@@ -14,6 +15,7 @@ const TEST_FILES_PATH = "./data/cleanup-test-files";
 const TEST_SERVER_KEY = randomBytes(32);
 
 let db: AppDatabase;
+let sqlite: DatabaseSync;
 let storage: LocalStorage;
 
 function insertNote(id: string, overrides: Partial<Record<string, unknown>> = {}) {
@@ -33,6 +35,14 @@ function insertNote(id: string, overrides: Partial<Record<string, unknown>> = {}
 			...overrides,
 		})
 		.run();
+}
+
+function pendingNoteIds(): string[] {
+	return db
+		.select()
+		.from(pendingDeletions)
+		.all()
+		.map((row) => row.noteId);
 }
 
 function insertUpload(id: string, noteId: string, expiresAt: Date) {
@@ -60,7 +70,7 @@ beforeEach(() => {
 	}
 	mkdirSync("./data", { recursive: true });
 	mkdirSync(TEST_FILES_PATH, { recursive: true });
-	db = createDatabase(TEST_DB_PATH).db;
+	({ db, sqlite } = createDatabase(TEST_DB_PATH));
 	storage = new LocalStorage(TEST_FILES_PATH);
 });
 
@@ -123,13 +133,45 @@ describe("runCleanup", () => {
 		await vi.waitFor(() => expect(hanging.purge).toHaveBeenCalled());
 
 		expect(db.select().from(notes).all()).toHaveLength(0);
+		expect(pendingNoteIds()).toEqual(["crashed00001"]);
+	});
+
+	it("keeps an expired note whose purge cannot be queued: both writes are one transaction", async () => {
+		sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+			BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		insertNote("atomic000001", { fileCount: 1, filePath: "/data/files/atomic000001" });
+
+		await runCleanup(db, stubStorage());
+
 		expect(
 			db
 				.select()
-				.from(pendingDeletions)
+				.from(notes)
 				.all()
-				.map((row) => row.noteId),
-		).toEqual(["crashed00001"]);
+				.map((note) => note.id),
+		).toEqual(["atomic000001"]);
+		const logged = String(consoleSpy.mock.calls[0]?.[0]);
+		expect(logged).toContain('"msg":"cleanup job failed"');
+		// The failed query quoted the note id in its message.
+		expect(logged).not.toContain("atomic000001");
+	});
+
+	it("keeps an expired upload session whose purge cannot be queued", async () => {
+		sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+			BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		insertUpload("upload000009", "uploadnote09", new Date(Date.now() - 10_000));
+
+		await runCleanup(db, stubStorage());
+
+		expect(
+			db
+				.select()
+				.from(uploads)
+				.all()
+				.map((upload) => upload.id),
+		).toEqual(["upload000009"]);
 	});
 
 	it("keeps a failed purge queued for a retry, and still deletes the note", async () => {
@@ -174,13 +216,7 @@ describe("runCleanup", () => {
 		await runCleanup(db, failing);
 
 		expect(db.select().from(uploads).all()).toHaveLength(0);
-		expect(
-			db
-				.select()
-				.from(pendingDeletions)
-				.all()
-				.map((row) => row.noteId),
-		).toEqual(["uploadnote03"]);
+		expect(pendingNoteIds()).toEqual(["uploadnote03"]);
 	});
 
 	it("drains due pending deletions", async () => {
@@ -227,7 +263,7 @@ describe("runCleanup", () => {
 		await runCleanup(failingDb, storage);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('"msg":"cleanup job failed","detail":"database locked"'),
+			expect.stringContaining('"msg":"cleanup job failed","detail":"Error"'),
 		);
 	});
 
@@ -242,7 +278,7 @@ describe("runCleanup", () => {
 		await runCleanup(failingDb, storage);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('"msg":"cleanup job failed","detail":"string error"'),
+			expect.stringContaining('"msg":"cleanup job failed","detail":"string"'),
 		);
 	});
 });
@@ -262,5 +298,31 @@ describe("startCleanupJob", () => {
 		clearInterval(timer);
 
 		expect(db.select().from(notes).all()).toHaveLength(0);
+	});
+
+	it("skips a tick while the previous pass is still running", async () => {
+		vi.useFakeTimers();
+		let release: () => void = () => {};
+		const slow = stubStorage({
+			purge: vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						release = resolve;
+					}),
+			),
+		});
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		insertNote("slowpurge001", { fileCount: 1, filePath: "/data/files/slowpurge001" });
+
+		const timer = startCleanupJob(db, slow, 100);
+		await vi.advanceTimersByTimeAsync(100);
+		insertNote("slowpurge002", { fileCount: 1, filePath: "/data/files/slowpurge002" });
+		await vi.advanceTimersByTimeAsync(300);
+		expect(slow.purge).toHaveBeenCalledTimes(1);
+
+		release();
+		await vi.advanceTimersByTimeAsync(100);
+		clearInterval(timer);
+		expect(slow.purge).toHaveBeenCalledWith("slowpurge002");
 	});
 });
