@@ -25,6 +25,33 @@ export interface S3Config {
 	readonly forcePathStyle: boolean;
 }
 
+/**
+ * How long a silent endpoint is waited on. These bound silence, not transfer
+ * time: an upload keeps its socket busy however large and slow it is, so they
+ * need no setting.
+ */
+export interface S3Timeouts {
+	/** Establishing the TCP connection. */
+	readonly connectionMs: number;
+	/**
+	 * Not a byte either way on an open request, such as a server that took the
+	 * request and never answers, or a body that stops arriving.
+	 */
+	readonly idleMs: number;
+	/** The health probe, retries included. */
+	readonly probeMs: number;
+}
+
+export const S3_TIMEOUTS: S3Timeouts = {
+	connectionMs: 5_000,
+	// Above the 6 s the SDK waits for a 100 Continue before sending a body
+	// anyway, and above what a server takes to delete 1000 keys in one call.
+	idleMs: 30_000,
+	// HeadBucket answers in well under a second: a storage this slow cannot
+	// serve notes either.
+	probeMs: 5_000,
+};
+
 const NOTES_PREFIX = "notes/";
 const CLAIMS_PREFIX = "instances/";
 // Parallel single deletes when a server refuses the batch call.
@@ -46,13 +73,21 @@ function isNotFoundError(err: unknown): boolean {
 	return false;
 }
 
-async function streamToBuffer(body: { transformToWebStream(): ReadableStream }): Promise<Buffer> {
+/**
+ * Read a response body whole, giving up when it stalls. The SDK's own idle
+ * timeout cannot see this: above 6 s it is set 3 s into the request and
+ * dropped once the headers are in, so a body that stopped arriving after a
+ * quick answer would hang the request for good.
+ */
+async function streamToBuffer(
+	body: { transformToWebStream(): ReadableStream },
+	idleMs: number,
+): Promise<Buffer> {
 	const chunks: Uint8Array[] = [];
-	const stream = body.transformToWebStream();
-	const reader = stream.getReader();
+	const reader = body.transformToWebStream().getReader();
 
 	for (;;) {
-		const { done, value } = await reader.read();
+		const { done, value } = await readWithin(reader, idleMs);
 		if (done) break;
 		chunks.push(value);
 	}
@@ -60,12 +95,35 @@ async function streamToBuffer(body: { transformToWebStream(): ReadableStream }):
 	return Buffer.concat(chunks);
 }
 
+async function readWithin<T>(
+	reader: ReadableStreamDefaultReader<T>,
+	idleMs: number,
+): Promise<ReadableStreamReadResult<T>> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stalled = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => {
+			reject(new StorageError(`S3 response stalled for ${String(idleMs / 1000)} s`));
+			// Ends the response and closes its connection. A rejection here
+			// would go unhandled and take the process down.
+			reader.cancel().catch(() => undefined);
+		}, idleMs);
+	});
+
+	try {
+		return await Promise.race([reader.read(), stalled]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 export class S3Storage implements StorageBackend {
 	private readonly client: S3Client;
 	private readonly bucket: string;
+	private readonly timeouts: S3Timeouts;
 
-	constructor(config: S3Config) {
+	constructor(config: S3Config, timeouts: S3Timeouts = S3_TIMEOUTS) {
 		this.bucket = config.bucket;
+		this.timeouts = timeouts;
 		this.client = new S3Client({
 			region: config.region,
 			...(config.endpoint ? { endpoint: config.endpoint } : {}),
@@ -74,13 +132,27 @@ export class S3Storage implements StorageBackend {
 				accessKeyId: config.accessKeyId,
 				secretAccessKey: config.secretAccessKey,
 			},
+			// Without these, an endpoint that hangs holds user requests, the
+			// health probe, purges and the sweep for good. The SDK retries a
+			// timeout like a reset connection, three attempts in all: the usual
+			// culprit is one dead pooled connection, which the next attempt
+			// replaces, and the SDK's retry quota stops retrying once failures
+			// pile up. Not requestTimeout: it bounds the whole request, which a
+			// slow upload can outlast, and only warns unless told to throw.
+			requestHandler: {
+				connectionTimeout: timeouts.connectionMs,
+				socketTimeout: timeouts.idleMs,
+			},
 		});
 	}
 
 	async probe(): Promise<void> {
 		// HeadBucket exercises endpoint reachability and credential validity in
 		// one cheap call — the two things that silently rot after a key rotation.
-		await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+		// The deadline covers the retries: the endpoint answers or it is down.
+		await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }), {
+			abortSignal: AbortSignal.timeout(this.timeouts.probeMs),
+		});
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {
@@ -117,7 +189,7 @@ export class S3Storage implements StorageBackend {
 			throw new StorageNotFoundError("Empty response from S3");
 		}
 
-		return streamToBuffer(response.Body);
+		return streamToBuffer(response.Body, this.timeouts.idleMs);
 	}
 
 	async saveChunk(noteId: string, chunkIndex: number, data: Buffer): Promise<string> {
@@ -156,7 +228,7 @@ export class S3Storage implements StorageBackend {
 			throw new StorageNotFoundError("Empty response from S3");
 		}
 
-		return streamToBuffer(response.Body);
+		return streamToBuffer(response.Body, this.timeouts.idleMs);
 	}
 
 	async purge(noteId: string): Promise<void> {
