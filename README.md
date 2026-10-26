@@ -357,6 +357,7 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Privacy | No analytics, no IP addresses or note content in logs. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
+| Image provenance | Signed (cosign, keyless) with a SLSA build provenance attestation, once scanned and smoke-tested — [how to verify](docs/self-hosting.md#verifying-the-image) |
 | HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
 | Storage | Path traversal protection, S3 key validation |
 | Validation | Zod schemas with max length constraints |

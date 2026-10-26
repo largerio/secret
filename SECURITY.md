@@ -62,6 +62,9 @@ its backups. Either way, the content stays protected by the end-to-end layer.
 - `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` on file downloads
 - SQLite `secure_delete` and WAL mode
 - Non-root Docker container with read-only filesystem
+- Signed images: a keyless cosign signature and a SLSA build provenance
+  attestation from the workflow that built them
+  ([how to verify](docs/self-hosting.md#verifying-the-image))
 - No logging of note content, decryption keys, or IP addresses (note IDs do
   appear in cleanup and deletion-retry logs)
 
