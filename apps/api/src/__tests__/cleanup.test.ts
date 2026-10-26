@@ -283,6 +283,144 @@ describe("runCleanup", () => {
 	});
 });
 
+describe("runCleanup in batches", () => {
+	function noteIds(): string[] {
+		return db
+			.select()
+			.from(notes)
+			.all()
+			.map((note) => note.id)
+			.sort();
+	}
+
+	// Expired, oldest first: batches take them in this order.
+	function insertExpiredFileNotes(count: number): void {
+		for (let i = 1; i <= count; i++) {
+			const id = `batched0000${String(i)}`;
+			insertNote(id, {
+				fileCount: 1,
+				filePath: `/data/files/${id}`,
+				expiresAt: new Date(Date.now() - 60_000 + i * 1000),
+			});
+		}
+	}
+
+	it("commits and purges each batch before taking the next", async () => {
+		const notesLeftAtPurge: Record<string, number> = {};
+		const tracked = stubStorage({
+			purge: vi.fn(async (noteId: string) => {
+				notesLeftAtPurge[noteId] = db.select().from(notes).all().length;
+			}),
+		});
+		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		insertExpiredFileNotes(5);
+		insertNote("stillgood001", { expiresAt: new Date(Date.now() + 3_600_000) });
+
+		await runCleanup(db, tracked, 2);
+
+		// Two, two, then a short batch of one ends the pass.
+		expect(notesLeftAtPurge).toEqual({
+			batched00001: 4,
+			batched00002: 4,
+			batched00003: 2,
+			batched00004: 2,
+			batched00005: 1,
+		});
+		expect(noteIds()).toEqual(["stillgood001"]);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"expired notes deleted","count":5'),
+		);
+	});
+
+	it("stops on an empty batch when the last full one took the rest", async () => {
+		const tracked = stubStorage();
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		insertExpiredFileNotes(4);
+
+		await runCleanup(db, tracked, 2);
+
+		expect(noteIds()).toEqual([]);
+		expect(tracked.purge).toHaveBeenCalledTimes(4);
+	});
+
+	it("keeps the batches committed before a failure, and rolls the failing one back whole", async () => {
+		// The fourth note's purge cannot be queued: its batch, the second, fails
+		// after deleting both its notes and queuing the third one's purge.
+		sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+			WHEN NEW.note_id = 'batched00004'
+			BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const tracked = stubStorage();
+		insertExpiredFileNotes(5);
+
+		await runCleanup(db, tracked, 2);
+
+		expect(tracked.purge).toHaveBeenCalledTimes(2);
+		expect(tracked.purge).toHaveBeenCalledWith("batched00001");
+		expect(tracked.purge).toHaveBeenCalledWith("batched00002");
+		// Every note still there has no purge queued, every one gone was purged.
+		expect(noteIds()).toEqual(["batched00003", "batched00004", "batched00005"]);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"msg":"cleanup job failed"'));
+	});
+
+	it("deletes expired upload sessions in batches too", async () => {
+		const tracked = stubStorage();
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		for (let i = 1; i <= 3; i++) {
+			insertUpload(
+				`upload00000${String(i)}`,
+				`uploadnote0${String(i)}`,
+				new Date(Date.now() - 60_000 + i * 1000),
+			);
+		}
+
+		await runCleanup(db, tracked, 2);
+
+		expect(db.select().from(uploads).all()).toHaveLength(0);
+		expect(tracked.purge).toHaveBeenCalledTimes(3);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+	});
+
+	it("lets other work run between batches", async () => {
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		for (let i = 1; i <= 3; i++) {
+			insertNote(`inline00000${String(i)}`);
+		}
+		// Inline notes have nothing to purge: without a turn of the event loop
+		// between batches, the whole pass would run before this callback.
+		let notesLeftWhenRun: number | undefined;
+		setImmediate(() => {
+			notesLeftWhenRun = db.select().from(notes).all().length;
+		});
+
+		await runCleanup(db, stubStorage(), 1);
+
+		expect(notesLeftWhenRun).toBe(2);
+		expect(noteIds()).toEqual([]);
+	});
+
+	it("deletes up to 200 rows per transaction by default", async () => {
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const transaction = vi.spyOn(db, "transaction");
+		const expiresAt = new Date(Date.now() - 10_000);
+		db.transaction(() => {
+			for (let i = 0; i < 450; i++) {
+				insertNote(`bulk${String(i).padStart(8, "0")}`, { expiresAt });
+			}
+		});
+		transaction.mockClear();
+
+		await runCleanup(db, stubStorage());
+
+		expect(noteIds()).toEqual([]);
+		// 200 + 200 + 50 notes, then one empty batch of upload sessions.
+		expect(transaction).toHaveBeenCalledTimes(4);
+	});
+});
+
 describe("startCleanupJob", () => {
 	afterEach(() => {
 		vi.useRealTimers();
