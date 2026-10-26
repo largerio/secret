@@ -7,6 +7,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-26
+
 ### Security
 
 - Images are signed (cosign, keyless) and carry a SLSA build provenance
@@ -29,10 +31,27 @@ image. Each version links to its GitHub release. The SDK has
     note, and the note field has focus on arrival (keyboard and mouse only).
 - Password managers no longer fill the opening password with saved
   credentials.
-- Opening a note shows the reads it has left. A single-read note opens in one
-  click, its warning next to the button. After a wrong password the page says
-  that the attempt spent a read, and how many are left.
-- Sizes follow the reader's language ("2,5 Mo", "2.5 MB").
+- Opening a note shows the reads it has left, and says so before the last one
+  is spent. A single-read note opens in one click, its warning next to the
+  button. After a wrong password the page says that the attempt spent a read,
+  and how many are left.
+- A link whose key is missing or cut short is caught before it spends a read.
+  Pasting the full link into the same tab opens the note.
+- Deleting a note asks for confirmation in the page, not in a browser dialog.
+- Motion stops within five seconds (WCAG 2.2.2): the accent arc turns once when
+  a card appears and once each time it takes the focus, and the glow settles
+  once. Only the progress card keeps turning while it works. Nothing moves
+  under `prefers-reduced-motion`.
+- Accessibility:
+  - Text and controls reach WCAG AA contrast in both themes, whatever
+    `APP_PRIMARY_COLOR` is.
+  - The focus is visible everywhere, and forced-colors mode keeps controls
+    outlined.
+  - Screen readers hear the progress steps, the copy confirmations, and a
+    generated password as one string.
+- Sizes follow the reader's language ("2,5 Mo", "2.5 MB"), counts use each
+  language's plural forms, and the translations were reviewed in all ten
+  languages.
 - The QR code carries the instance's accent and a logo, drawn at error
   correction level H so the logo costs nothing to readers.
 - The default accent is indigo instead of red. `APP_PRIMARY_COLOR` still sets
@@ -42,7 +61,7 @@ image. Each version links to its GitHub release. The SDK has
 
 - `GET /api/v1/notes/:id/exists` also returns `readCount`, the reads a note has
   already spent, so a client can say how many are left before opening it. It
-  stays at 0 on a note without a read limit.
+  stays at 0 on a note without a read limit. The SDK reads it from 1.2.0.
 
 ### Fixed
 
@@ -179,7 +198,8 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/largerio/secret/releases/tag/v1.4.0
 [1.3.2]: https://github.com/largerio/secret/releases/tag/v1.3.2
 [1.3.1]: https://github.com/largerio/secret/releases/tag/v1.3.1
 [1.3.0]: https://github.com/largerio/secret/releases/tag/v1.3.0

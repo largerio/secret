@@ -397,8 +397,8 @@ docker buildx imagetools inspect ghcr.io/largerio/secret:1 --format '{{json .SBO
 On Kubernetes, an admission policy (Kyverno, Sigstore policy-controller) can
 require the same issuer and identity before a pod starts.
 
-`1.3.2` and older were published unsigned. `:1` and `:latest` move to a signed
-image with the next release or the next weekly rebuild.
+Signing starts with `1.4.0`. `1.3.2` and older were published unsigned, and an
+exact tag never changes, so theirs cannot be verified.
 
 ---
 
