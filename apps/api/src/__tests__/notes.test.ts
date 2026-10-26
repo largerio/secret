@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
 import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
@@ -14,6 +15,7 @@ import { createWriteAuth } from "../middleware/auth.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+import { overrideStorage, stubStorage } from "./storageDoubles.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -40,6 +42,7 @@ const TEST_FILES_PATH = "./data/test-files";
 const TEST_SERVER_KEY = randomBytes(32);
 
 let db: AppDatabase;
+let sqlite: DatabaseSync;
 let app: Hono<AppEnv>;
 
 function createApp(
@@ -65,6 +68,23 @@ function createApp(
 	hono.use("/api/v1/notes/*", writeAuth);
 	hono.route("/api/v1/notes", createNotesRoutes());
 	return hono;
+}
+
+function createAppWithFailingPurge(database: AppDatabase) {
+	return createApp(
+		database,
+		overrideStorage(new LocalStorage(TEST_FILES_PATH), {
+			purge: () => Promise.reject(new Error("Simulated storage failure")),
+		}),
+	);
+}
+
+function pendingNoteIds(): string[] {
+	return db
+		.select()
+		.from(pendingDeletions)
+		.all()
+		.map((row) => row.noteId);
 }
 
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -128,7 +148,12 @@ beforeEach(() => {
 	}
 	const result = createDatabase(TEST_DB_PATH);
 	db = result.db;
+	sqlite = result.sqlite;
 	app = createApp(db);
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 afterAll(() => {
@@ -750,6 +775,7 @@ describe("GET /api/v1/notes/:id", () => {
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
 		expect(existsSync(filePath)).toBe(false);
+		expect(pendingNoteIds()).toEqual([]);
 	});
 
 	it("does not return salt for non-password notes", async () => {
@@ -822,15 +848,10 @@ describe("GET /api/v1/notes/:id", () => {
 
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		let storageDown = true;
-		const flakyStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
+		const flakyStorage = overrideStorage(realStorage, {
 			read: (key) =>
 				storageDown ? Promise.reject(new Error("storage unavailable")) : realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
+		});
 		const flakyApp = createApp(db, flakyStorage);
 
 		const failed = await flakyApp.request(`/api/v1/notes/${id}`);
@@ -871,112 +892,26 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(existsSync(filePath)).toBe(true);
 	});
 
-	it("logs error when chunk cleanup fails for expired chunked note", async () => {
+	it("queues the purge of an expired note for a retry when it fails", async () => {
 		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
+			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
 			.run();
-
-		// Use failing storage for chunk deletion
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failStorage: StorageBackend = {
-			save: (nid, data) => realStorage.save(nid, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
-			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
-			deleteChunks: () => Promise.reject("chunk fail string"),
-		};
-		const customApp = new Hono<AppEnv>();
-		customApp.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		customApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		customApp.use("/api/v1/notes/*", writeAuth);
-		customApp.route("/api/v1/notes", createNotesRoutes());
-
-		const res = await customApp.request(`/api/v1/notes/${id}`);
-		expect(res.status).toBe(404);
-	});
-
-	it("logs Error.message when chunk cleanup fails with Error for expired chunked note", async () => {
-		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
-			.where(eq(notesTable.id, id))
-			.run();
-
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failStorage: StorageBackend = {
-			save: (nid, data) => realStorage.save(nid, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (nid, idx, data) => realStorage.saveChunk(nid, idx, data),
-			readChunk: (nid, idx) => realStorage.readChunk(nid, idx),
-			deleteChunks: () => Promise.reject(new Error("chunk fail error")),
-		};
-		const customApp = new Hono<AppEnv>();
-		customApp.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		customApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		customApp.use("/api/v1/notes/*", writeAuth);
-		customApp.route("/api/v1/notes", createNotesRoutes());
+		const failApp = createAppWithFailingPurge(db);
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const res = await customApp.request(`/api/v1/notes/${id}`);
+		const res = await failApp.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
 
-		// The row is gone but its chunks are not: the failure must be recorded for
-		// retry, otherwise the objects are orphaned in storage forever.
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk fail error"`,
-			),
-		);
-		expect(db.select().from(pendingDeletions).all()).toHaveLength(1);
-		consoleSpy.mockRestore();
-	});
-
-	it("returns 404 and cleans up chunks for expired chunked note", async () => {
-		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000), chunkCount: 2, streamHeader: "hdr" })
-			.where(eq(notesTable.id, id))
-			.run();
-
-		const res = await app.request(`/api/v1/notes/${id}`);
-		expect(res.status).toBe(404);
-		expect((await res.json()).error).toBe("Note not found");
+		// The row is gone but its payload is not: the purge stays queued for the
+		// cleanup job, and the log does not carry the note id.
+		expect(pendingNoteIds()).toEqual([id]);
+		const logged = String(consoleSpy.mock.calls[0]?.[0]);
+		expect(logged).toContain('"msg":"storage purge failed, retry scheduled"');
+		expect(logged).not.toContain(id);
 	});
 
 	// A chunked note stores an empty `encryptedData` blob, so serving it from an
@@ -1176,221 +1111,212 @@ describe("DELETE /api/v1/notes/:id", () => {
 	});
 });
 
-describe("storage.delete error resilience", () => {
-	function createAppWithFailingStorage(database: AppDatabase) {
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failingStorage: StorageBackend = {
-			save: (id, data) => realStorage.save(id, data),
-			read: (key) => realStorage.read(key),
-			delete: () => Promise.reject(new Error("Simulated storage failure")),
-			saveChunk: (id, index, data) => realStorage.saveChunk(id, index, data),
-			readChunk: (id, index) => realStorage.readChunk(id, index),
-			deleteChunks: () => Promise.reject(new Error("Simulated storage failure")),
+describe("storage purge resilience", () => {
+	function insertParams(fileCount: number) {
+		return {
+			clientBlob: Buffer.from("payload"),
+			clientNonce: "nonce",
+			hasPassword: false,
+			expiresIn: 3600,
+			maxReads: 1,
+			fileCount,
+			salt: null,
+			quotaBytes: 0,
 		};
-		const hono = new Hono<AppEnv>();
-		hono.onError((err, c) => {
-			if (err instanceof HTTPException) {
-				return c.json({ error: err.message }, err.status);
-			}
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		hono.use("*", async (c, next) => {
-			c.set("db", database);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failingStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		hono.use("/api/v1/notes/*", writeAuth);
-		hono.route("/api/v1/notes", createNotesRoutes());
-		return hono;
 	}
 
-	it("reclaims the stored blob when the insert fails", async () => {
-		// The blob is written before the row exists. Without compensation a failed
-		// insert leaves it referenced by nothing: no `notes` row for the cleanup
-		// job, no `pending_deletions` entry — an orphan that never goes away.
-		const storage = new LocalStorage(TEST_FILES_PATH);
-		const deleted: string[] = [];
-		const trackingStorage: StorageBackend = {
-			...storage,
-			save: (id, data) => storage.save(id, data),
-			delete: (key) => {
-				deleted.push(key);
-				return storage.delete(key);
-			},
-			deleteChunks: (id, count) => storage.deleteChunks(id, count),
-			read: (key) => storage.read(key),
-			saveChunk: (id, index, data) => storage.saveChunk(id, index, data),
-			readChunk: (id, index) => storage.readChunk(id, index),
-		};
-
+	it("purges the stored blob when the insert fails", async () => {
 		// Imported lazily: a static import would evaluate the shared Zod schemas
 		// before @hono/zod-openapi extends Zod with .openapi().
 		const { insertNote } = await import("../routes/notes/helpers.js");
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const saved: string[] = [];
+		const trackingStorage = overrideStorage(storage, {
+			save: async (id, data) => {
+				saved.push(id);
+				return storage.save(id, data);
+			},
+		});
+		sqlite.exec(`CREATE TRIGGER disk_full BEFORE INSERT ON notes
+			BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+		// Drizzle wraps the SQLite error; the trigger's message is its cause.
+		const diskFull = expect.objectContaining({
+			cause: expect.objectContaining({ message: "database or disk is full" }),
+		});
 
-		const brokenDb = {
-			...db,
-			insert: () => ({
-				values: () => ({
-					run: () => {
-						throw new Error("database or disk is full");
-					},
-				}),
-			}),
-		} as unknown as AppDatabase;
+		await expect(insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(1))).rejects.toThrow(
+			diskFull,
+		);
 
-		await expect(
-			insertNote(brokenDb, TEST_SERVER_KEY, trackingStorage, {
-				clientBlob: Buffer.from("payload"),
-				clientNonce: "nonce",
-				hasPassword: false,
-				expiresIn: 3600,
-				maxReads: 1,
-				fileCount: 1,
-				salt: null,
-				quotaBytes: 0,
-			}),
-		).rejects.toThrow("database or disk is full");
+		expect(saved).toHaveLength(1);
+		expect(existsSync(`${TEST_FILES_PATH}/${saved[0]}`)).toBe(false);
+		expect(pendingNoteIds()).toEqual([]);
 
-		expect(deleted).toHaveLength(1);
-
-		// A text-only note stores no blob, so there is nothing to reclaim.
-		deleted.length = 0;
-		await expect(
-			insertNote(brokenDb, TEST_SERVER_KEY, trackingStorage, {
-				clientBlob: Buffer.from("payload"),
-				clientNonce: "nonce",
-				hasPassword: false,
-				expiresIn: 3600,
-				maxReads: 1,
-				fileCount: 0,
-				salt: null,
-				quotaBytes: 0,
-			}),
-		).rejects.toThrow("database or disk is full");
-
-		expect(deleted).toHaveLength(0);
+		// A text-only note stores no blob: nothing to write, nothing to queue.
+		await expect(insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(0))).rejects.toThrow(
+			diskFull,
+		);
+		expect(saved).toHaveLength(1);
+		expect(pendingNoteIds()).toEqual([]);
 	});
 
-	it("delete endpoint succeeds even when storage.delete fails", async () => {
+	it("purges what a failed save left behind", async () => {
+		const { insertNote } = await import("../routes/notes/helpers.js");
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const saved: string[] = [];
+		const halfWriting = overrideStorage(storage, {
+			save: async (id, data) => {
+				saved.push(id);
+				await storage.save(id, data.subarray(0, 3));
+				throw new Error("no space left on device");
+			},
+		});
+
+		await expect(insertNote(db, TEST_SERVER_KEY, halfWriting, insertParams(1))).rejects.toThrow(
+			"no space left on device",
+		);
+
+		expect(existsSync(`${TEST_FILES_PATH}/${saved[0]}`)).toBe(false);
+		expect(pendingNoteIds()).toEqual([]);
+	});
+
+	it("queues the purge before writing, so a crash mid-save leaves no orphan", async () => {
+		const { insertNote } = await import("../routes/notes/helpers.js");
+		let saving: string | undefined;
+		// A save that never settles stands for a process killed during the write.
+		const hangingStorage = stubStorage({
+			save: vi.fn((id: string) => {
+				saving = id;
+				return new Promise<string>(() => {});
+			}),
+		});
+
+		void insertNote(db, TEST_SERVER_KEY, hangingStorage, insertParams(1));
+		await vi.waitFor(() => expect(saving).toBeDefined());
+
+		const [pending] = db.select().from(pendingDeletions).all();
+		expect(pending?.noteId).toBe(saving);
+		// Held off long enough for a slow save to finish first.
+		expect(pending?.nextRetryAt.getTime()).toBeGreaterThan(Date.now() + 59 * 60_000);
+		expect(pending?.nextRetryAt.getTime()).toBeLessThanOrEqual(Date.now() + 60 * 60_000 + 1000);
+	});
+
+	it("drops the queued purge once the note row exists", async () => {
+		await createTestNote({ fileCount: 1 });
+		expect(pendingNoteIds()).toEqual([]);
+	});
+
+	it("delete endpoint succeeds and queues a retry when the purge fails", async () => {
 		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
-		const failApp = createAppWithFailingStorage(db);
+		const failApp = createAppWithFailingPurge(db);
+		vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const res = await failApp.request(`/api/v1/notes/${id}`, {
 			method: "DELETE",
 			headers: authHeaders({ "X-Delete-Token": deleteToken }),
 		});
 		expect(res.status).toBe(200);
-		const json = await res.json();
-		expect(json.deleted).toBe(true);
+		expect((await res.json()).deleted).toBe(true);
+		expect(pendingNoteIds()).toEqual([id]);
 
-		// DB record should be gone
 		const getRes = await failApp.request(`/api/v1/notes/${id}`);
 		expect(getRes.status).toBe(404);
 	});
 
-	it("read endpoint returns 404 for expired note even when storage.delete fails", async () => {
-		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
-		const failApp = createAppWithFailingStorage(db);
+	it("queues no purge when deleting a text-only note", async () => {
+		const { id, deleteToken } = await createTestNote();
+		const tracked = stubStorage();
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notesTable.id, id))
-			.run();
+		const res = await createApp(db, tracked).request(`/api/v1/notes/${id}`, {
+			method: "DELETE",
+			headers: authHeaders({ "X-Delete-Token": deleteToken }),
+		});
 
-		const res = await failApp.request(`/api/v1/notes/${id}`);
-		expect(res.status).toBe(404);
-		expect((await res.json()).error).toBe("Note not found");
+		expect(res.status).toBe(200);
+		expect(tracked.purge).not.toHaveBeenCalled();
+		expect(pendingNoteIds()).toEqual([]);
 	});
 
-	it("burn-after-read returns data even when storage.delete fails", async () => {
+	it("burn-after-read returns data and queues a retry when the purge fails", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
-		const failApp = createAppWithFailingStorage(db);
+		const failApp = createAppWithFailingPurge(db);
+		vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const res = await failApp.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(200);
-		const json = await res.json();
-		expect(json.encryptedData).toBeDefined();
+		expect((await res.json()).encryptedData).toBeDefined();
+		expect(pendingNoteIds()).toEqual([id]);
 
-		// Note should still be deleted from DB
 		const secondRead = await failApp.request(`/api/v1/notes/${id}`);
 		expect(secondRead.status).toBe(404);
 	});
 
-	it("handles non-Error rejection from storage.delete gracefully", async () => {
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const stringFailStorage: StorageBackend = {
-			save: (id, data) => realStorage.save(id, data),
-			read: (key) => realStorage.read(key),
-			delete: () => Promise.reject("string error"),
-			saveChunk: (id, index, data) => realStorage.saveChunk(id, index, data),
-			readChunk: (id, index) => realStorage.readChunk(id, index),
-			deleteChunks: () => Promise.reject("chunk string error"),
-		};
-		const hono = new Hono<AppEnv>();
-		hono.onError((err, c) => {
-			if (err instanceof HTTPException) {
-				return c.json({ error: err.message }, err.status);
-			}
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		hono.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", stringFailStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		hono.use("/api/v1/notes/*", writeAuth);
-		hono.route("/api/v1/notes", createNotesRoutes());
+	it("queues no purge when burning a text-only note", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+		const tracked = stubStorage();
 
-		// Test delete with non-Error rejection
-		const { id, deleteToken } = await createTestNote({ fileCount: 1 });
-		const res = await hono.request(`/api/v1/notes/${id}`, {
-			method: "DELETE",
-			headers: authHeaders({ "X-Delete-Token": deleteToken }),
-		});
+		const res = await createApp(db, tracked).request(`/api/v1/notes/${id}`);
+
 		expect(res.status).toBe(200);
-		expect((await res.json()).deleted).toBe(true);
+		expect(tracked.purge).not.toHaveBeenCalled();
+		expect(pendingNoteIds()).toEqual([]);
+	});
 
-		// Test expired note read with non-Error rejection
-		const { id: id2 } = await createTestNote({ expiresIn: 300, fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq: eqFn } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eqFn(notesTable.id, id2))
-			.run();
-		const res2 = await hono.request(`/api/v1/notes/${id2}`);
-		expect(res2.status).toBe(404);
+	describe("the purge is queued in the transaction that lets go of the payload", () => {
+		function failOutboxInserts(): void {
+			sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+				BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		}
 
-		// Test burn-after-read with non-Error rejection
-		const { id: id3 } = await createTestNote({ maxReads: 1, fileCount: 1 });
-		const res3 = await hono.request(`/api/v1/notes/${id3}`);
-		expect(res3.status).toBe(200);
+		it("keeps a note whose purge cannot be queued when it is deleted", async () => {
+			const { id, deleteToken } = await createTestNote({ fileCount: 1 });
+			failOutboxInserts();
+			vi.spyOn(console, "error").mockImplementation(() => {});
 
-		// Test delete of chunked note with non-Error rejection from deleteChunks
-		const { notes: nt } = await import("../db/schema.js");
-		const { eq: e } = await import("drizzle-orm");
-		const { id: id4, deleteToken: dt4 } = await createTestNote({ fileCount: 1 });
-		db.update(nt).set({ chunkCount: 2, streamHeader: "hdr" }).where(e(nt.id, id4)).run();
-		const res4 = await hono.request(`/api/v1/notes/${id4}`, {
-			method: "DELETE",
-			headers: authHeaders({ "X-Delete-Token": dt4 }),
+			const res = await app.request(`/api/v1/notes/${id}`, {
+				method: "DELETE",
+				headers: authHeaders({ "X-Delete-Token": deleteToken }),
+			});
+
+			expect(res.status).toBe(500);
+			expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(200);
 		});
-		expect(res4.status).toBe(200);
-		expect((await res4.json()).deleted).toBe(true);
+
+		it("does not burn a note whose purge cannot be queued", async () => {
+			const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+			failOutboxInserts();
+			vi.spyOn(console, "error").mockImplementation(() => {});
+
+			expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(500);
+
+			const { notes: notesTable } = await import("../db/schema.js");
+			const { eq } = await import("drizzle-orm");
+			expect(db.select().from(notesTable).where(eq(notesTable.id, id)).get()?.readCount).toBe(0);
+		});
+
+		it("drops the save's queued purge in the insert's own transaction", async () => {
+			const { insertNote } = await import("../routes/notes/helpers.js");
+			const { notes: notesTable } = await import("../db/schema.js");
+			const storage = new LocalStorage(TEST_FILES_PATH);
+			const saved: string[] = [];
+			const trackingStorage = overrideStorage(storage, {
+				save: async (id, data) => {
+					saved.push(id);
+					return storage.save(id, data);
+				},
+			});
+			sqlite.exec(`CREATE TRIGGER outbox_locked BEFORE DELETE ON pending_deletions
+				BEGIN SELECT RAISE(ABORT, 'outbox locked'); END`);
+			vi.spyOn(console, "error").mockImplementation(() => {});
+
+			await expect(
+				insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(1)),
+			).rejects.toThrow();
+
+			// No note may exist while its blob is queued for a purge.
+			expect(db.select().from(notesTable).all()).toHaveLength(0);
+			expect(existsSync(`${TEST_FILES_PATH}/${saved[0]}`)).toBe(false);
+		});
 	});
 });
 
@@ -1516,6 +1442,106 @@ describe("Chunked upload flow", () => {
 			body: chunk as BodyInit,
 		});
 		expect(res.status).toBe(404);
+	});
+
+	it("purges a chunk whose session was swept while it was being written", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("late");
+		const { uploads: up } = await import("../db/schema.js");
+		const { eq: e } = await import("drizzle-orm");
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		let noteId = "";
+		// The cleanup job deletes the expired session mid-write.
+		const racingApp = createApp(
+			db,
+			overrideStorage(storage, {
+				saveChunk: (id, index, data) => {
+					noteId = id;
+					db.delete(up).where(e(up.id, initJson.uploadId)).run();
+					return storage.saveChunk(id, index, data);
+				},
+			}),
+		);
+
+		const res = await racingApp.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Upload session not found or expired");
+		expect(existsSync(`${TEST_FILES_PATH}/${noteId}`)).toBe(false);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+	});
+
+	it("answers 409 to a chunk that lands after its upload was completed", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("only");
+		const put = (target: Hono<AppEnv>) =>
+			target.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+				body: chunk as BodyInit,
+			});
+		expect((await put(app)).status).toBe(200);
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		let noteId = "";
+		// A retried chunk races the client's own /complete.
+		const racingApp = createApp(
+			db,
+			overrideStorage(storage, {
+				saveChunk: async (id, index, data) => {
+					noteId = id;
+					const done = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+						method: "POST",
+						headers: authHeaders(),
+					});
+					expect(done.status).toBe(201);
+					return storage.saveChunk(id, index, data);
+				},
+			}),
+		);
+
+		const res = await put(racingApp);
+
+		expect(res.status).toBe(409);
+		expect((await res.json()).error).toBe("Upload already completed");
+		expect(pendingNoteIds()).toEqual([]);
+		// The completed note keeps its chunks.
+		const stream = await app.request(`/api/v1/notes/${noteId}/stream`);
+		expect(stream.status).toBe(200);
+		await stream.arrayBuffer();
+	});
+
+	it("queues the purge of a late chunk for a retry when it fails", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const chunk = chunkData("late");
+		const { uploads: up } = await import("../db/schema.js");
+		const { eq: e } = await import("drizzle-orm");
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		let noteId = "";
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const racingApp = createApp(
+			db,
+			overrideStorage(storage, {
+				saveChunk: (id, index, data) => {
+					noteId = id;
+					db.delete(up).where(e(up.id, initJson.uploadId)).run();
+					return storage.saveChunk(id, index, data);
+				},
+				purge: () => Promise.reject(new Error("down")),
+			}),
+		);
+
+		const res = await racingApp.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+
+		expect(res.status).toBe(404);
+		expect(pendingNoteIds()).toEqual([noteId]);
 	});
 
 	it("rejects chunk with out-of-range index", async () => {
@@ -2021,7 +2047,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		expect(json.error).toBe("Note not found");
 	});
 
-	it("logs error when chunk cleanup fails for expired chunked note on stream", async () => {
+	it("queues the purge of an expired chunked note for a retry when it fails", async () => {
 		const { id } = await createChunkedNote();
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
@@ -2029,88 +2055,19 @@ describe("GET /api/v1/notes/:id/stream", () => {
 			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
 			.run();
-
-		const failStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue("stream chunk fail string"),
-		};
-		const failApp = new Hono<AppEnv>();
-		failApp.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		failApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		failApp.route("/api/v1/notes", createNotesRoutes());
+		const failApp = createApp(
+			db,
+			stubStorage({ purge: vi.fn().mockRejectedValue(new Error("stream chunk error obj")) }),
+		);
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"stream chunk fail string"`,
-			),
+			expect.stringContaining('"msg":"storage purge failed, retry scheduled"'),
 		);
-		consoleSpy.mockRestore();
-	});
-
-	it("logs Error.message when chunk cleanup fails with Error for expired note on stream", async () => {
-		const { id } = await createChunkedNote();
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable)
-			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notesTable.id, id))
-			.run();
-
-		const failStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue(new Error("stream chunk error obj")),
-		};
-		const errApp = new Hono<AppEnv>();
-		errApp.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		errApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		errApp.route("/api/v1/notes", createNotesRoutes());
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const res = await errApp.request(`/api/v1/notes/${id}/stream`);
-		expect(res.status).toBe(404);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"stream chunk error obj"`,
-			),
-		);
-		consoleSpy.mockRestore();
+		expect(pendingNoteIds()).toEqual([id]);
 	});
 
 	it("returns 404 for non-existent note on stream", async () => {
@@ -2197,32 +2154,8 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		return createHash("sha256").update(data).digest("hex");
 	}
 
-	function createAppWithCustomStorage(database: AppDatabase, storage: StorageBackend) {
-		const hono = new Hono<AppEnv>();
-		hono.onError((err, c) => {
-			if (err instanceof HTTPException) {
-				return c.json({ error: err.message }, err.status);
-			}
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		hono.use("*", async (c, next) => {
-			c.set("db", database);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", storage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		hono.use("/api/v1/notes/*", writeAuth);
-		hono.route("/api/v1/notes", createNotesRoutes());
-		return hono;
-	}
-
 	async function createChunkedNoteViaApp(
-		targetApp: ReturnType<typeof createAppWithCustomStorage>,
+		targetApp: Hono<AppEnv>,
 		chunkCount = 1,
 	): Promise<{ id: string; deleteToken: string }> {
 		const initRes = await targetApp.request("/api/v1/notes/upload/init", {
@@ -2262,22 +2195,17 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 	it("errors the stream when a later chunk read fails mid-stream", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		// Create a 2-chunk note using real storage first
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 2);
 
 		// Stream through a storage whose chunk-1 read fails (chunk 0 still works,
 		// so the pre-flight check passes and headers are already sent).
-		const failingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const failingStorage = overrideStorage(realStorage, {
 			readChunk: (noteId, idx) =>
 				idx === 0
 					? realStorage.readChunk(noteId, idx)
 					: Promise.reject(new Error("mid-stream read failure")),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const failApp = createAppWithCustomStorage(db, failingStorage);
+		});
+		const failApp = createApp(db, failingStorage);
 
 		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200); // Headers committed before the failure
@@ -2295,22 +2223,17 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 	it("keeps a burn-after-read note whose chunk 0 is too small for an auth tag", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		// Create note using real storage first
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		// Now create an app with a storage that returns too-small chunk data
-		const corruptStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const corruptStorage = overrideStorage(realStorage, {
 			readChunk: () => Promise.resolve(Buffer.alloc(20)), // 12 IV + 8 data (< 16 auth tag)
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
+		});
+		const corruptApp = createApp(db, corruptStorage);
 
 		// Chunk 0 is decrypted before the read counts, so this fails up front.
 		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
@@ -2321,83 +2244,44 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		expect(row?.readCount).toBe(0);
 	});
 
-	it("logs error when deleteChunks fails during burn-after-read stream", async () => {
+	it("holds the purge of a burned chunked note until its stream ends, then retries a failure", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failDeleteChunksStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
-			deleteChunks: () => Promise.reject(new Error("chunk cleanup failure")),
-		};
-		const failApp = createAppWithCustomStorage(db, failDeleteChunksStorage);
-
-		// Create note with maxReads=1 (burn-after-read)
-		const { id } = await createChunkedNoteViaApp(failApp);
-		// Update to burn-after-read
+		const purge = vi.fn().mockRejectedValue(new Error("chunk cleanup failure"));
+		const failApp = createApp(db, overrideStorage(realStorage, { purge }));
+		const { id } = await createChunkedNoteViaApp(failApp, 2);
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
 		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
+
+		// Burned and queued, but the cleanup job is held off for as long as a
+		// slow client may still be reading.
+		const [queued] = db.select().from(pendingDeletions).all();
+		expect(queued?.noteId).toBe(id);
+		expect(queued?.nextRetryAt.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
+		expect(queued?.nextRetryAt.getTime()).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60_000 + 1000);
+		expect(purge).not.toHaveBeenCalled();
+
 		await res.arrayBuffer();
 
+		expect(purge).toHaveBeenCalledWith(id);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk cleanup failure"`,
-			),
+			expect.stringContaining('"msg":"storage purge failed, retry scheduled"'),
 		);
-		consoleSpy.mockRestore();
-	});
-
-	it("logs non-Error when deleteChunks fails with string during burn-after-read stream", async () => {
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
-			deleteChunks: () => Promise.reject("string delete error"),
-		};
-		const failApp = createAppWithCustomStorage(db, failStorage);
-
-		const { id } = await createChunkedNoteViaApp(failApp);
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		const res = await failApp.request(`/api/v1/notes/${id}/stream`);
-		expect(res.status).toBe(200);
-		await res.arrayBuffer();
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"string delete error"`,
-			),
-		);
-		consoleSpy.mockRestore();
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(1);
 	});
 
 	it("returns 500 when readChunk fails pre-flight with a non-404 error", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
-		const errorStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const errorStorage = overrideStorage(realStorage, {
 			readChunk: () => Promise.reject(new Error("disk read failure")),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const errorApp = createAppWithCustomStorage(db, errorStorage);
+		});
+		const errorApp = createApp(db, errorStorage);
 
 		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(500);
@@ -2410,18 +2294,13 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 	it("returns 404 when chunk 0 is missing (StorageNotFoundError)", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
 		const { StorageNotFoundError } = await import("../storage/errors.js");
-		const missingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const missingStorage = overrideStorage(realStorage, {
 			readChunk: () => Promise.reject(new StorageNotFoundError()),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const missingApp = createAppWithCustomStorage(db, missingStorage);
+		});
+		const missingApp = createApp(db, missingStorage);
 
 		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
@@ -2430,50 +2309,42 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 	it("keeps a burn-after-read note whose chunk 0 is missing", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage));
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const { StorageNotFoundError } = await import("../storage/errors.js");
-		const missingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const missingStorage = overrideStorage(realStorage, {
 			readChunk: () => Promise.reject(new StorageNotFoundError()),
-			deleteChunks: vi.fn().mockResolvedValue(undefined),
-		};
-		const missingApp = createAppWithCustomStorage(db, missingStorage);
+			purge: vi.fn().mockResolvedValue(undefined),
+		});
+		const missingApp = createApp(db, missingStorage);
 
 		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
 
 		// The read never counted, so nothing was burned or cleaned up.
-		expect(missingStorage.deleteChunks).not.toHaveBeenCalled();
+		expect(missingStorage.purge).not.toHaveBeenCalled();
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		expect(row?.readCount).toBe(0);
 	});
 
 	it("aborts the stream when chunk decryption throws inside the loop", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 2);
 
 		// Chunk 0 is genuine (it is decrypted before headers are sent); chunk 1
 		// passes the IV+tag length check but fails AES-GCM authentication,
 		// exercising the catch in the ReadableStream pull().
 		const garbage = Buffer.alloc(64);
-		const corruptStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const corruptStorage = overrideStorage(realStorage, {
 			readChunk: (noteId, idx) =>
 				idx === 0 ? realStorage.readChunk(noteId, idx) : Promise.resolve(garbage),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const corruptApp = createAppWithCustomStorage(db, corruptStorage);
+		});
+		const corruptApp = createApp(db, corruptStorage);
 
 		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
@@ -2483,24 +2354,16 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 	it("applies backpressure: reads at most the prefetch window until the client consumes", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const chunkCount = 12;
-		const { id } = await createChunkedNoteViaApp(
-			createAppWithCustomStorage(db, realStorage),
-			chunkCount,
-		);
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), chunkCount);
 
 		const readChunkCalls: number[] = [];
-		const countingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const countingStorage = overrideStorage(realStorage, {
 			readChunk: (noteId, idx) => {
 				readChunkCalls.push(idx);
 				return realStorage.readChunk(noteId, idx);
 			},
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
-		const countingApp = createAppWithCustomStorage(db, countingStorage);
+		});
+		const countingApp = createApp(db, countingStorage);
 
 		const res = await countingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
@@ -2527,22 +2390,15 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 	it("runs burn-after-read cleanup when the client cancels mid-stream", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 4);
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 4);
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
-		const deleteChunks = vi.fn().mockResolvedValue(undefined);
-		const spyStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
-			deleteChunks,
-		};
-		const spyApp = createAppWithCustomStorage(db, spyStorage);
+		const purge = vi.fn().mockResolvedValue(undefined);
+		const spyStorage = overrideStorage(realStorage, { purge });
+		const spyApp = createApp(db, spyStorage);
 
 		const res = await spyApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
@@ -2551,13 +2407,14 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await reader.read();
 		await reader.cancel();
 
-		expect(deleteChunks).toHaveBeenCalledTimes(1);
-		expect(deleteChunks).toHaveBeenCalledWith(id, 4);
+		expect(purge).toHaveBeenCalledTimes(1);
+		expect(purge).toHaveBeenCalledWith(id);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 	});
 
 	it("finalizes exactly once when cancel races an in-flight chunk read", async () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const { id } = await createChunkedNoteViaApp(createAppWithCustomStorage(db, realStorage), 2);
+		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 2);
 
 		const { notes: notesTable } = await import("../db/schema.js");
 		const { eq } = await import("drizzle-orm");
@@ -2570,16 +2427,12 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const pendingChunk1 = new Promise<Buffer>((resolve) => {
 			releaseChunk1 = resolve;
 		});
-		const deleteChunks = vi.fn().mockResolvedValue(undefined);
-		const racingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
+		const purge = vi.fn().mockResolvedValue(undefined);
+		const racingStorage = overrideStorage(realStorage, {
 			readChunk: (noteId, idx) => (idx === 0 ? realStorage.readChunk(noteId, idx) : pendingChunk1),
-			deleteChunks,
-		};
-		const racingApp = createAppWithCustomStorage(db, racingStorage);
+			purge,
+		});
+		const racingApp = createApp(db, racingStorage);
 
 		const res = await racingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(200);
@@ -2591,13 +2444,13 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
 		await reader.cancel();
-		expect(deleteChunks).toHaveBeenCalledTimes(1);
+		expect(purge).toHaveBeenCalledTimes(1);
 
 		// Release the in-flight read; its pull() fails past cancellation and must
 		// not run the cleanup a second time.
 		releaseChunk1(Buffer.alloc(64));
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(deleteChunks).toHaveBeenCalledTimes(1);
+		expect(purge).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -2665,57 +2518,22 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 		expect(existsJson.exists).toBe(false);
 	});
 
-	it("logs error when storage.deleteChunks fails during delete", async () => {
-		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const failStorage: StorageBackend = {
-			save: (id, data) => realStorage.save(id, data),
-			read: (key) => realStorage.read(key),
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (id, idx, data) => realStorage.saveChunk(id, idx, data),
-			readChunk: (id, idx) => realStorage.readChunk(id, idx),
-			deleteChunks: () => Promise.reject(new Error("chunk delete failure")),
-		};
-
-		const failApp = new Hono<AppEnv>();
-		failApp.onError((err, c) => {
-			if (err instanceof HTTPException) {
-				return c.json({ error: err.message }, err.status);
-			}
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		failApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", failStorage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			await next();
-		});
-		const writeAuth = createWriteAuth([]);
-		failApp.use("/api/v1/notes/*", writeAuth);
-		failApp.route("/api/v1/notes", createNotesRoutes());
-
-		// Create chunked note with regular app (which uses real storage for saveChunk)
+	it("queues a retry when the purge of a deleted chunked note fails", async () => {
+		const failApp = createAppWithFailingPurge(db);
 		const { id, deleteToken } = await createChunkedNote();
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
 		const deleteRes = await failApp.request(`/api/v1/notes/${id}`, {
 			method: "DELETE",
 			headers: authHeaders({ "X-Delete-Token": deleteToken }),
 		});
 		expect(deleteRes.status).toBe(200);
-		const json = await deleteRes.json();
-		expect(json.deleted).toBe(true);
+		expect((await deleteRes.json()).deleted).toBe(true);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				`"msg":"storage delete failed, scheduling retry","noteId":"${id}","detail":"chunk delete failure"`,
-			),
+			expect.stringContaining('"msg":"storage purge failed, retry scheduled"'),
 		);
-		consoleSpy.mockRestore();
+		expect(pendingNoteIds()).toEqual([id]);
 	});
 });
 
@@ -2868,18 +2686,13 @@ describe("burn-after-read under concurrent reads", () => {
 		// The payload is read before the read counts, so the other reader's burn
 		// can land in between: this reader has the blob but must not serve it.
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
-		const racingStorage: StorageBackend = {
-			save: (noteId, data) => realStorage.save(noteId, data),
+		const racingStorage = overrideStorage(realStorage, {
 			read: async (key) => {
 				const data = await realStorage.read(key);
 				db.delete(notesTable).where(eq(notesTable.id, id)).run();
 				return data;
 			},
-			delete: (key) => realStorage.delete(key),
-			saveChunk: (noteId, idx, data) => realStorage.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => realStorage.readChunk(noteId, idx),
-			deleteChunks: (noteId, cnt) => realStorage.deleteChunks(noteId, cnt),
-		};
+		});
 
 		const res = await createApp(db, racingStorage).request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);

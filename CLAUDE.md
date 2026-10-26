@@ -36,7 +36,7 @@ Monorepo with pnpm workspaces:
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
   - Error handling: Business logic errors use `HTTPException`, validation via `defaultHook`
   - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
-  - Cleanup: Background job deletes expired notes (`src/cleanup.ts`)
+  - Cleanup: Background job deletes expired notes (`src/cleanup.ts`). Storage purges go through the `pending_deletions` outbox (`src/pendingDeletions.ts`): enqueued in the transaction that deletes the row, run after commit, retried by the job. A daily sweep (`src/reconcile.ts`) purges stored objects no row points to, only on storage no other database has claimed
   - Entry point: `src/index.ts`
 
 - **`apps/web`** — SvelteKit 3 frontend (Svelte 5, Tailwind CSS 4)

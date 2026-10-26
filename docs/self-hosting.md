@@ -12,7 +12,8 @@ and runs as a single container.
 | Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
 
 Once it is up: [API keys](#api-keys-for-the-sdk) ·
-[Backup & restore](#backup--restore) · [Updating](#updating) ·
+[Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
+[Updating](#updating) ·
 [Verifying the image](#verifying-the-image) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
@@ -327,6 +328,90 @@ docker compose start
 
 Make sure the restored instance uses the **same** `SERVER_ENCRYPTION_KEY` as the
 one that produced the backup, or the notes won't decrypt.
+
+---
+
+## Storage cleanup
+
+A note's files are deleted from storage as soon as the note goes: read to its
+limit, deleted with its token, or expired. Each deletion is recorded in the
+database first, so a storage outage or a restart in the middle cannot lose it:
+the cleanup job retries it, with backoff, for a little over a day.
+
+What still slips through is removed by a daily sweep: any stored file older than
+a day that no note, upload or pending deletion points to. The first sweep runs
+ten minutes after startup. It logs a line when it removes something.
+
+For its first day on a storage, a database's sweep deletes nothing: it logs how
+many stored notes it does not know (`storage sweep on trial`). A large count on
+an instance that just started means it runs on the wrong database, such as a new
+volume after a renamed compose project: stop it before the day is out.
+
+### One storage location per instance
+
+The sweep trusts the database to know every note, so the bucket (or
+`FILES_PATH`) must belong to one instance. To enforce it, each database records
+its claim in the storage at startup, whether it sweeps or not (`instances/<id>`
+in the bucket, `FILES_PATH/.instances/<id>` on disk). When the sweep finds
+another claim it deletes nothing and logs a warning instead:
+
+```
+storage sweep skipped: another database has claimed this storage
+```
+
+This happens when two instances share a bucket, and also when an instance starts
+on an empty database while the storage still holds the notes of a database that
+claimed it: a lost volume, a renamed compose project, or a database backup older
+than the first claim. Point each instance at its own bucket, or restore the right
+database and delete the claim the wrong one left. If the other database is gone
+for good, delete its claim; the next sweep resumes.
+
+A copy of a database carries its claim: an instance restored from another's
+volume (a staging copy of production, say) cannot be told apart and must get a
+bucket of its own.
+
+To turn the sweep off, set `STORAGE_RECONCILE=false`. Deletions are still
+retried; only the files they miss stay behind.
+
+### S3 bucket settings
+
+- **Versioning off.** On a versioned bucket a deletion only hides the object:
+  the ciphertext of every note stays in its earlier versions. If versioning must
+  stay on, expire noncurrent versions after a day.
+- **No object lock or retention rule**: notes must be deletable at any time.
+- **Permissions.** The key needs to read, write, delete and list objects under
+  `notes/`, and to write and list them under `instances/`.
+- **A lifecycle rule** as a safety net. Incomplete multipart uploads, left when
+  the server stops in the middle of a large file, are invisible to the sweep:
+  abort them after a day. And since no note outlives the 30-day retention
+  ceiling, anything under `notes/` older than 31 days is garbage. Keep the rule
+  to that prefix: `instances/` holds the claims.
+
+With the AWS CLI (other S3 servers such as Cloudflare R2, Scaleway or Garage
+accept the same two actions; check your provider's documentation):
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket <bucket> \
+  --lifecycle-configuration '{
+    "Rules": [
+      {
+        "ID": "abort-incomplete-uploads",
+        "Status": "Enabled",
+        "Filter": {},
+        "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+      },
+      {
+        "ID": "expire-notes",
+        "Status": "Enabled",
+        "Filter": { "Prefix": "notes/" },
+        "Expiration": { "Days": 31 }
+      }
+    ]
+  }'
+```
+
+Add `--endpoint-url` for a server other than AWS. If you lower `MAX_EXPIRY`,
+you can lower the expiration to match: one day more than the ceiling.
 
 ---
 

@@ -1,9 +1,9 @@
 import { eq, lte } from "drizzle-orm";
 import { runWithConcurrency } from "./concurrency.js";
-import type { AppDatabase } from "./db/index.js";
+import type { AppDatabase, Transaction } from "./db/index.js";
 import { pendingDeletions } from "./db/schema.js";
 import { log } from "./logger.js";
-import type { StorageBackend } from "./storage/index.js";
+import { describeStorageError, type StorageBackend } from "./storage/index.js";
 
 const RETRY_BACKOFF_MS: readonly number[] = [
 	30_000, // 30s (also the initial delay before the first retry)
@@ -17,71 +17,93 @@ const INITIAL_BACKOFF_MS = RETRY_BACKOFF_MS[0] as number;
 const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length;
 const DRAIN_BATCH_LIMIT = 1000;
 
-export type DeletionTarget =
-	| { readonly noteId: string; readonly kind: "file"; readonly filePath: string }
-	| { readonly noteId: string; readonly kind: "chunks"; readonly chunkCount: number };
-
-interface DbDeletionShape {
+/** A purge owed for a note's stored payload, recorded in `pending_deletions`. */
+export interface PendingDeletion {
+	readonly id: number;
 	readonly noteId: string;
-	readonly filePath?: string | null;
-	readonly chunkCount?: number | null;
 }
 
-// Narrow a (filePath, chunkCount) DB-shaped row into the discriminated target.
-// Returns undefined if the row carries no work — callers treat this as a no-op.
-function toDeletionTarget(row: DbDeletionShape): DeletionTarget | undefined {
-	if (row.chunkCount && row.chunkCount > 0) {
-		return { noteId: row.noteId, kind: "chunks", chunkCount: row.chunkCount };
-	}
-	if (row.filePath) {
-		return { noteId: row.noteId, kind: "file", filePath: row.filePath };
-	}
-	return undefined;
+/** Whether a note row points at a payload in storage (a file or chunks). */
+export function hasStoredPayload(note: {
+	filePath: string | null;
+	chunkCount: number | null;
+}): boolean {
+	return note.filePath !== null || (note.chunkCount ?? 0) > 0;
 }
 
-async function tryDelete(storage: StorageBackend, target: DeletionTarget): Promise<void> {
-	if (target.kind === "chunks") {
-		await storage.deleteChunks(target.noteId, target.chunkCount);
-	} else {
-		await storage.delete(target.filePath);
-	}
-}
-
-function scheduleRow(db: AppDatabase, target: DeletionTarget): void {
-	const now = new Date();
-	db.insert(pendingDeletions)
+/**
+ * Record that a note's stored payload must go, in the transaction that lets go
+ * of it: the note row or the upload session deleted. Committed together, a
+ * crash before the purge leaves this row for the cleanup job rather than an
+ * object nothing points to.
+ *
+ * The caller purges right after the commit (`runDeletion`). `delayMs` holds
+ * the cleanup job off until that attempt has had time to finish.
+ */
+export function enqueueDeletion(
+	tx: Transaction,
+	noteId: string,
+	delayMs = INITIAL_BACKOFF_MS,
+): PendingDeletion {
+	const now = Date.now();
+	const row = tx
+		.insert(pendingDeletions)
 		.values({
-			noteId: target.noteId,
-			filePath: target.kind === "file" ? target.filePath : null,
-			chunkCount: target.kind === "chunks" ? target.chunkCount : null,
+			noteId,
 			attempts: 0,
-			nextRetryAt: new Date(now.getTime() + INITIAL_BACKOFF_MS),
-			createdAt: now,
+			nextRetryAt: new Date(now + delayMs),
+			createdAt: new Date(now),
 		})
-		.run();
+		.returning({ id: pendingDeletions.id })
+		.get() as { id: number };
+	return { id: row.id, noteId };
 }
 
-export function schedulePendingDeletion(db: AppDatabase, row: DbDeletionShape): void {
-	const target = toDeletionTarget(row);
-	if (target) scheduleRow(db, target);
+/** Drop a deletion no longer owed: the payload it covered now belongs to a note. */
+export function cancelDeletion(tx: Transaction, deletion: PendingDeletion): void {
+	tx.delete(pendingDeletions).where(eq(pendingDeletions.id, deletion.id)).run();
 }
 
-// Best-effort delete; on failure, persist a row in pending_deletions so the
-// cleanup job can retry. Routes call this AFTER the note row is gone from
-// the DB, so an unhandled rejection would otherwise orphan blobs on disk/S3.
-export async function deleteOrSchedule(
+// Purge, then drop the row. Returns why it failed, worded for a log line, or
+// undefined once done.
+async function settle(
 	db: AppDatabase,
 	storage: StorageBackend,
-	row: DbDeletionShape,
-): Promise<void> {
-	const target = toDeletionTarget(row);
-	if (!target) return;
+	deletion: PendingDeletion,
+): Promise<string | undefined> {
 	try {
-		await tryDelete(storage, target);
+		await storage.purge(deletion.noteId);
+		db.delete(pendingDeletions).where(eq(pendingDeletions.id, deletion.id)).run();
+		return undefined;
 	} catch (err: unknown) {
-		const detail = Error.isError(err) ? err.message : String(err);
-		log.error("storage delete failed, scheduling retry", { noteId: target.noteId, detail });
-		scheduleRow(db, target);
+		return describeStorageError(err);
+	}
+}
+
+/**
+ * Purge now, then drop the row. Never rejects: on failure the row stays and
+ * the cleanup job retries it with backoff. Logs carry the row id, never the
+ * note id.
+ */
+export async function runDeletion(
+	db: AppDatabase,
+	storage: StorageBackend,
+	deletion: PendingDeletion,
+): Promise<void> {
+	const failure = await settle(db, storage, deletion);
+	if (failure === undefined) {
+		return;
+	}
+	log.error("storage purge failed, retry scheduled", { deletionId: deletion.id, detail: failure });
+	try {
+		// The delay it was queued with only had to cover this attempt, which
+		// has now failed: retry on the backoff schedule, not a day from now.
+		db.update(pendingDeletions)
+			.set({ nextRetryAt: new Date(Date.now() + INITIAL_BACKOFF_MS) })
+			.where(eq(pendingDeletions.id, deletion.id))
+			.run();
+	} catch {
+		// The database is failing too: the row keeps its first delay.
 	}
 }
 
@@ -103,39 +125,26 @@ export async function drainPendingDeletions(
 	let failed = 0;
 
 	await runWithConcurrency(due, concurrency, async (row) => {
-		const target = toDeletionTarget(row);
-		if (!target) {
-			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
-			return;
-		}
-
-		try {
-			await tryDelete(storage, target);
-			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+		const failure = await settle(db, storage, row);
+		if (failure === undefined) {
 			drained++;
 			return;
-		} catch (err: unknown) {
-			const detail = Error.isError(err) ? err.message : String(err);
-			const nextAttempts = row.attempts + 1;
-
-			if (nextAttempts >= MAX_ATTEMPTS) {
-				log.error("giving up on pending deletion", {
-					noteId: row.noteId,
-					attempts: nextAttempts,
-					detail,
-				});
-				db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
-				failed++;
-				return;
-			}
-
-			const backoff = RETRY_BACKOFF_MS[nextAttempts] as number;
-			db.update(pendingDeletions)
-				.set({ attempts: nextAttempts, nextRetryAt: new Date(Date.now() + backoff) })
-				.where(eq(pendingDeletions.id, row.id))
-				.run();
-			failed++;
 		}
+		failed++;
+
+		const attempts = row.attempts + 1;
+		if (attempts >= MAX_ATTEMPTS) {
+			// The storage sweep (reconcile.ts) picks the object up once this row
+			// is gone.
+			log.error("giving up on pending deletion", { deletionId: row.id, attempts, detail: failure });
+			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+			return;
+		}
+
+		db.update(pendingDeletions)
+			.set({ attempts, nextRetryAt: new Date(Date.now() + (RETRY_BACKOFF_MS[attempts] as number)) })
+			.where(eq(pendingDeletions.id, row.id))
+			.run();
 	});
 
 	return { drained, failed };

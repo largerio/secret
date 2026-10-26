@@ -27,13 +27,14 @@ function readEnvNumber(value: string | undefined, fallback: number): number {
 }
 
 /**
- * On: "1" or "true". Off: "0", "false" or blank. Anything else is refused, so
- * a typo such as `yes` cannot silently mean off.
+ * On: "1" or "true". Off: "0" or "false". Blank keeps the default. Anything
+ * else is refused, so a typo such as `yes` cannot silently mean off.
  */
-function readEnvBoolean(name: string, value: string | undefined): boolean {
+function readEnvBoolean(name: string, value: string | undefined, fallback = false): boolean {
 	const normalized = (value ?? "").trim().toLowerCase();
+	if (normalized === "") return fallback;
 	if (normalized === "1" || normalized === "true") return true;
-	if (normalized === "" || normalized === "0" || normalized === "false") return false;
+	if (normalized === "0" || normalized === "false") return false;
 	throw new ConfigError(`${name} must be true or false (or 1 or 0)`);
 }
 
@@ -78,6 +79,8 @@ export interface AppConfig {
 	readonly apiKeys: ReadonlyArray<string>;
 	readonly storageBackend: StorageType;
 	readonly storage: StorageConfig;
+	/** Daily sweep of stored objects no note points to (see reconcile.ts). */
+	readonly storageReconcile: boolean;
 	readonly maxFileSize: number;
 	readonly maxFilesPerNote: number;
 	/** Total bytes of stored encrypted payloads; 0 disables the quota. */
@@ -161,6 +164,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const s3AccessKeyId = env["S3_ACCESS_KEY_ID"] ?? "";
 	const s3SecretAccessKey = env["S3_SECRET_ACCESS_KEY"] ?? "";
 	const s3ForcePathStyle = readEnvBoolean("S3_FORCE_PATH_STYLE", env["S3_FORCE_PATH_STYLE"]);
+	const storageReconcile = readEnvBoolean("STORAGE_RECONCILE", env["STORAGE_RECONCILE"], true);
 	const allowServerKeyChange = readEnvBoolean(
 		"ALLOW_SERVER_KEY_CHANGE",
 		env["ALLOW_SERVER_KEY_CHANGE"],
@@ -328,6 +332,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		apiKeys,
 		storageBackend,
 		storage,
+		storageReconcile,
 		maxFileSize,
 		maxFilesPerNote,
 		storageQuotaBytes,

@@ -7,6 +7,7 @@ import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { log } from "./logger.js";
+import { claimStorage, startReconcileJob } from "./reconcile.js";
 import { createStorageBackend } from "./storage/index.js";
 
 function fail(message: string, hint?: string): never {
@@ -52,6 +53,10 @@ const storage = createStorageBackend(config.storage);
 const { app, rateLimiters } = createApp({ db, serverKey, storage, config });
 
 const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs);
+// Claimed whether this instance sweeps or not, so a sweeping one sharing the
+// storage by mistake stops instead of taking these notes for orphans.
+void claimStorage(db, storage);
+const reconcileJob = config.storageReconcile ? startReconcileJob(db, storage) : undefined;
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port });
 
@@ -76,6 +81,7 @@ function shutdown(exitCode = 0): void {
 
 	log.info("graceful shutdown initiated");
 	clearInterval(cleanupTimer);
+	reconcileJob?.stop();
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}

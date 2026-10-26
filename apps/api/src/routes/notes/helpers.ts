@@ -6,12 +6,22 @@ import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../../db/index.js";
 import { notes } from "../../db/schema.js";
-import { deleteOrSchedule } from "../../pendingDeletions.js";
+import {
+	cancelDeletion,
+	enqueueDeletion,
+	hasStoredPayload,
+	type PendingDeletion,
+	runDeletion,
+} from "../../pendingDeletions.js";
 import { assertStorageQuota } from "../../quota.js";
 import type { StorageBackend } from "../../storage/index.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 
 export const DELETE_TOKEN_LENGTH = 32;
+
+// How long a file save may run before the cleanup job treats its object as
+// abandoned and purges it.
+const SAVE_WINDOW_MS = 60 * 60_000;
 
 export interface NotesEnv {
 	Variables: {
@@ -145,39 +155,50 @@ export async function insertNote(
 	const expiresAt = new Date(now.getTime() + params.expiresIn * 1000);
 
 	let filePath: string | null = null;
-	let storedBlob: Buffer;
+	let storedBlob = serverBlob;
+	// The blob is written before its row exists. Its purge is queued first, so
+	// a crash or a failure anywhere in between leaves a pending deletion
+	// instead of an object no row points to; the insert takes it back.
+	let saving: PendingDeletion | undefined;
 	if (params.fileCount > 0) {
-		filePath = await storage.save(id, serverBlob);
+		saving = db.transaction((tx) => enqueueDeletion(tx, id, SAVE_WINDOW_MS));
+		try {
+			filePath = await storage.save(id, serverBlob);
+		} catch (err) {
+			// A failed write can still leave a partial file behind.
+			await runDeletion(db, storage, saving);
+			throw err;
+		}
 		storedBlob = Buffer.alloc(0);
-	} else {
-		storedBlob = serverBlob;
 	}
 
 	try {
-		db.insert(notes)
-			.values({
-				id,
-				encryptedData: storedBlob,
-				serverNonce: serverIv.toString("base64"),
-				clientNonce: params.clientNonce,
-				hasPassword: params.hasPassword,
-				salt: params.salt,
-				deleteToken,
-				fileCount: params.fileCount,
-				filePath,
-				expiresAt,
-				maxReads: params.maxReads,
-				createdAt: now,
-				sizeBytes: serverBlob.length,
-			})
-			.run();
+		db.transaction((tx) => {
+			tx.insert(notes)
+				.values({
+					id,
+					encryptedData: storedBlob,
+					serverNonce: serverIv.toString("base64"),
+					clientNonce: params.clientNonce,
+					hasPassword: params.hasPassword,
+					salt: params.salt,
+					deleteToken,
+					fileCount: params.fileCount,
+					filePath,
+					expiresAt,
+					maxReads: params.maxReads,
+					createdAt: now,
+					sizeBytes: serverBlob.length,
+				})
+				.run();
+			if (saving) {
+				cancelDeletion(tx, saving);
+			}
+		});
 	} catch (err) {
-		// The blob is written before the row exists, so a failed insert (disk
-		// full, SQLITE_BUSY, corruption) would strand it: no `notes` row for the
-		// cleanup job to find, and no `pending_deletions` entry either. Reclaim
-		// it before rethrowing.
-		if (filePath) {
-			await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount: null });
+		// Disk full, SQLITE_BUSY, corruption: the blob has no row to belong to.
+		if (saving) {
+			await runDeletion(db, storage, saving);
 		}
 		throw err;
 	}
@@ -186,9 +207,9 @@ export async function insertNote(
 }
 
 // Finds the note a read is about to be served from: enforces existence and
-// expiry, schedules storage cleanup for expired rows, and throws
-// HTTPException for caller-observable errors. It counts nothing — callers load
-// and verify the payload first, then call consumeRead.
+// expiry, purges the payload of an expired row, and throws HTTPException for
+// caller-observable errors. It counts nothing — callers load and verify the
+// payload first, then call consumeRead.
 //
 // `expect` declares which storage shape the calling endpoint can actually
 // serve. A mismatch returns 400, so a request aimed at the wrong endpoint never
@@ -216,8 +237,7 @@ export async function findReadableNote(
 			return {
 				error: "Note not found" as const,
 				status: 404 as const,
-				filePath: note.filePath,
-				chunkCount: note.chunkCount,
+				...(hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id) } : {}),
 			};
 		}
 
@@ -238,26 +258,37 @@ export async function findReadableNote(
 	});
 
 	if ("error" in result) {
-		const filePath = "filePath" in result ? result.filePath : null;
-		const chunkCount = "chunkCount" in result ? result.chunkCount : null;
-		await deleteOrSchedule(db, storage, { noteId: id, filePath, chunkCount });
+		if ("deletion" in result) {
+			await runDeletion(db, storage, result.deletion);
+		}
 		httpError(result.status as 400 | 404, result.error);
 	}
 
 	return result.note;
 }
 
-// Counts one read, deleting the row once readCount reaches maxReads (callers
-// then clean up storage). Call it only after the payload is read and
-// decrypted: counted first, a storage error or a corrupt blob would burn a
-// burn-after-read note without ever delivering it. The row is read again
-// inside the transaction, so a reader that lost the race to a concurrent burn
-// gets a 404 — the callback is synchronous on a single connection, which is
-// what keeps two readers from both being served.
-export function consumeRead(db: AppDatabase, id: string): { shouldDelete: boolean } {
+// Counts one read, deleting the row once readCount reaches maxReads. Call it
+// only after the payload is read and decrypted: counted first, a storage error
+// or a corrupt blob would burn a burn-after-read note without ever delivering
+// it. The row is read again inside the transaction, so a reader that lost the
+// race to a concurrent burn gets a 404 — the callback is synchronous on a
+// single connection, which is what keeps two readers from both being served.
+//
+// Returns the purge the burn queued, for the caller to run once the payload is
+// delivered; `purgeDelayMs` holds the cleanup job off until then.
+export function consumeRead(
+	db: AppDatabase,
+	id: string,
+	purgeDelayMs?: number,
+): { deletion?: PendingDeletion } {
 	const result = db.transaction((tx) => {
 		const note = tx
-			.select({ readCount: notes.readCount, maxReads: notes.maxReads })
+			.select({
+				readCount: notes.readCount,
+				maxReads: notes.maxReads,
+				filePath: notes.filePath,
+				chunkCount: notes.chunkCount,
+			})
 			.from(notes)
 			.where(eq(notes.id, id))
 			.get();
@@ -268,15 +299,14 @@ export function consumeRead(db: AppDatabase, id: string): { shouldDelete: boolea
 
 		const maxReads = note.maxReads ?? 0;
 		const newReadCount = note.readCount + 1;
-		const shouldDelete = maxReads > 0 && newReadCount >= maxReads;
 
-		if (shouldDelete) {
-			tx.delete(notes).where(eq(notes.id, id)).run();
-		} else {
+		if (maxReads === 0 || newReadCount < maxReads) {
 			tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
+			return {};
 		}
 
-		return { shouldDelete };
+		tx.delete(notes).where(eq(notes.id, id)).run();
+		return hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id, purgeDelayMs) } : {};
 	});
 
 	if (result === undefined) {
@@ -314,9 +344,9 @@ export async function consumeNote(
 		httpError(500, "Failed to decrypt note", err);
 	}
 
-	const { shouldDelete } = consumeRead(db, id);
-	if (shouldDelete) {
-		await deleteOrSchedule(db, storage, { noteId: id, ...note });
+	const { deletion } = consumeRead(db, id);
+	if (deletion) {
+		await runDeletion(db, storage, deletion);
 	}
 
 	return { clientBlob, note };

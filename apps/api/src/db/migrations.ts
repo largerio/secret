@@ -170,8 +170,25 @@ const dropUnusedColumns: Migration = {
 	},
 };
 
+// A purge now removes everything stored under the note id, whatever its shape,
+// so the id is all a pending deletion needs. Rows written by earlier versions
+// keep it and drain as before.
+const pendingDeletionsByNote: Migration = {
+	version: 4,
+	name: "pending-deletions-by-note",
+	apply(sqlite) {
+		sqlite.exec(`ALTER TABLE pending_deletions DROP COLUMN file_path`);
+		sqlite.exec(`ALTER TABLE pending_deletions DROP COLUMN chunk_count`);
+	},
+};
+
 /** Ordered, append-only. Versions are contiguous and start at 1. */
-export const MIGRATIONS: readonly Migration[] = [baseline, storageAccounting, dropUnusedColumns];
+export const MIGRATIONS: readonly Migration[] = [
+	baseline,
+	storageAccounting,
+	dropUnusedColumns,
+	pendingDeletionsByNote,
+];
 
 export function getSchemaVersion(sqlite: DatabaseSync): number {
 	const row = sqlite.prepare("PRAGMA user_version").get() as { user_version: number };
