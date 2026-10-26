@@ -44,6 +44,13 @@ export default defineConfig({
 			},
 		}),
 	],
+	build: {
+		// Vite inlines any asset under 4 KB as a data: URI, and some Fontsource
+		// subsets are that small (JetBrains Mono's cyrillic-ext is 2 KB). font-src
+		// 'self' blocks a data: font, so fonts always ship as files rather than
+		// widening the policy.
+		assetsInlineLimit: (filePath) => (/\.woff2?$/.test(filePath) ? false : undefined),
+	},
 	server: {
 		host: true,
 		proxy: {
