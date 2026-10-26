@@ -1,102 +1,110 @@
 <script lang="ts">
 import { SecretDecryptionError } from "@largerio/secret-sdk";
 import type { NotePayload } from "@largerio/secret-shared";
-import { onMount } from "svelte";
-import { fade, fly } from "svelte/transition";
+import { onMount, tick } from "svelte";
 import { page } from "$app/state";
-import FileCard from "#lib/components/FileCard.svelte";
-import Icon from "#lib/components/Icon.svelte";
-import StepProgress from "#lib/components/StepProgress.svelte";
+import Icon, { type IconName } from "#lib/components/Icon.svelte";
+import FileRow from "#lib/components/note/FileRow.svelte";
+import NoteContent from "#lib/components/note/NoteContent.svelte";
+import Callout from "#lib/components/ui/Callout.svelte";
+import NoticeIcon from "#lib/components/ui/NoticeIcon.svelte";
+import PageHero from "#lib/components/ui/PageHero.svelte";
+import PasswordField from "#lib/components/ui/PasswordField.svelte";
+import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
+import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
-import { formatDateTime, t } from "#lib/i18n/index.svelte.js";
-import { setStep } from "#lib/steps.svelte.js";
-import { copyWithFeedback } from "#lib/utils/clipboard.js";
+import { formatDateTime, type MessageKey, t, tn } from "#lib/i18n/index.svelte.js";
 import { isPreviewable } from "#lib/utils/fileType.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
+import { type ProgressView, readProgress } from "#lib/utils/progress.js";
+import { readsLeft } from "#lib/utils/reads.js";
 
 interface NoteInfo {
 	hasPassword: boolean;
 	maxReads: number;
+	/** Null when the instance does not report it. */
+	readCount: number | null;
 	fileCount: number;
 	expiresAt: string;
 	chunked: boolean;
 }
 
+type Notice = "not_found" | "link_incomplete" | "unavailable" | "rate_limited";
+
 type NoteStatus =
-	| { state: "not_found" }
-	| { state: "link_incomplete" }
-	| { state: "unavailable" }
-	| { state: "rate_limited" }
+	| { state: "notice"; notice: Notice }
 	| { state: "ready"; info: NoteInfo }
-	| { state: "downloading"; progress: number }
-	| { state: "decrypting" }
-	| { state: "decrypted"; payload: NotePayload; previewUrls: string[] }
+	| { state: "opening"; progress: ProgressView }
+	| { state: "revealed"; payload: NotePayload; previewUrls: string[] }
 	| { state: "error"; message: string };
+
+const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconName }> = {
+	not_found: { title: "not_found_title", body: "not_found_description", icon: "file-x" },
+	link_incomplete: {
+		title: "link_incomplete_title",
+		body: "link_incomplete_description",
+		icon: "link",
+	},
+	unavailable: { title: "unavailable_title", body: "unavailable_description", icon: "alert" },
+	rate_limited: { title: "rate_limited_title", body: "rate_limited_description", icon: "clock" },
+};
 
 const { data } = $props();
 
-let status = $state<NoteStatus>(
-	data.noteInfo
-		? { state: "ready", info: data.noteInfo }
-		: data.unavailable
-			? { state: "unavailable" }
-			: data.rateLimited
-				? { state: "rate_limited" }
-				: { state: "not_found" },
-);
+// The page starts from what the loader found; from there on, the reader drives it.
+function initialStatus(): NoteStatus {
+	if (data.noteInfo) return { state: "ready", info: data.noteInfo };
+	const notice = data.unavailable ? "unavailable" : data.rateLimited ? "rate_limited" : "not_found";
+	return { state: "notice", notice };
+}
+
+let status = $state<NoteStatus>(initialStatus());
 let mounted = $state(false);
-let password = $state("");
 let keyFragment = $state("");
-let copied = $state(false);
-let wrongPassword = $state(false);
-let burnAccepted = $state(false);
-let pwShake = $state(false);
-let pwInputEl: HTMLInputElement | undefined = $state();
+let password = $state("");
+let passwordProblem = $state<"" | "empty" | "wrong">("");
+let wrongMessage = $state("");
+let passwordField: PasswordField | undefined = $state();
+// The note as it stood when it was opened, for what the revealed page says about it.
+let openedInfo = $state<NoteInfo | null>(null);
 let renderedMarkdown = $state("");
 
+// From the loader, not from `status`: a failed read is handled once `status`
+// has moved on, and that path must still know the note was single-read —
+// otherwise it offers a retry on a note that no longer exists.
+const isBurn = $derived(data.noteInfo?.maxReads === 1);
+
+const openingLabel = $derived(
+	status.state === "opening" && status.progress.step === 0
+		? t("read_downloading", { percent: status.progress.percent ?? 0 })
+		: t("read_decrypting"),
+);
+
+const revealedSub = $derived.by(() => {
+	if (status.state !== "revealed" || !openedInfo) return "";
+	const secret = status.payload.contentMode === "secret";
+	const left = readsLeft(openedInfo.maxReads, openedInfo.readCount);
+	const after = left === null ? null : left - 1;
+	if (isBurn || after === 0) return secret ? t("rv_sub_secret_gone") : t("rv_sub_gone");
+	if (after === null) return openedInfo.maxReads > 0 ? t("rv_sub_limited") : "";
+	return tn("rv_sub_left", after);
+});
+
 $effect(() => {
-	if (status.state !== "decrypted" || status.payload.contentMode !== "markdown") {
+	if (status.state !== "revealed" || status.payload.contentMode !== "markdown") {
 		renderedMarkdown = "";
 		return;
 	}
-	const text = status.payload.text ?? "";
+	const source = status.payload.text ?? "";
 	let cancelled = false;
-	(async () => {
-		const html = await renderMarkdown(text);
-		if (cancelled) return;
-		renderedMarkdown = html;
-	})();
+	renderMarkdown(source).then((html) => {
+		if (!cancelled) renderedMarkdown = html;
+	});
 	return () => {
 		cancelled = true;
 	};
 });
-
-$effect(() => {
-	if (status.state === "decrypted") setStep(4);
-	else setStep(3);
-});
-
-// From the loader, not from `status`: a failed read is handled once `status` has
-// moved on to "downloading", and that branch must still know the note was
-// single-read — otherwise it offers a retry on a note that no longer exists.
-const isBurn = $derived(data.noteInfo?.maxReads === 1);
-
-const needsPassword = $derived.by(() => {
-	if (status.state === "ready") return status.info.hasPassword;
-	return false;
-});
-
-const showPwInput = $derived(
-	status.state === "ready" && needsPassword && (!isBurn || burnAccepted),
-);
-const showPrimaryCta = $derived(status.state === "ready" && (!isBurn || burnAccepted));
-
-async function copyText(text: string) {
-	await copyWithFeedback(text, (v) => {
-		copied = v;
-	});
-}
 
 onMount(() => {
 	keyFragment = window.location.hash.slice(1);
@@ -106,90 +114,99 @@ onMount(() => {
 	// chat apps and SMS linkifiers all do it), not that the note is gone —
 	// saying "not found" sent people looking for the wrong problem.
 	if (!keyFragment && status.state === "ready") {
-		status = { state: "link_incomplete" };
+		status = { state: "notice", notice: "link_incomplete" };
 	}
 
 	return () => {
-		if (status.state === "decrypted") {
-			for (const url of status.previewUrls) {
-				URL.revokeObjectURL(url);
-			}
+		if (status.state === "revealed") {
+			for (const url of status.previewUrls) URL.revokeObjectURL(url);
 		}
 	};
 });
 
-function acceptBurn() {
-	burnAccepted = true;
-	// With no password to enter, nothing waits for the user between "I understand"
-	// and "Reveal", so decrypt in the same gesture instead of forcing a second click.
-	if (!needsPassword) handleDecrypt();
+function readsLeftText(info: NoteInfo): string {
+	const left = readsLeft(info.maxReads, info.readCount);
+	if (left === null) return info.maxReads > 0 ? t("un_reads_total", { count: info.maxReads }) : "";
+	return tn("un_reads_left", left);
 }
 
-async function handleDecrypt() {
+/**
+ * Ask the server where the note stands after a failed attempt, rather than
+ * subtract locally: someone else may have read it in the meantime.
+ */
+async function recheck(id: string, current: NoteInfo): Promise<NoteInfo | "gone"> {
+	try {
+		const info = await (await getClient()).checkNote(id);
+		if (!info.exists) return "gone";
+		return { ...current, readCount: info.readCount ?? null, expiresAt: info.expiresAt };
+	} catch {
+		return { ...current, readCount: null };
+	}
+}
+
+async function failPassword(id: string, current: NoteInfo): Promise<void> {
+	// The server cannot check the password (it never sees the key), so the
+	// read was spent the moment the ciphertext was served. Offering a retry on
+	// a burn-after-read note would be a lie: it is already gone.
+	if (isBurn) {
+		status = { state: "error", message: t("error_burned_wrong_password") };
+		return;
+	}
+
+	const fresh = await recheck(id, current);
+	if (fresh === "gone") {
+		status = { state: "error", message: t("error_wrong_password_last") };
+		return;
+	}
+
+	const left = readsLeft(fresh.maxReads, fresh.readCount);
+	wrongMessage = left === null ? t("error_wrong_password") : tn("error_wrong_password_left", left);
+	passwordProblem = "wrong";
+	status = { state: "ready", info: fresh };
+	await tick();
+	passwordField?.focus();
+}
+
+async function handleOpen(): Promise<void> {
 	const id = page.params["id"];
 	if (!id || status.state !== "ready") return;
+	const current = status.info;
 
-	const chunked = status.info.chunked;
-	status = { state: "downloading", progress: 0 };
-	wrongPassword = false;
+	if (current.hasPassword && !password) {
+		passwordProblem = "empty";
+		passwordField?.focus();
+		return;
+	}
+
+	passwordProblem = "";
+	openedInfo = current;
+	status = { state: "opening", progress: { step: 0, percent: 0, chunk: null } };
 
 	try {
 		const client = await getClient();
-		const result = await client.readNote(id, keyFragment, {
+		const { payload } = await client.readNote(id, keyFragment, {
 			...(password ? { password } : {}),
-			chunked,
-			onDownloadProgress: (p) => {
-				if (status.state === "downloading") {
-					status = { state: "downloading", progress: p * 100 };
-				}
-			},
+			chunked: current.chunked,
 			onProgress: (info) => {
-				if (info.phase === "downloading" && status.state === "downloading") {
-					status = { state: "downloading", progress: info.phaseProgress * 100 };
-				} else if (info.phase === "decrypting") {
-					status = { state: "decrypting" };
-				}
+				if (status.state === "opening") status = { state: "opening", progress: readProgress(info) };
 			},
 		});
 
-		status = { state: "decrypting" };
-
-		const { payload } = result;
-		const previewUrls: string[] = [];
-		if (payload.files) {
-			for (const file of payload.files) {
-				if (isPreviewable(file.type)) {
-					const url = URL.createObjectURL(
+		const previewUrls = (payload.files ?? []).map((file) =>
+			isPreviewable(file.type)
+				? URL.createObjectURL(
 						new Blob([new Uint8Array(file.data as ArrayLike<number>)] as BlobPart[], {
 							type: file.type,
 						}),
-					);
-					previewUrls.push(url);
-				} else {
-					previewUrls.push("");
-				}
-			}
-		}
-
-		status = { state: "decrypted", payload, previewUrls };
+					)
+				: "",
+		);
+		status = { state: "revealed", payload, previewUrls };
 	} catch (e) {
-		// A decryption failure (wrong password/key or corrupted data) surfaces as
-		// a single typed error — we cannot tell which, by design.
-		//
-		// The server cannot verify the password (it never sees the key), so the
-		// read is already spent by the time we get here. Offering "try again" on a
-		// burn-after-read note was a lie: the note is gone and the second attempt
-		// 404s. Only retry when a read actually remains.
-		if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword && !isBurn) {
-			wrongPassword = true;
-			pwShake = true;
-			status = { state: "ready", info: data.noteInfo };
-			setTimeout(() => {
-				pwShake = false;
-				pwInputEl?.focus();
-			}, 450);
-		} else if (e instanceof SecretDecryptionError && data.noteInfo?.hasPassword) {
-			status = { state: "error", message: t("error_burned_wrong_password") };
+		// A decryption failure (wrong password or key, corrupted data) surfaces as
+		// one typed error — which of them cannot be told, by design.
+		if (e instanceof SecretDecryptionError && current.hasPassword) {
+			await failPassword(id, current);
 		} else {
 			status = { state: "error", message: t("error_decryption") };
 		}
@@ -205,392 +222,141 @@ async function handleDecrypt() {
 	<meta property="og:description" content={t("view_description")} />
 </svelte:head>
 
-{#if status.state === "not_found" || status.state === "link_incomplete" || status.state === "unavailable" || status.state === "rate_limited"}
-	{@const copy =
-		status.state === "link_incomplete"
-			? { title: t("link_incomplete_title"), body: t("link_incomplete_description") }
-			: status.state === "unavailable"
-				? { title: t("unavailable_title"), body: t("unavailable_description") }
-				: status.state === "rate_limited"
-					? { title: t("rate_limited_title"), body: t("rate_limited_description") }
-					: { title: t("not_found_title"), body: t("not_found_description") }}
-	<section
-		class="rounded-2xl border"
-		style:background="var(--bg-2)"
-		style:border-color="var(--line)"
-		style:padding="40px 32px"
-		style:text-align="center"
-	>
-		<h1 class="serif" style:font-size="32px" style:margin="0 0 12px">
-			{copy.title}
-		</h1>
-		<p style:color="var(--muted)" style:margin="0 0 24px">{copy.body}</p>
-		<a
-			href="/"
-			class="inline-flex items-center gap-2 rounded-lg transition-colors"
-			style:background="var(--accent-strong)"
-			style:color="var(--accent-ink)"
-			style:padding="12px 18px"
-			style:font-size="14px"
-		>
-			<Icon name="lock" size={14} />
-			<span>{t("new_note")}</span>
-		</a>
-	</section>
+{#if status.state === "notice"}
+	{@const notice = NOTICES[status.notice]}
+	<PageHero title={t(notice.title)} sub={t(notice.body)}>
+		{#snippet lead()}
+			<NoticeIcon name={notice.icon} />
+		{/snippet}
+	</PageHero>
+	<div class="rise flex justify-center" style:animation-delay="0.18s">
+		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
+	</div>
 {:else if status.state === "ready"}
-	<section>
-		<div class="mb-8 flex flex-col items-start">
-			<span
-				class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
-				style:font-size="11px"
-				style:letter-spacing="0.12em"
-				style:color="var(--muted)"
-			>
-				<Icon name="lock" size={11} />
-				<span>{t("app_description")}</span>
-			</span>
-			<h1
-				class="serif"
-				style:font-size="clamp(32px, 5vw, 44px)"
-				style:margin="4px 0 20px"
-				style:line-height="1.3"
-				style:letter-spacing="-0.02em"
-				style:font-weight="400"
-				style:padding-bottom="8px"
-			>
-				{t("un_hero_1")}
-				<em style:color="var(--accent)">{t("un_hero_2")}</em>
-			</h1>
-			<p style:color="var(--muted)" style:font-size="15px" style:margin="0">
-				{t("un_hero_sub")}
-			</p>
-		</div>
+	{@const info = status.info}
+	{@const readsText = isBurn ? "" : readsLeftText(info)}
+	<PageHero title={t("un_title")} sub={t("un_sub")} />
 
-		{#if isBurn && !burnAccepted}
-			<div
-				class="mb-6 rounded-2xl border"
-				style:background="var(--accent-soft)"
-				style:border-color="var(--accent-ring)"
-				style:padding="20px 24px"
-			>
-				<div
-					class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
-					style:font-size="11px"
-					style:letter-spacing="0.12em"
-					style:color="var(--accent)"
-				>
-					<Icon name="flame" size={12} />
-					<span>{t("un_burn_title")}</span>
-				</div>
-				<p style:color="var(--text)" style:font-size="14px" style:margin="0 0 16px" style:line-height="1.5">
+	<form
+		class="card rise"
+		style:animation-delay="0.18s"
+		aria-label={t("un_title")}
+		onsubmit={(event) => {
+			event.preventDefault();
+			handleOpen();
+		}}
+	>
+		{#if isBurn}
+			<div class="px-3 pt-3">
+				<Callout tone="warn" icon="flame" title={t("un_burn_title")}>
 					{t("un_burn_body")}
-				</p>
-				{#if needsPassword}
-					<p
-						style:color="var(--text)"
-						style:font-size="13px"
-						style:margin="0 0 16px"
-						style:line-height="1.5"
-						style:font-weight="500"
-					>
-						{t("burn_password_warning")}
-					</p>
-				{/if}
-				<button
-					type="button"
-					onclick={acceptBurn}
-					disabled={!mounted}
-					class="inline-flex items-center gap-1.5 rounded-lg border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-					style:background="var(--accent-strong)"
-					style:color="var(--accent-ink)"
-					style:padding="10px 16px"
-					style:font-size="13px"
-					style:font-weight="500"
-				>
-					<Icon name="flame" size={13} />
-					<span>{t("un_burn_cta")}</span>
-				</button>
+					{#if info.hasPassword}
+						<span class="mt-0.5 block font-medium text-warn">{t("burn_password_warning")}</span>
+					{/if}
+				</Callout>
 			</div>
 		{/if}
 
-		{#if showPwInput}
-			<div
-				class="mb-4 rounded-2xl border"
-				style:background="var(--bg-2)"
-				style:border-color="var(--line)"
-				style:padding="20px 24px"
-				style:animation={pwShake ? "shake 0.4s" : "none"}
-			>
-				<div
-					class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
-					style:font-size="11px"
-					style:letter-spacing="0.12em"
-					style:color="var(--muted)"
-				>
-					<Icon name="key" size={12} />
-					<span>{t("un_pw_eyebrow")}</span>
-				</div>
-				<p
-					id="decrypt-password-hint"
-					style:color="var(--muted)"
-					style:font-size="13px"
-					style:margin="0 0 12px"
-				>
-					{t("un_pw_hint")}
-				</p>
-				<input
-					bind:this={pwInputEl}
-					id="decrypt-password"
-					type="password"
-					bind:value={password}
-					placeholder={t("un_pw_placeholder")}
-					aria-describedby="decrypt-password-hint"
-					autocomplete="off"
-					autofocus
-					onkeydown={(e) => {
-						if (e.key === "Enter") handleDecrypt();
-					}}
-					class="w-full rounded-xl border outline-none transition-colors"
-					style:background="var(--bg-2)"
-					style:border-color={wrongPassword ? "var(--accent)" : "var(--line)"}
-					style:color="var(--text)"
-					style:padding="12px 14px"
-					style:font-family="var(--font-mono)"
-					style:font-size="14px"
-				/>
-				{#if wrongPassword}
-					<div
-						role="alert"
-						class="mono mt-2 inline-flex items-center gap-1.5"
-						style:font-size="12px"
-						style:color="var(--accent)"
-					>
-						<Icon name="warn" size={12} />
-						<span>{t("error_wrong_password")}</span>
-					</div>
-				{/if}
-			</div>
-		{/if}
-
-		{#if showPrimaryCta}
-			<button
-				type="button"
-				onclick={handleDecrypt}
-				disabled={!mounted}
-				class="mb-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-				style:background="var(--accent-strong)"
-				style:color="var(--accent-ink)"
-				style:padding="16px 24px"
-				style:font-size="15px"
-				style:font-weight="500"
-			>
-				<Icon name="unlock" size={16} />
-				<span>{t("un_cta")}</span>
-			</button>
-		{/if}
-
-		<ul
-			class="mono m-0 flex list-none flex-col gap-2 p-0"
-			style:color="var(--muted-2)"
-			style:font-size="11px"
-			style:line-height="1.6"
-		>
-			<li class="flex items-center gap-2">
-				<Icon name="shield" size={12} />
-				<span>{t("un_info_local")}</span>
-			</li>
-			{#if isBurn}
-				<li class="flex items-center gap-2">
-					<Icon name="flame" size={12} />
-					<span>{t("un_info_burn")}</span>
+		<ul class="m-0 flex list-none flex-col gap-2.5 px-[18px] py-4 text-sm text-muted">
+			{#if readsText}
+				<li class="flex items-center gap-2.5">
+					<Icon name="eye" size={16} class="text-accent-text" />{readsText}
 				</li>
 			{/if}
-			<li class="flex items-center gap-2">
-				<Icon name="clock" size={12} />
-				<span>{t("un_info_expiry", { date: formatDateTime(status.info.expiresAt) })}</span>
+			<li class="flex items-center gap-2.5">
+				<Icon name="clock" size={16} class="text-accent-text" />{t("un_expiry", {
+					date: formatDateTime(info.expiresAt),
+				})}
 			</li>
-			{#if status.info.fileCount > 0}
-				<li class="flex items-center gap-2">
-					<Icon name="paperclip" size={12} />
-					<span>{t("files_count", { count: status.info.fileCount })}</span>
+			{#if info.fileCount > 0}
+				<li class="flex items-center gap-2.5">
+					<Icon name="paperclip" size={16} class="text-accent-text" />{tn("files_count", info.fileCount)}
 				</li>
 			{/if}
 		</ul>
-	</section>
-{:else if status.state === "downloading" || status.state === "decrypting"}
-	<section
-		class="flex flex-col items-center justify-center gap-6"
-		style:padding="48px 0"
-		role="status"
-	>
-		<div class="w-72 max-w-full">
-			<StepProgress
-				steps={[
-					{ key: "downloading", label: t("downloading"), icon: "download" },
-					{ key: "decrypting", label: t("decrypting"), icon: "unlock" },
-					{ key: "done", label: t("done"), icon: "check" },
-				]}
-				currentStep={status.state === "downloading" ? 0 : 1}
-				progress={status.state === "downloading" ? status.progress : 100}
-			/>
-		</div>
-	</section>
-{:else if status.state === "decrypted"}
-	<section class="space-y-6" in:fade={{ duration: 200 }}>
-		<div class="flex flex-col items-start">
-			<span
-				class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
-				style:font-size="11px"
-				style:letter-spacing="0.12em"
-				style:color="var(--accent)"
-			>
-				<Icon name="unlock" size={11} />
-				<span>{t("rv_eyebrow")}</span>
-			</span>
-			<h1
-				class="serif"
-				style:font-size="clamp(28px, 4vw, 36px)"
-				style:margin="4px 0 12px"
-				style:line-height="1.3"
-				style:letter-spacing="-0.02em"
-				style:font-weight="400"
-			>
-				{t("rv_title")}
-			</h1>
-		</div>
 
-		{#if status.payload.text}
-			<div
-				class="overflow-hidden rounded-2xl border"
-				style:background="var(--bg-2)"
-				style:border-color="var(--line)"
-				in:fly={{ y: 20, duration: 300 }}
-			>
-				<div
-					class="flex items-center justify-between border-b"
-					style:padding="12px 16px"
-					style:border-color="var(--line)"
-				>
-					<span
-						class="mono uppercase"
-						style:font-size="11px"
-						style:letter-spacing="0.1em"
-						style:color="var(--muted)"
-					>
-						{t("text_content")}
-					</span>
-					<button
-						type="button"
-						onclick={() => copyText(status.state === "decrypted" ? (status.payload.text ?? "") : "")}
-						class="inline-flex items-center gap-1.5 rounded-md border-0 bg-transparent transition-colors"
-						style:color={copied ? "var(--accent)" : "var(--muted)"}
-						style:padding="4px 8px"
-						style:font-size="12px"
-					>
-						<Icon name={copied ? "check" : "copy"} size={13} />
-						<span>{copied ? t("copied") : t("rv_copy")}</span>
-					</button>
-				</div>
-				<div style:padding="18px 20px">
-					{#if status.payload.contentMode === "markdown"}
-						<div class="prose prose-sm max-w-none">
-							{@html renderedMarkdown}
-						</div>
-					{:else if status.payload.contentMode === "secret"}
-						<code
-							class="block select-all break-all rounded-lg"
-							style:background="var(--bg-3)"
-							style:padding="14px 16px"
-							style:font-family="var(--font-mono)"
-							style:font-size="14px"
-							style:color="var(--text)"
-							style:line-height="1.5"
-							data-testid="note-secret">{status.payload.text}</code
-						>
-					{:else}
-						<pre
-							class="whitespace-pre-wrap"
-							style:font-family="inherit"
-							style:color="var(--text)"
-							style:font-size="15px"
-							style:line-height="1.7"
-							style:margin="0"
-							data-testid="note-text">{status.payload.text}</pre>
-					{/if}
-				</div>
+		{#if info.hasPassword}
+			<div class="flex flex-col gap-1.5 px-[18px] pb-4">
+				<label for="decrypt-password" class="text-[13px] font-medium">
+					{t("un_pw_label")} <span class="font-normal text-faint">— {t("un_pw_hint")}</span>
+				</label>
+				<PasswordField
+					bind:this={passwordField}
+					id="decrypt-password"
+					bind:value={password}
+					placeholder={t("un_pw_placeholder")}
+					invalid={passwordProblem !== ""}
+					describedby={passwordProblem ? "decrypt-password-error" : undefined}
+				/>
+				{#if passwordProblem}
+					<p id="decrypt-password-error" class="pop m-0 mt-0.5 flex items-start gap-2 text-[13px] text-danger" role="alert">
+						<Icon name="alert" size={15} class="mt-0.5 shrink-0" />
+						{passwordProblem === "empty" ? t("un_pw_empty") : wrongMessage}
+					</p>
+				{/if}
 			</div>
 		{/if}
 
-		{#if status.payload.files && status.payload.files.length > 0}
-			<div>
-				<div
-					class="mono mb-3 inline-flex items-center gap-1.5 uppercase"
-					style:font-size="11px"
-					style:letter-spacing="0.12em"
-					style:color="var(--muted)"
-				>
-					<Icon name="paperclip" size={11} />
-					<span>{t("rv_files")} ({status.payload.files.length})</span>
-				</div>
-				<ul class="m-0 flex list-none flex-col gap-3 p-0">
-					{#each status.payload.files as file, i (file.name + i)}
-						<FileCard
-							name={file.name}
-							type={file.type}
-							size={file.size}
-							data={new Uint8Array(file.data as ArrayLike<number>)}
-							previewUrl={status.previewUrls[i] ?? ""}
-							index={i}
-						/>
-					{/each}
-				</ul>
-			</div>
-		{/if}
+		<div class="border-t border-line p-3">
+			<button type="submit" class="btn btn-primary btn-lg w-full" disabled={!mounted}>
+				<Icon name="unlock" size={16} />
+				{info.hasPassword ? t("un_unlock") : t("un_show")}
+			</button>
+		</div>
+	</form>
 
-		<div class="flex gap-2">
-			<a
-				href="/"
-				class="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border transition-colors"
-				style:background="var(--bg-2)"
-				style:border-color="var(--line)"
-				style:color="var(--text)"
-				style:padding="14px"
-				style:font-size="14px"
-			>
-				<Icon name="lock" size={14} />
-				<span>{t("rv_gone_cta")}</span>
-			</a>
-		</div>
-	</section>
-{:else if status.state === "error"}
-	<section
-		class="rounded-2xl border"
-		style:background="var(--accent-soft)"
-		style:border-color="var(--accent-ring)"
-		style:padding="32px"
-		style:text-align="center"
-		in:fade={{ duration: 200 }}
-	>
-		<div
-			class="mono mb-2 inline-flex items-center gap-1.5 uppercase"
-			style:font-size="11px"
-			style:letter-spacing="0.12em"
-			style:color="var(--accent)"
-		>
-			<Icon name="warn" size={12} />
-			<span>{t("error_title")}</span>
-		</div>
-		<h1 class="serif" style:font-size="28px" style:margin="4px 0 10px">{status.message}</h1>
-		<a
-			href="/"
-			class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-			style:background="var(--accent-strong)"
-			style:color="var(--accent-ink)"
-			style:padding="12px 18px"
-			style:font-size="14px"
-		>
-			<Icon name="lock" size={14} />
-			<span>{t("new_note")}</span>
-		</a>
-	</section>
+	<div class="rise" style:animation-delay="0.3s"><TrustLine /></div>
+{:else if status.state === "opening"}
+	<PageHero title={t("un_title")} sub={t("un_sub")} />
+	<ProgressPanel
+		view={status.progress}
+		label={openingLabel}
+		detail={t("key_stays_here")}
+		steps={[t("step_download"), t("step_decrypt"), t("step_note")]}
+	/>
+	<TrustLine />
+{:else if status.state === "revealed"}
+	{@const payload = status.payload}
+	{@const files = payload.files ?? []}
+	<PageHero
+		title={payload.contentMode === "secret" ? t("rv_title_secret") : t("rv_title")}
+		sub={revealedSub || undefined}
+	/>
+
+	{#if payload.text}
+		<NoteContent text={payload.text} mode={payload.contentMode ?? "text"} html={renderedMarkdown} />
+	{/if}
+
+	{#if files.length > 0}
+		<section class="panel pop flex flex-col gap-2 p-3" aria-labelledby="files-label">
+			<p id="files-label" class="m-0 px-1.5 text-xs font-medium text-faint">
+				{tn("files_count", files.length)}
+			</p>
+			<ul class="m-0 flex list-none flex-col gap-2 p-0">
+				{#each files as file, index (file.name + index)}
+					<FileRow
+						name={file.name}
+						type={file.type}
+						size={file.size}
+						data={new Uint8Array(file.data as ArrayLike<number>)}
+						previewUrl={status.previewUrls[index] ?? ""}
+					/>
+				{/each}
+			</ul>
+		</section>
+	{/if}
+
+	<div class="flex justify-center">
+		<a href="/" class="btn btn-outline"><Icon name="plus" size={15} />{t("rv_new")}</a>
+	</div>
+{:else}
+	<PageHero title={t("error_title")} sub={status.message}>
+		{#snippet lead()}
+			<NoticeIcon name="alert" />
+		{/snippet}
+	</PageHero>
+	<div class="rise flex justify-center" style:animation-delay="0.18s">
+		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
+	</div>
 {/if}
+

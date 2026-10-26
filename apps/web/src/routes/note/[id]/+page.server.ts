@@ -17,6 +17,8 @@ export const load: ServerLoad = async ({ params, getClientAddress }) => {
 			noteInfo: {
 				hasPassword: info.hasPassword,
 				maxReads: info.maxReads,
+				// Unknown on an instance whose API predates the field.
+				readCount: info.readCount ?? null,
 				fileCount: info.fileCount,
 				expiresAt: info.expiresAt,
 				chunked: info.chunked,

@@ -45,14 +45,22 @@ describe("locale and theme resolution", () => {
 		expect(event.locals.locale).toBe("de");
 	});
 
-	it("defaults theme to dark unless the cookie is 'light'", async () => {
-		const dark = makeEvent();
-		await handle({ event: dark, resolve });
-		expect(dark.locals.theme).toBe("dark");
+	it("follows the system theme until the visitor picks one", async () => {
+		const fresh = makeEvent();
+		await handle({ event: fresh, resolve });
+		expect(fresh.locals.theme).toBe("system");
+
+		const tampered = makeEvent({ cookies: { secret_theme: "blue" } });
+		await handle({ event: tampered, resolve });
+		expect(tampered.locals.theme).toBe("system");
 
 		const light = makeEvent({ cookies: { secret_theme: "light" } });
 		await handle({ event: light, resolve });
 		expect(light.locals.theme).toBe("light");
+
+		const dark = makeEvent({ cookies: { secret_theme: "dark" } });
+		await handle({ event: dark, resolve });
+		expect(dark.locals.theme).toBe("dark");
 	});
 
 	it("injects locale and theme into the rendered HTML", async () => {

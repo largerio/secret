@@ -25,8 +25,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 			? (cookieLang as Locale)
 			: parseAcceptLanguage(acceptLang);
 
+	// Without a choice of their own, visitors get their OS theme (app.css
+	// resolves "system" with prefers-color-scheme).
 	const cookieTheme = event.cookies.get("secret_theme");
-	event.locals.theme = cookieTheme === "light" ? "light" : "dark";
+	event.locals.theme = cookieTheme === "light" || cookieTheme === "dark" ? cookieTheme : "system";
 
 	const response = await resolve(event, {
 		// Runs once the loaders are done, so the root layout has set the accent.

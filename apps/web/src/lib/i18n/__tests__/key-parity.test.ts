@@ -35,7 +35,13 @@ describe("i18n key parity", () => {
 		it(`locale "${name}" has exactly the same keys as en`, () => {
 			const keys = Object.keys(messages).sort();
 			const missing = enKeys.filter((k) => !(k in messages));
-			const extra = keys.filter((k) => !(k in en));
+			// A language may need more plural forms than English (Russian's few
+			// and many) for a message that has them in English: `tn` reads those.
+			const extra = keys.filter((k) => {
+				if (k in en) return false;
+				const base = /^(.+)_(zero|two|few|many)$/.exec(k)?.[1];
+				return !(base && `${base}_other` in en);
+			});
 			expect(missing, `missing keys in "${name}"`).toEqual([]);
 			expect(extra, `extra keys in "${name}"`).toEqual([]);
 		});

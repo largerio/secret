@@ -67,6 +67,24 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
 	);
 }
 
+/** The bases of messages that come in plural forms: `reads_count` for `reads_count_one`… */
+export type PluralKey = {
+	[K in MessageKey]: K extends `${infer Base}_one` ? Base : never;
+}[MessageKey];
+
+/**
+ * A message in the plural form the active language uses for `count`, which
+ * fills `{count}`. English only needs `_one` and `_other`; a language with
+ * more forms adds them under the same base (Russian's `_few` and `_many`),
+ * and any form a language does not define falls back to its `_other`.
+ */
+export function tn(base: PluralKey, count: number): string {
+	const form = new Intl.PluralRules(currentLocale).select(count);
+	const key =
+		`${base}_${form}` in (messages[currentLocale] ?? {}) ? `${base}_${form}` : `${base}_other`;
+	return t(key as MessageKey, { count });
+}
+
 export function formatDateTime(value: Date | number | string): string {
 	return new Date(value).toLocaleString(currentLocale, {
 		dateStyle: "medium",

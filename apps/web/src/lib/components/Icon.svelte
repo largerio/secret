@@ -1,157 +1,166 @@
 <script module lang="ts">
 export type IconName =
-	| "lock"
-	| "unlock"
-	| "github"
-	| "text"
-	| "md"
-	| "key"
-	| "paperclip"
-	| "shield"
+	| "alert"
+	| "arrow-right"
+	| "check"
+	| "chevron-down"
 	| "clock"
+	| "code"
+	| "copy"
+	| "download"
 	| "eye"
 	| "eye-off"
-	| "copy"
-	| "check"
-	| "arrow-right"
-	| "arrow-left"
-	| "upload"
 	| "file"
-	| "x"
-	| "qr"
+	| "file-text"
+	| "file-x"
 	| "flame"
-	| "warn"
-	| "sparkle"
-	| "dice"
-	| "download"
-	| "trash"
+	| "github"
+	| "globe"
+	| "image"
+	| "key"
+	| "link"
+	| "list"
+	| "lock"
 	| "mail"
-	| "external";
+	| "moon"
+	| "paperclip"
+	| "plus"
+	| "qr"
+	| "refresh"
+	| "shield"
+	| "sun"
+	| "trash"
+	| "type"
+	| "unlock"
+	| "upload"
+	| "x";
 </script>
 
 <script lang="ts">
+// Stroke icons drawn on a 24-unit grid (Lucide's geometry), so they share one weight.
 let {
 	name,
 	size = 16,
 	class: klass = "",
-	stroke = 1.5,
+	stroke = 2,
 }: { name: IconName; size?: number; class?: string; stroke?: number } = $props();
 </script>
 
-{#if name === "lock"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg
-	>
-{:else if name === "unlock"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 7.5-2" /></svg
-	>
-{:else if name === "github"}
-	<svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M12 .5A11.5 11.5 0 0 0 .5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55v-1.93c-3.2.7-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.75 1.18 1.75 1.18 1.02 1.75 2.68 1.24 3.33.95.1-.74.4-1.24.72-1.52-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18.92-.26 1.9-.38 2.88-.38s1.96.12 2.88.38c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.73.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.39-5.25 5.67.41.35.78 1.05.78 2.12v3.14c0 .31.21.66.79.55C20.21 21.39 23.5 17.08 23.5 12A11.5 11.5 0 0 0 12 .5Z"
-		/></svg
-	>
-{:else if name === "text"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="16" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg
-	>
-{:else if name === "md"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 15V9l2 3 2-3v6M15 9v6M13 13l2 2 2-2" /></svg
-	>
-{:else if name === "key"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><circle cx="8" cy="15" r="4" /><path d="M10.85 12.15 21 2l-3 3 2 2-2 2-2-2-1.5 1.5" /></svg
-	>
-{:else if name === "paperclip"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.19 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48" /></svg
-	>
-{:else if name === "shield"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /></svg
-	>
-{:else if name === "clock"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg
-	>
-{:else if name === "eye"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg
-	>
-{:else if name === "eye-off"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" /><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c6.5 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" /><path
-			d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3.5 7 10 7a9.74 9.74 0 0 0 5.39-1.61"
-		/><line x1="2" y1="2" x2="22" y2="22" /></svg
-	>
-{:else if name === "copy"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg
-	>
-{:else if name === "check"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><polyline points="20 6 9 17 4 12" /></svg
-	>
-{:else if name === "arrow-right"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg
-	>
-{:else if name === "arrow-left"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg
-	>
-{:else if name === "upload"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg
-	>
-{:else if name === "file"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg
-	>
-{:else if name === "x"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg
-	>
-{:else if name === "qr"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3M21 14v7M14 21h3M17 17v4" /></svg
-	>
-{:else if name === "flame"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" /></svg
-	>
-{:else if name === "warn"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line
-			x1="12"
-			y1="17"
-			x2="12.01"
-			y2="17"
-		/></svg
-	>
-{:else if name === "sparkle"}
-	<svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5z" /></svg
-	>
-{:else if name === "dice"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1" fill="currentColor" /><circle cx="16" cy="16" r="1" fill="currentColor" /><circle cx="16" cy="8" r="1" fill="currentColor" /><circle cx="8" cy="16" r="1" fill="currentColor" /></svg
-	>
-{:else if name === "download"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg
-	>
-{:else if name === "trash"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg
-	>
-{:else if name === "mail"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Z" /><polyline points="22 6 12 13 2 6" /></svg
-	>
-{:else if name === "external"}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" width={size} height={size} class={klass} aria-hidden="true"
-		><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg
-	>
-{/if}
+<svg
+	viewBox="0 0 24 24"
+	width={size}
+	height={size}
+	fill="none"
+	stroke="currentColor"
+	stroke-width={stroke}
+	stroke-linecap="round"
+	stroke-linejoin="round"
+	class={klass}
+	aria-hidden="true"
+>
+	{#if name === "alert"}
+		<circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
+	{:else if name === "arrow-right"}
+		<path d="M5 12h14M12 5l7 7-7 7" />
+	{:else if name === "check"}
+		<path d="M20 6 9 17l-5-5" />
+	{:else if name === "chevron-down"}
+		<path d="m6 9 6 6 6-6" />
+	{:else if name === "clock"}
+		<circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+	{:else if name === "code"}
+		<path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />
+	{:else if name === "copy"}
+		<rect width="14" height="14" x="8" y="8" rx="2" /><path
+			d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+		/>
+	{:else if name === "download"}
+		<path d="M12 15V3M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5" />
+	{:else if name === "eye"}
+		<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" />
+	{:else if name === "eye-off"}
+		<path
+			d="M10.73 5.08A10.74 10.74 0 0 1 21.94 11.65a1 1 0 0 1 0 .7 10.75 10.75 0 0 1-1.44 2.49M14.08 14.16a3 3 0 0 1-4.24-4.24M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14M2 2l20 20"
+		/>
+	{:else if name === "file"}
+		<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
+			d="M14 2v4a2 2 0 0 0 2 2h4"
+		/>
+	{:else if name === "file-text"}
+		<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
+			d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"
+		/>
+	{:else if name === "file-x"}
+		<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path
+			d="M14 2v4a2 2 0 0 0 2 2h4M9.5 12.5l5 5M14.5 12.5l-5 5"
+		/>
+	{:else if name === "flame"}
+		<path
+			d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"
+		/>
+	{:else if name === "github"}
+		<path
+			d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4M9 18c-4.51 2-5-2-7-2"
+		/>
+	{:else if name === "globe"}
+		<circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20" />
+	{:else if name === "image"}
+		<rect width="18" height="18" x="3" y="3" rx="2" /><circle cx="9" cy="9" r="2" /><path
+			d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"
+		/>
+	{:else if name === "key"}
+		<path
+			d="M2.59 17.41A2 2 0 0 0 2 18.83V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.17a2 2 0 0 0 1.42-.59l.81-.81a6.5 6.5 0 1 0-4-4z"
+		/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+	{:else if name === "link"}
+		<path
+			d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+		/>
+	{:else if name === "list"}
+		<path d="M3 6h.01M3 12h.01M3 18h.01M8 6h13M8 12h13M8 18h13" />
+	{:else if name === "lock"}
+		<rect width="18" height="11" x="3" y="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+	{:else if name === "mail"}
+		<rect width="20" height="16" x="2" y="4" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+	{:else if name === "moon"}
+		<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+	{:else if name === "paperclip"}
+		<path
+			d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+		/>
+	{:else if name === "plus"}
+		<path d="M5 12h14M12 5v14" />
+	{:else if name === "qr"}
+		<rect width="5" height="5" x="3" y="3" rx="1" /><rect width="5" height="5" x="16" y="3" rx="1" /><rect
+			width="5"
+			height="5"
+			x="3"
+			y="16"
+			rx="1"
+		/><path
+			d="M21 16h-3a2 2 0 0 0-2 2v3M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"
+		/>
+	{:else if name === "refresh"}
+		<path
+			d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"
+		/>
+	{:else if name === "shield"}
+		<path
+			d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+		/><path d="m9 12 2 2 4-4" />
+	{:else if name === "sun"}
+		<circle cx="12" cy="12" r="4" /><path
+			d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+		/>
+	{:else if name === "trash"}
+		<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+	{:else if name === "type"}
+		<path d="M4 7V4h16v3M9 20h6M12 4v16" />
+	{:else if name === "unlock"}
+		<rect width="18" height="11" x="3" y="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" />
+	{:else if name === "upload"}
+		<path d="M12 3v12M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5" />
+	{:else if name === "x"}
+		<path d="M18 6 6 18M6 6l12 12" />
+	{/if}
+</svg>
