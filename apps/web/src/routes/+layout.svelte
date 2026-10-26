@@ -3,19 +3,13 @@
 // of every visitor, including on the page that carries the decryption key.
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
-import "@fontsource/instrument-serif/400.css";
-import "@fontsource/instrument-serif/400-italic.css";
 import "../app.css";
-import Icon from "#lib/components/Icon.svelte";
-import LangToggle from "#lib/components/LangToggle.svelte";
-import StepIndicator from "#lib/components/StepIndicator.svelte";
-import ThemeToggle from "#lib/components/ThemeToggle.svelte";
+import SiteFooter from "#lib/components/SiteFooter.svelte";
+import Aura from "#lib/components/ui/Aura.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { getLocale, t } from "#lib/i18n/index.svelte.js";
 
 const { children } = $props();
-
-const repoUrl = "https://github.com/largerio/secret";
 
 const localeToOg: Record<string, string> = {
 	en: "en_US",
@@ -54,104 +48,22 @@ const locale = $derived(getLocale());
 	<link rel="alternate" hreflang="x-default" href={config.appUrl} />
 </svelte:head>
 
-<div class="relative z-[1] flex min-h-screen flex-col">
+<div class="relative flex min-h-screen flex-col overflow-x-clip">
 	<a
 		href="#main-content"
-		class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:px-4 focus:py-2"
-		style:background="var(--accent-strong)"
-		style:color="var(--accent-ink)"
+		class="btn btn-primary sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50"
 	>
 		{t("skip_to_content")}
 	</a>
 
-	<header
-		class="sticky top-0 z-10 border-b"
-		style:background="color-mix(in srgb, var(--bg) 85%, transparent)"
-		style:backdrop-filter="blur(18px)"
-		style:border-color="var(--line)"
+	<Aura />
+
+	<main
+		id="main-content"
+		class="relative z-[1] mx-auto box-border flex w-full max-w-[640px] flex-1 flex-col gap-5 px-6 pt-[72px] pb-12 max-[600px]:pt-9"
 	>
-		<nav
-			class="mx-auto flex max-w-[1100px] items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-4"
-			aria-label="Main navigation"
-		>
-			<a
-				href="/"
-				class="flex items-center gap-2.5 no-underline"
-				style:color="var(--text)"
-			>
-				<span
-					class="grid place-items-center rounded-lg"
-					style:width="28px"
-					style:height="28px"
-					style:background="var(--accent)"
-					style:color="var(--accent-ink)"
-				>
-					<Icon name="lock" size={15} />
-				</span>
-				<span class="serif" style:font-size="22px" style:letter-spacing="-0.02em"
-					>{config.appName.toLowerCase()}</span
-				>
-			</a>
-			<div class="flex items-center gap-1.5 sm:gap-2">
-				<LangToggle />
-				<ThemeToggle />
-				<a
-					href={repoUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="hidden items-center gap-2 rounded-lg border px-3 py-1.5 text-xs no-underline transition-colors sm:inline-flex"
-					style:background="transparent"
-					style:border-color="transparent"
-					style:color="var(--muted)"
-					aria-label={t("github")}
-				>
-					<Icon name="github" size={15} />
-					<span>{t("github")}</span>
-				</a>
-				<a
-					href={repoUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="inline-flex items-center justify-center rounded-full border sm:hidden"
-					style:background="var(--bg-2)"
-					style:border-color="var(--line)"
-					style:color="var(--muted)"
-					style:width="32px"
-					style:height="32px"
-					aria-label={t("github")}
-				>
-					<Icon name="github" size={14} />
-				</a>
-			</div>
-		</nav>
-	</header>
-
-	<StepIndicator />
-
-	<main id="main-content" class="relative z-[1] mx-auto w-full max-w-[720px] flex-1 px-4 py-10 sm:px-8 sm:py-14">
 		{@render children()}
 	</main>
 
-	<footer class="border-t" style:background="var(--bg-2)" style:border-color="var(--line)">
-		<div
-			class="mx-auto max-w-[1100px] px-4 py-5 text-center sm:px-8"
-			style:color="var(--muted-2)"
-			style:font-size="12px"
-		>
-			{#if config.footerText}
-				<span>{config.footerText}</span>
-				<span style:margin="0 8px">·</span>
-			{/if}
-			<span>{t("footer_powered")}</span>
-			<a
-				href={repoUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="underline-offset-2 hover:underline"
-				style:color="var(--muted)">Secret</a
-			>
-			<span style:margin="0 8px">·</span>
-			<span>{t("footer_tagline")}</span>
-		</div>
-	</footer>
+	<SiteFooter />
 </div>

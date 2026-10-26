@@ -14,6 +14,36 @@ image. Each version links to its GitHub release. The SDK has
   passed the scan and the smoke test. A release only tags a signed image. See
   [Verifying the image](docs/self-hosting.md#verifying-the-image).
 
+### Changed
+
+- A redesigned interface. Every page now has a single card in the middle,
+  in a light and a dark theme that follows the system until a visitor picks one.
+  Instance controls (language, theme) move to the footer.
+- Creating a note:
+  - The password generator is a tool of the note, not a separate tab: it puts
+    the password where the caret is. A note made of the generated password
+    alone still reaches the reader as a password to copy.
+  - Markdown is a "Formatting" toggle.
+  - Files are attached from the toolbar or dropped onto the note.
+  - Expiry, reads and the opening password read as one sentence under the
+    note, and the note field has focus on arrival (keyboard and mouse only).
+- Password managers no longer fill the opening password with saved
+  credentials.
+- Opening a note shows the reads it has left. A single-read note opens in one
+  click, its warning next to the button. After a wrong password the page says
+  that the attempt spent a read, and how many are left.
+- Sizes follow the reader's language ("2,5 Mo", "2.5 MB").
+- The QR code carries the instance's accent and a logo, drawn at error
+  correction level H so the logo costs nothing to readers.
+- The default accent is indigo instead of red. `APP_PRIMARY_COLOR` still sets
+  it, and also derives the gradients and the dark-theme shade.
+
+### Added
+
+- `GET /api/v1/notes/:id/exists` also returns `readCount`, the reads a note has
+  already spent, so a client can say how many are left before opening it. It
+  stays at 0 on a note without a read limit.
+
 ### Fixed
 
 - A generated password always holds a character of every class it draws from.

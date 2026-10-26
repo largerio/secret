@@ -39,14 +39,13 @@ test("the chosen expiry duration is reflected on creation and on the view page",
 	// than waiting for real expiry (minimum is 300s — too long for e2e).
 	const shareUrl = await createNote(page, { text: secret, expirySeconds: 3600, maxReads: 3 });
 
-	// Success screen "Expiration" fact shows the selected duration.
-	await expect(page.getByText("Expiration")).toBeVisible();
-	await expect(page.getByText("1 hour")).toBeVisible();
+	// The success screen restates the rule: "Erased after 3 reads or in 1 hour".
+	await expect(page.getByText(/Erased after/)).toBeVisible();
+	await expect(page.getByText("1 hour", { exact: true })).toBeVisible();
 
-	// The view page also advertises the expiry before decryption.
+	// The view page also advertises the expiry, and the reads left, before decryption.
 	const reader = await context.newPage();
 	await reader.goto(shareUrl);
-	await expect(reader.getByText(/Will no longer be accessible after/i)).toBeVisible({
-		timeout: 15_000,
-	});
+	await expect(reader.getByText(/Available until/i)).toBeVisible({ timeout: 15_000 });
+	await expect(reader.getByText("3 reads left")).toBeVisible();
 });

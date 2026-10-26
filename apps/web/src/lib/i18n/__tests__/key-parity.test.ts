@@ -35,9 +35,32 @@ describe("i18n key parity", () => {
 		it(`locale "${name}" has exactly the same keys as en`, () => {
 			const keys = Object.keys(messages).sort();
 			const missing = enKeys.filter((k) => !(k in messages));
-			const extra = keys.filter((k) => !(k in en));
+			// A language may need more plural forms than English (Russian's few
+			// and many) for a message that has them in English: `tn` reads those.
+			const extra = keys.filter((k) => {
+				if (k in en) return false;
+				const base = /^(.+)_(zero|two|few|many)$/.exec(k)?.[1];
+				return !(base && `${base}_other` in en);
+			});
 			expect(missing, `missing keys in "${name}"`).toEqual([]);
 			expect(extra, `extra keys in "${name}"`).toEqual([]);
+		});
+	}
+
+	// Slots decide which controls render (`splitTemplate`): a renamed `{reads}`
+	// would silently drop the reads picker from the sentence.
+	const placeholders = (message: string) =>
+		[...message.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+	const source = en as Record<string, string>;
+
+	for (const [name, messages] of Object.entries(locales)) {
+		it(`locale "${name}" keeps the placeholders of every English message`, () => {
+			for (const [key, message] of Object.entries(messages)) {
+				// Extra plural forms are checked against the form they extend.
+				const reference =
+					source[key] ?? source[key.replace(/_(zero|two|few|many)$/, "_other")] ?? "";
+				expect(placeholders(message), `${name}: ${key}`).toEqual(placeholders(reference));
+			}
 		});
 	}
 });

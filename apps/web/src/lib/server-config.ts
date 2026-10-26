@@ -82,3 +82,10 @@ export function defaultExpiration(maxExpiry: number): number {
 	// needs no fallback branch.
 	return Math.max(...allowed.map((option) => option.value));
 }
+
+/** The label of an expiration choice, or undefined for a duration the picker never offers. */
+export function expiryLabelKey(
+	seconds: number,
+): (typeof EXPIRATION_OPTIONS)[number]["labelKey"] | undefined {
+	return EXPIRATION_OPTIONS.find((option) => option.value === seconds)?.labelKey;
+}

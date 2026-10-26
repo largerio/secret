@@ -185,6 +185,24 @@ describe("createApp — versioned API", () => {
 		);
 	});
 
+	it("documents readCount on the exists response", async () => {
+		const res = await makeApp().request("/api/v1/openapi.json");
+		const doc = (await res.json()) as {
+			paths: Record<string, Record<string, unknown>>;
+		};
+		const ok = doc.paths["/notes/{id}/exists"]?.["get"] as {
+			responses: { 200: { content: { "application/json": { schema: { anyOf: unknown[] } } } } };
+		};
+		const [found] = ok.responses[200].content["application/json"].schema.anyOf as {
+			required: string[];
+			properties: Record<string, { type: string; minimum?: number; description?: string }>;
+		}[];
+
+		expect(found?.required).toContain("readCount");
+		expect(found?.properties["readCount"]).toMatchObject({ type: "integer", minimum: 0 });
+		expect(found?.properties["readCount"]?.description).toContain("maxReads - readCount");
+	});
+
 	it("serves the Scalar docs page", async () => {
 		const res = await makeApp().request("/api/v1/docs");
 		expect(res.status).toBe(200);

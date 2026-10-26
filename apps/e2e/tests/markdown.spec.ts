@@ -3,10 +3,10 @@ import { createNote, gotoCreate, revealNote } from "./helpers";
 
 test("the Markdown editor renders a live preview while composing", async ({ page }) => {
 	await gotoCreate(page);
-	await page.getByRole("tab", { name: /Markdown/i }).click();
-	await page.getByPlaceholder(/markdown/i).fill("# Hello preview\n\n**bold here**");
+	await page.getByRole("button", { name: "Formatting" }).click();
+	await page.locator("#note-text").fill("# Hello preview\n\n**bold here**");
 
-	// Switching to the Preview tab renders sanitized HTML (debounced ~200ms).
+	// Switching to the Preview tab renders sanitized HTML (debounced ~150ms).
 	await page.getByRole("button", { name: /^Preview$/i }).click();
 
 	const preview = page.locator(".prose");

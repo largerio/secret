@@ -15,15 +15,24 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 **[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="Compose a secret, encrypt it in the browser, and get a one-time share link whose key never reaches the server" width="100%" />
+  <img src="docs/images/demo.gif" alt="Type a secret, encrypt it in the browser and copy the one-time link; the recipient opens it once, and the same link then finds nothing" width="100%" />
 </p>
 
 <p align="center">
-  <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/create-dark.png" />
+    <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
+  </picture>
   &nbsp;
-  <img src="docs/images/share.png" alt="Get a one-time link — the decryption key lives in the URL and never reaches the server" width="32%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/share-dark.png" />
+    <img src="docs/images/share.png" alt="Get a one-time link — the decryption key lives in the URL and never reaches the server" width="32%" />
+  </picture>
   &nbsp;
-  <img src="docs/images/view.png" alt="Recipient opens the link — decrypted locally, self-destructs after reading" width="32%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/view-dark.png" />
+    <img src="docs/images/view.png" alt="Recipient opens the link — decrypted locally, erased from the server as it is read" width="32%" />
+  </picture>
 </p>
 
 <p align="center"><sub><b>Create</b> → encrypted locally &nbsp;·&nbsp; <b>Share</b> → one-time link, key never sent &nbsp;·&nbsp; <b>Read</b> → decrypted in-browser, then gone</sub></p>
@@ -54,6 +63,9 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Auto-expiry** — 5 minutes to 30 days
 - **Read limits** — Auto-delete after N reads
 - **Delete token** — Manually delete a note at any time
+- **Markdown** — Optional formatting with a preview, sanitized (DOMPurify) before the reader sees it
+- **Password generator** — Inserts a strong password where you type, or shares one on its own
+- **Light & dark themes** — Follows the system, switchable from the footer
 - **File previews** — Images, PDF, video, audio rendered in-browser after decryption
 - **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
 - **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
@@ -190,7 +202,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL (`http://` or `https://`) |
-| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: the built-in red). See `.env.example` for footer and social image |
+| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: indigo). The gradients and the dark-theme shade are derived from it. See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |

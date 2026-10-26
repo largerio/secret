@@ -471,7 +471,56 @@ describe("GET /api/v1/notes/:id/exists", () => {
 		expect(json.hasPassword).toBe(false);
 		expect(json.fileCount).toBe(0);
 		expect(json.maxReads).toBe(0);
+		expect(json.readCount).toBe(0);
 		expect(json.expiresAt).toBeDefined();
+	});
+
+	it("reports readCount 0 for a fresh multi-read note", async () => {
+		const { id } = await createTestNote({ maxReads: 3 });
+
+		const res = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.maxReads).toBe(3);
+		expect(json.readCount).toBe(0);
+	});
+
+	it("counts a read of a multi-read note without consuming one itself", async () => {
+		const { id } = await createTestNote({ maxReads: 3 });
+
+		const readRes = await app.request(`/api/v1/notes/${id}`);
+		expect(readRes.status).toBe(200);
+
+		const first = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		const second = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		expect(first.readCount).toBe(1);
+		// Probing is free: /exists must never move the count.
+		expect(second.readCount).toBe(1);
+		expect(second.maxReads).toBe(3);
+	});
+
+	it("keeps readCount at 0 for an unlimited note, however often it is read", async () => {
+		const { id } = await createTestNote({ maxReads: 0 });
+
+		await app.request(`/api/v1/notes/${id}`);
+		await app.request(`/api/v1/notes/${id}`);
+
+		const json = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		expect(json.exists).toBe(true);
+		expect(json.maxReads).toBe(0);
+		expect(json.readCount).toBe(0);
+	});
+
+	it("keeps readCount at 0 for a legacy note whose maxReads is null", async () => {
+		const { id } = await createTestNote({ maxReads: 3 });
+		await app.request(`/api/v1/notes/${id}`);
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes).set({ maxReads: null }).where(eq(notes.id, id)).run();
+
+		const json = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		expect(json.maxReads).toBe(0);
+		expect(json.readCount).toBe(0);
 	});
 
 	it("returns maxReads 0 when database value is null", async () => {
@@ -518,6 +567,35 @@ describe("GET /api/v1/notes/:id/exists", () => {
 		expect(res.status).toBe(200);
 		const json = await res.json();
 		expect(json.exists).toBe(false);
+	});
+
+	it("reveals nothing about an expired note that had been read", async () => {
+		const { id } = await createTestNote({ maxReads: 3 });
+		await app.request(`/api/v1/notes/${id}`);
+		const before = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		expect(before.readCount).toBe(1);
+
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notes.id, id))
+			.run();
+
+		const res = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ exists: false });
+	});
+
+	it("reveals nothing once the last read burns the note", async () => {
+		const { id } = await createTestNote({ maxReads: 2 });
+		await app.request(`/api/v1/notes/${id}`);
+		const before = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
+		expect(before.readCount).toBe(1);
+		await app.request(`/api/v1/notes/${id}`);
+
+		const res = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(await res.json()).toEqual({ exists: false });
 	});
 
 	it("returns 400 for invalid note ID format", async () => {

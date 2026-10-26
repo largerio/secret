@@ -1,54 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { generatePassword, getPasswordStrength } from "../password.js";
-
-describe("getPasswordStrength", () => {
-	it("returns a neutral result for an empty password", () => {
-		const result = getPasswordStrength("");
-		expect(result.score).toBe(0);
-		expect(result.labelKey).toBeNull();
-		expect(result.color).toBe("var(--muted-2)");
-	});
-
-	it("scores a very weak password", () => {
-		// Short, lowercase only: 0 criteria met
-		const result = getPasswordStrength("abc");
-		expect(result.score).toBe(0);
-		expect(result.labelKey).toBeNull();
-	});
-
-	it("scores a weak password", () => {
-		// >= 8 chars only
-		const result = getPasswordStrength("abcdefgh");
-		expect(result.score).toBe(1);
-		expect(result.labelKey).toBe("str_vweak");
-	});
-
-	it("scores a medium password", () => {
-		// >= 8 chars, mixed case, digits
-		const result = getPasswordStrength("Abcdef12");
-		expect(result.score).toBe(3);
-		expect(result.labelKey).toBe("str_ok");
-	});
-
-	it("scores a strong password", () => {
-		// >= 14 chars, mixed case, digits
-		const result = getPasswordStrength("Abcdefghijkl12");
-		expect(result.score).toBe(4);
-		expect(result.labelKey).toBe("str_strong");
-	});
-
-	it("scores an excellent password with all criteria", () => {
-		// >= 14 chars, mixed case, digits, symbols
-		const result = getPasswordStrength("Abcdefghijk12!@");
-		expect(result.score).toBe(5);
-		expect(result.labelKey).toBe("str_exc");
-	});
-
-	it("assigns a color for every non-empty password", () => {
-		expect(getPasswordStrength("abc").color).toBe("#ef4444");
-		expect(getPasswordStrength("Abcdefghijk12!@").color).toBe("#10b981");
-	});
-});
+import {
+	entropyMeter,
+	generatePassword,
+	glyphKind,
+	passwordEntropy,
+	rateEntropy,
+} from "../password.js";
 
 describe("generatePassword", () => {
 	it("generates a password of the default length", () => {
@@ -69,12 +26,6 @@ describe("generatePassword", () => {
 
 	it("generates different passwords on each call", () => {
 		expect(generatePassword()).not.toBe(generatePassword());
-	});
-
-	it("rates its own output as excellent, every time", () => {
-		for (let i = 0; i < 500; i++) {
-			expect(getPasswordStrength(generatePassword()).score).toBe(5);
-		}
 	});
 
 	it("holds a character of every enabled class", () => {
@@ -131,5 +82,44 @@ describe("generatePassword", () => {
 		expect(password).toHaveLength(1);
 		expect(spy).toHaveBeenCalledTimes(2);
 		spy.mockRestore();
+	});
+});
+
+describe("passwordEntropy", () => {
+	it("counts length times the bits of the enabled pool", () => {
+		// 24 + 23 + 8 + 5 = 60 characters.
+		expect(passwordEntropy()).toBe(Math.round(20 * Math.log2(60)));
+		expect(passwordEntropy(10, { digits: true })).toBe(30);
+	});
+
+	it("rates the default settings as excellent", () => {
+		expect(rateEntropy(passwordEntropy())).toBe("excellent");
+	});
+
+	it("falls back to the lowercase pool like the generator does", () => {
+		expect(passwordEntropy(4, {})).toBe(Math.round(4 * Math.log2(23)));
+	});
+});
+
+describe("rateEntropy", () => {
+	it("puts each figure on the scale", () => {
+		expect(rateEntropy(49)).toBe("weak");
+		expect(rateEntropy(50)).toBe("fair");
+		expect(rateEntropy(80)).toBe("strong");
+		expect(rateEntropy(110)).toBe("excellent");
+	});
+});
+
+describe("entropyMeter", () => {
+	it("fills the meter at 130 bits and never past it", () => {
+		expect(entropyMeter(65)).toBe(50);
+		expect(entropyMeter(130)).toBe(100);
+		expect(entropyMeter(400)).toBe(100);
+	});
+});
+
+describe("glyphKind", () => {
+	it("sorts each character into the class it is coloured by", () => {
+		expect([..."Ab3#"].map(glyphKind)).toEqual(["upper", "lower", "digit", "symbol"]);
 	});
 });

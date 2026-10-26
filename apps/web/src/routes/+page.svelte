@@ -1,82 +1,89 @@
 <script lang="ts">
-import type { ContentMode } from "@largerio/secret-shared";
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
-import type { ProgressInfo, UploadPhase } from "@largerio/secret-sdk";
-import EncryptionBadge from "#lib/components/EncryptionBadge.svelte";
-import FileDropZone from "#lib/components/FileDropZone.svelte";
+import { onMount } from "svelte";
+import Composer from "#lib/components/create/Composer.svelte";
+import Lifetime from "#lib/components/create/Lifetime.svelte";
+import SuccessView from "#lib/components/create/SuccessView.svelte";
 import Icon from "#lib/components/Icon.svelte";
-import MarkdownEditor from "#lib/components/MarkdownEditor.svelte";
-import PasswordGenerator from "#lib/components/PasswordGenerator.svelte";
-import SecuritySettings from "#lib/components/SecuritySettings.svelte";
-import StepProgress from "#lib/components/StepProgress.svelte";
-import SuccessView from "#lib/components/SuccessView.svelte";
+import Callout from "#lib/components/ui/Callout.svelte";
+import PageHero from "#lib/components/ui/PageHero.svelte";
+import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
+import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
-import { defaultExpiration } from "#lib/server-config.js";
 import { t } from "#lib/i18n/index.svelte.js";
-import { setStep } from "#lib/steps.svelte.js";
+import { defaultExpiration } from "#lib/server-config.js";
 import { solveCap } from "#lib/utils/cap.js";
+import { resolveContentMode } from "#lib/utils/contentMode.js";
+import { DONE, type ProgressView, sendProgress } from "#lib/utils/progress.js";
+
+// How long "Link ready" stays on screen before the link itself replaces it.
+const DONE_PAUSE_MS = 450;
+
+const config = $derived(getConfig());
+const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 
 let mounted = $state(false);
-$effect(() => {
+onMount(() => {
 	mounted = true;
 });
 
-$effect(() => {
-	setStep(shareUrl ? 2 : 1);
-});
-
-// Form state
-let contentMode = $state<ContentMode>("text");
+// The note being written
 let text = $state("");
-// The Password tab keeps its own value: the generator fills it on mount, and
-// sharing `text` with the other tabs overwrote whatever had been typed there.
-let generatedSecret = $state("");
 let files = $state<File[]>([]);
-let password = $state("");
+let formatted = $state(false);
+let generated = $state<string | null>(null);
 let expiresIn = $state(defaultExpiration(getConfig().maxExpiry));
-let maxReads = $state("1");
+let maxReads = $state(1);
+let password = $state("");
+let passwordOn = $state(false);
 
-// Submission state
-let isSubmitting = $state(false);
+// Where the page is: writing, sending, or showing the link
+let phase = $state<"compose" | "sending" | "done">("compose");
+let progress = $state<ProgressView>({ step: 0, percent: null, chunk: null });
 let error = $state("");
-let uploadProgress = $state<number | null>(null);
-let uploadPhase = $state<UploadPhase>("encrypting");
-let uploadChunkLabel = $state("");
+let passwordError = $state("");
 
-// Result state
-let shareUrl = $state("");
-let qrCodeUrl = $state("");
-let manageUrl = $state("");
-let createdFileCount = $state(0);
+let result = $state<{
+	shareUrl: string;
+	manageUrl: string;
+	password: string;
+	fileCount: number;
+} | null>(null);
 let linkCopied = $state(false);
 
-// The decryption key lives only in this URL — it was never sent to the server
-// and cannot be recovered. A stray Back, reload or tab close before the user
-// copies it loses the secret for good, so warn while it is still on screen.
+const contentMode = $derived(
+	resolveContentMode(text, { formatted, generated, hasFiles: files.length > 0 }),
+);
+const canSubmit = $derived(text.trim().length > 0 || files.length > 0);
+
+const progressLabel = $derived(
+	progress.step === 0
+		? t("send_encrypting")
+		: progress.step === 1
+			? t("send_uploading", { percent: progress.percent ?? 0 })
+			: t("send_done"),
+);
+const progressDetail = $derived(
+	progress.step === 1 && progress.chunk
+		? t("chunk_progress", { current: progress.chunk.current, total: progress.chunk.total })
+		: progress.step === 2
+			? ""
+			: t("key_stays_here"),
+);
+
+// Leaving mid-upload loses the note, and leaving the link before copying it
+// loses the secret for good: the key exists nowhere else.
 $effect(() => {
-	if (!shareUrl || linkCopied) return;
-	const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+	const guard = phase === "sending" || (phase === "done" && !linkCopied);
+	if (!guard) return;
+	const warn = (event: BeforeUnloadEvent) => event.preventDefault();
 	window.addEventListener("beforeunload", warn);
 	return () => window.removeEventListener("beforeunload", warn);
 });
 
-const config = $derived(getConfig());
-const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
-const maxFilesPerNote = $derived(config.maxFilesPerNote);
-
-// What a submit sends, for the tab on screen. The drop zone is hidden on the
-// Password tab, so files attached on another tab stay there, unsent.
-const isSecretMode = $derived(contentMode === "secret");
-const submittedText = $derived(isSecretMode ? generatedSecret : text);
-const submittedFiles = $derived(isSecretMode ? [] : files);
-
-const canSubmit = $derived(!!(submittedText.trim() || submittedFiles.length > 0));
-
-async function handleSubmit() {
-	const text = submittedText;
-	const files = submittedFiles;
-	if (!text && files.length === 0) {
+async function handleSubmit(): Promise<void> {
+	if (!canSubmit) {
 		error = t("error_empty_content");
 		return;
 	}
@@ -84,93 +91,76 @@ async function handleSubmit() {
 		error = t("error_text_too_long", { max: String(MAX_TEXT_SIZE / 1024) });
 		return;
 	}
+	// Asked for and left empty would quietly send the note unprotected.
+	if (passwordOn && !password.trim()) {
+		passwordError = t("error_empty_password");
+		return;
+	}
 
 	error = "";
-	isSubmitting = true;
-	uploadProgress = null;
+	passwordError = "";
+	progress = { step: 0, percent: null, chunk: null };
+	phase = "sending";
+	// The field is only sent while the reader is asked for it.
+	const sentPassword = passwordOn ? password : "";
 
 	try {
 		const capToken = await solveCap();
 		const client = await getClient();
-		const parsed = parseInt(maxReads, 10);
-		const parsedMaxReads = Number.isNaN(parsed) ? 1 : parsed;
-
 		const noteFiles = await Promise.all(
-			files.map(async (file) => {
-				const buffer = await file.arrayBuffer();
-				return { name: file.name, type: file.type, data: new Uint8Array(buffer) };
-			}),
+			files.map(async (file) => ({
+				name: file.name,
+				type: file.type,
+				data: new Uint8Array(await file.arrayBuffer()),
+			})),
 		);
 
-		const result = await client.createNote({
+		const created = await client.createNote({
 			...(text ? { text, contentMode } : {}),
 			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
-			...(password ? { password } : {}),
+			...(sentPassword ? { password: sentPassword } : {}),
 			expiresIn,
-			maxReads: parsedMaxReads,
+			maxReads,
 			capToken,
 			// The instance's CHUNK_SIZE: the API refuses any chunk larger than it,
 			// and the SDK knows only its own 4 MiB default.
 			chunkSize: config.chunkSize,
-			onUploadProgress: (p) => {
-				uploadProgress = p * 100;
-			},
-			onProgress: (info: ProgressInfo) => {
-				uploadPhase = info.phase as UploadPhase;
-				uploadProgress = info.overallProgress * 100;
-				if (info.currentChunk && info.totalChunks && info.totalChunks > 1) {
-					uploadChunkLabel = t("chunk_progress", {
-						current: String(info.currentChunk),
-						total: String(info.totalChunks),
-					});
-				} else {
-					uploadChunkLabel = "";
-				}
+			onProgress: (info) => {
+				progress = sendProgress(info);
 			},
 		});
 
-		const url = `${window.location.origin}/note/${result.id}#${result.keyFragment}`;
-		createdFileCount = files.length;
-		shareUrl = url;
-		manageUrl = `${window.location.origin}/note/${result.id}/manage#${result.deleteToken}`;
-		const { toDataURL } = await import("qrcode");
-		qrCodeUrl = await toDataURL(url, { width: 256, margin: 2 });
+		const origin = window.location.origin;
+		result = {
+			shareUrl: `${origin}/note/${created.id}#${created.keyFragment}`,
+			manageUrl: `${origin}/note/${created.id}/manage#${created.deleteToken}`,
+			password: sentPassword,
+			fileCount: files.length,
+		};
+		progress = DONE;
+		await new Promise((resolve) => setTimeout(resolve, DONE_PAUSE_MS));
+		phase = "done";
 	} catch (e) {
 		error = e instanceof Error ? e.message : t("error_generic");
-	} finally {
-		isSubmitting = false;
-		uploadProgress = null;
+		phase = "compose";
 	}
 }
 
-function reset() {
-	contentMode = "text";
+function reset(): void {
 	text = "";
-	generatedSecret = "";
 	files = [];
+	formatted = false;
+	generated = null;
 	password = "";
+	passwordOn = false;
+	passwordError = "";
 	expiresIn = defaultExpiration(getConfig().maxExpiry);
-	maxReads = "1";
-	shareUrl = "";
-	manageUrl = "";
-	qrCodeUrl = "";
-	createdFileCount = 0;
+	maxReads = 1;
+	result = null;
 	linkCopied = false;
 	error = "";
-	uploadPhase = "encrypting";
-	uploadChunkLabel = "";
+	phase = "compose";
 }
-
-const TABS: {
-	id: ContentMode;
-	labelKey: "content_mode_text" | "content_mode_markdown" | "content_mode_secret";
-	subKey: "tab_text_sub" | "tab_markdown_sub" | "tab_secret_sub";
-	icon: "text" | "md" | "key";
-}[] = [
-	{ id: "text", labelKey: "content_mode_text", subKey: "tab_text_sub", icon: "text" },
-	{ id: "markdown", labelKey: "content_mode_markdown", subKey: "tab_markdown_sub", icon: "md" },
-	{ id: "secret", labelKey: "content_mode_secret", subKey: "tab_secret_sub", icon: "key" },
-];
 </script>
 
 <svelte:head>
@@ -204,195 +194,65 @@ const TABS: {
 	}).replace(/</g, "\\u003c")}</script>`}
 </svelte:head>
 
-{#if shareUrl}
+{#if phase === "done" && result}
 	<SuccessView
-		{shareUrl}
-		{qrCodeUrl}
-		{manageUrl}
-		{password}
-		fileCount={createdFileCount}
+		shareUrl={result.shareUrl}
+		manageUrl={result.manageUrl}
+		password={result.password}
+		fileCount={result.fileCount}
 		{expiresIn}
 		{maxReads}
 		onreset={reset}
 		onlinkcopied={() => (linkCopied = true)}
 	/>
+{:else if phase === "sending"}
+	<PageHero title={t("send_title")} sub={t("send_sub")} afterAction />
+	<ProgressPanel
+		view={progress}
+		label={progressLabel}
+		detail={progressDetail}
+		steps={[t("step_encrypt"), t("step_upload"), t("step_link")]}
+	/>
+	<p class="m-0 flex items-center justify-center gap-2 text-center text-[12.5px] text-muted">
+		<Icon name="alert" size={14} class="shrink-0 text-warn" />{t("send_keep_open")}
+	</p>
 {:else}
+	<PageHero title={t("create_title")} sub={t("create_sub")} afterAction={error !== ""} />
+
 	<form
-		onsubmit={(e) => {
-			e.preventDefault();
+		class="flex flex-col gap-5"
+		onsubmit={(event) => {
+			event.preventDefault();
 			handleSubmit();
 		}}
 	>
-		<div class="mb-10">
-			<EncryptionBadge />
-			<h1
-				class="serif"
-				style:font-size="clamp(36px, 6vw, 48px)"
-				style:margin="20px 0 20px"
-				style:line-height="1.25"
-				style:letter-spacing="-0.02em"
-				style:font-weight="400"
-				style:padding-bottom="4px"
-			>
-				{t("create_hero_1")}<br />
-				<em style:color="var(--accent)">{t("create_hero_2")}</em>
-			</h1>
-			<p style:color="var(--muted)" style:font-size="16px" style:max-width="560px" style:margin="0">
-				{t("create_hero_sub")}
-			</p>
-		</div>
-
 		{#if error}
-			<div
-				class="mb-6 rounded-xl border px-4 py-3 text-sm"
-				style:background="var(--accent-soft)"
-				style:border-color="var(--accent-ring)"
-				style:color="var(--text)"
-				role="alert"
-			>
-				{error}
-			</div>
+			<div class="pop"><Callout tone="danger" icon="alert">{error}</Callout></div>
 		{/if}
 
-		<!-- Segmented tabs -->
-		<div
-			role="tablist"
-			class="mb-6 grid gap-1.5 rounded-2xl border"
-			style:grid-template-columns="repeat(3, 1fr)"
-			style:background="var(--bg-2)"
-			style:border-color="var(--line)"
-			style:padding="6px"
-		>
-			{#each TABS as tab (tab.id)}
-				{@const active = contentMode === tab.id}
-				<button
-					type="button"
-					role="tab"
-					aria-selected={active}
-					onclick={() => (contentMode = tab.id)}
-					class="flex flex-col items-start gap-1 rounded-xl border-0 transition-all"
-					style:background={active ? "var(--bg-3)" : "transparent"}
-					style:color={active ? "var(--text)" : "var(--muted)"}
-					style:padding="12px 14px"
-				>
-					<span class="flex items-center gap-2" style:font-size="14px" style:font-weight="500">
-						<span style:color={active ? "var(--accent)" : "var(--muted)"}>
-							<Icon name={tab.icon} size={16} />
-						</span>
-						<span>{t(tab.labelKey)}</span>
-					</span>
-					<span class="mono hidden sm:inline" style:font-size="10px" style:color="var(--muted-2)"
-						>{t(tab.subKey)}</span
-					>
-				</button>
-			{/each}
-		</div>
+		<Composer
+			bind:text
+			bind:files
+			bind:formatted
+			bind:generated
+			secretNote={contentMode === "secret"}
+			{maxFileSize}
+			maxFilesPerNote={config.maxFilesPerNote}
+		/>
 
-		<!-- Editor -->
-		<div class="mb-6">
-			{#if contentMode === "secret"}
-				<PasswordGenerator bind:value={generatedSecret} />
-			{:else if contentMode === "markdown"}
-				<div class="relative">
-					<MarkdownEditor
-						bind:value={text}
-						maxlength={MAX_TEXT_SIZE}
-						placeholder={t("text_placeholder_md")}
-					/>
-					<div
-						class="mono pointer-events-none absolute"
-						style:bottom="12px"
-						style:right="14px"
-						style:font-size="10px"
-						style:color="var(--muted-2)"
-					>
-						{text.length.toLocaleString()} / {MAX_TEXT_SIZE.toLocaleString()}
-					</div>
-				</div>
-			{:else}
-				<div class="relative">
-					<textarea
-						id="note-text"
-						bind:value={text}
-						placeholder={t("text_placeholder")}
-						rows="8"
-						maxlength={MAX_TEXT_SIZE}
-						aria-describedby="note-text-count"
-						class="w-full rounded-xl border outline-none transition-colors"
-						style:background="var(--bg-2)"
-						style:border-color="var(--line)"
-						style:color="var(--text)"
-						style:padding="14px 16px"
-						style:font-size="15px"
-						style:line-height="1.6"
-						style:resize="vertical"
-						style:min-height="180px"
-					></textarea>
-					<div
-						id="note-text-count"
-						class="mono pointer-events-none absolute"
-						style:bottom="12px"
-						style:right="14px"
-						style:font-size="10px"
-						style:color="var(--muted-2)"
-					>
-						{text.length.toLocaleString()} / {MAX_TEXT_SIZE.toLocaleString()}
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		<!-- Files dropzone -->
-		{#if contentMode !== "secret"}
-			<FileDropZone bind:files {maxFileSize} {maxFilesPerNote} />
-		{/if}
-
-		<!-- Security settings -->
-		<SecuritySettings bind:password bind:expiresIn bind:maxReads />
-
-		{#if isSubmitting}
-			<div class="mb-4" role="status">
-				<StepProgress
-					steps={[
-						{ key: "encrypting", label: t("step_encrypting"), icon: "shield" },
-						{ key: "uploading", label: t("step_uploading"), icon: "upload" },
-						{ key: "done", label: t("step_done"), icon: "check" },
-					]}
-					currentStep={uploadPhase === "encrypting" ? 0 : uploadPhase === "uploading" ? 1 : 2}
-					progress={uploadProgress ?? 0}
-					label={uploadChunkLabel}
-				/>
-			</div>
-		{/if}
+		<Lifetime bind:expiresIn bind:maxReads bind:password bind:passwordOn {passwordError} />
 
 		<button
 			type="submit"
-			disabled={!mounted || isSubmitting || !canSubmit}
-			class="inline-flex w-full items-center justify-center gap-2 rounded-xl border-0 transition-all disabled:cursor-not-allowed disabled:opacity-50"
-			style:background="var(--accent-strong)"
-			style:color="var(--accent-ink)"
-			style:padding="16px 24px"
-			style:font-size="15px"
-			style:font-weight="500"
+			class="btn btn-primary btn-lg rise w-full"
+			style:animation-delay="0.3s"
+			disabled={!mounted || !canSubmit}
 		>
-			{#if isSubmitting}
-				<span class="spinner"></span>
-				<span>{t("submit_encrypting")}</span>
-			{:else}
-				<Icon name="lock" size={16} />
-				<span>{t("submit_encrypt")}</span>
-				<Icon name="arrow-right" size={15} class="opacity-80" />
-			{/if}
+			{t("submit_encrypt")}<Icon name="arrow-right" size={16} />
 		</button>
 
-		<p
-			class="mono mt-6 text-center"
-			style:font-size="11px"
-			style:color="var(--muted-2)"
-			style:line-height="1.7"
-		>
-			{t("disclaimer_1")} <code style:color="var(--muted)">#</code><br />
-			{t("disclaimer_2")}
-		</p>
+		<div class="rise" style:animation-delay="0.36s">
+			<TrustLine />
+		</div>
 	</form>
 {/if}

@@ -354,8 +354,14 @@ function isNoteInfo(value: unknown): value is NoteInfo {
 		typeof v["fileCount"] === "number" &&
 		typeof v["expiresAt"] === "string" &&
 		typeof v["maxReads"] === "number" &&
+		// Optional: an instance running an older API does not send it.
+		(v["readCount"] === undefined || isNonNegativeInteger(v["readCount"])) &&
 		typeof v["chunked"] === "boolean"
 	);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+	return Number.isInteger(value) && (value as number) >= 0;
 }
 
 export async function deleteNote(

@@ -1,43 +1,3 @@
-export type StrengthLabelKey = "str_vweak" | "str_weak" | "str_ok" | "str_strong" | "str_exc";
-
-export interface PasswordStrength {
-	readonly score: number;
-	readonly labelKey: StrengthLabelKey | null;
-	readonly color: string;
-}
-
-const STRENGTH_KEYS: readonly StrengthLabelKey[] = [
-	"str_vweak",
-	"str_weak",
-	"str_ok",
-	"str_strong",
-	"str_exc",
-];
-const STRENGTH_COLORS: readonly string[] = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#10b981"];
-
-/** Score a password from 0 to 5 based on length and character variety. */
-export function getPasswordStrength(password: string): PasswordStrength {
-	if (!password) return { score: 0, labelKey: null, color: "var(--muted-2)" };
-
-	let score = 0;
-	if (password.length >= 8) score++;
-	if (password.length >= 14) score++;
-	if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
-	if (/\d/.test(password)) score++;
-	if (/[^\w\s]/.test(password)) score++;
-
-	const idx = Math.min(score - 1, 4);
-	if (idx < 0) return { score, labelKey: null, color: "#ef4444" };
-
-	// idx ∈ [0, 4] here and both arrays have 5 entries, so the `??` fallbacks
-	// below are unreachable — they exist only for noUncheckedIndexedAccess.
-	/* v8 ignore next */
-	const labelKey = STRENGTH_KEYS[idx] ?? null;
-	/* v8 ignore next */
-	const color = STRENGTH_COLORS[idx] ?? "#ef4444";
-	return { score, labelKey, color };
-}
-
 /** Which character classes a generated password may draw from. */
 export interface PasswordOptions {
 	readonly uppercase?: boolean;
@@ -71,6 +31,21 @@ function uniformIndex(max: number): number {
 	}
 }
 
+const ALL_CLASSES: PasswordOptions = {
+	uppercase: true,
+	lowercase: true,
+	digits: true,
+	symbols: true,
+};
+
+/** The charsets `options` enables, lowercase alone when it enables none. */
+function enabledCharsets(options: PasswordOptions = ALL_CLASSES): string[] {
+	const classes = (Object.keys(CHARSETS) as Array<keyof typeof CHARSETS>)
+		.filter((name) => options[name])
+		.map((name) => CHARSETS[name]);
+	return classes.length > 0 ? classes : [CHARSETS.lowercase];
+}
+
 function pick(charset: string): string {
 	return charset.charAt(uniformIndex(charset.length));
 }
@@ -84,12 +59,7 @@ function pick(charset: string): string {
  * each enabled class, each at a random position.
  */
 export function generatePassword(length = 20, options?: PasswordOptions): string {
-	const opts = options ?? { uppercase: true, lowercase: true, digits: true, symbols: true };
-	const classes = (Object.keys(CHARSETS) as Array<keyof typeof CHARSETS>)
-		.filter((name) => opts[name])
-		.map((name) => CHARSETS[name]);
-	if (classes.length === 0) classes.push(CHARSETS.lowercase);
-
+	const classes = enabledCharsets(options);
 	const charset = classes.join("");
 	const guaranteed = length >= classes.length ? classes : [];
 	const chars: string[] = [];
@@ -100,4 +70,39 @@ export function generatePassword(length = 20, options?: PasswordOptions): string
 		chars.splice(uniformIndex(chars.length + 1), 0, pick(set));
 	}
 	return chars.join("");
+}
+
+export type EntropyRating = "weak" | "fair" | "strong" | "excellent";
+
+/**
+ * Entropy of a password `generatePassword` would draw with these settings, in
+ * bits, counting every character as a uniform pick from the enabled charsets.
+ * The one-character-per-class guarantee costs a fraction of a bit, ignored here.
+ */
+export function passwordEntropy(length = 20, options?: PasswordOptions): number {
+	const pool = enabledCharsets(options).join("").length;
+	return Math.round(length * Math.log2(pool));
+}
+
+/** A word for an entropy figure, on the usual offline-attack scale. */
+export function rateEntropy(bits: number): EntropyRating {
+	if (bits < 50) return "weak";
+	if (bits < 80) return "fair";
+	if (bits < 110) return "strong";
+	return "excellent";
+}
+
+/** How full the strength meter is for an entropy figure, in percent: 130 bits fills it. */
+export function entropyMeter(bits: number): number {
+	return Math.min(100, Math.round((bits / 130) * 100));
+}
+
+export type GlyphKind = "upper" | "lower" | "digit" | "symbol";
+
+/** Which colour a password character is shown in, so look-alikes are told apart. */
+export function glyphKind(char: string): GlyphKind {
+	if (/[0-9]/.test(char)) return "digit";
+	if (/[A-Z]/.test(char)) return "upper";
+	if (/[a-z]/.test(char)) return "lower";
+	return "symbol";
 }

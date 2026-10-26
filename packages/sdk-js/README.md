@@ -91,6 +91,16 @@ const { payload } = await client.readNote(id, keyFragment, { password });
 
 `NoteInfo` is a discriminated union: narrow on `exists` before touching any other field.
 
+`maxReads` is the limit the note was created with (`0` means unlimited); `readCount` is how many of those reads are already spent, wrong passwords included, since the server cannot tell them apart:
+
+```ts
+if (info.maxReads > 0 && info.readCount !== undefined) {
+  console.log(`${info.maxReads - info.readCount} read(s) left`);
+}
+```
+
+`readCount` is always `0` on an unlimited note. It is optional because an instance running an older API does not send it: treat `undefined` as unknown, not as zero. The count can change between `checkNote` and `readNote` if someone else opens the note in the meantime.
+
 ## Files
 
 A file is a name, a MIME type and the bytes — the SDK never touches the filesystem itself:

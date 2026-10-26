@@ -1,32 +1,43 @@
 <script lang="ts">
+import { onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
+import NoticeView from "#lib/components/ui/NoticeView.svelte";
+import PageHero from "#lib/components/ui/PageHero.svelte";
+import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
 import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { solveCap } from "#lib/utils/cap.js";
+import type { PageData } from "./$types";
 
-const { data } = $props();
+const { data }: { data: PageData } = $props();
 
 let mounted = $state(false);
 let deleteToken = $state("");
+// Deleting is final, so it takes two clicks: the first only asks for confirmation.
+let confirming = $state(false);
 let isDeleting = $state(false);
 let isDeleted = $state(false);
 let error = $state("");
+// The button that replaces the one just clicked takes the focus, so the
+// keyboard never falls back to the top of the page.
+let deleteButton: HTMLButtonElement | undefined = $state();
+let confirmButton: HTMLButtonElement | undefined = $state();
 
-$effect(() => {
+onMount(() => {
 	deleteToken = window.location.hash.slice(1);
 	mounted = true;
 });
 
-const deleteLabel = $derived(
-	!mounted ? t("loading") : isDeleting ? t("deleting") : t("delete_button"),
-);
+async function setConfirming(next: boolean): Promise<void> {
+	confirming = next;
+	await tick();
+	(next ? confirmButton : deleteButton)?.focus();
+}
 
-async function handleDelete() {
-	if (!confirm(t("delete_confirm"))) return;
-
-	const id = page.params["id"];
+async function handleDelete(): Promise<void> {
+	const id = page.params.id;
 	if (!id || !deleteToken) return;
 
 	isDeleting = true;
@@ -49,116 +60,66 @@ async function handleDelete() {
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<div class="space-y-6">
-	{#if !data.noteExists && !isDeleted}
-		<div
-			class="rounded-2xl border p-8 text-center"
-			style:background="var(--bg-2)"
-			style:border-color="var(--line)"
-		>
-			<h1 class="serif" style:font-size="24px" style:color="var(--text)">
-				{t("not_found_title")}
-			</h1>
-			<p class="mt-2" style:color="var(--muted)">{t("not_found_description")}</p>
-			<a
-				href="/"
-				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-				style:background="var(--accent-strong)"
-				style:color="var(--accent-ink)"
-				style:padding="12px 18px"
-				style:font-size="14px"
-			>
-				<Icon name="lock" size={14} />
-				<span>{t("new_note")}</span>
-			</a>
-		</div>
-	{:else if isDeleted}
-		<div
-			class="rounded-2xl border p-8 text-center"
-			style:background="var(--bg-2)"
-			style:border-color="var(--line)"
-		>
-			<p
-				class="inline-flex items-center justify-center gap-2"
-				style:color="var(--text)"
-				style:font-size="17px"
-				style:font-weight="500"
-			>
-				<Icon name="check" size={16} />
-				<span>{t("note_deleted")}</span>
+{#if isDeleted}
+	<PageHero title={t("note_deleted")} sub={t("note_deleted_sub")} afterAction>
+		{#snippet badge()}
+			<SuccessBadge />
+		{/snippet}
+	</PageHero>
+	<div class="rise flex justify-center" style:animation-delay="0.18s">
+		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
+	</div>
+{:else if !data.noteExists}
+	<NoticeView icon="file-x" title={t("not_found_title")} sub={t("not_found_description")} />
+{:else if mounted && !deleteToken}
+	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} />
+{:else}
+	<PageHero title={t("manage_title")} sub={t("manage_description")} />
+
+	<section
+		class="card rise flex flex-col gap-3 p-4"
+		style:animation-delay="0.18s"
+		aria-label={t("manage_title")}
+	>
+		{#if error}
+			<p class="pop m-0 text-sm text-danger" role="alert">{error}</p>
+		{/if}
+
+		{#if confirming}
+			<p class="pop m-0 flex items-center gap-2 text-sm text-muted">
+				<Icon name="alert" size={16} class="shrink-0 text-danger" />{t("delete_confirm")}
 			</p>
-			<div>
-				<a
-					href="/"
-					class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-					style:background="var(--accent-strong)"
-					style:color="var(--accent-ink)"
-					style:padding="12px 18px"
-					style:font-size="14px"
+			<div class="flex flex-wrap gap-2">
+				<button
+					type="button"
+					class="btn btn-outline flex-1"
+					disabled={isDeleting}
+					onclick={() => setConfirming(false)}
 				>
-					<Icon name="lock" size={14} />
-					<span>{t("new_note")}</span>
-				</a>
+					{t("cancel")}
+				</button>
+				<button
+					type="button"
+					class="btn btn-danger flex-1"
+					bind:this={confirmButton}
+					disabled={isDeleting}
+					onclick={handleDelete}
+				>
+					<Icon name="trash" size={15} />
+					{isDeleting ? t("deleting") : t("delete_confirm_button")}
+				</button>
 			</div>
-		</div>
-	{:else if mounted && !deleteToken}
-		<div
-			class="rounded-2xl border p-8 text-center"
-			style:background="var(--accent-soft)"
-			style:border-color="var(--accent-ring)"
-		>
-			<h1 style:color="var(--text)" style:font-size="17px" style:font-weight="600">
-				{t("error_title")}
-			</h1>
-			<p class="mt-2" style:color="var(--muted)" style:font-size="14px">
-				{t("manage_invalid_token")}
-			</p>
-			<a
-				href="/"
-				class="mt-4 inline-flex items-center gap-2 rounded-lg transition-colors"
-				style:background="var(--accent-strong)"
-				style:color="var(--accent-ink)"
-				style:padding="12px 18px"
-				style:font-size="14px"
-			>
-				<Icon name="lock" size={14} />
-				<span>{t("new_note")}</span>
-			</a>
-		</div>
-	{:else}
-		<div
-			class="space-y-4 rounded-2xl border p-6"
-			style:background="var(--bg-2)"
-			style:border-color="var(--line)"
-		>
-			<h1 class="serif" style:font-size="24px" style:color="var(--text)">
-				{t("manage_title")}
-			</h1>
-			<p style:color="var(--muted)" style:font-size="14px">{t("manage_description")}</p>
-
-			{#if error}
-				<div
-					class="rounded-xl border px-4 py-3 text-sm"
-					style:background="var(--accent-soft)"
-					style:border-color="var(--accent-ring)"
-					style:color="var(--text)"
-					role="alert"
-				>
-					{error}
-				</div>
-			{/if}
-
+		{:else}
 			<button
-				onclick={handleDelete}
-				disabled={!mounted || isDeleting}
-				class="inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-				style:background="var(--accent-soft)"
-				style:border-color="var(--accent-ring)"
-				style:color="var(--accent)"
+				type="button"
+				class="btn btn-outline btn-lg w-full"
+				bind:this={deleteButton}
+				disabled={!mounted}
+				onclick={() => setConfirming(true)}
 			>
-				<Icon name="trash" size={14} />
-				<span>{deleteLabel}</span>
+				<Icon name="trash" size={16} />
+				{mounted ? t("delete_button") : t("loading")}
 			</button>
-		</div>
-	{/if}
-</div>
+		{/if}
+	</section>
+{/if}

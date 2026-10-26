@@ -12,60 +12,71 @@ test.describe("create page", () => {
 		await expectNoA11yViolations(page, "create page (initial)");
 	});
 
-	test("password field + strength meter has no a11y violations", async ({ page }) => {
+	test("opening password field has no a11y violations", async ({ page }) => {
 		await gotoCreate(page);
+		await page.locator("#password-mode").selectOption("on");
 		await page.locator("#password").fill("Tr0ub4dour&3xample");
-		// The strength meter only renders once the field is non-empty.
 		await expect(page.locator("#password")).toHaveValue("Tr0ub4dour&3xample");
-		await expectNoA11yViolations(page, "create page (password + strength)");
+		await expectNoA11yViolations(page, "create page (opening password)");
 	});
 
-	test("password generator (secret tab) has no a11y violations", async ({ page }) => {
+	test("password generator has no a11y violations", async ({ page }) => {
 		await gotoCreate(page);
-		// The "secret" content mode is labelled "Password" in the UI.
-		await page.getByRole("tab", { name: /password/i }).click();
-		// The generator auto-fills a password on mount; wait for it before scanning.
+		await page.getByRole("button", { name: "Generate a password" }).click();
 		await expect(page.getByRole("button", { name: /regenerate/i })).toBeVisible();
 		await expectNoA11yViolations(page, "create page (password generator)");
 	});
 
-	test("markdown editor (write + preview) has no a11y violations", async ({ page }) => {
+	test("markdown formatting (write + preview) has no a11y violations", async ({ page }) => {
 		await gotoCreate(page);
-		await page.getByRole("tab", { name: /markdown/i }).click();
-		const editor = page.getByPlaceholder(/markdown/i);
-		await expect(editor).toBeVisible();
-		await editor.fill("# Heading\n\nSome **bold** body text.");
+		await page.getByRole("button", { name: "Formatting" }).click();
+		await page.locator("#note-text").fill("# Heading\n\nSome **bold** body text.");
 		await expectNoA11yViolations(page, "markdown editor (write)");
 
-		await page.getByRole("button", { name: /preview/i }).click();
+		await page.getByRole("button", { name: /^preview$/i }).click();
 		// Wait for the debounced render to produce the prose output.
 		await expect(page.locator(".prose")).toBeVisible();
 		await expectNoA11yViolations(page, "markdown editor (preview)");
 	});
 });
 
+// The dark theme has its own palette: scan it too, through the OS preference
+// the app follows until a visitor picks a theme.
+test.describe("dark theme", () => {
+	test.use({ colorScheme: "dark" });
+
+	test("create page has no a11y violations", async ({ page }) => {
+		await gotoCreate(page);
+		await expectNoA11yViolations(page, "create page (dark)");
+	});
+
+	test("share screen has no a11y violations", async ({ page }) => {
+		await createNote(page, { text: `a11y dark ${Date.now()}` });
+		await expect(page.getByTestId("share-url")).toBeVisible();
+		await expectNoA11yViolations(page, "success view (dark)");
+	});
+});
+
 test.describe("success view", () => {
-	test("share screen (with QR + manage details) has no a11y violations", async ({ page }) => {
+	test("share screen (with QR + deletion link) has no a11y violations", async ({ page }) => {
 		await createNote(page, { text: `a11y success ${Date.now()}`, password: "hunter2-secret" });
 		await expect(page.getByTestId("share-url")).toBeVisible();
 		await expectNoA11yViolations(page, "success view (initial)");
 
-		// Reveal the QR image and expand the delete/manage section, then re-scan.
-		await page.getByRole("button", { name: /QR Code/i }).click();
+		// Reveal the QR code, then re-scan with the deletion link in view.
+		await page.getByRole("button", { name: /QR code/i }).click();
 		await expect(page.getByRole("img", { name: /QR code for the share link/i })).toBeVisible();
-		await page.locator("#manage-url").scrollIntoViewIfNeeded();
-		await page.locator("summary").click();
-		await expect(page.locator("#manage-url")).toBeVisible();
-		await expectNoA11yViolations(page, "success view (QR + manage expanded)");
+		await page.getByTestId("manage-link").scrollIntoViewIfNeeded();
+		await expectNoA11yViolations(page, "success view (QR open)");
 	});
 });
 
 test.describe("note view", () => {
-	test("burn-warning gate has no a11y violations", async ({ page, context }) => {
+	test("single-read warning has no a11y violations", async ({ page, context }) => {
 		const shareUrl = await createNote(page, { text: `a11y burn ${Date.now()}` });
 		const reader = await context.newPage();
 		await reader.goto(shareUrl);
-		await expect(reader.getByRole("button", { name: /I understand, continue/i })).toBeEnabled({
+		await expect(reader.getByRole("button", { name: /Show the note/i })).toBeEnabled({
 			timeout: 30_000,
 		});
 		await expectNoA11yViolations(reader, "note view (burn gate)");
@@ -79,7 +90,7 @@ test.describe("note view", () => {
 		});
 		const reader = await context.newPage();
 		await reader.goto(shareUrl);
-		// maxReads > 1 means no burn gate — the password field is shown immediately.
+		// maxReads > 1: no single-read warning, just the password field.
 		await expect(reader.locator("#decrypt-password")).toBeVisible({ timeout: 30_000 });
 		await expectNoA11yViolations(reader, "note view (password gate)");
 	});

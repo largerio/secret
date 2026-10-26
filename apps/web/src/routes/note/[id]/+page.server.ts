@@ -1,10 +1,26 @@
 import { SecretApiError } from "@largerio/secret-sdk";
-import type { ServerLoad } from "@sveltejs/kit";
 import { getServerClient } from "#lib/server/client.js";
 import { readClientAddress } from "#lib/utils/forwarding.js";
+import type { PageServerLoad } from "./$types";
 
-export const load: ServerLoad = async ({ params, getClientAddress }) => {
-	const id = params["id"];
+interface NoteInfo {
+	hasPassword: boolean;
+	maxReads: number;
+	/** Null on an instance whose API predates the field. */
+	readCount: number | null;
+	fileCount: number;
+	expiresAt: string;
+	chunked: boolean;
+}
+
+interface NoteLoad {
+	noteInfo: NoteInfo | null;
+	unavailable: boolean;
+	rateLimited: boolean;
+}
+
+export const load: PageServerLoad = async ({ params, getClientAddress }): Promise<NoteLoad> => {
+	const id = params.id;
 	if (!id) return { noteInfo: null, unavailable: false, rateLimited: false };
 
 	try {
@@ -17,6 +33,7 @@ export const load: ServerLoad = async ({ params, getClientAddress }) => {
 			noteInfo: {
 				hasPassword: info.hasPassword,
 				maxReads: info.maxReads,
+				readCount: info.readCount ?? null,
 				fileCount: info.fileCount,
 				expiresAt: info.expiresAt,
 				chunked: info.chunked,
