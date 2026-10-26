@@ -3,13 +3,17 @@ import { applyFormat, type TextState } from "../markdownEdit.js";
 
 /** Write a state with `[` `]` marking the selection (or a lone `|` for a caret). */
 function at(marked: string): TextState {
-	if (marked.includes("|")) {
-		const start = marked.indexOf("|");
-		return { value: marked.replace("|", ""), start, end: start };
+	const caret = marked.indexOf("|");
+	if (caret !== -1) {
+		return { value: marked.slice(0, caret) + marked.slice(caret + 1), start: caret, end: caret };
 	}
-	const start = marked.indexOf("[");
-	const end = marked.indexOf("]") - 1;
-	return { value: marked.replace("[", "").replace("]", ""), start, end };
+	const open = marked.indexOf("[");
+	const close = marked.indexOf("]");
+	return {
+		value: marked.slice(0, open) + marked.slice(open + 1, close) + marked.slice(close + 1),
+		start: open,
+		end: close - 1,
+	};
 }
 
 describe("applyFormat", () => {
