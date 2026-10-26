@@ -16,7 +16,7 @@ Once it is up: [API keys](#api-keys-for-the-sdk) ·
 [Restricting who can create notes](#restricting-who-can-create-notes) ·
 [Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
 [One instance per database](#one-instance-per-database) ·
-[Updating](#updating) ·
+[Monitoring](#monitoring) · [Updating](#updating) ·
 [Verifying the image](#verifying-the-image) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
@@ -731,11 +731,136 @@ running two:
   its restart policy (`restart: unless-stopped` in `docker-compose.yml`) brings
   it back within seconds.
 - Docker alone does not restart a container that is only `unhealthy`. An
-  orchestrator can, from `/api/health`: a Kubernetes liveness probe, a Swarm
-  service.
+  orchestrator can, from the [health probes](#health-probes): a Kubernetes
+  liveness probe, a Swarm service.
 - If the host fails, start the instance elsewhere on the same data: a volume
   that can follow it, or the latest [backup](#backup--restore). On Kubernetes:
   one replica, a `ReadWriteOnce` volume.
+
+---
+
+## Monitoring
+
+### Health probes
+
+Three endpoints answer on the app's port, with no token:
+
+| Path | `200` when | For |
+|---|---|---|
+| `/api/health/live` | the API process answers; nothing else is checked | a liveness probe |
+| `/api/health/ready` | the database and the storage answer, and the container is not stopping; `503` otherwise | a readiness probe, a load balancer, the image's `HEALTHCHECK` |
+| `/api/health` | as `/api/health/ready`, with the version and the quota added | a look by hand, and the checks that already call it |
+
+```bash
+curl http://localhost:3000/api/health
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.5.0","revision":"<commit>"}
+```
+
+`status` is `ok`, `degraded` when a check fails (`database` is the volume,
+`storage` is `FILES_PATH` or the S3 bucket), or `draining` once the container
+is stopping. The checks are cached for 10 seconds, so polling cannot hammer the
+storage.
+
+The image's `HEALTHCHECK` polls readiness. Docker keeps a single health status,
+and a deploy that waits for it, such as
+[Deploying from CI](#deploying-from-ci), must not accept a container that
+starts but cannot reach its storage. Liveness is for orchestrators that tell
+the two apart, such as Kubernetes: restarting a container does not fix an S3
+outage, so its liveness probe should not fail on one.
+
+**Stopping.** On `SIGTERM`, readiness turns to `draining` at once and the
+container stops accepting connections. The requests in flight get
+`SHUTDOWN_TIMEOUT` seconds, 8 by default, then they are cut and the database is
+closed. Docker kills a container 10 seconds after asking it to stop, unless
+told otherwise: to give long uploads more time, raise both, the timeout a
+couple of seconds under the grace period.
+
+```yaml
+services:
+  app:
+    environment:
+      - SHUTDOWN_TIMEOUT=25
+    stop_grace_period: 30s
+```
+
+### Version
+
+`/api/health` reports the version and the commit the image was built from
+(`revision`); the API reference (`/api/v1/openapi.json`) reports the version
+too.
+
+- A release reports its number, such as `1.5.0`.
+- An image built from `main` after a release, such as `:main`, reports that
+  release suffixed `-dev` (`1.5.0-dev`), next to its own revision: it holds
+  changes the release does not.
+- An image you build yourself reports the latest version in its `CHANGELOG.md`,
+  whichever commit you built, and an `unknown` revision. Pass the commit to
+  record it: `docker build --build-arg REVISION=$(git rev-parse HEAD) .`
+
+### Metrics
+
+`GET /api/metrics` exposes counters and gauges in the Prometheus text format. It
+is off by default: the path answers `404` until `METRICS_TOKEN` is set, and then
+`401` to any request without that token.
+
+```env
+METRICS_TOKEN=<openssl rand -base64 32>   # 32 characters minimum
+```
+
+The endpoint is served on the app's port, like the rest of the API: the token
+is what keeps it private. Your reverse proxy can also refuse `/api/metrics` from
+outside your network. Prometheus sends the token as a bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: secret
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      credentials_file: /etc/prometheus/secret-metrics-token
+    static_configs:
+      - targets: ["secret.example.com"]
+```
+
+Successful scrapes stay out of the logs; refused ones are logged.
+
+| Metric | Type | Labels | |
+|---|---|---|---|
+| `secret_build_info` | gauge | `version`, `revision` | Always 1 |
+| `secret_process_start_time_seconds` | gauge | | Uptime is `time() - secret_process_start_time_seconds` |
+| `secret_process_resident_memory_bytes` | gauge | | |
+| `secret_process_heap_used_bytes` | gauge | | |
+| `secret_http_requests_total` | counter | `method`, `route`, `status` | `route` is the pattern (`/api/v1/notes/:id`), `status` the class (`2xx`) |
+| `secret_http_request_duration_seconds` | histogram | `method`, `route` | Up to the response headers |
+| `secret_notes_created_total` | counter | `type` | `text`, `file`, or `chunked` (a large upload) |
+| `secret_note_reads_total` | counter | `type` | |
+| `secret_notes_burned_total` | counter | | Deleted by the read that reached their limit |
+| `secret_notes_deleted_total` | counter | | Deleted with their delete token |
+| `secret_notes_expired_total` | counter | | Deleted by the cleanup job once expired |
+| `secret_notes` | gauge | `type` | Notes in the database |
+| `secret_upload_sessions` | gauge | | Chunked uploads in progress |
+| `secret_storage_used_bytes` | gauge | | What `STORAGE_QUOTA_BYTES` counts |
+| `secret_storage_quota_bytes` | gauge | | Only when a quota is set |
+| `secret_storage_purges_total` | counter | `result` | Deletions of a note's files: `ok` or `error` |
+| `secret_pending_deletions` | gauge | `state` | Deletions owed: `queued`, or `retrying` after a failed retry |
+| `secret_pending_deletions_abandoned_total` | counter | | Deletions given up after their last retry |
+| `secret_storage_sweep_last_run_timestamp_seconds` | gauge | | When the [storage sweep](#storage-cleanup) last ended |
+| `secret_storage_sweep_last_status` | gauge | `status` | 1 for how it ended: `done`, `trial`, `skipped` or `failed` |
+| `secret_storage_sweep_last_orphans` | gauge | | Files no note points to, found by the last sweep that ran |
+
+Counters start again from zero when the container restarts. Worth an alert:
+readiness failing; `secret_pending_deletions{state="retrying"}` above zero for
+hours, or `secret_pending_deletions_abandoned_total` rising, as deletions are
+failing (the logs say why, often the storage credentials); a sweep `skipped`
+(see [One storage location per instance](#one-storage-location-per-instance));
+`secret_storage_used_bytes` close to the quota.
+
+**What they reveal.** No metric carries a note id, an address or a path, and
+none helps decrypt anything. They are still metadata about how the instance is
+used: how many notes are created and read, of which kind, when, and how much is
+stored. That is why they are off by default, and why the token deserves the
+care of an API key. The volume stored, which `/api/health` used to show anyone,
+is now only here.
 
 ---
 
@@ -916,12 +1041,13 @@ endpoint from inside the host:
 
 ```bash
 curl http://localhost:3000/api/health
-# {"status":"ok","checks":{"database":"ok","storage":"ok"}}
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},…}
 ```
 
 A failing check answers `503` and names the subsystem — `database` (the volume)
 or `storage` (`FILES_PATH`, or the S3 credentials). The error itself is in the
-logs, prefixed `[health]`.
+logs: `database probe failed` or `storage probe failed`. See
+[Health probes](#health-probes).
 
 ### Uploads fail behind a reverse proxy
 

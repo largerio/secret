@@ -62,6 +62,8 @@ describe("parseConfig", () => {
 				trustedProxies: [],
 				storageReconcile: true,
 				debug: false,
+				metricsToken: "",
+				shutdownTimeoutMs: 8000,
 			});
 			expect(config.storage).toEqual({ type: "local", localPath: "./data/files" });
 		});
@@ -121,6 +123,36 @@ describe("parseConfig", () => {
 			expectConfigError(
 				baseEnv({ API_KEY: key0, API_KEY_2: "short" }),
 				"API keys must be at least 32 characters long.",
+			);
+		});
+	});
+
+	describe("metrics token", () => {
+		const token = "m".repeat(32);
+
+		it("is off unless set, and trimmed", () => {
+			expect(parseConfig(baseEnv({ METRICS_TOKEN: "  " })).metricsToken).toBe("");
+			expect(parseConfig(baseEnv({ METRICS_TOKEN: ` ${token} ` })).metricsToken).toBe(token);
+		});
+
+		it("rejects a token short enough to brute-force", () => {
+			const err = expectConfigError(
+				baseEnv({ METRICS_TOKEN: "m".repeat(31) }),
+				"METRICS_TOKEN must be at least 32 characters long.",
+			);
+			expect(err.hint).toContain("openssl rand -base64 32");
+		});
+	});
+
+	describe("shutdown timeout", () => {
+		it("takes SHUTDOWN_TIMEOUT in seconds", () => {
+			expect(parseConfig(baseEnv({ SHUTDOWN_TIMEOUT: "25" })).shutdownTimeoutMs).toBe(25_000);
+		});
+
+		it.each(["0", "1.5", "3601", "soon"])("rejects %s", (value) => {
+			expectConfigError(
+				baseEnv({ SHUTDOWN_TIMEOUT: value }),
+				"SHUTDOWN_TIMEOUT must be an integer between 1 and 3600 seconds",
 			);
 		});
 	});
@@ -486,6 +518,7 @@ describe("blank environment values", () => {
 		"CHUNK_SIZE",
 		"MAX_CHUNKED_FILE_SIZE",
 		"RATE_LIMIT_MULTIPLIER",
+		"SHUTDOWN_TIMEOUT",
 	])("treats a blank %s as unset", (key) => {
 		expect(() => parseConfig(baseEnv({ [key]: "" }))).not.toThrow();
 		expect(() => parseConfig(baseEnv({ [key]: "   " }))).not.toThrow();

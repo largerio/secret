@@ -4,9 +4,11 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { UNKNOWN_BUILD } from "../buildInfo.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
+import { type AppMetrics, createMetrics } from "../metrics.js";
 import { createWriteAuth } from "../middleware/auth.js";
 import { assertStorageQuota, getStorageUsedBytes } from "../quota.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
@@ -32,6 +34,7 @@ interface AppEnv {
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
 		storageQuotaBytes: number;
+		metrics: AppMetrics;
 	};
 }
 
@@ -52,6 +55,7 @@ function createQuotaApp(
 	quotaBytes: number,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
 ) {
+	const metrics = createMetrics({ db: database, build: UNKNOWN_BUILD, quotaBytes });
 	const hono = new Hono<AppEnv>();
 	hono.onError((err, c) => {
 		if (err instanceof HTTPException) {
@@ -68,6 +72,7 @@ function createQuotaApp(
 		c.set("maxExpirySeconds", 2_592_000);
 		c.set("maxFilesPerNote", 10);
 		c.set("storageQuotaBytes", quotaBytes);
+		c.set("metrics", metrics);
 		await next();
 	});
 	const writeAuth = createWriteAuth([]);

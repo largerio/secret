@@ -25,6 +25,9 @@ export type ReconcileResult =
 			readonly failed: number;
 	  };
 
+/** How a scheduled sweep ended: its result, or `failed` when it threw. */
+export type SweepOutcome = ReconcileResult | { readonly status: "failed" };
+
 /**
  * This database's identity, created on first use: its id, and since when it
  * has claimed the storage. Both live in the database and its backups, so they
@@ -139,9 +142,14 @@ export async function reconcileStorage(
 		: { status: "done", scanned, purged, failed };
 }
 
-async function runSweep(db: AppDatabase, storage: StorageBackend): Promise<void> {
+async function runSweep(
+	db: AppDatabase,
+	storage: StorageBackend,
+	onSweep: (outcome: SweepOutcome) => void,
+): Promise<void> {
 	try {
 		const result = await reconcileStorage(db, storage);
+		onSweep(result);
 		if (result.status === "skipped") {
 			log.warn("storage sweep skipped: another database has claimed this storage", {
 				instances: result.otherInstances,
@@ -177,20 +185,26 @@ async function runSweep(db: AppDatabase, storage: StorageBackend): Promise<void>
 		}
 	} catch (err: unknown) {
 		log.error("storage sweep failed", { detail: describeStorageError(err) });
+		onSweep({ status: "failed" });
 	}
 }
 
 /**
  * Sweep shortly after boot, then daily. Each run is scheduled once the previous
- * one ends, so a long listing never overlaps the next.
+ * one ends, so a long listing never overlaps the next. `onSweep` hears how each
+ * run ended (the metrics).
  */
-export function startReconcileJob(db: AppDatabase, storage: StorageBackend): { stop(): void } {
+export function startReconcileJob(
+	db: AppDatabase,
+	storage: StorageBackend,
+	onSweep: (outcome: SweepOutcome) => void = () => {},
+): { stop(): void } {
 	let timer: ReturnType<typeof setTimeout>;
 	let stopped = false;
 
 	const schedule = (delayMs: number): void => {
 		timer = setTimeout(async () => {
-			await runSweep(db, storage);
+			await runSweep(db, storage, onSweep);
 			if (!stopped) {
 				schedule(RECONCILE_INTERVAL_MS);
 			}

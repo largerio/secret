@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../../db/index.js";
 import { notes } from "../../db/schema.js";
+import type { AppMetrics } from "../../metrics.js";
 import {
 	cancelDeletion,
 	enqueueDeletion,
@@ -33,6 +34,7 @@ export interface NotesEnv {
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
 		storageQuotaBytes: number;
+		metrics: AppMetrics;
 		uploadId: string;
 	};
 }
@@ -274,13 +276,14 @@ export async function findReadableNote(
 // race to a concurrent burn gets a 404 — the callback is synchronous on a
 // single connection, which is what keeps two readers from both being served.
 //
-// Returns the purge the burn queued, for the caller to run once the payload is
-// delivered; `purgeDelayMs` holds the cleanup job off until then.
+// Returns whether the read burned the note, and the purge the burn queued, for
+// the caller to run once the payload is delivered; `purgeDelayMs` holds the
+// cleanup job off until then.
 export function consumeRead(
 	db: AppDatabase,
 	id: string,
 	purgeDelayMs?: number,
-): { deletion?: PendingDeletion } {
+): { burned: boolean; deletion?: PendingDeletion } {
 	const result = db.transaction((tx) => {
 		const note = tx
 			.select({
@@ -302,11 +305,14 @@ export function consumeRead(
 
 		if (maxReads === 0 || newReadCount < maxReads) {
 			tx.update(notes).set({ readCount: newReadCount }).where(eq(notes.id, id)).run();
-			return {};
+			return { burned: false };
 		}
 
 		tx.delete(notes).where(eq(notes.id, id)).run();
-		return hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id, purgeDelayMs) } : {};
+		return {
+			burned: true,
+			...(hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id, purgeDelayMs) } : {}),
+		};
 	});
 
 	if (result === undefined) {
@@ -344,10 +350,10 @@ export async function consumeNote(
 		httpError(500, "Failed to decrypt note", err);
 	}
 
-	const { deletion } = consumeRead(db, id);
+	const { burned, deletion } = consumeRead(db, id);
 	if (deletion) {
 		await runDeletion(db, storage, deletion);
 	}
 
-	return { clientBlob, note };
+	return { clientBlob, note, burned };
 }

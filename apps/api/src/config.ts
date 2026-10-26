@@ -93,6 +93,16 @@ const SERVER_KEY_BYTES = 32;
 /** Roughly the length of `openssl rand -base64 32`; rejects toy keys. */
 const MIN_API_KEY_LENGTH = 32;
 
+/** The metrics token is reachable from the internet too: same bar as an API key. */
+const MIN_METRICS_TOKEN_LENGTH = 32;
+
+/**
+ * Seconds a shutdown waits for in-flight requests: under the 10 s Docker leaves
+ * between SIGTERM and SIGKILL. The web server in the image drains as long.
+ */
+const DEFAULT_SHUTDOWN_TIMEOUT = 8;
+const MAX_SHUTDOWN_TIMEOUT = 3600;
+
 /**
  * Raised when an environment value fails validation. The entry point catches
  * this, prints the message (plus optional hint), and exits with status 1 —
@@ -141,6 +151,10 @@ export interface AppConfig {
 	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
 	readonly allowServerKeyChange: boolean;
 	readonly debug: boolean;
+	/** Bearer token for `GET /api/metrics`; empty leaves the endpoint off (404). */
+	readonly metricsToken: string;
+	/** How long a shutdown waits for in-flight requests before it cuts them. */
+	readonly shutdownTimeoutMs: number;
 }
 
 /**
@@ -219,6 +233,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		env["ALLOW_SERVER_KEY_CHANGE"],
 	);
 	const debug = readEnvBoolean("DEBUG", env["DEBUG"]);
+	const metricsToken = env["METRICS_TOKEN"]?.trim() ?? "";
+	const shutdownTimeout = readEnvNumber(env["SHUTDOWN_TIMEOUT"], DEFAULT_SHUTDOWN_TIMEOUT);
 
 	const maxFileSize = readEnvNumber(env["MAX_FILE_SIZE"], Number(String(MAX_FILE_SIZE)));
 	const maxFilesPerNote = readEnvNumber(
@@ -259,6 +275,23 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError(
 			`API keys must be at least ${String(MIN_API_KEY_LENGTH)} characters long.`,
 			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	if (metricsToken !== "" && metricsToken.length < MIN_METRICS_TOKEN_LENGTH) {
+		throw new ConfigError(
+			`METRICS_TOKEN must be at least ${String(MIN_METRICS_TOKEN_LENGTH)} characters long.`,
+			"Generate one with: openssl rand -base64 32",
+		);
+	}
+
+	if (
+		!Number.isInteger(shutdownTimeout) ||
+		shutdownTimeout < 1 ||
+		shutdownTimeout > MAX_SHUTDOWN_TIMEOUT
+	) {
+		throw new ConfigError(
+			`SHUTDOWN_TIMEOUT must be an integer between 1 and ${String(MAX_SHUTDOWN_TIMEOUT)} seconds`,
 		);
 	}
 
@@ -392,5 +425,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		rateLimitMultiplier,
 		allowServerKeyChange,
 		debug,
+		metricsToken,
+		shutdownTimeoutMs: shutdownTimeout * 1000,
 	};
 }

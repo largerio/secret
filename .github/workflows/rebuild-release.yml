@@ -32,6 +32,7 @@ jobs:
       upstream: ${{ steps.compare.outputs.upstream }}
       line-digest: ${{ steps.compare.outputs.line-digest }}
       stale: ${{ steps.compare.outputs.stale }}
+      revision: ${{ steps.compare.outputs.revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,6 +92,7 @@ jobs:
           {
             echo "upstream=$upstream"
             echo "line-digest=$(docker buildx imagetools inspect "$line" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            echo "revision=$commit"
           } >> "$GITHUB_OUTPUT"
 
           if [ "$current" = "$upstream" ]; then
@@ -179,6 +181,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           outputs: type=image,name=ghcr.io/largerio/secret,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.labels.outputs.labels }}
+          # What deploy.yml gave the release's image, which reports its version
+          # without -dev. A release older than these arguments ignores them.
+          build-args: |
+            REVISION=${{ needs.check.outputs.revision }}
+            RELEASE=true
           sbom: true
           provenance: mode=max
 

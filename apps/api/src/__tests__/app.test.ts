@@ -43,6 +43,8 @@ function makeApp(config: AppConfig = buildConfig()) {
 	return createApp({ db, serverKey: TEST_SERVER_KEY, storage, config }).app;
 }
 
+const UNKNOWN = { version: "unknown", revision: "unknown" };
+
 beforeEach(() => {
 	for (const path of [TEST_DB_PATH, `${TEST_DB_PATH}-wal`, `${TEST_DB_PATH}-shm`]) {
 		if (existsSync(path)) rmSync(path);
@@ -62,7 +64,7 @@ afterAll(() => {
 	if (existsSync(TEST_FILES_PATH)) rmSync(TEST_FILES_PATH, { recursive: true });
 });
 
-describe("createApp — unversioned routes", () => {
+describe("createApp — health probes", () => {
 	it("reports healthy when the database and storage respond", async () => {
 		const res = await makeApp().request("/api/health");
 		expect(res.status).toBe(200);
@@ -70,8 +72,87 @@ describe("createApp — unversioned routes", () => {
 		expect(await res.json()).toEqual({
 			status: "ok",
 			checks: { database: "ok", storage: "ok" },
-			storage: { usedBytes: 0, quotaBytes: null },
+			storage: { quotaBytes: null },
+			...UNKNOWN,
 		});
+	});
+
+	it("reports the build and the quota, never the volume stored", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const build = { version: "1.4.1-dev", revision: "0123456789abcdef0123456789abcdef01234567" };
+		const app = createApp({
+			db,
+			serverKey: TEST_SERVER_KEY,
+			storage,
+			config: buildConfig({ storageQuotaBytes: 5000 }),
+			build,
+		}).app;
+
+		const body = (await (await app.request("/api/health")).json()) as Record<string, unknown>;
+
+		expect(body).toMatchObject({ storage: { quotaBytes: 5000 }, ...build });
+		expect(JSON.stringify(body)).not.toContain("usedBytes");
+	});
+
+	it("answers liveness without touching the database or the storage", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const probe = vi.spyOn(storage, "probe").mockRejectedValue(new Error("bucket unreachable"));
+		const app = createApp({ db, serverKey: TEST_SERVER_KEY, storage, config: buildConfig() }).app;
+		sqlite.close();
+
+		const res = await app.request("/api/health/live");
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("cache-control")).toBe("no-store");
+		expect(await res.json()).toEqual({ status: "ok" });
+		expect(probe).not.toHaveBeenCalled();
+	});
+
+	it("answers readiness from the database and the storage", async () => {
+		const res = await makeApp().request("/api/health/ready");
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("cache-control")).toBe("no-store");
+		expect(await res.json()).toEqual({
+			status: "ok",
+			checks: { database: "ok", storage: "ok" },
+		});
+	});
+
+	it("turns readiness and /api/health to 503 once the drain begins, not liveness", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const { app, drain } = createApp({
+			db,
+			serverKey: TEST_SERVER_KEY,
+			storage,
+			config: buildConfig(),
+		});
+		expect((await app.request("/api/health/ready")).status).toBe(200);
+
+		drain();
+
+		const ready = await app.request("/api/health/ready");
+		expect(ready.status).toBe(503);
+		expect(await ready.json()).toEqual({
+			status: "draining",
+			checks: { database: "ok", storage: "ok" },
+		});
+		const health = await app.request("/api/health");
+		expect(health.status).toBe(503);
+		expect(await health.json()).toMatchObject({ status: "draining" });
+		expect((await app.request("/api/health/live")).status).toBe(200);
+	});
+
+	it("keeps every probe out of the request log", async () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+		const app = makeApp();
+		for (const path of ["/api/health", "/api/health/live", "/api/health/ready"]) {
+			await app.request(path);
+		}
+
+		expect(logSpy).not.toHaveBeenCalled();
+		logSpy.mockRestore();
 	});
 
 	it("reports 503 when the storage backend is unreachable", async () => {
@@ -86,8 +167,10 @@ describe("createApp — unversioned routes", () => {
 		expect(await res.json()).toEqual({
 			status: "degraded",
 			checks: { database: "ok", storage: "error" },
-			storage: { usedBytes: 0, quotaBytes: null },
+			storage: { quotaBytes: null },
+			...UNKNOWN,
 		});
+		expect((await app.request("/api/health/ready")).status).toBe(503);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			expect.stringContaining('"msg":"storage probe failed","detail":"bucket unreachable"'),
 		);
@@ -105,7 +188,9 @@ describe("createApp — unversioned routes", () => {
 		expect((await res.json()).checks.database).toBe("error");
 		consoleSpy.mockRestore();
 	});
+});
 
+describe("createApp — unversioned routes", () => {
 	it("serves robots.txt referencing the configured appUrl", async () => {
 		const res = await makeApp().request("/robots.txt");
 		expect(res.status).toBe(200);
@@ -163,11 +248,12 @@ describe("createApp — versioned API", () => {
 		expect(res.status).toBe(200);
 		const doc = (await res.json()) as {
 			openapi: string;
-			info: { title: string };
+			info: { title: string; version: string };
 			paths: Record<string, unknown>;
 		};
 		expect(doc.openapi).toBe("3.1.0");
 		expect(doc.info.title).toBe("Secret API");
+		expect(doc.info.version).toBe("unknown");
 		// Every notes endpoint must be documented, including the binary/multipart
 		// ones whose handlers validate manually.
 		expect(Object.keys(doc.paths)).toEqual(
@@ -183,6 +269,23 @@ describe("createApp — versioned API", () => {
 				"/notes/upload/{uploadId}/complete",
 			]),
 		);
+	});
+
+	it("gives the OpenAPI document the build's version", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const app = createApp({
+			db,
+			serverKey: TEST_SERVER_KEY,
+			storage,
+			config: buildConfig(),
+			build: { version: "1.4.1", revision: "unknown" },
+		}).app;
+
+		const doc = (await (await app.request("/api/v1/openapi.json")).json()) as {
+			info: { version: string };
+		};
+
+		expect(doc.info.version).toBe("1.4.1");
 	});
 
 	it("documents readCount on the exists response", async () => {

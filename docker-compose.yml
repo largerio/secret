@@ -55,6 +55,10 @@ services:
       - ALLOW_SERVER_KEY_CHANGE=${ALLOW_SERVER_KEY_CHANGE:-false}
       - API_HOST=${API_HOST:-}
       - CLEANUP_INTERVAL_MS=${CLEANUP_INTERVAL_MS:-300000}
+      # Turns on /api/metrics. See docs/self-hosting.md#monitoring
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+      # Raise it with a stop_grace_period a couple of seconds longer.
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-}
       - DEBUG=${DEBUG:-0}
     restart: unless-stopped
     init: true

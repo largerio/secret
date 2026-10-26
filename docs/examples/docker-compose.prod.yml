@@ -43,6 +43,10 @@ services:
       - ADDRESS_HEADER=X-Forwarded-For
       - XFF_DEPTH=1
 
+      # How long a stopping container lets in-flight uploads finish, under
+      # stop_grace_period below.
+      - SHUTDOWN_TIMEOUT=25
+
     # The image ships its own HEALTHCHECK; this only shortens the start period
     # so a rollout is judged quickly. Remove it to keep the image defaults.
     healthcheck:
@@ -51,7 +55,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://localhost:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
@@ -74,7 +78,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # Give in-flight uploads a chance to finish; the app force-exits after 8s.
+    # Docker's default is 10s, enough for the default SHUTDOWN_TIMEOUT of 8s.
     stop_grace_period: 30s
 
 volumes:

@@ -3,10 +3,17 @@ import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-s
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono, type MiddlewareHandler } from "hono";
 import { compress } from "hono/compress";
+import { type BuildInfo, UNKNOWN_BUILD } from "./buildInfo.js";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
-import { createHealthCheck } from "./health.js";
+import { createHealthCheck, createReadiness } from "./health.js";
 import { type Logger, log } from "./logger.js";
+import {
+	type AppMetrics,
+	createMetrics,
+	createMetricsHandler,
+	createRequestMetrics,
+} from "./metrics.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createBodyLimits } from "./middleware/bodyLimit.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
@@ -36,6 +43,7 @@ export interface AppEnv {
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
 		storageQuotaBytes: number;
+		metrics: AppMetrics;
 		requestId: string;
 	};
 }
@@ -47,13 +55,27 @@ export interface CreateAppDeps {
 	readonly config: AppConfig;
 	/** Injectable for tests; defaults to the process-wide structured logger. */
 	readonly logger?: Logger;
+	/**
+	 * Shared with what runs beside the app (the purge counter around the
+	 * storage, the sweep); a fresh registry by default.
+	 */
+	readonly metrics?: AppMetrics;
+	/** Version and revision, read at startup (readBuildInfo). */
+	readonly build?: BuildInfo;
 }
 
 export interface CreatedApp {
 	readonly app: Hono<AppEnv>;
 	/** Rate limiters whose sweep timers must be cleared on shutdown. */
 	readonly rateLimiters: ReadonlyArray<RateLimitResult>;
+	/** Shutdown has begun: readiness answers 503 from now on. */
+	readonly drain: () => void;
 }
+
+/** Probed every few seconds by orchestrators and load balancers. */
+const HEALTH_PATHS = ["/api/health", "/api/health/live", "/api/health/ready"];
+
+const METRICS_PATH = "/api/metrics";
 
 /**
  * Assemble the Hono application: middleware, body limits, rate limiting, auth,
@@ -64,6 +86,9 @@ export interface CreatedApp {
 export function createApp(deps: CreateAppDeps): CreatedApp {
 	const { db, serverKey, storage, config } = deps;
 	const logger = deps.logger ?? log;
+	const build = deps.build ?? UNKNOWN_BUILD;
+	const metrics =
+		deps.metrics ?? createMetrics({ db, build, quotaBytes: config.storageQuotaBytes, logger });
 
 	const app = new Hono<AppEnv>();
 
@@ -73,9 +98,14 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	// First so every later middleware, handler and the error handler can
 	// correlate their log lines with this request. Health probes are skipped:
-	// an orchestrator polling every few seconds would drown the log.
+	// an orchestrator polling every few seconds would drown the log. So is a
+	// scrape, unless it fails (a wrong token, say).
 	app.use("*", createRequestId());
-	app.use("*", createRequestLogger(logger, { skipPaths: ["/api/health"] }));
+	app.use(
+		"*",
+		createRequestLogger(logger, { skipPaths: HEALTH_PATHS, quietPaths: [METRICS_PATH] }),
+	);
+	app.use("*", createRequestMetrics(metrics));
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
 	app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
@@ -155,19 +185,44 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		c.set("maxExpirySeconds", config.maxExpirySeconds);
 		c.set("maxFilesPerNote", config.maxFilesPerNote);
 		c.set("storageQuotaBytes", config.storageQuotaBytes);
+		c.set("metrics", metrics);
 		await next();
 	});
 
 	// --- Unversioned routes ---
 
-	const checkHealth = createHealthCheck(db, storage, {
-		quotaBytes: config.storageQuotaBytes,
-	});
-	app.get("/api/health", async (c) => {
+	app.use("/api/health/*", async (c, next) => {
+		await next();
 		c.header("Cache-Control", "no-store");
-		const report = await checkHealth();
+	});
+
+	// Liveness: the process answers. It touches nothing, so a slow or failing
+	// dependency never gets a working process restarted.
+	app.get("/api/health/live", (c) => c.json({ status: "ok" as const }));
+
+	// Readiness: the database and the storage answer, and no shutdown has begun.
+	const readiness = createReadiness(createHealthCheck(db, storage));
+	app.get("/api/health/ready", async (c) => {
+		const report = await readiness.check();
 		return c.json(report, report.status === "ok" ? 200 : 503);
 	});
+
+	// The readiness report, plus what an operator looks for. The volume stored
+	// is not public: it is in the metrics.
+	const quotaBytes = config.storageQuotaBytes > 0 ? config.storageQuotaBytes : null;
+	app.get("/api/health", async (c) => {
+		const report = await readiness.check();
+		return c.json(
+			{ ...report, storage: { quotaBytes }, version: build.version, revision: build.revision },
+			report.status === "ok" ? 200 : 503,
+		);
+	});
+
+	// Off unless METRICS_TOKEN is set: a 404, like any unknown route.
+	if (config.metricsToken !== "") {
+		app.get(METRICS_PATH, createMetricsHandler(metrics, config.metricsToken));
+	}
+
 	app.get("/robots.txt", (c) => {
 		c.header("Content-Type", "text/plain");
 		c.header("Cache-Control", "public, max-age=86400");
@@ -216,7 +271,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		openapi: "3.1.0",
 		info: {
 			title: "Secret API",
-			version: "1.0.0",
+			version: build.version,
 			description:
 				"Zero-knowledge encrypted note and file sharing API. Data is encrypted client-side before transmission; the server never sees plaintext.",
 		},
@@ -237,5 +292,6 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	return {
 		app,
 		rateLimiters: [createLimit, readLimit, existsLimit, chunksLimit, capRateLimit],
+		drain: readiness.drain,
 	};
 }

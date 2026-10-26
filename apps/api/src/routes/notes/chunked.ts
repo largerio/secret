@@ -283,6 +283,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		if ("error" in result) {
 			return c.json({ error: result.error }, 409);
 		}
+		c.get("metrics").noteCreated("chunked");
 
 		return c.json(
 			{
@@ -347,7 +348,8 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 			httpError(500, "Failed to decrypt note", err);
 		}
 
-		const { deletion } = consumeRead(db, id, STREAM_WINDOW_MS);
+		const { burned, deletion } = consumeRead(db, id, STREAM_WINDOW_MS);
+		c.get("metrics").noteRead("chunked", burned);
 
 		// Read-ahead window: keep a few chunk reads in flight so per-chunk
 		// storage latency (one round-trip per chunk on S3) overlaps with

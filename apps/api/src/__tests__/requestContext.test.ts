@@ -20,9 +20,15 @@ function makeApp() {
 
 	const app = new Hono<{ Variables: { requestId: string } }>();
 	app.use("*", createRequestId());
-	app.use("*", createRequestLogger(logger, { skipPaths: ["/api/health"] }));
+	app.use(
+		"*",
+		createRequestLogger(logger, { skipPaths: ["/api/health"], quietPaths: ["/api/metrics"] }),
+	);
 	app.get("/notes/:id", (c) => c.json({ requestId: c.get("requestId") }));
 	app.get("/api/health", (c) => c.json({ status: "ok" }));
+	app.get("/api/metrics", (c) =>
+		c.req.header("authorization") ? c.text("") : c.json({ error: "Unauthorized" }, 401),
+	);
 
 	return { app, lines };
 }
@@ -90,6 +96,17 @@ describe("createRequestLogger", () => {
 		const res = await app.request("/api/health");
 		expect(res.status).toBe(200);
 		expect(lines).toHaveLength(0);
+	});
+
+	it("logs a quiet path only when it fails", async () => {
+		const { app, lines } = makeApp();
+
+		await app.request("/api/metrics", { headers: { authorization: "Bearer token" } });
+		expect(lines).toHaveLength(0);
+
+		await app.request("/api/metrics");
+		expect(lines).toHaveLength(1);
+		expect(lines[0]?.entry).toMatchObject({ route: "/api/metrics", status: 401 });
 	});
 
 	it("logs every request when no skip list is configured", async () => {

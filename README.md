@@ -206,12 +206,14 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
-| `STORAGE_QUOTA_BYTES` | `0` | Total storage budget for encrypted payloads. Writes beyond it get HTTP 507 until notes expire or are deleted; `0` = unlimited. Usage is reported by `/api/health` |
+| `STORAGE_QUOTA_BYTES` | `0` | Total storage budget for encrypted payloads. Writes beyond it get HTTP 507 until notes expire or are deleted; `0` = unlimited. Usage is in the metrics (`secret_storage_used_bytes`) |
 | `STORAGE_RECONCILE` | `true` | Daily sweep that deletes stored files no note points to any more. Requires a bucket or `FILES_PATH` used by this instance alone. See [Storage cleanup](docs/self-hosting.md#storage-cleanup) |
 | `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `…_FILE` | — | Read a secret from a file instead, such as a Docker or Kubernetes secret: `SERVER_ENCRYPTION_KEY_FILE`, `API_KEY_FILE`, `API_KEY_1_FILE`…, `S3_ACCESS_KEY_ID_FILE`, `S3_SECRET_ACCESS_KEY_FILE`. Cannot be combined with the variable itself. See [Secrets in files](docs/self-hosting.md#secrets-in-files) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
+| `METRICS_TOKEN` | — | Turns on `/api/metrics` (Prometheus) for requests bearing this token, min. 32 chars. See [Monitoring](docs/self-hosting.md#monitoring) |
+| `SHUTDOWN_TIMEOUT` | `8` | Seconds a stopping container gives in-flight requests. Keep it a couple of seconds under the stop grace period (10 s unless raised) |
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
@@ -255,6 +257,7 @@ Step-by-step deployment guides for common setups are in
 - **Synology NAS** — DSM Container Manager walkthrough, with volume/permission notes
 - **Reverse proxy & HTTPS** — including DSM's built-in reverse proxy
 - **Backup & restore** — a hot copy of the database, the files and the key, and how long to keep them
+- **Monitoring** — liveness and readiness probes, the version, Prometheus metrics
 
 ## Updating
 

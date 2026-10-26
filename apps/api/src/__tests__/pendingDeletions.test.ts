@@ -201,9 +201,9 @@ describe("runDeletion", () => {
 });
 
 describe("drainPendingDeletions", () => {
-	it("returns 0/0 when there is nothing to drain", async () => {
+	it("returns zeros when there is nothing to drain", async () => {
 		const result = await drainPendingDeletions(db, storage);
-		expect(result).toEqual({ drained: 0, failed: 0 });
+		expect(result).toEqual({ drained: 0, failed: 0, abandoned: 0 });
 	});
 
 	it("purges due deletions and removes their rows", async () => {
@@ -214,7 +214,7 @@ describe("drainPendingDeletions", () => {
 
 		const result = await drainPendingDeletions(db, storage);
 
-		expect(result).toEqual({ drained: 2, failed: 0 });
+		expect(result).toEqual({ drained: 2, failed: 0, abandoned: 0 });
 		expect(existsSync(key)).toBe(false);
 		expect(existsSync(`${TEST_FILES_PATH}/recover02`)).toBe(false);
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
@@ -224,7 +224,7 @@ describe("drainPendingDeletions", () => {
 		queue("future001", { nextRetryAt: new Date(Date.now() + 60_000) });
 
 		const result = await drainPendingDeletions(db, storage);
-		expect(result).toEqual({ drained: 0, failed: 0 });
+		expect(result).toEqual({ drained: 0, failed: 0, abandoned: 0 });
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(1);
 	});
 
@@ -234,7 +234,7 @@ describe("drainPendingDeletions", () => {
 		const before = Date.now();
 
 		const result = await drainPendingDeletions(db, failing);
-		expect(result).toEqual({ drained: 0, failed: 1 });
+		expect(result).toEqual({ drained: 0, failed: 1, abandoned: 0 });
 		const rows = db.select().from(pendingDeletions).all();
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.attempts).toBe(1);
@@ -258,7 +258,7 @@ describe("drainPendingDeletions", () => {
 		queue("stringfail");
 
 		const result = await drainPendingDeletions(db, failing);
-		expect(result).toEqual({ drained: 0, failed: 1 });
+		expect(result).toEqual({ drained: 0, failed: 1, abandoned: 0 });
 		expect(db.select().from(pendingDeletions).all()[0]?.attempts).toBe(1);
 	});
 
@@ -268,7 +268,7 @@ describe("drainPendingDeletions", () => {
 		queue("giveup001", { attempts: 5 }); // one less than MAX_ATTEMPTS=6
 
 		const result = await drainPendingDeletions(db, failing);
-		expect(result).toEqual({ drained: 0, failed: 1 });
+		expect(result).toEqual({ drained: 0, failed: 1, abandoned: 1 });
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 		const logged = String(consoleSpy.mock.calls[0]?.[0]);
 		expect(logged).toContain('"msg":"giving up on pending deletion"');
