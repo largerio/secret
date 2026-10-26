@@ -121,6 +121,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 				fileCount: notes.fileCount,
 				expiresAt: notes.expiresAt,
 				maxReads: notes.maxReads,
+				readCount: notes.readCount,
 				chunkCount: notes.chunkCount,
 			})
 			.from(notes)
@@ -131,12 +132,18 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			return c.json({ exists: false as const });
 		}
 
+		const maxReads = note.maxReads ?? 0;
+
 		return c.json({
 			exists: true as const,
 			hasPassword: note.hasPassword,
 			fileCount: note.fileCount,
 			expiresAt: note.expiresAt.toISOString(),
-			maxReads: note.maxReads ?? 0,
+			maxReads,
+			// The count only matters against a limit. An unlimited note keeps
+			// counting forever, and reporting that would hand anyone holding the
+			// link a live view counter, so it stays at 0.
+			readCount: maxReads > 0 ? note.readCount : 0,
 			chunked: (note.chunkCount ?? 0) > 0,
 		});
 	});

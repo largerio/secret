@@ -112,8 +112,11 @@ its backups. Either way, the content stays protected by the end-to-end layer.
 
 - **Metadata enumeration via `GET /api/v1/notes/:id/exists`.** This endpoint reveals
   whether a note ID exists and exposes coarse metadata (`hasPassword`, `fileCount`,
-  `chunked`, expiry, and the configured read limit — not the remaining count) without
-  authentication. It is rate-limited but
+  `chunked`, expiry, the configured read limit and the reads already spent against
+  it) without authentication. Anyone holding a link can therefore watch the reads of
+  a multi-read note being spent, without spending one; a burn-after-read note
+  already gave that away by disappearing. An unlimited note always reports 0 reads,
+  so the endpoint is not a view counter. It is rate-limited but
   is not zero-knowledge with respect to existence/metadata. Note IDs are long and
   random, so enumeration is impractical, but the leak is acknowledged.
 - **One instance only.** SQLite, the proof-of-work challenges and the rate-limit

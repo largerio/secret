@@ -14,6 +14,12 @@ image. Each version links to its GitHub release. The SDK has
   passed the scan and the smoke test. A release only tags a signed image. See
   [Verifying the image](docs/self-hosting.md#verifying-the-image).
 
+### Added
+
+- `GET /api/v1/notes/:id/exists` also returns `readCount`, the reads a note has
+  already spent, so a client can say how many are left before opening it. It
+  stays at 0 on a note without a read limit.
+
 ### Fixed
 
 - A generated password always holds a character of every class it draws from.

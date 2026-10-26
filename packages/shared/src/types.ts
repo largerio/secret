@@ -35,6 +35,9 @@ export interface NoteExistsResponse {
 	readonly fileCount: number;
 	readonly expiresAt: string;
 	readonly maxReads: number;
+	/** Reads already spent; always 0 when `maxReads` is 0 (unlimited). */
+	readonly readCount: number;
+	readonly chunked: boolean;
 }
 
 export interface ReadNoteResponse {

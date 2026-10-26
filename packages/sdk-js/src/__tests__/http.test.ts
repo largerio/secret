@@ -464,6 +464,63 @@ describe("checkNote", () => {
 		expect(err.message).toBe("Malformed response from /exists");
 	});
 
+	test("returns readCount when the API sends it", async () => {
+		const info = {
+			exists: true,
+			hasPassword: true,
+			fileCount: 0,
+			expiresAt: "2099-01-01",
+			maxReads: 3,
+			readCount: 1,
+			chunked: false,
+		};
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse(info)));
+		const config = createConfig(fetchMock);
+
+		expect(await checkNote(config, "noteId123456")).toEqual(info);
+	});
+
+	test("accepts a response without readCount, as an older API sends it", async () => {
+		// The SDK is published and may talk to instances that predate the field.
+		const info = {
+			exists: true,
+			hasPassword: false,
+			fileCount: 0,
+			expiresAt: "2099-01-01",
+			maxReads: 3,
+			chunked: false,
+		};
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse(info)));
+		const config = createConfig(fetchMock);
+
+		const result = await checkNote(config, "noteId123456");
+		expect(result).toEqual(info);
+		expect(result.exists && result.readCount).toBeUndefined();
+	});
+
+	test.each([[-1], [1.5], ["1"], [null]])(
+		"rejects a readCount that is not a non-negative integer: %s",
+		async (readCount) => {
+			const fetchMock = vi.fn<typeof fetch>(() =>
+				Promise.resolve(
+					okResponse({
+						exists: true,
+						hasPassword: false,
+						fileCount: 0,
+						expiresAt: "2099-01-01",
+						maxReads: 3,
+						readCount,
+						chunked: false,
+					}),
+				),
+			);
+			const config = createConfig(fetchMock);
+
+			const err = await catchApiError(checkNote(config, "noteId123456"));
+			expect(err.message).toBe("Malformed response from /exists");
+		},
+	);
+
 	test.each([[null], ["a string"], [42], [{ exists: "maybe" }]])(
 		"rejects a non-object or mistyped body: %s",
 		async (body) => {

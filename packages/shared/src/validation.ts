@@ -77,6 +77,15 @@ export const noteExistsResponseSchema = z.object({
 	fileCount: z.number().int(),
 	expiresAt: z.string(),
 	maxReads: z.number().int(),
+	readCount: z
+		.number()
+		.int()
+		.min(0)
+		.describe(
+			"Reads already spent on the note. A read is spent once the ciphertext is served, " +
+				"so a wrong password still counts. Reads left: maxReads - readCount. Always 0 when " +
+				"maxReads is 0 (unlimited): how often an unlimited note was opened is not disclosed.",
+		),
 	chunked: z.boolean(),
 });
 
