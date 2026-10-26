@@ -1,9 +1,9 @@
-import type { ServerLoad } from "@sveltejs/kit";
 import { getServerClient } from "#lib/server/client.js";
 import { readClientAddress } from "#lib/utils/forwarding.js";
+import type { PageServerLoad } from "./$types";
 
-export const load: ServerLoad = async ({ params, getClientAddress }) => {
-	const id = params["id"];
+export const load: PageServerLoad = async ({ params, getClientAddress }) => {
+	const id = params.id;
 	if (!id) return { noteExists: false };
 
 	try {

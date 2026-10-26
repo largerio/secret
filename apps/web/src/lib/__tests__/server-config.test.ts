@@ -9,6 +9,7 @@ import {
 	allowedExpirationOptions,
 	buildServerConfig,
 	defaultExpiration,
+	expiryLabelKey,
 	readPositiveInt,
 } from "../server-config.js";
 
@@ -125,5 +126,17 @@ describe("defaultExpiration", () => {
 
 	it("returns the shortest option when the ceiling is below all of them", () => {
 		expect(defaultExpiration(60)).toBe(300);
+	});
+});
+
+describe("expiryLabelKey", () => {
+	it("names every duration the picker offers", () => {
+		for (const option of EXPIRATION_OPTIONS) {
+			expect(expiryLabelKey(option.value)).toBe(option.labelKey);
+		}
+	});
+
+	it("names nothing it does not offer, rather than mislabelling it", () => {
+		expect(expiryLabelKey(42)).toBeUndefined();
 	});
 });

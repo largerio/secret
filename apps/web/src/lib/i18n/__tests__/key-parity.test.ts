@@ -46,4 +46,21 @@ describe("i18n key parity", () => {
 			expect(extra, `extra keys in "${name}"`).toEqual([]);
 		});
 	}
+
+	// Slots decide which controls render (`splitTemplate`): a renamed `{reads}`
+	// would silently drop the reads picker from the sentence.
+	const placeholders = (message: string) =>
+		[...message.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+	const source = en as Record<string, string>;
+
+	for (const [name, messages] of Object.entries(locales)) {
+		it(`locale "${name}" keeps the placeholders of every English message`, () => {
+			for (const [key, message] of Object.entries(messages)) {
+				// Extra plural forms are checked against the form they extend.
+				const reference =
+					source[key] ?? source[key.replace(/_(zero|two|few|many)$/, "_other")] ?? "";
+				expect(placeholders(message), `${name}: ${key}`).toEqual(placeholders(reference));
+			}
+		});
+	}
 });

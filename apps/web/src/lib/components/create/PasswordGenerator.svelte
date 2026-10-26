@@ -1,8 +1,11 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import Icon from "#lib/components/Icon.svelte";
+import PasswordGlyphs from "#lib/components/ui/PasswordGlyphs.svelte";
 import { type MessageKey, t } from "#lib/i18n/index.svelte.js";
 import {
 	type EntropyRating,
+	entropyMeter,
 	generatePassword,
 	type PasswordOptions,
 	passwordEntropy,
@@ -40,8 +43,12 @@ let enabled = $state<Required<PasswordOptions>>({
 	symbols: true,
 });
 let value = $state(generatePassword(20));
+let insertButton: HTMLButtonElement | undefined = $state();
 
 const bits = $derived(passwordEntropy(length, enabled));
+
+// The panel opens above the button that opened it: start the keyboard on its main action.
+onMount(() => insertButton?.focus());
 
 // Regenerate on explicit intent only (a button, a class toggle, releasing the
 // slider), never continuously while the slider is dragged.
@@ -55,13 +62,6 @@ function toggle(key: CharClass): void {
 	if (!Object.values(next).some(Boolean)) return;
 	enabled = next;
 	regenerate();
-}
-
-function charKind(ch: string): string {
-	if (/[0-9]/.test(ch)) return "digit";
-	if (/[A-Z]/.test(ch)) return "upper";
-	if (/[a-z]/.test(ch)) return "lower";
-	return "symbol";
 }
 </script>
 
@@ -82,9 +82,10 @@ function charKind(ch: string): string {
 
 	<div class="value-box">
 		<div class="flex items-center gap-2">
-			<code class="value" aria-label={t("gen_value")}>
-				{#each value as ch, i (i)}<span class={charKind(ch)}>{ch}</span>{/each}
-			</code>
+			<p class="value m-0">
+				<span class="sr-only">{t("gen_value")}:</span>
+				<PasswordGlyphs {value} live />
+			</p>
 			<button
 				type="button"
 				class="btn btn-ghost btn-sm btn-icon shrink-0"
@@ -97,7 +98,7 @@ function charKind(ch: string): string {
 		</div>
 		<div class="flex items-center gap-2.5 pr-1.5">
 			<div class="meter" aria-hidden="true">
-				<div class="meter-fill" style:width="{Math.min(100, Math.round(bits / 1.3))}%"></div>
+				<div class="meter-fill" style:width="{entropyMeter(bits)}%"></div>
 			</div>
 			<span class="text-xs whitespace-nowrap text-muted">
 				<strong class="font-semibold text-accent-text">{t(RATINGS[rateEntropy(bits)])}</strong>
@@ -125,11 +126,10 @@ function charKind(ch: string): string {
 					type="button"
 					class="class-toggle"
 					aria-pressed={enabled[option.key]}
-					aria-label={t(option.label)}
-					title={t(option.label)}
 					onclick={() => toggle(option.key)}
 				>
-					{option.sample}
+					{#if enabled[option.key]}<Icon name="check" size={11} stroke={2.6} />{/if}
+					{option.sample}<span class="sr-only">, {t(option.label)}</span>
 				</button>
 			{/each}
 		</div>
@@ -137,7 +137,12 @@ function charKind(ch: string): string {
 
 	<div class="flex justify-end gap-2">
 		<button type="button" class="btn btn-outline btn-sm" onclick={onclose}>{t("cancel")}</button>
-		<button type="button" class="btn btn-primary btn-sm" onclick={() => oninsert(value)}>
+		<button
+			type="button"
+			class="btn btn-primary btn-sm"
+			bind:this={insertButton}
+			onclick={() => oninsert(value)}
+		>
 			{t("gen_insert")}
 		</button>
 	</div>
@@ -175,22 +180,6 @@ function charKind(ch: string): string {
 		word-break: break-all;
 	}
 
-	.upper {
-		color: var(--text);
-	}
-
-	.lower {
-		color: var(--muted);
-	}
-
-	.digit {
-		color: var(--accent-text);
-	}
-
-	.symbol {
-		color: var(--accent-2-text);
-	}
-
 	.meter {
 		flex: 1;
 		height: 4px;
@@ -207,9 +196,12 @@ function charKind(ch: string): string {
 	}
 
 	.class-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		height: 30px;
 		padding: 0 10px;
-		border: 1px solid var(--line-strong);
+		border: 1px solid var(--field-line);
 		border-radius: var(--radius-sm);
 		background: transparent;
 		color: var(--muted);
@@ -221,8 +213,9 @@ function charKind(ch: string): string {
 			color 0.15s ease;
 	}
 
+	/* On: a check mark as well as the tint, so the state does not rest on colour. */
 	.class-toggle[aria-pressed="true"] {
-		border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+		border-color: var(--accent-text);
 		background: var(--accent-soft);
 		color: var(--accent-text);
 	}

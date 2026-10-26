@@ -23,10 +23,10 @@ const offset = $derived(
 );
 </script>
 
-<section class="card pop flex flex-col items-center gap-4 px-6 pt-9 pb-7 text-center" role="status">
-	<span class="progress-ring">
-		<span class="arc" class:spin={!measured}>
-			<svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+<section class="card pop flex flex-col items-center gap-4 px-6 pt-9 pb-7 text-center">
+	<span class="progress-ring" aria-hidden="true">
+		<span class="arc" class:animate-spin={!measured}>
+			<svg viewBox="0 0 64 64" width="64" height="64">
 				<circle cx="32" cy="32" r="28" class="track" />
 				<circle
 					cx="32"
@@ -50,7 +50,14 @@ const offset = $derived(
 		<p class="m-0 text-[13px] text-faint">{detail}</p>
 	</div>
 
-	<div class="bar" aria-hidden="true">
+	<div
+		class="bar"
+		role="progressbar"
+		aria-label={label}
+		aria-valuemin={0}
+		aria-valuemax={100}
+		aria-valuenow={view.percent ?? undefined}
+	>
 		{#if measured}
 			<div class="fill" style:width="{view.percent}%"></div>
 		{:else}
@@ -58,8 +65,11 @@ const offset = $derived(
 		{/if}
 	</div>
 
-	<ol class="m-0 flex list-none flex-wrap justify-center gap-x-4 gap-y-2 p-0 text-[12.5px]" aria-label={t("progress_steps")}>
-		{#each steps as name, index (name)}
+	<ol
+		class="m-0 flex list-none flex-wrap justify-center gap-x-4 gap-y-2 p-0 text-[12.5px]"
+		aria-label={t("progress_steps")}
+	>
+		{#each steps as name, index (index)}
 			{@const state = index < view.step || done ? "done" : index === view.step ? "active" : "todo"}
 			<li class="step {state}" aria-current={state === "active" ? "step" : undefined}>
 				{#if state === "done"}
@@ -71,6 +81,9 @@ const offset = $derived(
 			</li>
 		{/each}
 	</ol>
+
+	<!-- Announces each step as it starts, not every percent of it. -->
+	<p class="sr-only" role="status">{steps[view.step]}</p>
 </section>
 
 <style>
@@ -106,10 +119,6 @@ const offset = $derived(
 		stroke: var(--accent);
 		stroke-linecap: round;
 		transition: stroke-dashoffset 0.25s linear;
-	}
-
-	.spin {
-		animation: spin 1s linear infinite;
 	}
 
 	.bar {

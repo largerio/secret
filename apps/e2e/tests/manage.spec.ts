@@ -6,6 +6,8 @@ import { createNote, getManageUrl, revealNote } from "./helpers.js";
 // exercised it: no unit test, and the single e2e reference only opened the
 // <details> to run an accessibility scan without ever following the link.
 test.describe("management (revocation) flow", () => {
+	test.use({ permissions: ["clipboard-read", "clipboard-write"] });
+
 	test("deleting a note makes it unreadable for the recipient", async ({ page }) => {
 		const shareUrl = await createNote(page, { text: "revoke me", maxReads: 3 });
 		const manageUrl = await getManageUrl(page);

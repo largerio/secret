@@ -53,7 +53,8 @@ function download(): void {
 			<span class="font-mono text-[11.5px] text-faint">{formatSize(size, getLocale())}</span>
 		</span>
 		<button type="button" class="btn btn-outline btn-sm" onclick={download}>
-			<Icon name="download" size={15} /><span class="max-[600px]:sr-only">{t("rv_download")}</span>
+			<Icon name="download" size={15} /><span class="max-[600px]:sr-only">{t("rv_download")}</span
+			><span class="sr-only">&nbsp;{name}</span>
 		</button>
 	</div>
 </li>

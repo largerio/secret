@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { generatePassword, passwordEntropy, rateEntropy } from "../password.js";
+import {
+	entropyMeter,
+	generatePassword,
+	glyphKind,
+	passwordEntropy,
+	rateEntropy,
+} from "../password.js";
 
 describe("generatePassword", () => {
 	it("generates a password of the default length", () => {
@@ -101,5 +107,19 @@ describe("rateEntropy", () => {
 		expect(rateEntropy(50)).toBe("fair");
 		expect(rateEntropy(80)).toBe("strong");
 		expect(rateEntropy(110)).toBe("excellent");
+	});
+});
+
+describe("entropyMeter", () => {
+	it("fills the meter at 130 bits and never past it", () => {
+		expect(entropyMeter(65)).toBe(50);
+		expect(entropyMeter(130)).toBe(100);
+		expect(entropyMeter(400)).toBe(100);
+	});
+});
+
+describe("glyphKind", () => {
+	it("sorts each character into the class it is coloured by", () => {
+		expect([..."Ab3#"].map(glyphKind)).toEqual(["upper", "lower", "digit", "symbol"]);
 	});
 });

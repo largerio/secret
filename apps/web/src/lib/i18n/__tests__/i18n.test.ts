@@ -115,6 +115,14 @@ describe("tn", () => {
 		expect(tn("error_wrong_password_left", 3)).toContain("осталось 3");
 	});
 
+	it("passes other parameters through and writes the count the language's way", () => {
+		expect(tn("files_limit", 1000, { size: "10 MB" })).toBe("Up to 1,000 files, 10 MB in total");
+		setLocale("fr");
+		expect(tn("files_limit", 1000, { size: "10 Mo" })).toBe(
+			"Jusqu'à 1\u202f000 fichiers, 10 Mo au total",
+		);
+	});
+
 	it("survives a locale with no table, through the English fallback", () => {
 		setLocale("xx" as Locale);
 		expect(tn("reads_count", 3)).toBe("3 reads");

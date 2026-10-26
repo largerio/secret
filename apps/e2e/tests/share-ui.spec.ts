@@ -36,7 +36,7 @@ test("a generated password protects the note and decrypts it end to end", async 
 	await page.locator("#max-reads").selectOption("3");
 
 	// The generate button fills the opening password field with a random one.
-	await page.getByRole("button", { name: "with a password" }).click();
+	await page.locator("#password-mode").selectOption("on");
 	await page.getByRole("button", { name: "Generate an opening password" }).click();
 	const generated = await page.locator("#password").inputValue();
 	expect(generated.length).toBeGreaterThan(0);

@@ -91,3 +91,18 @@ export function rateEntropy(bits: number): EntropyRating {
 	if (bits < 110) return "strong";
 	return "excellent";
 }
+
+/** How full the strength meter is for an entropy figure, in percent: 130 bits fills it. */
+export function entropyMeter(bits: number): number {
+	return Math.min(100, Math.round((bits / 130) * 100));
+}
+
+export type GlyphKind = "upper" | "lower" | "digit" | "symbol";
+
+/** Which colour a password character is shown in, so look-alikes are told apart. */
+export function glyphKind(char: string): GlyphKind {
+	if (/[0-9]/.test(char)) return "digit";
+	if (/[A-Z]/.test(char)) return "upper";
+	if (/[a-z]/.test(char)) return "lower";
+	return "symbol";
+}

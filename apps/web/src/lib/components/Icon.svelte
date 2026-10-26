@@ -1,6 +1,7 @@
 <script module lang="ts">
 export type IconName =
 	| "alert"
+	| "arrow-left"
 	| "arrow-right"
 	| "check"
 	| "chevron-down"
@@ -60,6 +61,8 @@ let {
 >
 	{#if name === "alert"}
 		<circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
+	{:else if name === "arrow-left"}
+		<path d="M19 12H5M12 19l-7-7 7-7" />
 	{:else if name === "arrow-right"}
 		<path d="M5 12h14M12 5l7 7-7 7" />
 	{:else if name === "check"}

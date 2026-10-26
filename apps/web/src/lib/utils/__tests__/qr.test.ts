@@ -1,6 +1,7 @@
+import jsQR from "jsqr";
 import { create } from "qrcode";
 import { describe, expect, it } from "vitest";
-import { drawQr, layoutQr, type QrModules } from "../qr.js";
+import { drawQr, layoutQr, type QrDrawing, type QrModules } from "../qr.js";
 
 /** A symbol whose every module is dark, so only the carved-out areas lack dots. */
 function solid(size: number): QrModules {
@@ -9,6 +10,30 @@ function solid(size: number): QrModules {
 
 function dotCount(path: string): number {
 	return path.split("M").length - 1;
+}
+
+/**
+ * Rasterise a symbol the way a camera would see the drawn code: modules as
+ * squares, a quiet zone around, and the logo square painted solid dark like
+ * the gradient plate it sits on.
+ */
+function rasterise(modules: QrModules, logo: QrDrawing["logo"], scale = 4, quiet = 4) {
+	const width = (modules.size + quiet * 2) * scale;
+	const data = new Uint8ClampedArray(width * width * 4).fill(255);
+	const inLogo = (n: number) => n >= logo.start && n < logo.start + logo.size;
+	for (let row = 0; row < modules.size; row++) {
+		for (let col = 0; col < modules.size; col++) {
+			const dark = (inLogo(row) && inLogo(col)) || modules.get(row, col);
+			if (!dark) continue;
+			for (let y = 0; y < scale; y++) {
+				for (let x = 0; x < scale; x++) {
+					const i = (((row + quiet) * scale + y) * width + (col + quiet) * scale + x) * 4;
+					data.fill(0, i, i + 3);
+				}
+			}
+		}
+	}
+	return { data, width };
 }
 
 describe("layoutQr", () => {
@@ -45,6 +70,15 @@ describe("layoutQr", () => {
 });
 
 describe("drawQr", () => {
+	it.each([
+		"https://s.io/note/abc#k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU_-Ab12Cd3",
+		"https://secret.example.com/note/V1StGXR8_Z5jdHi6B#k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU_-Ab12Cd3",
+	])("stays readable with the logo over its centre: %s", (link) => {
+		const { modules } = create(link, { errorCorrectionLevel: "H" });
+		const { data, width } = rasterise(modules, layoutQr(modules).logo);
+		expect(jsQR(data, width, width)?.data).toBe(link);
+	});
+
 	it("encodes at level H so the logo square stays recoverable", async () => {
 		const link =
 			"https://secret.example.com/note/V1StGXR8_Z5jdHi6B#k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU";

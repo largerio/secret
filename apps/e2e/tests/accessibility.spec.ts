@@ -14,7 +14,7 @@ test.describe("create page", () => {
 
 	test("opening password field has no a11y violations", async ({ page }) => {
 		await gotoCreate(page);
-		await page.getByRole("button", { name: "with a password" }).click();
+		await page.locator("#password-mode").selectOption("on");
 		await page.locator("#password").fill("Tr0ub4dour&3xample");
 		await expect(page.locator("#password")).toHaveValue("Tr0ub4dour&3xample");
 		await expectNoA11yViolations(page, "create page (opening password)");
@@ -33,10 +33,27 @@ test.describe("create page", () => {
 		await page.locator("#note-text").fill("# Heading\n\nSome **bold** body text.");
 		await expectNoA11yViolations(page, "markdown editor (write)");
 
-		await page.getByRole("tab", { name: /preview/i }).click();
+		await page.getByRole("button", { name: /^preview$/i }).click();
 		// Wait for the debounced render to produce the prose output.
 		await expect(page.locator(".prose")).toBeVisible();
 		await expectNoA11yViolations(page, "markdown editor (preview)");
+	});
+});
+
+// The dark theme has its own palette: scan it too, through the OS preference
+// the app follows until a visitor picks a theme.
+test.describe("dark theme", () => {
+	test.use({ colorScheme: "dark" });
+
+	test("create page has no a11y violations", async ({ page }) => {
+		await gotoCreate(page);
+		await expectNoA11yViolations(page, "create page (dark)");
+	});
+
+	test("share screen has no a11y violations", async ({ page }) => {
+		await createNote(page, { text: `a11y dark ${Date.now()}` });
+		await expect(page.getByTestId("share-url")).toBeVisible();
+		await expectNoA11yViolations(page, "success view (dark)");
 	});
 });
 

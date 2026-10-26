@@ -6,8 +6,11 @@ const INK_DARK = "#17171c";
 const INK_DARK_RGB: Rgb = [0x17, 0x17, 0x1c];
 // The dark theme's background (app.css): a dark-theme accent must stand out from it.
 const DARK_BG: Rgb = [0x09, 0x09, 0x0b];
+// The light theme's softest surface (app.css --soft): accent text must read on it.
+const LIGHT_SOFT: Rgb = [0xf4, 0xf4, 0xf6];
 
-// WCAG 2's floor for UI components against their surroundings.
+// WCAG 2's floors: text, and UI components against their surroundings.
+const MIN_TEXT_CONTRAST = 4.5;
 const MIN_UI_CONTRAST = 3;
 // QR modules against the white plate: well above what scanners need in poor light.
 const MIN_QR_CONTRAST = 10;
@@ -119,10 +122,18 @@ function secondColor(rgb: Rgb): Rgb {
 	return result;
 }
 
-/** White or near-black, whichever stays most readable across every stop. */
-function inkFor(stops: readonly Rgb[]): string {
+/**
+ * Pick the text colour for a gradient, then move each stop away from it until
+ * that text reaches 4.5:1 everywhere on the button. White text is kept as long
+ * as a slight shift gets it there (it reads better on saturated colours);
+ * only light colours get near-black text.
+ */
+function fitInk(stops: readonly [Rgb, Rgb]): { ink: string; stops: [Rgb, Rgb] } {
 	const worst = (ink: Rgb) => Math.min(...stops.map((stop) => contrastRatio(stop, ink)));
-	return worst(WHITE) >= worst(INK_DARK_RGB) ? "#ffffff" : INK_DARK;
+	const white = worst(WHITE) >= MIN_UI_CONTRAST || worst(WHITE) >= worst(INK_DARK_RGB);
+	const [ink, away] = white ? [WHITE, BLACK] : [INK_DARK_RGB, WHITE];
+	const fit = (stop: Rgb) => pushToContrast(stop, away, ink, MIN_TEXT_CONTRAST);
+	return { ink: white ? "#ffffff" : INK_DARK, stops: [fit(stops[0]), fit(stops[1])] };
 }
 
 /**
@@ -133,8 +144,10 @@ function inkFor(stops: readonly Rgb[]): string {
  * computed here from the parsed channels, never from the raw input.
  *
  * - `--brand`, `--brand-2`: the gradient's two stops; `--brand-ink`, the text on it.
- * - `--brand-dk*`: the same for the dark theme, lightened when the colour would
- *   vanish against its near-black background.
+ * - `--brand-text`, `--brand-2-text`: the accent as text on the light theme,
+ *   darkened until it reads at 4.5:1.
+ * - `--brand-dk*`: the gradient for the dark theme, lightened when the colour
+ *   would vanish against its near-black background.
  * - `--brand-qr`, `--brand-2-qr`: darkened shades for QR codes on a white plate.
  *
  * @returns A style declaration list, or undefined to keep the built-in indigo.
@@ -144,16 +157,22 @@ export function accentStyle(color: string): string | undefined {
 	if (!brand) return undefined;
 
 	const brand2 = secondColor(brand);
-	const dark = pushToContrast(brand, WHITE, DARK_BG, MIN_UI_CONTRAST);
-	const dark2 = pushToContrast(brand2, WHITE, DARK_BG, MIN_UI_CONTRAST);
+	const light = fitInk([brand, brand2]);
+	const dark = fitInk([
+		pushToContrast(brand, WHITE, DARK_BG, MIN_UI_CONTRAST),
+		pushToContrast(brand2, WHITE, DARK_BG, MIN_UI_CONTRAST),
+	]);
+	const asText = (color: Rgb) => pushToContrast(color, BLACK, LIGHT_SOFT, MIN_TEXT_CONTRAST);
 
 	return [
-		`--brand:${toHex(brand)}`,
-		`--brand-2:${toHex(brand2)}`,
-		`--brand-ink:${inkFor([brand, brand2])}`,
-		`--brand-dk:${toHex(dark)}`,
-		`--brand-2-dk:${toHex(dark2)}`,
-		`--brand-ink-dk:${inkFor([dark, dark2])}`,
+		`--brand:${toHex(light.stops[0])}`,
+		`--brand-2:${toHex(light.stops[1])}`,
+		`--brand-ink:${light.ink}`,
+		`--brand-text:${toHex(asText(brand))}`,
+		`--brand-2-text:${toHex(asText(brand2))}`,
+		`--brand-dk:${toHex(dark.stops[0])}`,
+		`--brand-2-dk:${toHex(dark.stops[1])}`,
+		`--brand-ink-dk:${dark.ink}`,
 		`--brand-qr:${toHex(pushToContrast(brand, BLACK, WHITE, MIN_QR_CONTRAST))}`,
 		`--brand-2-qr:${toHex(pushToContrast(brand2, BLACK, WHITE, MIN_QR_CONTRAST))}`,
 	].join(";");

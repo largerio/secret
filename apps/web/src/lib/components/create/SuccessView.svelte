@@ -1,5 +1,4 @@
 <script lang="ts">
-import { EXPIRATION_OPTIONS } from "@largerio/secret-shared";
 import Icon from "#lib/components/Icon.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import QrCode from "#lib/components/ui/QrCode.svelte";
@@ -7,7 +6,9 @@ import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { t, tn } from "#lib/i18n/index.svelte.js";
 import { splitTemplate } from "#lib/i18n/template.js";
+import { expiryLabelKey } from "#lib/server-config.js";
 import { copyWithFeedback } from "#lib/utils/clipboard.js";
+import { splitShareUrl } from "#lib/utils/shareUrl.js";
 
 interface Props {
 	shareUrl: string;
@@ -39,37 +40,36 @@ let manageCopied = $state(false);
 let passwordVisible = $state(false);
 let qrOpen = $state(false);
 let clipboardError = $state(false);
+// Read out by screen readers: a button's label changing under focus is not announced.
+let announcement = $state("");
 
 const mailto = $derived(
 	`mailto:?subject=${encodeURIComponent(getConfig().appName)}&body=${encodeURIComponent(shareUrl)}`,
 );
 
 // The fragment is the decryption key: shown apart so it reads as the part that stays secret.
-const parts = $derived.by(() => {
-	const hash = shareUrl.indexOf("#");
-	const base = hash < 0 ? shareUrl : shareUrl.slice(0, hash);
-	const scheme = base.indexOf("://") + 3;
-	return {
-		scheme: base.slice(0, scheme),
-		address: base.slice(scheme),
-		key: hash < 0 ? "" : shareUrl.slice(hash),
-	};
-});
+const parts = $derived(splitShareUrl(shareUrl));
 
 const rule = $derived(splitTemplate(t("ok_rule")));
-const readsText = $derived(tn("reads_count", maxReads));
-const expiryText = $derived(
-	t(EXPIRATION_OPTIONS.find((option) => option.value === expiresIn)?.labelKey ?? "expiry_24h"),
-);
+const expiryKey = $derived(expiryLabelKey(expiresIn));
+const slots = $derived<Record<string, string>>({
+	reads: tn("reads_count", maxReads),
+	expiry: expiryKey ? t(expiryKey) : "",
+});
 
-async function copy(text: string, setCopied: (copied: boolean) => void): Promise<boolean> {
+async function copy(
+	text: string,
+	setCopied: (copied: boolean) => void,
+	done: string,
+): Promise<boolean> {
 	const ok = await copyWithFeedback(text, setCopied, 1600);
 	clipboardError = !ok;
+	if (ok) announcement = done;
 	return ok;
 }
 </script>
 
-<PageHero title={t("ok_title")} sub={password ? t("ok_sub_pw") : t("ok_sub")}>
+<PageHero title={t("ok_title")} sub={password ? t("ok_sub_pw") : t("ok_sub")} afterAction>
 	{#snippet badge()}
 		<SuccessBadge />
 	{/snippet}
@@ -100,7 +100,7 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 			type="button"
 			class="btn btn-primary min-w-[200px] flex-1 text-[15px]"
 			onclick={async () => {
-				if (await copy(shareUrl, (v) => (linkCopied = v))) onlinkcopied();
+				if (await copy(shareUrl, (v) => (linkCopied = v), t("ok_copied"))) onlinkcopied();
 			}}
 		>
 			{#if linkCopied}
@@ -147,12 +147,17 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 		</div>
 		<div class="flex items-center gap-1">
 			<code class="px-1.5 font-mono text-sm tracking-wide">
-				{passwordVisible ? password : "•".repeat(12)}
+				{#if passwordVisible}
+					{password}
+				{:else}
+					<span aria-hidden="true">{"•".repeat(12)}</span><span class="sr-only">{t("ok_pw_hidden")}</span>
+				{/if}
 			</code>
 			<button
 				type="button"
 				class="btn btn-ghost btn-sm btn-icon"
-				aria-label={passwordVisible ? t("hide_password") : t("show_password")}
+				aria-label={t("show_password")}
+				aria-pressed={passwordVisible}
 				onclick={() => (passwordVisible = !passwordVisible)}
 			>
 				<Icon name={passwordVisible ? "eye-off" : "eye"} size={16} />
@@ -160,7 +165,7 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 			<button
 				type="button"
 				class="btn btn-outline btn-sm"
-				onclick={() => copy(password, (v) => (passwordCopied = v))}
+				onclick={() => copy(password, (v) => (passwordCopied = v), t("rv_secret_copied"))}
 			>
 				{passwordCopied ? t("copied") : t("copy")}
 			</button>
@@ -173,7 +178,7 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 		{#if "text" in segment}
 			{segment.text}
 		{:else}
-			<strong class="font-medium text-text">{segment.slot === "reads" ? readsText : expiryText}</strong>
+			<strong class="font-medium text-text">{slots[segment.slot] ?? ""}</strong>
 		{/if}
 	{/each}
 	{#if fileCount > 0}
@@ -187,24 +192,23 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 	class="rise mt-2 flex flex-col items-center gap-3.5 border-t border-line pt-[22px]"
 	style:animation-delay="0.34s"
 >
-	{#if manageUrl}
-		<p class="m-0 text-center text-[13px] leading-[1.7] text-muted">
-			{t("ok_manage_hint")}<br />
-			<button
-				type="button"
-				class="manage"
-				data-testid="manage-link"
-				data-url={manageUrl}
-				onclick={() => copy(manageUrl, (v) => (manageCopied = v))}
-			>
-				{manageCopied ? t("ok_manage_copied") : t("ok_manage_copy")}
-			</button>
-		</p>
-	{/if}
+	<p class="m-0 text-center text-[13px] leading-[1.7] text-muted">
+		{t("ok_manage_hint")}<br />
+		<button
+			type="button"
+			class="inline-choice"
+			data-testid="manage-link"
+			onclick={() => copy(manageUrl, (v) => (manageCopied = v), t("ok_manage_copied"))}
+		>
+			{manageCopied ? t("ok_manage_copied") : t("ok_manage_copy")}
+		</button>
+	</p>
 	<button type="button" class="btn btn-outline h-10" onclick={onreset}>
 		<Icon name="plus" size={15} />{t("ok_new")}
 	</button>
 </div>
+
+<p class="sr-only" role="status">{announcement}</p>
 
 <style>
 	.url {
@@ -212,20 +216,5 @@ async function copy(text: string, setCopied: (copied: boolean) => void): Promise
 		font-size: 14.5px;
 		line-height: 1.6;
 		word-break: break-all;
-	}
-
-	.manage {
-		padding: 0 2px;
-		border: 0;
-		border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent);
-		background: transparent;
-		color: var(--text);
-		font: inherit;
-		font-weight: 500;
-	}
-
-	.manage:hover {
-		border-bottom-style: solid;
-		border-bottom-color: var(--accent);
 	}
 </style>

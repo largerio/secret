@@ -15,9 +15,12 @@ let drawing = $state<QrDrawing | null>(null);
 
 $effect(() => {
 	let cancelled = false;
-	drawQr(url).then((next) => {
-		if (!cancelled) drawing = next;
-	});
+	drawQr(url)
+		.then((next) => {
+			if (!cancelled) drawing = next;
+		})
+		// The link stays copyable; the code's panel simply stays empty.
+		.catch(() => {});
 	return () => {
 		cancelled = true;
 	};

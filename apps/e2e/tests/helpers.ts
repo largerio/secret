@@ -56,7 +56,7 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
 	}
 
 	if (options.password !== undefined) {
-		await page.getByRole("button", { name: "with a password" }).click();
+		await page.locator("#password-mode").selectOption("on");
 		await page.locator("#password").fill(options.password);
 	}
 	if (options.maxReads !== undefined) {
@@ -100,12 +100,13 @@ export async function submitNote(page: Page): Promise<string> {
  * token, like the decryption key, is never shown again.
  */
 export async function getManageUrl(page: Page): Promise<string> {
-	// The success screen offers it as a "copy" button that carries the link.
-	const button = page.getByTestId("manage-link");
-	await expect(button).toBeVisible();
-	const url = await button.getAttribute("data-url");
+	// The success screen only offers it as a button that copies it. Needs the
+	// clipboard permissions: `test.use({ permissions: ["clipboard-read", "clipboard-write"] })`.
+	await page.getByTestId("manage-link").click();
+	await expect(page.getByTestId("manage-link")).toHaveText(/copied/i);
+	const url = await page.evaluate(() => navigator.clipboard.readText());
 	expect(url, "manage URL should be present").toContain("/manage#");
-	return url as string;
+	return url;
 }
 
 /**
@@ -160,7 +161,12 @@ export async function expectNoA11yViolations(page: Page, label: string): Promise
 	// trip color-contrast. Finishing each animation snaps it to its end (full-opacity)
 	// state, making the scan deterministic regardless of machine speed.
 	await page.evaluate(() => {
-		for (const animation of document.getAnimations()) animation.finish();
+		for (const animation of document.getAnimations()) {
+			// finish() throws on an endless animation: there is no end to jump to.
+			const endless = animation.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY;
+			if (endless) animation.cancel();
+			else animation.finish();
+		}
 	});
 
 	const { violations } = await new AxeBuilder({ page })

@@ -1,9 +1,9 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 import Icon, { type IconName } from "#lib/components/Icon.svelte";
 import PasswordGenerator from "#lib/components/create/PasswordGenerator.svelte";
-import { getLocale, type MessageKey, t } from "#lib/i18n/index.svelte.js";
+import { getLocale, type MessageKey, t, tn } from "#lib/i18n/index.svelte.js";
 import { type AttachError, attachFiles } from "#lib/utils/files.js";
 import { formatSize } from "#lib/utils/format.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
@@ -48,8 +48,10 @@ const FORMATS: {
 
 let textarea: HTMLTextAreaElement | undefined = $state();
 let fileInput: HTMLInputElement | undefined = $state();
-let tab = $state<"write" | "preview">("write");
-let preview = $state("");
+let generatorButton: HTMLButtonElement | undefined = $state();
+let previewOn = $state(false);
+// Null while the markdown renders: nothing stale or empty flashes in between.
+let preview = $state<string | null>(null);
 let generatorOpen = $state(false);
 let dragging = $state(false);
 let attachError = $state<AttachError | null>(null);
@@ -57,7 +59,10 @@ let attachError = $state<AttachError | null>(null);
 let dragDepth = 0;
 
 const locale = $derived(getLocale());
-const showingPreview = $derived(formatted && tab === "preview");
+const showingPreview = $derived(formatted && previewOn);
+const limits = $derived(
+	tn("files_limit", maxFilesPerNote, { size: formatSize(maxFileSize, locale) }),
+);
 
 const attachMessage = $derived.by(() => {
 	if (!attachError) return "";
@@ -76,14 +81,19 @@ onMount(() => {
 	if (matchMedia("(pointer: fine)").matches) textarea?.focus();
 });
 
+// The textarea is gone while previewing, so the text cannot change under it:
+// render once, straight away.
 $effect(() => {
-	const source = text;
 	if (!showingPreview) return;
-
-	const timer = setTimeout(async () => {
-		preview = source.trim() ? await renderMarkdown(source) : "";
-	}, 150);
-	return () => clearTimeout(timer);
+	const source = text;
+	let cancelled = false;
+	preview = null;
+	(source.trim() ? renderMarkdown(source) : Promise.resolve("")).then((html) => {
+		if (!cancelled) preview = html;
+	});
+	return () => {
+		cancelled = true;
+	};
 });
 
 function addFiles(incoming: File[]): void {
@@ -93,8 +103,8 @@ function addFiles(incoming: File[]): void {
 	attachError = result.error;
 }
 
-function removeFile(index: number): void {
-	files = files.filter((_, i) => i !== index);
+function removeFile(file: File): void {
+	files = files.filter((other) => other !== file);
 	attachError = null;
 }
 
@@ -124,9 +134,16 @@ function insertPassword(password: string): void {
 	text = `${before}${glue}${password}${text.slice(end)}`;
 	generated = password;
 	generatorOpen = false;
-	tab = "write";
+	previewOn = false;
 	const caret = start + glue.length + password.length;
 	restoreSelection(caret, caret);
+}
+
+// Closed without inserting: the keyboard goes back to the button that opened it.
+async function closeGenerator(): Promise<void> {
+	generatorOpen = false;
+	await tick();
+	generatorButton?.focus();
 }
 
 const carriesFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
@@ -158,7 +175,7 @@ function onDrop(event: DragEvent): void {
 </script>
 
 <div
-	class="card rise composer relative"
+	class="card rise relative"
 	style:animation-delay="0.18s"
 	role="group"
 	aria-label={t("note_label")}
@@ -171,29 +188,21 @@ function onDrop(event: DragEvent): void {
 		<div class="drop-overlay pop" aria-hidden="true">
 			<Icon name="upload" size={22} />
 			<span class="text-sm font-medium text-text">{t("drop_hint")}</span>
-			<span class="text-xs">
-				{t("files_limit", { count: maxFilesPerNote, size: formatSize(maxFileSize, locale) })}
-			</span>
+			<span class="text-xs">{limits}</span>
 		</div>
 	{/if}
 
 	{#if formatted}
 		<div class="md-bar pop">
-			<div class="tabs" role="tablist" aria-label={t("tool_format")}>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={tab === "write"}
-					onclick={() => (tab = "write")}>{t("md_write")}</button
-				>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={tab === "preview"}
-					onclick={() => (tab = "preview")}>{t("md_preview")}</button
-				>
-			</div>
-			{#if tab === "write"}
+			<button
+				type="button"
+				class="btn btn-ghost btn-sm h-8"
+				aria-pressed={previewOn}
+				onclick={() => (previewOn = !previewOn)}
+			>
+				<Icon name="eye" size={15} />{t("md_preview")}
+			</button>
+			{#if !previewOn}
 				<div class="flex gap-0.5">
 					{#each FORMATS as item (item.format)}
 						<button
@@ -215,7 +224,7 @@ function onDrop(event: DragEvent): void {
 		<div class="preview">
 			{#if preview}
 				<div class="prose prose-sm max-w-none">{@html preview}</div>
-			{:else}
+			{:else if preview === ""}
 				<p class="m-0 text-sm text-faint">{t("md_preview_empty")}</p>
 			{/if}
 		</div>
@@ -228,21 +237,24 @@ function onDrop(event: DragEvent): void {
 			placeholder={t("note_placeholder")}
 			rows="9"
 			maxlength={MAX_TEXT_SIZE}
+			spellcheck="false"
+			autocapitalize="off"
+			autocomplete="off"
 		></textarea>
 	{/if}
 
 	{#if files.length > 0}
 		<ul class="m-0 flex list-none flex-wrap gap-2 px-4 pb-3.5" aria-label={t("attached_files")}>
-			{#each files as file, index (`${file.name}-${index}`)}
+			{#each files as file (file)}
 				<li class="chip pop">
 					<Icon name="file" size={14} class="shrink-0 text-accent-text" />
-					<span class="max-w-[220px] truncate">{file.name}</span>
-					<span class="font-mono text-[11px] text-faint">{formatSize(file.size, locale)}</span>
+					<span class="min-w-0 flex-1 truncate">{file.name}</span>
+					<span class="shrink-0 font-mono text-[11px] text-faint">{formatSize(file.size, locale)}</span>
 					<button
 						type="button"
-						class="btn btn-ghost btn-sm btn-icon h-[26px] w-[26px]"
+						class="btn btn-ghost btn-sm btn-icon h-[26px] w-[26px] shrink-0"
 						aria-label={t("remove_file", { name: file.name })}
-						onclick={() => removeFile(index)}
+						onclick={() => removeFile(file)}
 					>
 						<Icon name="x" size={13} />
 					</button>
@@ -263,7 +275,7 @@ function onDrop(event: DragEvent): void {
 
 	{#if generatorOpen}
 		<div id="password-generator">
-			<PasswordGenerator oninsert={insertPassword} onclose={() => (generatorOpen = false)} />
+			<PasswordGenerator oninsert={insertPassword} onclose={closeGenerator} />
 		</div>
 	{/if}
 
@@ -273,11 +285,13 @@ function onDrop(event: DragEvent): void {
 				type="button"
 				class="btn btn-ghost btn-sm"
 				title={t("tool_attach_label")}
+				aria-describedby="attach-limits"
 				onclick={() => fileInput?.click()}
 			>
 				<Icon name="paperclip" size={15} />
 				<span class="max-[600px]:sr-only">{t("tool_attach")}</span>
 			</button>
+			<span id="attach-limits" class="sr-only">{limits}</span>
 			<input
 				id="file-upload"
 				bind:this={fileInput}
@@ -294,6 +308,7 @@ function onDrop(event: DragEvent): void {
 			<button
 				type="button"
 				class="btn btn-ghost btn-sm"
+				bind:this={generatorButton}
 				aria-expanded={generatorOpen}
 				aria-controls={generatorOpen ? "password-generator" : undefined}
 				title={t("tool_generate")}
@@ -309,7 +324,7 @@ function onDrop(event: DragEvent): void {
 				title={t("tool_format_title")}
 				onclick={() => {
 					formatted = !formatted;
-					tab = "write";
+					previewOn = false;
 				}}
 			>
 				<Icon name="type" size={15} />
@@ -354,32 +369,6 @@ function onDrop(event: DragEvent): void {
 		border-bottom: 1px solid var(--line);
 	}
 
-	.tabs {
-		display: inline-flex;
-		gap: 2px;
-		padding: 3px;
-		border-radius: var(--radius-lg);
-		background: var(--soft);
-	}
-
-	.tabs button {
-		height: 28px;
-		padding: 0 12px;
-		border: 0;
-		border-radius: var(--radius-md);
-		background: transparent;
-		color: var(--muted);
-		font: inherit;
-		font-size: 13px;
-		font-weight: 500;
-	}
-
-	.tabs [aria-selected="true"] {
-		background: var(--surface);
-		color: var(--text);
-		box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
-	}
-
 	.format-heading,
 	.format-bold {
 		font-weight: 700;
@@ -391,10 +380,13 @@ function onDrop(event: DragEvent): void {
 		font-size: 15px;
 	}
 
+	/* Never wider than the card: at 320 px a long name shrinks, the remove button stays. */
 	.chip {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
+		min-width: 0;
+		max-width: 100%;
 		height: 34px;
 		padding: 0 4px 0 10px;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);

@@ -1,5 +1,6 @@
 <script lang="ts">
 import { tick } from "svelte";
+import Icon from "#lib/components/Icon.svelte";
 import InlineSelect from "#lib/components/ui/InlineSelect.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
 import { getConfig } from "#lib/config.svelte.js";
@@ -14,6 +15,8 @@ interface Props {
 	password: string;
 	/** Whether the note asks for a password; the value is only sent while this is on. */
 	passwordOn: boolean;
+	/** Shown under the password field, which is then marked invalid. */
+	passwordError?: string;
 }
 
 let {
@@ -21,6 +24,7 @@ let {
 	maxReads = $bindable(),
 	password = $bindable(),
 	passwordOn = $bindable(),
+	passwordError = "",
 }: Props = $props();
 
 const READS = [1, 3, 10, 100];
@@ -37,11 +41,14 @@ const expiryOptions = $derived(
 );
 
 const readOptions = $derived(
-	READS.map((count) => ({
-		value: count,
-		label: tn("reads_count", count),
-	})),
+	READS.map((count) => ({ value: count, label: tn("reads_count", count) })),
 );
+
+// Like the other choices in the sentence, this one shows its current value.
+const passwordOptions = $derived([
+	{ value: "off", label: t("life_without_password") },
+	{ value: "on", label: t("life_with_password") },
+]);
 
 const sentence = $derived(splitTemplate(t("life_sentence")));
 
@@ -53,9 +60,9 @@ $effect(() => {
 	}
 });
 
-async function togglePassword(): Promise<void> {
-	passwordOn = !passwordOn;
-	if (!passwordOn) return;
+async function setPasswordOn(on: boolean): Promise<void> {
+	passwordOn = on;
+	if (!on) return;
 	await tick();
 	passwordField?.focus();
 }
@@ -83,19 +90,16 @@ function generateOpeningPassword(): void {
 			{/if}
 		{/each}
 		<span class="mx-1.5 text-line-strong" aria-hidden="true">·</span>
-		<button
-			type="button"
-			class="password-toggle"
-			aria-expanded={passwordOn}
-			aria-controls={passwordOn ? "extra-password" : undefined}
-			onclick={togglePassword}
-		>
-			{passwordOn ? t("life_remove_password") : t("life_add_password")}
-		</button>
+		<InlineSelect
+			id="password-mode"
+			label={t("life_password")}
+			bind:value={() => (passwordOn ? "on" : "off"), (mode) => setPasswordOn(mode === "on")}
+			options={passwordOptions}
+		/>
 	</p>
 
 	{#if passwordOn}
-		<div id="extra-password" class="pop flex flex-col gap-1.5">
+		<div class="pop flex flex-col gap-1.5">
 			<label for="password" class="text-[13px] font-medium">
 				{t("pw_extra_label")} <span class="font-normal text-faint">— {t("pw_extra_hint")}</span>
 			</label>
@@ -104,28 +108,16 @@ function generateOpeningPassword(): void {
 				id="password"
 				bind:value={password}
 				placeholder={t("pw_extra_placeholder")}
-				autocomplete="new-password"
+				invalid={passwordError !== ""}
+				describedby={passwordError ? "password-error" : undefined}
 				generateLabel={t("pw_extra_generate")}
 				ongenerate={generateOpeningPassword}
 			/>
+			{#if passwordError}
+				<p id="password-error" class="pop m-0 flex items-start gap-2 text-[13px] text-danger" role="alert">
+					<Icon name="alert" size={15} class="mt-0.5 shrink-0" />{passwordError}
+				</p>
+			{/if}
 		</div>
 	{/if}
 </div>
-
-<style>
-	.password-toggle {
-		padding: 0 2px;
-		border: 0;
-		border-bottom: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent);
-		background: transparent;
-		color: var(--text);
-		font: inherit;
-		font-weight: 500;
-		transition: border-color 0.15s ease;
-	}
-
-	.password-toggle:hover {
-		border-bottom-style: solid;
-		border-bottom-color: var(--accent);
-	}
-</style>

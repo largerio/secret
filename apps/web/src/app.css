@@ -7,8 +7,6 @@
 		"Inter Variable", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	--font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-	--color-bg: var(--bg);
-	--color-surface: var(--surface);
 	--color-soft: var(--soft);
 	--color-line: var(--line);
 	--color-line-strong: var(--line-strong);
@@ -16,8 +14,6 @@
 	--color-muted: var(--muted);
 	--color-faint: var(--faint);
 	--color-accent: var(--accent);
-	--color-accent-2: var(--accent-2);
-	--color-accent-ink: var(--accent-ink);
 	--color-accent-soft: var(--accent-soft);
 	--color-accent-text: var(--accent-text);
 	--color-warn: var(--warn);
@@ -43,6 +39,8 @@
 	--soft: #f4f4f6;
 	--line: #e6e6ea;
 	--line-strong: #cfcfd6;
+	/* Field borders: 3:1 against the field, so it reads as one. */
+	--field-line: #8a8a94;
 	--text: #17171c;
 	--muted: #52525b;
 	--faint: #6b6b74;
@@ -57,11 +55,11 @@
 	--accent: var(--brand, #4f46e5);
 	--accent-2: var(--brand-2, #7733e2);
 	--accent-ink: var(--brand-ink, #ffffff);
-	--accent-text: var(--accent);
-	--accent-2-text: var(--accent-2);
+	/* The accent as text: --brand-text is darkened to 4.5:1 when the colour is light. */
+	--accent-text: var(--brand-text, var(--accent));
+	--accent-2-text: var(--brand-2-text, var(--accent-2));
 
 	--accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
-	--accent-ring: color-mix(in srgb, var(--accent) 22%, transparent);
 	/* QR codes are always drawn dark on a white plate, whatever the theme. */
 	--qr-1: var(--brand-qr, #36309c);
 	--qr-2: var(--brand-2-qr, #51239a);
@@ -74,6 +72,7 @@
 	--soft: #1b1b20;
 	--line: #26262c;
 	--line-strong: #3d3d45;
+	--field-line: #66666f;
 	--text: #f4f4f5;
 	--muted: #a1a1aa;
 	--faint: #8b8b95;
@@ -92,7 +91,11 @@
 	--accent-2-text: color-mix(in srgb, var(--accent-2) 55%, #ffffff);
 }
 
-/* No explicit choice yet: follow the system. Same values as the block above. */
+/*
+ * No explicit choice yet: follow the system. The same values as the block
+ * above: a selector list cannot span the media query, and light-dark() would
+ * leave browsers from before 2024 with no colours at all.
+ */
 @media (prefers-color-scheme: dark) {
 	:root[data-mode="system"] {
 		color-scheme: dark;
@@ -101,6 +104,7 @@
 		--soft: #1b1b20;
 		--line: #26262c;
 		--line-strong: #3d3d45;
+		--field-line: #66666f;
 		--text: #f4f4f5;
 		--muted: #a1a1aa;
 		--faint: #8b8b95;
@@ -141,6 +145,8 @@
 }
 
 /* ---------- Base ---------- */
+/* Layered, so Tailwind utilities (outline-none, cursor-*, placeholder:*) still win. */
+@layer base {
 html {
 	background: var(--bg);
 }
@@ -164,8 +170,9 @@ button:not(:disabled),
 	cursor: pointer;
 }
 
+/* Solid, in the accent's text shade: at least 4.5:1 on both themes. */
 *:focus-visible {
-	outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+	outline: 2px solid var(--accent-text);
 	outline-offset: 2px;
 }
 
@@ -199,6 +206,7 @@ button:not(:disabled),
 		font-size: 16px !important;
 	}
 }
+}
 
 /* ---------- Motion ---------- */
 
@@ -228,12 +236,6 @@ button:not(:disabled),
 	to {
 		opacity: 1;
 		transform: none;
-	}
-}
-
-@keyframes spin {
-	to {
-		transform: rotate(360deg);
 	}
 }
 
@@ -362,8 +364,11 @@ button:not(:disabled),
 	}
 
 	/* The surface that matters on a page, ringed by an arc of accent that turns
-	   slowly and brightens while something inside has focus. */
+	   slowly. While something inside has focus the whole ring takes the accent,
+	   the arc still turning on it: that ring is the focus indicator of the
+	   fields that draw none themselves, such as the note's textarea. */
 	.card {
+		--edge: var(--line);
 		--arc: color-mix(in srgb, var(--accent) 65%, var(--line));
 		--arc-2: color-mix(in srgb, var(--accent-2) 65%, var(--line));
 		border: 1.5px solid transparent;
@@ -372,11 +377,11 @@ button:not(:disabled),
 			linear-gradient(var(--surface), var(--surface)) padding-box,
 			conic-gradient(
 					from var(--border-angle),
-					var(--line) 0deg,
-					var(--line) 190deg,
+					var(--edge) 0deg,
+					var(--edge) 190deg,
 					var(--arc) 280deg,
 					var(--arc-2) 330deg,
-					var(--line) 360deg
+					var(--edge) 360deg
 				)
 				border-box;
 		box-shadow: var(--shadow-card);
@@ -384,8 +389,9 @@ button:not(:disabled),
 	}
 
 	.card:focus-within {
-		--arc: var(--accent);
-		--arc-2: var(--accent-2);
+		--edge: var(--accent-text);
+		--arc: var(--accent-2-text);
+		--arc-2: var(--accent-text);
 	}
 
 	.card.rise {
@@ -404,7 +410,7 @@ button:not(:disabled),
 		width: 100%;
 		height: 46px;
 		padding: 0 14px;
-		border: 1px solid var(--line-strong);
+		border: 1px solid var(--field-line);
 		border-radius: var(--radius-lg);
 		background: var(--surface);
 		color: var(--text);
@@ -414,8 +420,8 @@ button:not(:disabled),
 	}
 
 	.field:focus {
-		border-color: var(--accent);
-		box-shadow: 0 0 0 1px var(--accent);
+		border-color: var(--accent-text);
+		box-shadow: 0 0 0 1px var(--accent-text);
 		outline: none;
 	}
 
@@ -426,6 +432,38 @@ button:not(:disabled),
 
 	.field[aria-invalid="true"]:focus {
 		box-shadow: 0 0 0 1px var(--danger);
+	}
+
+	/* A choice written into a sentence (a select, a toggle): the sentence's own
+	   text with a dashed underline, in the accent's text shade so it reads as
+	   something to act on. */
+	.inline-choice {
+		padding: 0 2px;
+		border: 0;
+		border-bottom: 1.5px dashed var(--accent-text);
+		border-radius: 0;
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		font-weight: 500;
+	}
+
+	.inline-choice:hover {
+		border-bottom-style: solid;
+	}
+}
+
+/* Windows high contrast: gradients and tints vanish, so states need outlines. */
+@media (forced-colors: active) {
+	.card {
+		border-color: CanvasText;
+	}
+
+	.btn-ghost[aria-pressed="true"],
+	.btn-ghost[aria-expanded="true"],
+	.btn-outline[aria-expanded="true"],
+	[aria-pressed="true"] {
+		outline: 2px solid Highlight;
 	}
 }
 

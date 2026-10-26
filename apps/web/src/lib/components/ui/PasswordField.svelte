@@ -77,7 +77,8 @@ export function focus(): void {
 		<button
 			type="button"
 			class="btn btn-ghost btn-sm btn-icon"
-			aria-label={visible ? t("hide_password") : t("show_password")}
+			aria-label={t("show_password")}
+			title={t("show_password")}
 			aria-pressed={visible}
 			onclick={() => (visible = !visible)}
 		>
@@ -103,9 +104,5 @@ export function focus(): void {
 		gap: 2px;
 	}
 
-	/* The pressed state of the eye is shown by its icon, not by a tint. */
-	.actions [aria-pressed="true"] {
-		background: transparent;
-		color: var(--muted);
-	}
+
 </style>

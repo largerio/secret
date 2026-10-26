@@ -50,6 +50,10 @@ export default defineConfig({
 		// language fails every test with an opaque 30s timeout.
 		locale: "en-US",
 		extraHTTPHeaders: { "accept-language": "en-US,en;q=0.9" },
+		// The app's infinite animations (the card border, the background glow)
+		// stop under reduced motion: the a11y scan can settle the page, and the
+		// reduced-motion path gets exercised on every run.
+		reducedMotion: "reduce",
 		trace: "on-first-retry",
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

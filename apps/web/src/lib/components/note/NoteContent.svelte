@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ContentMode } from "@largerio/secret-shared";
 import Icon from "#lib/components/Icon.svelte";
+import PasswordGlyphs from "#lib/components/ui/PasswordGlyphs.svelte";
 import { t } from "#lib/i18n/index.svelte.js";
 import { copyWithFeedback } from "#lib/utils/clipboard.js";
 
@@ -15,25 +16,20 @@ const { text, mode, html }: Props = $props();
 
 let copied = $state(false);
 let copyFailed = $state(false);
+// Read out by screen readers: a button's label changing under focus is not announced.
+let announcement = $state("");
 
 async function copy(): Promise<void> {
-	copyFailed = !(await copyWithFeedback(text, (v) => (copied = v), 1600));
-}
-
-function charKind(ch: string): string {
-	if (/[0-9]/.test(ch)) return "digit";
-	if (/[A-Z]/.test(ch)) return "upper";
-	if (/[a-z]/.test(ch)) return "lower";
-	return "symbol";
+	const ok = await copyWithFeedback(text, (v) => (copied = v), 1600);
+	copyFailed = !ok;
+	if (ok) announcement = mode === "secret" ? t("rv_secret_copied") : t("copied");
 }
 </script>
 
 {#if mode === "secret"}
 	<section class="card pop flex flex-col gap-3.5 p-[18px]" aria-labelledby="secret-label">
 		<span id="secret-label" class="text-xs font-medium text-faint">{t("rv_secret_label")}</span>
-		<code class="secret" data-testid="note-secret">
-			{#each text as ch, i (i)}<span class={charKind(ch)}>{ch}</span>{/each}
-		</code>
+		<code class="secret"><PasswordGlyphs value={text} testid="note-secret" /></code>
 		<button type="button" class="btn btn-primary btn-lg" onclick={copy}>
 			<Icon name={copied ? "check" : "copy"} size={16} />
 			{copied ? t("rv_secret_copied") : t("rv_copy_secret")}
@@ -50,7 +46,11 @@ function charKind(ch: string): string {
 		</div>
 		<div class="px-5 py-[18px]">
 			{#if mode === "markdown"}
-				<div class="prose prose-sm max-w-none" data-testid="note-markdown">{@html html}</div>
+				<!-- Links in a note load as full pages: routed in place, the reader
+				     would keep this note's state under another note's address. -->
+				<div class="prose prose-sm max-w-none" data-testid="note-markdown" data-sveltekit-reload>
+					{@html html}
+				</div>
 			{:else}
 				<p class="plain m-0" data-testid="note-text">{text}</p>
 			{/if}
@@ -61,6 +61,7 @@ function charKind(ch: string): string {
 {#if copyFailed}
 	<p class="m-0 text-center text-[13px] text-danger" role="alert">{t("error_clipboard")}</p>
 {/if}
+<p class="sr-only" role="status">{announcement}</p>
 
 <style>
 	.plain {
@@ -81,22 +82,5 @@ function charKind(ch: string): string {
 		letter-spacing: 0.04em;
 		text-align: center;
 		word-break: break-all;
-		user-select: all;
-	}
-
-	.upper {
-		color: var(--text);
-	}
-
-	.lower {
-		color: var(--muted);
-	}
-
-	.digit {
-		color: var(--accent-text);
-	}
-
-	.symbol {
-		color: var(--accent-2-text);
 	}
 </style>

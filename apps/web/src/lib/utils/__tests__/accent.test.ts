@@ -22,7 +22,19 @@ function hue([r, g, b]: Rgb): number {
 }
 
 const WHITE: Rgb = [255, 255, 255];
+const INK_DARK: Rgb = [0x17, 0x17, 0x1c];
+const LIGHT_SOFT: Rgb = [0xf4, 0xf4, 0xf6];
 const DARK_BG: Rgb = [0x09, 0x09, 0x0b];
+
+const BRIGHT_AND_MID = [
+	"#eab308",
+	"#22c55e",
+	"#0ea5e9",
+	"#3b82f6",
+	"#ef4444",
+	"#777777",
+	"#ffffff",
+];
 
 describe("accentStyle", () => {
 	it("keeps the built-in accent when no colour is set", () => {
@@ -41,6 +53,8 @@ describe("accentStyle", () => {
 				"--brand:#4f46e5",
 				"--brand-2:#7733e2",
 				"--brand-ink:#ffffff",
+				"--brand-text:#4f46e5",
+				"--brand-2-text:#7733e2",
 				"--brand-dk:#4f46e5",
 				"--brand-2-dk:#7733e2",
 				"--brand-ink-dk:#ffffff",
@@ -78,8 +92,27 @@ describe("accentStyle", () => {
 		},
 	);
 
+	it.each(BRIGHT_AND_MID)("keeps text on a %s button at 4.5:1 on both stops", (color) => {
+		const style = accentStyle(color);
+		const ink = style?.includes("--brand-ink:#ffffff") ? WHITE : INK_DARK;
+		expect(contrastRatio(token(style, "--brand"), ink)).toBeGreaterThanOrEqual(4.5);
+		expect(contrastRatio(token(style, "--brand-2"), ink)).toBeGreaterThanOrEqual(4.5);
+	});
+
+	it("keeps white text on a saturated colour, nudging it darker", () => {
+		expect(accentStyle("#3b82f6")).toContain("--brand-ink:#ffffff");
+		expect(accentStyle("#eab308")).toContain("--brand-ink:#17171c");
+	});
+
+	it.each(BRIGHT_AND_MID)("darkens %s into accent text that reads on the light theme", (color) => {
+		const style = accentStyle(color);
+		expect(contrastRatio(token(style, "--brand-text"), LIGHT_SOFT)).toBeGreaterThanOrEqual(4.5);
+		expect(contrastRatio(token(style, "--brand-2-text"), LIGHT_SOFT)).toBeGreaterThanOrEqual(4.5);
+	});
+
 	it("leaves greys alone instead of inventing a hue", () => {
-		expect(accentStyle("#777777")).toContain("--brand-2:#777777");
+		const style = accentStyle("#777777");
+		expect(token(style, "--brand-2")).toEqual(token(style, "--brand"));
 	});
 
 	it("lightens a colour that would vanish on the dark theme's background", () => {

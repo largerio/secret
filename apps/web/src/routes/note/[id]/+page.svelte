@@ -1,5 +1,5 @@
 <script lang="ts">
-import { SecretDecryptionError } from "@largerio/secret-sdk";
+import { SecretApiError, SecretDecryptionError } from "@largerio/secret-sdk";
 import type { NotePayload } from "@largerio/secret-shared";
 import { onMount, tick } from "svelte";
 import { page } from "$app/state";
@@ -7,7 +7,7 @@ import Icon, { type IconName } from "#lib/components/Icon.svelte";
 import FileRow from "#lib/components/note/FileRow.svelte";
 import NoteContent from "#lib/components/note/NoteContent.svelte";
 import Callout from "#lib/components/ui/Callout.svelte";
-import NoticeIcon from "#lib/components/ui/NoticeIcon.svelte";
+import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
@@ -18,17 +18,18 @@ import { formatDateTime, type MessageKey, t, tn } from "#lib/i18n/index.svelte.j
 import { isPreviewable } from "#lib/utils/fileType.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
 import { type ProgressView, readProgress } from "#lib/utils/progress.js";
-import { readsLeft } from "#lib/utils/reads.js";
+import {
+	isLastRead,
+	type NoteAfterRead,
+	type ReadsAfter,
+	readsAfter,
+	readsBefore,
+	readsLeft,
+} from "#lib/utils/reads.js";
+import { isKeyFragment } from "#lib/utils/shareUrl.js";
+import type { PageData } from "./$types";
 
-interface NoteInfo {
-	hasPassword: boolean;
-	maxReads: number;
-	/** Null when the instance does not report it. */
-	readCount: number | null;
-	fileCount: number;
-	expiresAt: string;
-	chunked: boolean;
-}
+type NoteInfo = NonNullable<PageData["noteInfo"]>;
 
 type Notice = "not_found" | "link_incomplete" | "unavailable" | "rate_limited";
 
@@ -36,7 +37,7 @@ type NoteStatus =
 	| { state: "notice"; notice: Notice }
 	| { state: "ready"; info: NoteInfo }
 	| { state: "opening"; progress: ProgressView }
-	| { state: "revealed"; payload: NotePayload; previewUrls: string[] }
+	| { state: "revealed"; payload: NotePayload; previewUrls: string[]; after: ReadsAfter }
 	| { state: "error"; message: string };
 
 const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconName }> = {
@@ -50,7 +51,7 @@ const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconN
 	rate_limited: { title: "rate_limited_title", body: "rate_limited_description", icon: "clock" },
 };
 
-const { data } = $props();
+const { data }: { data: PageData } = $props();
 
 // The page starts from what the loader found; from there on, the reader drives it.
 function initialStatus(): NoteStatus {
@@ -61,13 +62,13 @@ function initialStatus(): NoteStatus {
 
 let status = $state<NoteStatus>(initialStatus());
 let mounted = $state(false);
+// Once the reader has acted, each new screen takes the focus.
+let acted = $state(false);
 let keyFragment = $state("");
 let password = $state("");
 let passwordProblem = $state<"" | "empty" | "wrong">("");
 let wrongMessage = $state("");
 let passwordField: PasswordField | undefined = $state();
-// The note as it stood when it was opened, for what the revealed page says about it.
-let openedInfo = $state<NoteInfo | null>(null);
 let renderedMarkdown = $state("");
 
 // From the loader, not from `status`: a failed read is handled once `status`
@@ -82,13 +83,13 @@ const openingLabel = $derived(
 );
 
 const revealedSub = $derived.by(() => {
-	if (status.state !== "revealed" || !openedInfo) return "";
-	const secret = status.payload.contentMode === "secret";
-	const left = readsLeft(openedInfo.maxReads, openedInfo.readCount);
-	const after = left === null ? null : left - 1;
-	if (isBurn || after === 0) return secret ? t("rv_sub_secret_gone") : t("rv_sub_gone");
-	if (after === null) return openedInfo.maxReads > 0 ? t("rv_sub_limited") : "";
-	return tn("rv_sub_left", after);
+	if (status.state !== "revealed") return "";
+	const { after } = status;
+	if (after.kind === "gone") {
+		return status.payload.contentMode === "secret" ? t("rv_sub_secret_gone") : t("rv_sub_gone");
+	}
+	if (after.kind === "left") return tn("rv_sub_left", after.count);
+	return after.kind === "limited" ? t("rv_sub_limited") : "";
 });
 
 $effect(() => {
@@ -110,37 +111,50 @@ onMount(() => {
 	keyFragment = window.location.hash.slice(1);
 	mounted = true;
 
-	// A missing fragment means the link was truncated in transit (mail clients,
-	// chat apps and SMS linkifiers all do it), not that the note is gone —
-	// saying "not found" sent people looking for the wrong problem.
-	if (!keyFragment && status.state === "ready") {
+	// A missing or cut fragment means the link was truncated in transit (mail
+	// clients, chat apps and SMS linkifiers all do it), not that the note is
+	// gone. Caught here, before any read: the server spends a read before the
+	// key is ever used, so a broken key would burn reads on every attempt.
+	if (status.state === "ready" && !isKeyFragment(keyFragment)) {
 		status = { state: "notice", notice: "link_incomplete" };
 	}
 
+	// The full link pasted into the same tab only changes the fragment: the
+	// page does not reload, so pick the key up from here.
+	const onHashChange = () => {
+		keyFragment = window.location.hash.slice(1);
+		const incomplete = status.state === "notice" && status.notice === "link_incomplete";
+		if (incomplete && data.noteInfo && isKeyFragment(keyFragment)) {
+			status = { state: "ready", info: data.noteInfo };
+		}
+	};
+	window.addEventListener("hashchange", onHashChange);
+
 	return () => {
+		window.removeEventListener("hashchange", onHashChange);
 		if (status.state === "revealed") {
 			for (const url of status.previewUrls) URL.revokeObjectURL(url);
 		}
 	};
 });
 
-function readsLeftText(info: NoteInfo): string {
-	const left = readsLeft(info.maxReads, info.readCount);
-	if (left === null) return info.maxReads > 0 ? t("un_reads_total", { count: info.maxReads }) : "";
-	return tn("un_reads_left", left);
+function readsText(info: NoteInfo): string {
+	const reads = readsBefore(info.maxReads, info.readCount);
+	if (reads.kind === "left") return tn("un_reads_left", reads.count);
+	return reads.kind === "total" ? t("un_reads_total", { count: reads.count }) : "";
 }
 
 /**
- * Ask the server where the note stands after a failed attempt, rather than
- * subtract locally: someone else may have read it in the meantime.
+ * Ask the server where the note stands, rather than work it out locally:
+ * other readers may have spent reads since the page loaded. Null when the
+ * server cannot be asked.
  */
-async function recheck(id: string, current: NoteInfo): Promise<NoteInfo | "gone"> {
+async function recheck(id: string): Promise<NoteAfterRead | null> {
 	try {
 		const info = await (await getClient()).checkNote(id);
-		if (!info.exists) return "gone";
-		return { ...current, readCount: info.readCount ?? null, expiresAt: info.expiresAt };
+		return info.exists ? { exists: true, readCount: info.readCount ?? null } : { exists: false };
 	} catch {
-		return { ...current, readCount: null };
+		return null;
 	}
 }
 
@@ -153,16 +167,17 @@ async function failPassword(id: string, current: NoteInfo): Promise<void> {
 		return;
 	}
 
-	const fresh = await recheck(id, current);
-	if (fresh === "gone") {
+	const fresh = await recheck(id);
+	if (fresh?.exists === false) {
 		status = { state: "error", message: t("error_wrong_password_last") };
 		return;
 	}
 
-	const left = readsLeft(fresh.maxReads, fresh.readCount);
+	const info = { ...current, readCount: fresh ? fresh.readCount : null };
+	const left = readsLeft(info.maxReads, info.readCount);
 	wrongMessage = left === null ? t("error_wrong_password") : tn("error_wrong_password_left", left);
 	passwordProblem = "wrong";
-	status = { state: "ready", info: fresh };
+	status = { state: "ready", info };
 	await tick();
 	passwordField?.focus();
 }
@@ -179,7 +194,7 @@ async function handleOpen(): Promise<void> {
 	}
 
 	passwordProblem = "";
-	openedInfo = current;
+	acted = true;
 	status = { state: "opening", progress: { step: 0, percent: 0, chunk: null } };
 
 	try {
@@ -194,18 +209,20 @@ async function handleOpen(): Promise<void> {
 
 		const previewUrls = (payload.files ?? []).map((file) =>
 			isPreviewable(file.type)
-				? URL.createObjectURL(
-						new Blob([new Uint8Array(file.data as ArrayLike<number>)] as BlobPart[], {
-							type: file.type,
-						}),
-					)
+				? URL.createObjectURL(new Blob([file.data] as BlobPart[], { type: file.type }))
 				: "",
 		);
-		status = { state: "revealed", payload, previewUrls };
+		// A single-read note is gone without asking.
+		const after = readsAfter(current.maxReads, isBurn ? null : await recheck(id));
+		status = { state: "revealed", payload, previewUrls, after };
 	} catch (e) {
-		// A decryption failure (wrong password or key, corrupted data) surfaces as
-		// one typed error — which of them cannot be told, by design.
-		if (e instanceof SecretDecryptionError && current.hasPassword) {
+		if (e instanceof SecretApiError && e.status === 404) {
+			// Someone else spent the last read in the meantime.
+			status = { state: "notice", notice: "not_found" };
+		} else if (e instanceof SecretApiError && e.status === 429) {
+			status = { state: "notice", notice: "rate_limited" };
+		} else if (e instanceof SecretDecryptionError && current.hasPassword) {
+			// A wrong password, or a damaged key: which of them cannot be told, by design.
 			await failPassword(id, current);
 		} else {
 			status = { state: "error", message: t("error_decryption") };
@@ -224,17 +241,11 @@ async function handleOpen(): Promise<void> {
 
 {#if status.state === "notice"}
 	{@const notice = NOTICES[status.notice]}
-	<PageHero title={t(notice.title)} sub={t(notice.body)}>
-		{#snippet lead()}
-			<NoticeIcon name={notice.icon} />
-		{/snippet}
-	</PageHero>
-	<div class="rise flex justify-center" style:animation-delay="0.18s">
-		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
-	</div>
+	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction={acted} />
 {:else if status.state === "ready"}
 	{@const info = status.info}
-	{@const readsText = isBurn ? "" : readsLeftText(info)}
+	{@const lastRead = isLastRead(info.maxReads, info.readCount)}
+	{@const reads = isBurn ? "" : readsText(info)}
 	<PageHero title={t("un_title")} sub={t("un_sub")} />
 
 	<form
@@ -246,9 +257,9 @@ async function handleOpen(): Promise<void> {
 			handleOpen();
 		}}
 	>
-		{#if isBurn}
+		{#if lastRead}
 			<div class="px-3 pt-3">
-				<Callout tone="warn" icon="flame" title={t("un_burn_title")}>
+				<Callout tone="warn" icon="flame" title={isBurn ? t("un_burn_title") : t("un_last_title")}>
 					{t("un_burn_body")}
 					{#if info.hasPassword}
 						<span class="mt-0.5 block font-medium text-warn">{t("burn_password_warning")}</span>
@@ -258,9 +269,9 @@ async function handleOpen(): Promise<void> {
 		{/if}
 
 		<ul class="m-0 flex list-none flex-col gap-2.5 px-[18px] py-4 text-sm text-muted">
-			{#if readsText}
+			{#if reads}
 				<li class="flex items-center gap-2.5">
-					<Icon name="eye" size={16} class="text-accent-text" />{readsText}
+					<Icon name="eye" size={16} class="text-accent-text" />{reads}
 				</li>
 			{/if}
 			<li class="flex items-center gap-2.5">
@@ -289,7 +300,11 @@ async function handleOpen(): Promise<void> {
 					describedby={passwordProblem ? "decrypt-password-error" : undefined}
 				/>
 				{#if passwordProblem}
-					<p id="decrypt-password-error" class="pop m-0 mt-0.5 flex items-start gap-2 text-[13px] text-danger" role="alert">
+					<p
+						id="decrypt-password-error"
+						class="pop m-0 mt-0.5 flex items-start gap-2 text-[13px] text-danger"
+						role="alert"
+					>
 						<Icon name="alert" size={15} class="mt-0.5 shrink-0" />
 						{passwordProblem === "empty" ? t("un_pw_empty") : wrongMessage}
 					</p>
@@ -307,7 +322,7 @@ async function handleOpen(): Promise<void> {
 
 	<div class="rise" style:animation-delay="0.3s"><TrustLine /></div>
 {:else if status.state === "opening"}
-	<PageHero title={t("un_title")} sub={t("un_sub")} />
+	<PageHero title={t("un_title")} sub={t("un_sub")} afterAction />
 	<ProgressPanel
 		view={status.progress}
 		label={openingLabel}
@@ -321,6 +336,7 @@ async function handleOpen(): Promise<void> {
 	<PageHero
 		title={payload.contentMode === "secret" ? t("rv_title_secret") : t("rv_title")}
 		sub={revealedSub || undefined}
+		afterAction
 	/>
 
 	{#if payload.text}
@@ -338,7 +354,7 @@ async function handleOpen(): Promise<void> {
 						name={file.name}
 						type={file.type}
 						size={file.size}
-						data={new Uint8Array(file.data as ArrayLike<number>)}
+						data={file.data}
 						previewUrl={status.previewUrls[index] ?? ""}
 					/>
 				{/each}
@@ -350,13 +366,5 @@ async function handleOpen(): Promise<void> {
 		<a href="/" class="btn btn-outline"><Icon name="plus" size={15} />{t("rv_new")}</a>
 	</div>
 {:else}
-	<PageHero title={t("error_title")} sub={status.message}>
-		{#snippet lead()}
-			<NoticeIcon name="alert" />
-		{/snippet}
-	</PageHero>
-	<div class="rise flex justify-center" style:animation-delay="0.18s">
-		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
-	</div>
+	<NoticeView icon="alert" title={t("error_title")} sub={status.message} afterAction />
 {/if}
-

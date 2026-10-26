@@ -47,13 +47,15 @@ const footerText = $derived(getConfig().footerText);
 </footer>
 
 <style>
+	/* Underlined at rest: their colour alone barely sets them apart from the text around. */
 	.link {
 		color: var(--accent-text);
-		text-decoration: none;
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--accent-text) 45%, transparent);
+		text-underline-offset: 3px;
 	}
 
 	.link:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
+		text-decoration-color: currentColor;
 	}
 </style>

@@ -7,7 +7,7 @@ test("the Markdown editor renders a live preview while composing", async ({ page
 	await page.locator("#note-text").fill("# Hello preview\n\n**bold here**");
 
 	// Switching to the Preview tab renders sanitized HTML (debounced ~150ms).
-	await page.getByRole("tab", { name: /^Preview$/i }).click();
+	await page.getByRole("button", { name: /^Preview$/i }).click();
 
 	const preview = page.locator(".prose");
 	await expect(preview.locator("h1")).toHaveText("Hello preview");

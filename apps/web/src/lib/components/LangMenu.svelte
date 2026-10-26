@@ -16,13 +16,25 @@ const LANGS: { code: Locale; label: string }[] = [
 	{ code: "ko", label: "한국어" },
 ];
 
-function pick(code: Locale): void {
-	setLocale(code);
+// On Windows, arrowing through a closed select fires `change` at every step:
+// switching the whole page on each key press would make the list unusable.
+// Choices made with the arrow keys wait for Enter or for the select to lose focus.
+let browsing = false;
+
+function pick(code: string): void {
+	browsing = false;
+	if (code === getLocale()) return;
+	setLocale(code as Locale);
 	setPreferenceCookie("secret_lang", code);
 	// <html lang> otherwise keeps the SSR value until a full reload, so screen
 	// readers announce the new content with the previous language's voice
 	// (WCAG 3.1.1) and hyphenation/quotes stay wrong.
 	document.documentElement.lang = code;
+}
+
+function onKeydown(event: KeyboardEvent & { currentTarget: HTMLSelectElement }): void {
+	if (event.key.startsWith("Arrow")) browsing = true;
+	if (event.key === "Enter") pick(event.currentTarget.value);
 }
 </script>
 
@@ -30,7 +42,16 @@ function pick(code: Locale): void {
 <label class="lang btn btn-ghost btn-sm">
 	<Icon name="globe" size={14} />
 	<span class="sr-only">{t("lang_label")}</span>
-	<select value={getLocale()} onchange={(event) => pick(event.currentTarget.value as Locale)}>
+	<select
+		value={getLocale()}
+		onkeydown={onKeydown}
+		onchange={(event) => {
+			if (!browsing) pick(event.currentTarget.value);
+		}}
+		onblur={(event) => {
+			if (browsing) pick(event.currentTarget.value);
+		}}
+	>
 		{#each LANGS as lang (lang.code)}
 			<option value={lang.code} lang={lang.code}>{lang.label}</option>
 		{/each}
@@ -59,8 +80,9 @@ function pick(code: Locale): void {
 		outline: none;
 	}
 
-	.lang:focus-within {
-		outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+	/* The ring goes around the whole control, and only for keyboard focus. */
+	.lang:has(select:focus-visible) {
+		outline: 2px solid var(--accent-text);
 		outline-offset: 2px;
 	}
 </style>

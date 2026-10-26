@@ -1,9 +1,11 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
+import { onMount } from "svelte";
 import Composer from "#lib/components/create/Composer.svelte";
 import Lifetime from "#lib/components/create/Lifetime.svelte";
 import SuccessView from "#lib/components/create/SuccessView.svelte";
 import Icon from "#lib/components/Icon.svelte";
+import Callout from "#lib/components/ui/Callout.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
@@ -22,7 +24,7 @@ const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 
 let mounted = $state(false);
-$effect(() => {
+onMount(() => {
 	mounted = true;
 });
 
@@ -40,6 +42,7 @@ let passwordOn = $state(false);
 let phase = $state<"compose" | "sending" | "done">("compose");
 let progress = $state<ProgressView>({ step: 0, percent: null, chunk: null });
 let error = $state("");
+let passwordError = $state("");
 
 let result = $state<{
 	shareUrl: string;
@@ -88,8 +91,14 @@ async function handleSubmit(): Promise<void> {
 		error = t("error_text_too_long", { max: String(MAX_TEXT_SIZE / 1024) });
 		return;
 	}
+	// Asked for and left empty would quietly send the note unprotected.
+	if (passwordOn && !password.trim()) {
+		passwordError = t("error_empty_password");
+		return;
+	}
 
 	error = "";
+	passwordError = "";
 	progress = { step: 0, percent: null, chunk: null };
 	phase = "sending";
 	// The field is only sent while the reader is asked for it.
@@ -144,6 +153,7 @@ function reset(): void {
 	generated = null;
 	password = "";
 	passwordOn = false;
+	passwordError = "";
 	expiresIn = defaultExpiration(getConfig().maxExpiry);
 	maxReads = 1;
 	result = null;
@@ -196,7 +206,7 @@ function reset(): void {
 		onlinkcopied={() => (linkCopied = true)}
 	/>
 {:else if phase === "sending"}
-	<PageHero title={t("send_title")} sub={t("send_sub")} />
+	<PageHero title={t("send_title")} sub={t("send_sub")} afterAction />
 	<ProgressPanel
 		view={progress}
 		label={progressLabel}
@@ -207,7 +217,7 @@ function reset(): void {
 		<Icon name="alert" size={14} class="shrink-0 text-warn" />{t("send_keep_open")}
 	</p>
 {:else}
-	<PageHero title={t("create_title")} sub={t("create_sub")} />
+	<PageHero title={t("create_title")} sub={t("create_sub")} afterAction={error !== ""} />
 
 	<form
 		class="flex flex-col gap-5"
@@ -217,9 +227,7 @@ function reset(): void {
 		}}
 	>
 		{#if error}
-			<p class="pop m-0 rounded-lg border border-danger/35 bg-danger/8 px-4 py-3 text-sm text-text" role="alert">
-				{error}
-			</p>
+			<div class="pop"><Callout tone="danger" icon="alert">{error}</Callout></div>
 		{/if}
 
 		<Composer
@@ -232,7 +240,7 @@ function reset(): void {
 			maxFilesPerNote={config.maxFilesPerNote}
 		/>
 
-		<Lifetime bind:expiresIn bind:maxReads bind:password bind:passwordOn />
+		<Lifetime bind:expiresIn bind:maxReads bind:password bind:passwordOn {passwordError} />
 
 		<button
 			type="submit"
