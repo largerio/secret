@@ -8,11 +8,17 @@ set -euo pipefail
 
 IMAGE=$1
 
-# Every PaaS injects PORT. The API key and the S3 secret are only there to be
+# Every PaaS injects PORT. The API keys and the S3 secret are only there to be
 # looked for in the web process below: random, since written here they would
-# read as leaked keys.
+# read as leaked keys. API_KEY_2 comes from a file, as a Docker secret would,
+# readable by the container's uid 1001.
+key_file=$(mktemp)
+trap 'rm -f "$key_file"' EXIT
+openssl rand -hex 24 > "$key_file"
+chmod 644 "$key_file"
 docker run -d --name smoke -e PORT=10000 -p 10000:10000 \
 	-e API_KEY_1="$(openssl rand -hex 24)" -e S3_SECRET_ACCESS_KEY="$(openssl rand -hex 16)" \
+	-e API_KEY_2_FILE=/run/secrets/api_key -v "$key_file:/run/secrets/api_key:ro" \
 	"$IMAGE"
 for _ in $(seq 30); do
 	if curl -fsS http://localhost:10000/api/health > /dev/null 2>&1; then break; fi
@@ -34,6 +40,12 @@ for probe in "-X POST -F probe=1 http://localhost:10000/api/v1/notes/upload" \
 	[ "$code" = "401" ] \
 		|| { echo "FAIL: curl $probe answered $code, expected 401"; docker logs smoke; exit 1; }
 done
+# Past the key check, the empty note fails validation: 400, not 401.
+echo "--- an API key read from a file must authorize writes ---"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $(cat "$key_file")" \
+	-H "Content-Type: application/json" -d '{}' http://localhost:10000/api/v1/notes)
+[ "$code" = "400" ] \
+	|| { echo "FAIL: a write with API_KEY_2_FILE's key answered $code"; docker logs smoke; exit 1; }
 # adapter-node 6 dropped ORIGIN and defaults to https: on plain HTTP the
 # app would reject its own form posts. The image derives the origin from
 # APP_URL (here its default, http://localhost:PORT) — while SvelteKit's
@@ -46,7 +58,8 @@ cross=$(curl -s -o /dev/null -w '%{http_code}' -X POST -F probe=1 \
 if [ "$same" = "403" ] || [ "$cross" != "403" ]; then
 	echo "FAIL: same-origin POST $same, cross-origin POST $cross"; docker logs smoke; exit 1
 fi
-# The API's secrets must reach the API, and only the API.
+# The API's secrets must reach the API, and only the API. The generated server
+# key goes by its file, like API_KEY_2: no environment holds the key itself.
 echo "--- the web process must not see the API's secrets ---"
 environ() {
 	# "node <script>" never appears whole in this shell's own command line, so
@@ -54,14 +67,16 @@ environ() {
 	# command line starts with qemu.
 	docker exec smoke sh -c 'tr "\0" "\n" < "/proc/$(pgrep -f "node $1" | head -n 1)/environ"' sh "$1"
 }
-secrets='^(SERVER_ENCRYPTION_KEY|API_KEY_1|S3_SECRET_ACCESS_KEY)='
+secrets='^(SERVER_ENCRYPTION_KEY|SERVER_ENCRYPTION_KEY_FILE|API_KEY_1|API_KEY_2_FILE|S3_SECRET_ACCESS_KEY)='
 # Read first, so a process that is not found fails the test instead of
 # counting no secrets.
 api_env=$(environ apps/api/dist/index.js)
 web_env=$(environ apps/web/dist/server/index.js)
 api=$(grep -cE "$secrets" <<< "$api_env" || true)
 web=$(grep -cE "$secrets" <<< "$web_env" || true)
-if [ "$api" != "3" ] || [ "$web" != "0" ]; then
-	echo "FAIL: the API sees $api of its 3 secrets, the web process $web"; docker logs smoke; exit 1
+# 4: the key's file, API_KEY_1, API_KEY_2's file and the S3 secret. A fifth
+# would be the key itself.
+if [ "$api" != "4" ] || [ "$web" != "0" ]; then
+	echo "FAIL: the API sees $api of its 4 secrets, the web process $web"; docker logs smoke; exit 1
 fi
 docker rm -f smoke

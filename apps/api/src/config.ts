@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
 	CLEANUP_INTERVAL_MS,
 	DEFAULT_CAP_CHALLENGE_COUNT,
@@ -36,6 +37,51 @@ function readEnvBoolean(name: string, value: string | undefined, fallback = fals
 	if (normalized === "1" || normalized === "true") return true;
 	if (normalized === "0" || normalized === "false") return false;
 	throw new ConfigError(`${name} must be true or false (or 1 or 0)`);
+}
+
+/**
+ * A secret, from `NAME` or from the file `NAME_FILE` names, the way Docker and
+ * Kubernetes hand out secrets. Blank counts as unset, since compose passes
+ * `NAME=` for every variable it lists; both at once is refused, not guessed at.
+ */
+function readSecret(env: NodeJS.ProcessEnv, name: string): string | undefined {
+	const value = env[name];
+	const hasValue = value !== undefined && value.trim() !== "";
+	const path = env[`${name}_FILE`]?.trim();
+	if (!path) {
+		return hasValue ? value : undefined;
+	}
+	if (hasValue) {
+		throw new ConfigError(`Set ${name} or ${name}_FILE, not both.`);
+	}
+	return readSecretFile(`${name}_FILE`, path);
+}
+
+/**
+ * The file's content without its final line breaks. Errors name the variable
+ * and the path, never what the file holds.
+ */
+function readSecretFile(name: string, path: string): string {
+	let content: string;
+	try {
+		content = readFileSync(path, "utf8");
+	} catch (err) {
+		throw new ConfigError(
+			`${name} is set, but ${path} cannot be read (${String((err as NodeJS.ErrnoException).code)}).`,
+			"The file must exist and be readable by the user the server runs as (uid 1001 in the Docker image).",
+		);
+	}
+
+	// A loop rather than /[\r\n]+$/, which backtracks quadratically on a long
+	// run of line breaks followed by anything else.
+	let end = content.length;
+	while (end > 0 && (content[end - 1] === "\n" || content[end - 1] === "\r")) end--;
+	const secret = content.slice(0, end);
+
+	if (secret.trim() === "") {
+		throw new ConfigError(`${name} is set, but ${path} is empty.`);
+	}
+	return secret;
 }
 
 /** The longest delay setInterval honors; a longer one is clamped to 1 ms. */
@@ -140,7 +186,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const host = env["HOST"] ?? "0.0.0.0";
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
-	const serverKey = env["SERVER_ENCRYPTION_KEY"];
+	const serverKey = readSecret(env, "SERVER_ENCRYPTION_KEY");
 	const rawAppUrl = env["APP_URL"]?.trim() || `http://localhost:${String(port)}`;
 	const cleanupIntervalMs = readEnvNumber(
 		env["CLEANUP_INTERVAL_MS"],
@@ -152,17 +198,20 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	);
 	const capChallengeCount = readEnvNumber(env["CAP_CHALLENGE_COUNT"], DEFAULT_CAP_CHALLENGE_COUNT);
 
-	const apiKeys = Object.entries(env)
-		.filter(([key]) => /^API_KEY(_\d+)?$/.test(key))
-		.map(([, value]) => value?.trim())
+	// API_KEY, API_KEY_1, API_KEY_2…, each from its variable or its _FILE.
+	const apiKeyNames = new Set(
+		Object.keys(env).flatMap((key) => /^(API_KEY(?:_\d+)?)(?:_FILE)?$/.exec(key)?.[1] ?? []),
+	);
+	const apiKeys = [...apiKeyNames]
+		.map((name) => readSecret(env, name)?.trim())
 		.filter((v): v is string => Boolean(v));
 
 	const storageBackend = (env["STORAGE_BACKEND"] ?? "local") as StorageType;
 	const s3Bucket = env["S3_BUCKET"] ?? "";
 	const s3Region = env["S3_REGION"] ?? "us-east-1";
 	const s3Endpoint = env["S3_ENDPOINT"];
-	const s3AccessKeyId = env["S3_ACCESS_KEY_ID"] ?? "";
-	const s3SecretAccessKey = env["S3_SECRET_ACCESS_KEY"] ?? "";
+	const s3AccessKeyId = readSecret(env, "S3_ACCESS_KEY_ID") ?? "";
+	const s3SecretAccessKey = readSecret(env, "S3_SECRET_ACCESS_KEY") ?? "";
 	const s3ForcePathStyle = readEnvBoolean("S3_FORCE_PATH_STYLE", env["S3_FORCE_PATH_STYLE"]);
 	const storageReconcile = readEnvBoolean("STORAGE_RECONCILE", env["STORAGE_RECONCILE"], true);
 	const allowServerKeyChange = readEnvBoolean(

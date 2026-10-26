@@ -210,6 +210,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `STORAGE_RECONCILE` | `true` | Daily sweep that deletes stored files no note points to any more. Requires a bucket or `FILES_PATH` used by this instance alone. See [Storage cleanup](docs/self-hosting.md#storage-cleanup) |
 | `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
+| `…_FILE` | — | Read a secret from a file instead, such as a Docker or Kubernetes secret: `SERVER_ENCRYPTION_KEY_FILE`, `API_KEY_FILE`, `API_KEY_1_FILE`…, `S3_ACCESS_KEY_ID_FILE`, `S3_SECRET_ACCESS_KEY_FILE`. Cannot be combined with the variable itself. See [Secrets in files](docs/self-hosting.md#secrets-in-files) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
@@ -238,6 +239,9 @@ MAX_FILE_SIZE=104857600           # 100 MB
 Works with AWS S3, Cloudflare R2, and self-hosted servers such as
 [RustFS](https://github.com/rustfs/rustfs) or [Garage](https://garagehq.deuxfleurs.fr).
 With Garage, set `S3_REGION` to its region (`garage` by default).
+
+The two keys can also come from files: `S3_ACCESS_KEY_ID_FILE` and
+`S3_SECRET_ACCESS_KEY_FILE`.
 
 Give each instance a bucket of its own, without versioning, and add the
 lifecycle rule in [S3 bucket settings](docs/self-hosting.md#s3-bucket-settings).

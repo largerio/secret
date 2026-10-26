@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	CLEANUP_INTERVAL_MS,
 	DEFAULT_CAP_CHALLENGE_COUNT,
@@ -9,7 +12,7 @@ import {
 	MAX_FILES_PER_NOTE,
 	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { type AppConfig, ConfigError, describeRateLimitScope, parseConfig } from "../config.js";
 
 type Env = NodeJS.ProcessEnv;
@@ -348,6 +351,108 @@ describe("parseConfig", () => {
 			const config = parseConfig(baseEnv({ TRUSTED_PROXIES: "10.0.0.0/8, ::1" }));
 			expect(config.trustedProxies).toEqual(["10.0.0.0/8", "::1"]);
 		});
+	});
+});
+
+describe("secrets in files", () => {
+	const dir = mkdtempSync(join(tmpdir(), "secret-config-"));
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+	let files = 0;
+	/** Write `content` to a fresh file and return its path. */
+	function secretFile(content: string): string {
+		files++;
+		const path = join(dir, `secret-${String(files)}`);
+		writeFileSync(path, content);
+		return path;
+	}
+
+	const apiKey = "file-key".padEnd(32, "f");
+
+	it.each([
+		["a final line break", `${TEST_KEY}\n`],
+		["a Windows line break", `${TEST_KEY}\r\n`],
+		["several line breaks", `${TEST_KEY}\n\n`],
+		["no line break", TEST_KEY],
+	])("reads SERVER_ENCRYPTION_KEY_FILE, dropping %s", (_, content) => {
+		const config = parseConfig({ SERVER_ENCRYPTION_KEY_FILE: secretFile(content) } as Env);
+		expect(config.serverKey).toBe(TEST_KEY);
+	});
+
+	it("reads every API key from its variable or its _FILE, numbered ones included", () => {
+		const env = baseEnv({
+			API_KEY_FILE: secretFile(`${apiKey}0\n`),
+			API_KEY_1: `${apiKey}1`,
+			API_KEY_2_FILE: secretFile(`  ${apiKey}2  \n`),
+			API_KEY_FILE_3: "not an API key variable",
+		});
+		expect(parseConfig(env).apiKeys).toEqual([`${apiKey}0`, `${apiKey}1`, `${apiKey}2`]);
+	});
+
+	it("reads the S3 credentials from files", () => {
+		const config = parseConfig(
+			baseEnv({
+				STORAGE_BACKEND: "s3",
+				S3_BUCKET: "b",
+				S3_ACCESS_KEY_ID_FILE: secretFile("akid\n"),
+				S3_SECRET_ACCESS_KEY_FILE: secretFile("s3cr3t\n"),
+			}),
+		);
+		expect(config.storage.s3).toMatchObject({ accessKeyId: "akid", secretAccessKey: "s3cr3t" });
+	});
+
+	it.each(["SERVER_ENCRYPTION_KEY", "API_KEY", "API_KEY_7", "S3_SECRET_ACCESS_KEY"])(
+		"refuses %s set both ways",
+		(name) => {
+			expectConfigError(
+				baseEnv({ [name]: `${apiKey}x`, [`${name}_FILE`]: secretFile(`${apiKey}y`) }),
+				`Set ${name} or ${name}_FILE, not both.`,
+			);
+		},
+	);
+
+	it("takes a blank variable next to its _FILE for unset, as compose passes one", () => {
+		const env = { SERVER_ENCRYPTION_KEY: "", SERVER_ENCRYPTION_KEY_FILE: secretFile(TEST_KEY) };
+		expect(parseConfig(env as Env).serverKey).toBe(TEST_KEY);
+	});
+
+	it("takes a blank _FILE for unset", () => {
+		expect(parseConfig(baseEnv({ SERVER_ENCRYPTION_KEY_FILE: "  " })).serverKey).toBe(TEST_KEY);
+	});
+
+	it("names the variable and the path of a file it cannot read", () => {
+		const missing = join(dir, "missing");
+		const err = expectConfigError(
+			baseEnv({ SERVER_ENCRYPTION_KEY: undefined, SERVER_ENCRYPTION_KEY_FILE: missing }),
+			`SERVER_ENCRYPTION_KEY_FILE is set, but ${missing} cannot be read (ENOENT).`,
+		);
+		expect(err.hint).toContain("readable by the user the server runs as");
+	});
+
+	it("refuses a directory", () => {
+		expectConfigError(
+			baseEnv({ S3_ACCESS_KEY_ID_FILE: dir }),
+			`S3_ACCESS_KEY_ID_FILE is set, but ${dir} cannot be read (EISDIR).`,
+		);
+	});
+
+	it.each([
+		["empty", ""],
+		["blank", " \n"],
+	])("refuses an %s file", (_, content) => {
+		const path = secretFile(content);
+		expectConfigError(
+			baseEnv({ API_KEY_FILE: path }),
+			`API_KEY_FILE is set, but ${path} is empty.`,
+		);
+	});
+
+	it("never quotes what the file holds", () => {
+		const err = expectConfigError(
+			baseEnv({ API_KEY_FILE: secretFile("hunter2-from-a-file\n") }),
+			"API keys must be at least 32 characters long.",
+		);
+		expect(`${err.message} ${err.hint ?? ""}`).not.toContain("hunter2");
 	});
 });
 

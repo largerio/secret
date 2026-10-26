@@ -12,6 +12,7 @@ and runs as a single container.
 | Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
 
 Once it is up: [API keys](#api-keys-for-the-sdk) ·
+[Secrets in files](#secrets-in-files) ·
 [Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
 [Updating](#updating) ·
 [Verifying the image](#verifying-the-image) ·
@@ -273,6 +274,93 @@ API_KEY=<openssl rand -base64 32>   # 32 characters minimum
 
 Then `docker compose up -d --force-recreate`. A key authorises writes only — it
 grants no read access others don't have, and no ability to decrypt.
+
+---
+
+## Secrets in files
+
+Each secret can be read from a file instead of a variable, the way Docker and
+Kubernetes hand secrets to a container: append `_FILE` to the variable's name
+and give the file's path.
+
+| Variable | From a file |
+|---|---|
+| `SERVER_ENCRYPTION_KEY` | `SERVER_ENCRYPTION_KEY_FILE` |
+| `API_KEY`, `API_KEY_1`… | `API_KEY_FILE`, `API_KEY_1_FILE`… |
+| `S3_ACCESS_KEY_ID` | `S3_ACCESS_KEY_ID_FILE` |
+| `S3_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY_FILE` |
+
+The file holds the value alone; line breaks at its end are ignored. A variable
+set together with its `_FILE`, or a file that is missing, unreadable or empty,
+stops the server at startup, with an error that names the variable and the path
+but never what the file holds.
+
+With Compose, declare the secrets in a `docker-compose.override.yml` next to
+`docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    environment:
+      - SERVER_ENCRYPTION_KEY_FILE=/run/secrets/server_key
+      - API_KEY_FILE=/run/secrets/api_key
+    secrets:
+      - server_key
+      - api_key
+
+secrets:
+  server_key:
+    file: ./secrets/server_key
+  api_key:
+    file: ./secrets/api_key
+```
+
+```bash
+mkdir secrets
+openssl rand -base64 32 > secrets/server_key
+openssl rand -base64 32 > secrets/api_key
+chmod 400 secrets/*
+# Compose mounts each file as it is on the host: the container's user must read it
+sudo chown 1001:1001 secrets/*
+```
+
+`docker compose up -d` reads the override on its own. A command that lists its
+files with `-f`, like the HTTPS setup's, must list it too:
+`-f docker-compose.override.yml`.
+
+**What this protects.** A value in `.env` or under `environment:` shows in
+`docker inspect` and in the environment of the processes in the container. A
+secret file keeps it out of both: only its path shows. Inside the container the
+API reads the files; the web server gets neither the secrets nor the `_FILE`
+variables, so a dependency of the web server that dumps its environment finds
+nothing to leak. That is not isolation: both processes run as the same user, so
+code running in the web server could still read the files, as it could read the
+data volume.
+
+**The server key.** Without `SERVER_ENCRYPTION_KEY` or
+`SERVER_ENCRYPTION_KEY_FILE`, the image generates the key on first start and
+keeps it in the data volume, at `/app/data/.encryption_key`, which it hands to
+the API as `SERVER_ENCRYPTION_KEY_FILE`. (`KEY_FILE` moves that generated file;
+it plays no part once you give a key either way.) Held in a secret instead, the
+key no longer travels with the volume and its backups, so the server's
+encryption layer also protects a stolen copy of the volume. To move a generated
+key out of the volume:
+
+```bash
+mkdir -p secrets
+docker compose exec -T app cat /app/data/.encryption_key > secrets/server_key
+chmod 400 secrets/server_key && sudo chown 1001:1001 secrets/server_key
+# With the override above in place:
+docker compose up -d
+# Once the instance is up and serves its notes:
+docker compose exec app rm /app/data/.encryption_key
+```
+
+The server refuses to start on a key that does not match its notes, so a wrong
+file fails loudly. Backups made before the move still hold the key.
+
+Outside the image the API reads the same variables. On Kubernetes, mount the
+Secret as a volume and point the `_FILE` variables at its files.
 
 ---
 
