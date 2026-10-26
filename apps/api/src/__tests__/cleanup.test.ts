@@ -1,14 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { serverEncrypt } from "@largerio/secret-crypto";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { startCleanupJob } from "../cleanup.js";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runCleanup, startCleanupJob } from "../cleanup.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes, pendingDeletions, uploads } from "../db/schema.js";
-import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+import { stubStorage } from "./storageDoubles.js";
 
 const TEST_DB_PATH = "./data/cleanup-test.db";
 const TEST_FILES_PATH = "./data/cleanup-test-files";
@@ -36,6 +35,20 @@ function insertNote(id: string, overrides: Partial<Record<string, unknown>> = {}
 		.run();
 }
 
+function insertUpload(id: string, noteId: string, expiresAt: Date) {
+	db.insert(uploads)
+		.values({
+			id,
+			metadata: "{}",
+			chunkCount: 2,
+			noteId,
+			deleteToken: "tok",
+			createdAt: new Date(),
+			expiresAt,
+		})
+		.run();
+}
+
 beforeEach(() => {
 	try {
 		rmSync(TEST_DB_PATH, { force: true });
@@ -51,6 +64,10 @@ beforeEach(() => {
 	storage = new LocalStorage(TEST_FILES_PATH);
 });
 
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
 afterAll(() => {
 	try {
 		rmSync(TEST_DB_PATH, { force: true });
@@ -62,471 +79,188 @@ afterAll(() => {
 	}
 });
 
-describe("startCleanupJob", () => {
-	it("removes expired notes", async () => {
-		insertNote("expired00001");
-
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(0);
-	});
-
-	it("removes file on disk when cleaning expired note with file", async () => {
-		const filePath = `${TEST_FILES_PATH}/expired-file`;
-		writeFileSync(filePath, "encrypted-data");
-
-		insertNote("expiredfile1", { fileCount: 1, filePath });
-
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(existsSync(filePath)).toBe(false);
-	});
-
-	it("does not remove non-expired notes", async () => {
-		insertNote("notexpired01", { expiresAt: new Date(Date.now() + 3_600_000) });
-
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(1);
-	});
-
-	it("removes multiple expired notes in one pass", async () => {
+describe("runCleanup", () => {
+	it("removes expired notes and leaves the others", async () => {
 		insertNote("expired00001");
 		insertNote("expired00002");
-		insertNote("expired00003");
-
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(0);
-	});
-
-	it("leaves non-expired notes when removing expired ones", async () => {
-		insertNote("expired00001");
 		insertNote("stillgood001", { expiresAt: new Date(Date.now() + 3_600_000) });
 
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
+		await runCleanup(db, storage);
 
 		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(1);
-		expect(remaining[0]?.id).toBe("stillgood001");
+		expect(remaining.map((note) => note.id)).toEqual(["stillgood001"]);
 	});
 
-	it("logs error and still deletes DB record when file deletion fails", async () => {
-		const filePath = resolve(`${TEST_FILES_PATH}/fail-delete`);
-		writeFileSync(filePath, "encrypted-data");
+	it("purges the payload of expired file and chunked notes", async () => {
+		const filePath = await storage.save("expiredfile1", Buffer.from("encrypted-data"));
+		await storage.saveChunk("chunked00001", 0, Buffer.from("c0"));
+		insertNote("expiredfile1", { fileCount: 1, filePath });
+		insertNote("chunked00001", { chunkCount: 1, streamHeader: "header" });
 
-		const failingStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn().mockRejectedValue(new Error("disk error")),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn(),
-		};
+		await runCleanup(db, storage);
 
-		insertNote("faildelete01", { fileCount: 1, filePath });
+		expect(existsSync(filePath)).toBe(false);
+		expect(existsSync(`${TEST_FILES_PATH}/chunked00001`)).toBe(false);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+	});
 
+	it("queues no purge for an inline note", async () => {
+		const tracked = stubStorage();
+		insertNote("inline000001");
+
+		await runCleanup(db, tracked);
+
+		expect(tracked.purge).not.toHaveBeenCalled();
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+	});
+
+	it("queues the purge with the row deletion, so an interrupted purge is not lost", async () => {
+		// A purge that never settles stands for a crash right after the commit.
+		const hanging = stubStorage({ purge: vi.fn(() => new Promise<void>(() => {})) });
+		insertNote("crashed00001", { fileCount: 1, filePath: "/data/files/crashed00001" });
+
+		void runCleanup(db, hanging);
+		await vi.waitFor(() => expect(hanging.purge).toHaveBeenCalled());
+
+		expect(db.select().from(notes).all()).toHaveLength(0);
+		expect(
+			db
+				.select()
+				.from(pendingDeletions)
+				.all()
+				.map((row) => row.noteId),
+		).toEqual(["crashed00001"]);
+	});
+
+	it("keeps a failed purge queued for a retry, and still deletes the note", async () => {
+		const failing = stubStorage({ purge: vi.fn().mockRejectedValue(new Error("disk error")) });
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, failingStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
+		insertNote("faildelete01", { fileCount: 1, filePath: "/data/files/faildelete01" });
 
-		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(0);
+		await runCleanup(db, failing);
+
+		expect(db.select().from(notes).all()).toHaveLength(0);
+		const [pending] = db.select().from(pendingDeletions).all();
+		expect(pending?.noteId).toBe("faildelete01");
+		expect(pending?.nextRetryAt.getTime()).toBeGreaterThan(Date.now());
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"faildelete01","detail":"disk error"',
-			),
+			expect.stringContaining('"msg":"storage purge failed, retry scheduled"'),
 		);
-		consoleSpy.mockRestore();
 	});
 
-	it("isolates a note whose retry scheduling itself throws", async () => {
-		const filePath = resolve(`${TEST_FILES_PATH}/iso-fail`);
-		writeFileSync(filePath, "data");
+	it("removes expired upload sessions and purges their chunks", async () => {
+		await storage.saveChunk("uploadnote01", 0, Buffer.from("c0"));
+		insertUpload("upload000001", "uploadnote01", new Date(Date.now() - 10_000));
+		insertUpload("upload000002", "uploadnote02", new Date(Date.now() + 3_600_000));
 
-		const failingStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn().mockRejectedValue(new Error("disk error")),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn(),
-		};
+		await runCleanup(db, storage);
 
-		insertNote("isofail00001", { fileCount: 1, filePath });
-
-		// Proxy the DB so persisting the retry row throws: deleteOrSchedule then
-		// rejects, exercising safeDelete's per-task isolation (the catch branch).
-		const throwingDb = new Proxy(db, {
-			get(target, prop, receiver) {
-				if (prop === "insert") {
-					return () => {
-						throw new Error("insert failed");
-					};
-				}
-				const value = Reflect.get(target, prop, receiver);
-				return typeof value === "function" ? value.bind(target) : value;
-			},
-		}) as AppDatabase;
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(throwingDb, failingStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"cleanup of note failed","noteId":"isofail00001","detail":"insert failed"',
-			),
-		);
-		consoleSpy.mockRestore();
+		expect(
+			db
+				.select()
+				.from(uploads)
+				.all()
+				.map((upload) => upload.id),
+		).toEqual(["upload000002"]);
+		expect(existsSync(`${TEST_FILES_PATH}/uploadnote01`)).toBe(false);
+		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
 	});
 
-	it("isolates a note whose retry scheduling throws a non-Error", async () => {
-		const filePath = resolve(`${TEST_FILES_PATH}/iso-fail-str`);
-		writeFileSync(filePath, "data");
+	it("keeps the purge of an expired session queued when it fails", async () => {
+		const failing = stubStorage({ purge: vi.fn().mockRejectedValue(new Error("s3 down")) });
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		insertUpload("upload000003", "uploadnote03", new Date(Date.now() - 10_000));
 
-		const failingStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn().mockRejectedValue(new Error("disk error")),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn(),
-		};
+		await runCleanup(db, failing);
 
-		insertNote("isofailstr01", { fileCount: 1, filePath });
-
-		const throwingDb = new Proxy(db, {
-			get(target, prop, receiver) {
-				if (prop === "insert") {
-					return () => {
-						throw "insert string failure";
-					};
-				}
-				const value = Reflect.get(target, prop, receiver);
-				return typeof value === "function" ? value.bind(target) : value;
-			},
-		}) as AppDatabase;
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(throwingDb, failingStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"cleanup of note failed","noteId":"isofailstr01","detail":"insert string failure"',
-			),
-		);
-		consoleSpy.mockRestore();
+		expect(db.select().from(uploads).all()).toHaveLength(0);
+		expect(
+			db
+				.select()
+				.from(pendingDeletions)
+				.all()
+				.map((row) => row.noteId),
+		).toEqual(["uploadnote03"]);
 	});
 
-	it("catches and logs errors when database transaction fails", async () => {
-		const failingDb = {
-			transaction: () => {
-				throw new Error("database locked");
-			},
-		} as unknown as AppDatabase;
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(failingDb, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('"msg":"cleanup job failed","detail":"database locked"'),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("catches and logs non-Error exceptions in cleanup job", async () => {
-		const failingDb = {
-			transaction: () => {
-				throw "string error";
-			},
-		} as unknown as AppDatabase;
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(failingDb, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('"msg":"cleanup job failed","detail":"string error"'),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("logs non-Error rejection values in cleanup", async () => {
-		const filePath = resolve(`${TEST_FILES_PATH}/fail-str`);
-		writeFileSync(filePath, "encrypted-data");
-
-		const failingStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn().mockRejectedValue("string-error"),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn(),
-		};
-
-		insertNote("failstring01", { fileCount: 1, filePath });
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, failingStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"failstring01","detail":"string-error"',
-			),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("removes expired chunked notes and calls deleteChunks", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockResolvedValue(undefined),
-		};
-
-		insertNote("chunked00001", { chunkCount: 3, streamHeader: "header" });
-
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		const remaining = db.select().from(notes).all();
-		expect(remaining).toHaveLength(0);
-		expect(mockStorage.deleteChunks).toHaveBeenCalledWith("chunked00001", 3);
-	});
-
-	it("logs non-Error rejection for expired chunked note deleteChunks", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue("string chunk error"),
-		};
-
-		insertNote("chunkstr001", { chunkCount: 2, streamHeader: "header" });
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"chunkstr001","detail":"string chunk error"',
-			),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("logs error when deleteChunks fails for expired chunked note", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue(new Error("chunk delete failed")),
-		};
-
-		insertNote("chunkfail01", { chunkCount: 2, streamHeader: "header" });
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"chunkfail01","detail":"chunk delete failed"',
-			),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("removes expired upload sessions and calls deleteChunks", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockResolvedValue(undefined),
-		};
-
-		db.insert(uploads)
-			.values({
-				id: "upload000001",
-				metadata: "{}",
-				chunkCount: 4,
-				noteId: "uploadnote01",
-				deleteToken: "tok",
-				createdAt: new Date(),
-				expiresAt: new Date(Date.now() - 10_000),
-			})
-			.run();
-
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		const remainingUploads = db.select().from(uploads).all();
-		expect(remainingUploads).toHaveLength(0);
-		expect(mockStorage.deleteChunks).toHaveBeenCalledWith("uploadnote01", 4);
-	});
-
-	it("logs error when deleteChunks fails for expired upload session", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue(new Error("upload chunk error")),
-		};
-
-		db.insert(uploads)
-			.values({
-				id: "upload000002",
-				metadata: "{}",
-				chunkCount: 2,
-				noteId: "uploadnote02",
-				deleteToken: "tok",
-				createdAt: new Date(),
-				expiresAt: new Date(Date.now() - 10_000),
-			})
-			.run();
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"uploadnote02","detail":"upload chunk error"',
-			),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("logs non-Error rejection for expired upload session chunk deletion", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn().mockRejectedValue("string-upload-error"),
-		};
-
-		db.insert(uploads)
-			.values({
-				id: "upload000003",
-				metadata: "{}",
-				chunkCount: 1,
-				noteId: "uploadnote03",
-				deleteToken: "tok",
-				createdAt: new Date(),
-				expiresAt: new Date(Date.now() - 10_000),
-			})
-			.run();
-
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				'"msg":"storage delete failed, scheduling retry","noteId":"uploadnote03","detail":"string-upload-error"',
-			),
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it("drains pending_deletions on each tick", async () => {
-		const filePath = `${TEST_FILES_PATH}/drain-me`;
-		writeFileSync(filePath, "data");
-
+	it("drains due pending deletions", async () => {
+		await storage.save("drainnote01", Buffer.from("data"));
 		db.insert(pendingDeletions)
 			.values({
-				noteId: "drainnote1",
-				filePath,
-				chunkCount: null,
+				noteId: "drainnote01",
 				attempts: 0,
 				nextRetryAt: new Date(Date.now() - 1000),
 				createdAt: new Date(),
 			})
 			.run();
-
 		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		const timer = startCleanupJob(db, storage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		clearInterval(timer);
+
+		await runCleanup(db, storage);
 
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+		expect(existsSync(`${TEST_FILES_PATH}/drainnote01`)).toBe(false);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('"msg":"pending deletions drained"'),
+			expect.stringContaining('"msg":"pending deletions drained","drained":1,"failed":0'),
 		);
-		consoleSpy.mockRestore();
 	});
 
-	it("does not delete non-expired upload sessions", async () => {
-		const mockStorage: StorageBackend = {
-			save: vi.fn(),
-			read: vi.fn(),
-			delete: vi.fn(),
-			saveChunk: vi.fn(),
-			readChunk: vi.fn(),
-			deleteChunks: vi.fn(),
-		};
+	it("does not retry a purge it has just queued", async () => {
+		const failing = stubStorage({ purge: vi.fn().mockRejectedValue(new Error("down")) });
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		insertNote("justqueued01", { fileCount: 1, filePath: "/data/files/justqueued01" });
 
-		db.insert(uploads)
-			.values({
-				id: "upload000004",
-				metadata: "{}",
-				chunkCount: 1,
-				noteId: "uploadnote04",
-				deleteToken: "tok",
-				createdAt: new Date(),
-				expiresAt: new Date(Date.now() + 3_600_000),
-			})
-			.run();
+		await runCleanup(db, failing);
 
-		const timer = startCleanupJob(db, mockStorage, 100);
-		await new Promise((resolve) => setTimeout(resolve, 250));
+		// One attempt right after the commit; the drain waits for the retry delay.
+		expect(failing.purge).toHaveBeenCalledOnce();
+		expect(db.select().from(pendingDeletions).all()[0]?.attempts).toBe(0);
+	});
+
+	it("logs and survives a database failure", async () => {
+		const failingDb = {
+			transaction: () => {
+				throw new Error("database locked");
+			},
+		} as unknown as AppDatabase;
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await runCleanup(failingDb, storage);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"cleanup job failed","detail":"database locked"'),
+		);
+	});
+
+	it("logs a non-Error failure as is", async () => {
+		const failingDb = {
+			transaction: () => {
+				throw "string error";
+			},
+		} as unknown as AppDatabase;
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await runCleanup(failingDb, storage);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('"msg":"cleanup job failed","detail":"string error"'),
+		);
+	});
+});
+
+describe("startCleanupJob", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("runs a cleanup pass on every interval", async () => {
+		vi.useFakeTimers();
+		insertNote("expired00001");
+
+		const timer = startCleanupJob(db, storage, 100);
+		expect(db.select().from(notes).all()).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(100);
 		clearInterval(timer);
 
-		const remaining = db.select().from(uploads).all();
-		expect(remaining).toHaveLength(1);
-		expect(mockStorage.deleteChunks).not.toHaveBeenCalled();
+		expect(db.select().from(notes).all()).toHaveLength(0);
 	});
 });

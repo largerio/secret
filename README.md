@@ -207,6 +207,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
 | `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
 | `STORAGE_QUOTA_BYTES` | `0` | Total storage budget for encrypted payloads. Writes beyond it get HTTP 507 until notes expire or are deleted; `0` = unlimited. Usage is reported by `/api/health` |
+| `STORAGE_RECONCILE` | `true` | Daily sweep that deletes stored files no note points to any more. Requires a bucket or `FILES_PATH` used by this instance alone. See [Storage cleanup](docs/self-hosting.md#storage-cleanup) |
 | `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
 | `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
 | `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
@@ -215,7 +216,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max chunked upload size (500 MB) |
 | `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
 
-On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`, `DEBUG`) accept `true` or `1` for on, and `false`, `0` or blank for off. Any other value, like any invalid setting, stops the server at startup.
+On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`, `STORAGE_RECONCILE`, `DEBUG`) accept `true` or `1` for on, and `false` or `0` for off; blank keeps the default. Any other value, like any invalid setting, stops the server at startup.
 
 > **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. The server stores a fingerprint of the key and **refuses to start** if it changes while notes exist, so a mistake fails loudly instead of silently bricking your data. When the key is auto-generated it lives at `.encryption_key` inside the data volume, so backing up the volume backs up the key; read it back with `docker compose exec app cat /app/data/.encryption_key`.
 
@@ -237,6 +238,9 @@ MAX_FILE_SIZE=104857600           # 100 MB
 Works with AWS S3, Cloudflare R2, and self-hosted servers such as
 [RustFS](https://github.com/rustfs/rustfs) or [Garage](https://garagehq.deuxfleurs.fr).
 With Garage, set `S3_REGION` to its region (`garage` by default).
+
+Give each instance a bucket of its own, without versioning, and add the
+lifecycle rule in [S3 bucket settings](docs/self-hosting.md#s3-bucket-settings).
 
 ## Self-Hosting
 

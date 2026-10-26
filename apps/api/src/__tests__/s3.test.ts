@@ -39,6 +39,9 @@ vi.mock("@aws-sdk/client-s3", () => {
 		DeleteObjectsCommand: class MockDeleteObjectsCommand {
 			constructor(public params: unknown) {}
 		},
+		ListObjectsV2Command: class MockListObjectsV2Command {
+			constructor(public params: unknown) {}
+		},
 		NoSuchKey: MockNoSuchKey,
 	};
 });
@@ -51,6 +54,19 @@ vi.mock("@aws-sdk/lib-storage", () => ({
 		done = mockDone;
 	},
 }));
+
+/** The parameters of the nth command sent to the SDK client. */
+function params(call: number): unknown {
+	return (mockSend.mock.calls[call]?.[0] as { params?: unknown } | undefined)?.params;
+}
+
+async function collect<T>(items: AsyncIterable<T>): Promise<T[]> {
+	const collected: T[] = [];
+	for await (const item of items) {
+		collected.push(item);
+	}
+	return collected;
+}
 
 const config = {
 	bucket: "test-bucket",
@@ -110,13 +126,13 @@ describe("S3Storage", () => {
 
 		it("rejects note ID with invalid characters", async () => {
 			await expect(storage.save("../etc/passwd", Buffer.from("x"))).rejects.toThrow(
-				"Invalid note ID for storage key",
+				"Invalid id for storage key",
 			);
 		});
 
 		it("rejects note ID with spaces", async () => {
 			await expect(storage.save("note id", Buffer.from("x"))).rejects.toThrow(
-				"Invalid note ID for storage key",
+				"Invalid id for storage key",
 			);
 		});
 	});
@@ -186,19 +202,6 @@ describe("S3Storage", () => {
 		});
 	});
 
-	describe("delete", () => {
-		it("calls S3 delete command", async () => {
-			mockSend.mockResolvedValueOnce({});
-			await expect(storage.delete("notes/note123")).resolves.not.toThrow();
-			expect(mockSend).toHaveBeenCalledOnce();
-		});
-
-		it("does not throw on delete error", async () => {
-			mockSend.mockRejectedValueOnce(new Error("NoSuchKey"));
-			await expect(storage.delete("notes/missing")).resolves.not.toThrow();
-		});
-	});
-
 	describe("saveChunk", () => {
 		it("sends PutObject with correct key", async () => {
 			mockSend.mockResolvedValueOnce({});
@@ -216,7 +219,7 @@ describe("S3Storage", () => {
 
 		it("rejects note ID with invalid characters", async () => {
 			await expect(storage.saveChunk("../bad", 0, Buffer.from("x"))).rejects.toThrow(
-				"Invalid note ID for storage key",
+				"Invalid id for storage key",
 			);
 		});
 
@@ -276,9 +279,7 @@ describe("S3Storage", () => {
 		});
 
 		it("rejects invalid note ID before issuing the GetObject", async () => {
-			await expect(storage.readChunk("../bad", 0)).rejects.toThrow(
-				"Invalid note ID for storage key",
-			);
+			await expect(storage.readChunk("../bad", 0)).rejects.toThrow("Invalid id for storage key");
 			expect(mockSend).not.toHaveBeenCalled();
 		});
 
@@ -287,33 +288,207 @@ describe("S3Storage", () => {
 		});
 	});
 
-	describe("deleteChunks", () => {
-		it("sends batch Delete for all chunk objects", async () => {
-			mockSend.mockResolvedValue({});
-			await storage.deleteChunks("note123", 3);
-			expect(mockSend).toHaveBeenCalledTimes(1);
+	describe("purge", () => {
+		it("lists the note's objects and deletes them, file and chunks alike", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [
+						{ Key: "notes/note123" },
+						{ Key: "notes/note123/chunk_0" },
+						{ Key: "notes/note1234" },
+						{},
+					],
+				})
+				.mockResolvedValueOnce({});
 
-			const cmd = mockSend.mock.calls[0]?.[0] as {
-				params?: { Delete?: { Objects?: Array<{ Key: string }> } };
-			};
-			const objects = cmd?.params?.Delete?.Objects ?? [];
-			expect(objects).toEqual([
-				{ Key: "notes/note123/chunk_0" },
-				{ Key: "notes/note123/chunk_1" },
-				{ Key: "notes/note123/chunk_2" },
-			]);
+			await storage.purge("note123");
+
+			expect(params(0)).toEqual({ Bucket: "test-bucket", Prefix: "notes/note123" });
+			// notes/note1234 matches the prefix but belongs to another note.
+			expect(params(1)).toEqual({
+				Bucket: "test-bucket",
+				Delete: {
+					Objects: [{ Key: "notes/note123" }, { Key: "notes/note123/chunk_0" }],
+					Quiet: true,
+				},
+			});
 		});
 
-		it("does not throw when batch delete fails", async () => {
-			mockSend.mockRejectedValue(new Error("S3 error"));
-			await expect(storage.deleteChunks("note123", 2)).resolves.not.toThrow();
+		it("follows the listing across pages, deleting each one", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [{ Key: "notes/note123/chunk_0" }, { Key: "notes/note123/chunk_1" }],
+					NextContinuationToken: "page-2",
+				})
+				.mockResolvedValueOnce({})
+				.mockResolvedValueOnce({
+					Contents: [{ Key: "notes/note123/chunk_2" }, { Key: "notes/note123/chunk_3" }],
+				})
+				.mockResolvedValueOnce({});
+
+			await storage.purge("note123");
+
+			expect(params(2)).toEqual({
+				Bucket: "test-bucket",
+				Prefix: "notes/note123",
+				ContinuationToken: "page-2",
+			});
+			expect(params(3)).toMatchObject({
+				Delete: { Objects: [{ Key: "notes/note123/chunk_2" }, { Key: "notes/note123/chunk_3" }] },
+			});
 		});
 
-		it("rejects invalid note ID and chunk count", async () => {
-			await expect(storage.deleteChunks("../bad", 1)).rejects.toThrow(
-				"Invalid note ID for storage key",
+		it("deletes a lone object with a plain DELETE, which every S3 server accepts", async () => {
+			mockSend
+				.mockResolvedValueOnce({ Contents: [{ Key: "notes/note123" }] })
+				.mockResolvedValueOnce({});
+
+			await storage.purge("note123");
+
+			expect(params(1)).toEqual({ Bucket: "test-bucket", Key: "notes/note123" });
+		});
+
+		it("counts a lone object already gone as deleted", async () => {
+			mockSend
+				.mockResolvedValueOnce({ Contents: [{ Key: "notes/note123" }] })
+				.mockRejectedValueOnce(new MockNoSuchKey());
+
+			await expect(storage.purge("note123")).resolves.toBeUndefined();
+		});
+
+		it("propagates any other failure to delete a lone object", async () => {
+			mockSend
+				.mockResolvedValueOnce({ Contents: [{ Key: "notes/note123" }] })
+				.mockRejectedValueOnce(new Error("AccessDenied"));
+
+			await expect(storage.purge("note123")).rejects.toThrow("AccessDenied");
+		});
+
+		it("sends no delete when nothing is stored", async () => {
+			mockSend.mockResolvedValueOnce({});
+			await storage.purge("note123");
+			expect(mockSend).toHaveBeenCalledOnce();
+		});
+
+		it("rejects when S3 refuses a key, though the response is a 200", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [{ Key: "notes/note123" }, { Key: "notes/note123/chunk_0" }],
+				})
+				.mockResolvedValueOnce({
+					Errors: [
+						{ Key: "notes/note123", Code: "AccessDenied" },
+						{ Key: "notes/note123/chunk_0" },
+					],
+				});
+			await expect(storage.purge("note123")).rejects.toThrow(
+				"S3 refused to delete 2 object(s): AccessDenied",
 			);
-			await expect(storage.deleteChunks("note123", -1)).rejects.toThrow("Invalid chunk count");
+		});
+
+		it("names an unknown error when S3 gives no code", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [{ Key: "notes/note123" }, { Key: "notes/note123/chunk_0" }],
+				})
+				.mockResolvedValueOnce({ Errors: [{ Key: "notes/note123" }] });
+			await expect(storage.purge("note123")).rejects.toThrow("1 object(s): unknown error");
+		});
+
+		it("counts a key already gone as deleted", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [{ Key: "notes/note123" }, { Key: "notes/note123/chunk_0" }],
+				})
+				.mockResolvedValueOnce({ Errors: [{ Key: "notes/note123", Code: "NoSuchKey" }] });
+			await expect(storage.purge("note123")).resolves.toBeUndefined();
+		});
+
+		it("propagates a failed listing or delete", async () => {
+			mockSend.mockRejectedValueOnce(new Error("S3 error"));
+			await expect(storage.purge("note123")).rejects.toThrow("S3 error");
+		});
+
+		it("rejects an invalid note ID before calling S3", async () => {
+			await expect(storage.purge("../bad")).rejects.toThrow("Invalid id for storage key");
+			expect(mockSend).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("list", () => {
+		const t1 = new Date("2026-10-01T00:00:00Z");
+		const t2 = new Date("2026-10-02T00:00:00Z");
+
+		it("folds a note's objects into one entry dated by the latest, across pages", async () => {
+			mockSend
+				.mockResolvedValueOnce({
+					Contents: [
+						{ Key: "notes/aaaaaaaaaaaa", LastModified: t1 },
+						{ Key: "notes/bbbbbbbbbbbb/chunk_0", LastModified: t2 },
+					],
+					NextContinuationToken: "page-2",
+				})
+				.mockResolvedValueOnce({
+					Contents: [
+						{ Key: "notes/bbbbbbbbbbbb/chunk_1", LastModified: t1 },
+						{ Key: "notes/cccccccccccc/chunk_0", LastModified: t1 },
+						{ Key: "notes/cccccccccccc/chunk_1", LastModified: t2 },
+					],
+				});
+
+			expect(await collect(storage.list())).toEqual([
+				{ noteId: "aaaaaaaaaaaa", lastModified: t1 },
+				{ noteId: "bbbbbbbbbbbb", lastModified: t2 },
+				{ noteId: "cccccccccccc", lastModified: t2 },
+			]);
+			expect(params(0)).toEqual({ Bucket: "test-bucket", Prefix: "notes/" });
+			expect(params(1)).toMatchObject({ ContinuationToken: "page-2" });
+		});
+
+		it("skips keys outside the layout Secret writes", async () => {
+			mockSend.mockResolvedValueOnce({
+				Contents: [
+					{ Key: "notes/short", LastModified: t1 },
+					{ Key: "notes/aaaaaaaaaaaa/other", LastModified: t1 },
+					{ Key: "notes/aaaaaaaaaaaa/chunk_x", LastModified: t1 },
+					{ Key: "notes/bbbbbbbbbbbb" },
+					{ LastModified: t1 },
+				],
+			});
+
+			expect(await collect(storage.list())).toEqual([]);
+		});
+
+		it("yields nothing for an empty bucket", async () => {
+			mockSend.mockResolvedValueOnce({});
+			expect(await collect(storage.list())).toEqual([]);
+		});
+	});
+
+	describe("claims", () => {
+		it("records a claim as an empty object under instances/", async () => {
+			mockSend.mockResolvedValueOnce({});
+			await storage.claim("instance-a");
+			expect(params(0)).toEqual({
+				Bucket: "test-bucket",
+				Key: "instances/instance-a",
+				Body: Buffer.alloc(0),
+			});
+		});
+
+		it("rejects an invalid instance id", async () => {
+			await expect(storage.claim("../x")).rejects.toThrow("Invalid id for storage key");
+		});
+
+		it("lists claims by instance id", async () => {
+			mockSend.mockResolvedValueOnce({
+				Contents: [{ Key: "instances/instance-a" }, { Key: "instances/" }, {}],
+				NextContinuationToken: "page-2",
+			});
+			mockSend.mockResolvedValueOnce({ Contents: [{ Key: "instances/instance-b" }] });
+
+			expect(await storage.listClaims()).toEqual(["instance-a", "instance-b"]);
+			expect(params(0)).toEqual({ Bucket: "test-bucket", Prefix: "instances/" });
 		});
 	});
 

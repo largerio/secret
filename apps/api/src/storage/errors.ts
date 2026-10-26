@@ -21,14 +21,18 @@ export class StorageNotFoundError extends StorageError {
 	}
 }
 
-export function assertChunkIndex(index: number): void {
-	if (!Number.isInteger(index) || index < 0) {
-		throw new StorageInvalidKeyError("Invalid chunk index");
+// Note ids and instance ids are both nanoids: this charset keeps them from
+// ever addressing a path or key outside their own.
+const ID_RE = /^[A-Za-z0-9_-]+$/;
+
+export function assertId(id: string): void {
+	if (!ID_RE.test(id)) {
+		throw new StorageInvalidKeyError("Invalid id for storage key");
 	}
 }
 
-export function assertChunkCount(count: number): void {
-	if (!Number.isInteger(count) || count < 0) {
-		throw new StorageInvalidKeyError("Invalid chunk count");
+export function assertChunkIndex(index: number): void {
+	if (!Number.isInteger(index) || index < 0) {
+		throw new StorageInvalidKeyError("Invalid chunk index");
 	}
 }

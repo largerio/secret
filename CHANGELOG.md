@@ -7,6 +7,42 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Security
+
+- Note IDs no longer appear in the logs. The cleanup job and the deletion
+  retries logged them.
+
+### Added
+
+- A daily storage sweep removes stored files that no note points to any more,
+  such as those a failed deletion left behind. It only runs on storage that no
+  other database has claimed, and `STORAGE_RECONCILE=false` turns it off. See
+  [Storage cleanup](docs/self-hosting.md#storage-cleanup).
+
+### Fixed
+
+- Deleting a note's files from storage could fail silently: both backends
+  swallowed every error, and S3 ignored the keys it refused to delete. Nothing
+  was retried, so the ciphertext of burned or expired notes could stay on disk
+  or in the bucket. Failures are now logged and retried.
+- A deletion is recorded in the same transaction that removes the note, so a
+  restart in between no longer strands its files. The same holds while a file
+  is being saved, and for a chunk that lands after its upload session expired.
+  Such a chunk used to get a `500` and stay; it is now removed and gets a
+  `404`, or a `409` if the upload was completed in the meantime.
+
+### Upgrade notes
+
+- Migration 4 drops two columns from `pending_deletions`. Back up the data
+  volume first: once migrated, the database no longer starts on 1.4.0 or older.
+- The first storage sweep runs ten minutes after startup and removes files
+  older than a day that the database does not know. If several instances share
+  a bucket or `FILES_PATH`, give each its own, or set `STORAGE_RECONCILE=false`
+  on all of them, before upgrading any: an instance that has not upgraded yet
+  leaves no claim, so the others cannot tell its files from orphans.
+- On S3, turn versioning off and add the lifecycle rule in
+  [S3 bucket settings](docs/self-hosting.md#s3-bucket-settings).
+
 ## [1.4.0] - 2026-10-26
 
 ### Security

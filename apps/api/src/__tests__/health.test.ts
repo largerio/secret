@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { createHealthCheck } from "../health.js";
 import type { StorageBackend } from "../storage/index.js";
+import { stubStorage } from "./storageDoubles.js";
 
 const TEST_DB_PATH = "./data/health-test.db";
 
@@ -25,16 +26,7 @@ function closeQuietly(): void {
 }
 
 function makeStorage(overrides: Partial<StorageBackend> = {}): StorageBackend {
-	return {
-		save: vi.fn(),
-		read: vi.fn(),
-		delete: vi.fn(),
-		saveChunk: vi.fn(),
-		readChunk: vi.fn(),
-		deleteChunks: vi.fn(),
-		probe: vi.fn(() => Promise.resolve()),
-		...overrides,
-	} as StorageBackend;
+	return stubStorage({ probe: vi.fn(() => Promise.resolve()), ...overrides });
 }
 
 beforeEach(() => {

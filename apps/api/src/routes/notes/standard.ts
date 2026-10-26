@@ -7,7 +7,7 @@ import {
 } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { notes } from "../../db/schema.js";
-import { deleteOrSchedule } from "../../pendingDeletions.js";
+import { enqueueDeletion, hasStoredPayload, runDeletion } from "../../pendingDeletions.js";
 import {
 	assertWithinPolicy,
 	buildNoteHeaders,
@@ -220,14 +220,16 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 			tx.delete(notes).where(eq(notes.id, id)).run();
 
-			return { note };
+			return hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id) } : {};
 		});
 
 		if ("error" in result) {
 			httpError(result.status as 403, result.error);
 		}
 
-		await deleteOrSchedule(db, storage, { noteId: id, ...result.note });
+		if (result.deletion) {
+			await runDeletion(db, storage, result.deletion);
+		}
 
 		return c.json({ deleted: true as const });
 	});

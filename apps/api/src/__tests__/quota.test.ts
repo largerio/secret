@@ -12,6 +12,7 @@ import { assertStorageQuota, getStorageUsedBytes } from "../quota.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+import { overrideStorage } from "./storageDoubles.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -279,14 +280,7 @@ describe("storage quota over HTTP", () => {
 	it("refuses a multipart upload that would exceed the quota with 507", async () => {
 		const real = new LocalStorage(TEST_FILES_PATH);
 		const save = vi.fn();
-		const storage: StorageBackend = {
-			save,
-			read: (key) => real.read(key),
-			delete: (key) => real.delete(key),
-			saveChunk: (noteId, idx, data) => real.saveChunk(noteId, idx, data),
-			readChunk: (noteId, idx) => real.readChunk(noteId, idx),
-			deleteChunks: (noteId, cnt) => real.deleteChunks(noteId, cnt),
-		};
+		const storage = overrideStorage(real, { save });
 		const app = createQuotaApp(db, 50, storage);
 
 		const form = new FormData();
@@ -325,14 +319,7 @@ describe("storage quota over HTTP", () => {
 	it("refuses a chunk that would exceed the quota, writing nothing", async () => {
 		const real = new LocalStorage(TEST_FILES_PATH);
 		const saveChunk = vi.fn();
-		const storage: StorageBackend = {
-			save: (noteId, data) => real.save(noteId, data),
-			read: (key) => real.read(key),
-			delete: (key) => real.delete(key),
-			saveChunk,
-			readChunk: (noteId, idx) => real.readChunk(noteId, idx),
-			deleteChunks: (noteId, cnt) => real.deleteChunks(noteId, cnt),
-		};
+		const storage = overrideStorage(real, { saveChunk });
 		const app = createQuotaApp(db, 100, storage);
 
 		const { status, uploadId } = await initUpload(app);

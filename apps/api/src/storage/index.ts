@@ -7,7 +7,7 @@ export {
 	StorageInvalidKeyError,
 	StorageNotFoundError,
 } from "./errors.js";
-export type { StorageBackend } from "./interface.js";
+export type { StorageBackend, StoredNote } from "./interface.js";
 
 export type StorageType = "local" | "s3";
 

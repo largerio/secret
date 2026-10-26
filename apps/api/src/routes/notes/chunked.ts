@@ -13,7 +13,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { notes, uploadChunks, uploads } from "../../db/schema.js";
-import { deleteOrSchedule } from "../../pendingDeletions.js";
+import { enqueueDeletion, runDeletion } from "../../pendingDeletions.js";
 import { assertStorageQuota } from "../../quota.js";
 import { StorageNotFoundError } from "../../storage/index.js";
 import {
@@ -33,6 +33,10 @@ import {
 	uploadCompleteRoute,
 	uploadInitRoute,
 } from "./openapi-routes.js";
+
+// How long a stream that burned its note may keep reading chunks before the
+// cleanup job purges them: past it, a crash mid-stream no longer strands them.
+const STREAM_WINDOW_MS = 24 * 60 * 60_000;
 
 export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 	// These handlers validate manually (binary bodies, custom error shapes), so
@@ -159,15 +163,36 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const storage = c.get("storage");
 		await storage.saveChunk(session.noteId, index, storedData);
 
-		// Upsert (not do-nothing): a re-uploaded chunk replaces the stored file,
-		// so its recorded size must follow.
-		db.insert(uploadChunks)
-			.values({ uploadId: uploadId, chunkIndex: index, sizeBytes: storedData.length })
-			.onConflictDoUpdate({
-				target: [uploadChunks.uploadId, uploadChunks.chunkIndex],
-				set: { sizeBytes: storedData.length },
-			})
-			.run();
+		// The session can end while the chunk is written: expired and swept by
+		// the cleanup job, or completed by a concurrent /complete. Checked again
+		// where the chunk is recorded, so a late write is never left behind.
+		const outcome = db.transaction((tx) => {
+			if (tx.select({ id: uploads.id }).from(uploads).where(eq(uploads.id, uploadId)).get()) {
+				// Upsert (not do-nothing): a re-uploaded chunk replaces the stored
+				// file, so its recorded size must follow.
+				tx.insert(uploadChunks)
+					.values({ uploadId: uploadId, chunkIndex: index, sizeBytes: storedData.length })
+					.onConflictDoUpdate({
+						target: [uploadChunks.uploadId, uploadChunks.chunkIndex],
+						set: { sizeBytes: storedData.length },
+					})
+					.run();
+				return { status: "recorded" as const };
+			}
+			if (tx.select({ id: notes.id }).from(notes).where(eq(notes.id, session.noteId)).get()) {
+				return { status: "completed" as const };
+			}
+			return { status: "orphaned" as const, deletion: enqueueDeletion(tx, session.noteId) };
+		});
+
+		if (outcome.status === "completed") {
+			return c.json({ error: "Upload already completed" }, 409);
+		}
+
+		if (outcome.status === "orphaned") {
+			await runDeletion(db, storage, outcome.deletion);
+			return c.json({ error: "Upload session not found or expired" }, 404);
+		}
 
 		return c.json({ received: true as const });
 	});
@@ -322,7 +347,7 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 			httpError(500, "Failed to decrypt note", err);
 		}
 
-		const { shouldDelete } = consumeRead(db, id);
+		const { deletion } = consumeRead(db, id, STREAM_WINDOW_MS);
 
 		// Read-ahead window: keep a few chunk reads in flight so per-chunk
 		// storage latency (one round-trip per chunk on S3) overlaps with
@@ -349,8 +374,8 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const finalize = async (): Promise<void> => {
 			if (finalized) return;
 			finalized = true;
-			if (shouldDelete) {
-				await deleteOrSchedule(db, storage, { noteId: id, chunkCount });
+			if (deletion) {
+				await runDeletion(db, storage, deletion);
 			}
 		};
 

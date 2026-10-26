@@ -42,7 +42,7 @@ or anyone holding the server's database and storage, can and cannot learn:
 | Number of files, password set or not, read limit and reads so far, expiry, creation time | Yes — stored in clear to enforce them |
 | When a note is created, read and deleted | Yes |
 | IP addresses | Seen for rate limiting and kept in memory for about a minute; never written to the app's logs. Your reverse proxy may log them |
-| Note IDs | Appear in cleanup and deletion-retry logs, never in request logs |
+| Note IDs | Never written to the app's logs |
 
 The at-rest layer uses `SERVER_ENCRYPTION_KEY`. Left empty, that key is generated
 on first start and stored in the data volume (`.encryption_key`), so a copy of the
@@ -65,8 +65,7 @@ its backups. Either way, the content stays protected by the end-to-end layer.
 - Signed images: a keyless cosign signature and a SLSA build provenance
   attestation from the workflow that built them
   ([how to verify](docs/self-hosting.md#verifying-the-image))
-- No logging of note content, decryption keys, or IP addresses (note IDs do
-  appear in cleanup and deletion-retry logs)
+- No logging of note content, decryption keys, note IDs or IP addresses
 
 ## Threat Model
 

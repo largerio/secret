@@ -57,6 +57,7 @@ describe("parseConfig", () => {
 				chunkSize: DEFAULT_CHUNK_SIZE,
 				maxChunkedFileSize: DEFAULT_MAX_CHUNKED_SIZE,
 				trustedProxies: [],
+				storageReconcile: true,
 				debug: false,
 			});
 			expect(config.storage).toEqual({ type: "local", localPath: "./data/files" });
@@ -188,13 +189,22 @@ describe("parseConfig", () => {
 			S3_ACCESS_KEY_ID: "a",
 			S3_SECRET_ACCESS_KEY: "s",
 		};
-		const read: Record<string, (config: AppConfig) => boolean | undefined> = {
-			ALLOW_SERVER_KEY_CHANGE: (config) => config.allowServerKeyChange,
-			DEBUG: (config) => config.debug,
-			S3_FORCE_PATH_STYLE: (config) => config.storage.s3?.forcePathStyle,
+		const settings: Record<
+			string,
+			{ read: (config: AppConfig) => boolean | undefined; byDefault: boolean }
+		> = {
+			ALLOW_SERVER_KEY_CHANGE: { read: (config) => config.allowServerKeyChange, byDefault: false },
+			DEBUG: { read: (config) => config.debug, byDefault: false },
+			S3_FORCE_PATH_STYLE: {
+				read: (config) => config.storage.s3?.forcePathStyle,
+				byDefault: false,
+			},
+			STORAGE_RECONCILE: { read: (config) => config.storageReconcile, byDefault: true },
 		};
 
-		describe.each(Object.keys(read))("%s", (name) => {
+		describe.each(Object.keys(settings))("%s", (name) => {
+			const setting = settings[name] as (typeof settings)[string];
+
 			it.each([
 				["1", true],
 				["true", true],
@@ -203,13 +213,15 @@ describe("parseConfig", () => {
 				["0", false],
 				["false", false],
 				["False", false],
-				["", false],
-				[undefined, false],
 			])("reads %j as %s", (value, expected) => {
+				expect(setting.read(parseConfig(baseEnv({ ...s3, [name]: value })))).toBe(expected);
+			});
+
+			it.each([[""], ["  "], [undefined]])("keeps the default for %j", (value) => {
 				const config = parseConfig(
 					baseEnv({ ...s3, ...(value === undefined ? {} : { [name]: value }) }),
 				);
-				expect(read[name]?.(config)).toBe(expected);
+				expect(setting.read(config)).toBe(setting.byDefault);
 			});
 
 			it("refuses a value that is neither on nor off", () => {

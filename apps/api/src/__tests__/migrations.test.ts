@@ -101,6 +101,8 @@ describe("applyMigrations", () => {
 		expect(columnNames(sqlite, "notes")).not.toContain("burn_after_read");
 		expect(columnNames(sqlite, "uploads")).not.toContain("chunks_received");
 		expect(columnNames(sqlite, "upload_chunks")).toContain("size_bytes");
+		expect(columnNames(sqlite, "pending_deletions")).not.toContain("file_path");
+		expect(columnNames(sqlite, "pending_deletions")).not.toContain("chunk_count");
 		expect(indexNames(sqlite)).toEqual([
 			"idx_notes_expires_at",
 			"idx_pending_deletions_next_retry",
@@ -169,6 +171,31 @@ describe("applyMigrations", () => {
 		]);
 		expect(sqlite.prepare(`SELECT id, chunk_count FROM uploads`).all()).toEqual([
 			{ id: "v2-upload", chunk_count: 2 },
+		]);
+		sqlite.close();
+	});
+
+	it("keeps the pending deletions of a version 3 database, by note id", () => {
+		const legacy = new DatabaseSync(TEST_DB_PATH);
+		applyMigrations(legacy, MIGRATIONS.slice(0, 3));
+		legacy
+			.prepare(
+				`INSERT INTO pending_deletions (note_id, file_path, chunk_count, attempts, next_retry_at, created_at)
+				 VALUES ('v3-file', '/data/files/v3-file', NULL, 2, 1, 1), ('v3-chunks', NULL, 4, 0, 1, 1)`,
+			)
+			.run();
+		legacy.close();
+
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
+		expect(columnNames(sqlite, "pending_deletions")).not.toContain("file_path");
+		expect(columnNames(sqlite, "pending_deletions")).not.toContain("chunk_count");
+		expect(
+			sqlite.prepare(`SELECT note_id, attempts FROM pending_deletions ORDER BY id`).all(),
+		).toEqual([
+			{ note_id: "v3-file", attempts: 2 },
+			{ note_id: "v3-chunks", attempts: 0 },
 		]);
 		sqlite.close();
 	});
