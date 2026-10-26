@@ -20,8 +20,9 @@ test("create a note, share it, and decrypt the plaintext in a fresh tab", async 
 test("a wrong key (tampered fragment) fails to decrypt", async ({ page, context }) => {
 	const shareUrl = await createTextNote(page, "another secret");
 
-	// Corrupt the fragment so client-side decryption must fail.
-	const tampered = `${shareUrl.split("#")[0]}#${"A".repeat(50)}`;
+	// A well-formed key, but not this note's, so client-side decryption must
+	// fail. (A malformed one never gets that far: it is an incomplete link.)
+	const tampered = `${shareUrl.split("#")[0]}#${"A".repeat(43)}`;
 
 	const reader = await context.newPage();
 	await revealNote(reader, tampered);

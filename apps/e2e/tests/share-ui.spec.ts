@@ -18,7 +18,7 @@ test.describe("clipboard", () => {
 		const shareUrl = await createNote(page, { text: `clipboard secret ${Date.now()}` });
 
 		await page.getByRole("button", { name: "Copy the link" }).click();
-		await expect(page.getByText("Link copied")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Link copied" })).toBeVisible();
 
 		const clipboard = await page.evaluate(() => navigator.clipboard.readText());
 		expect(clipboard).toBe(shareUrl);

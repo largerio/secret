@@ -37,13 +37,15 @@ test("a file round-trips: attached on create, downloaded intact on read", async 
 	const reader = await context.newPage();
 	await revealNote(reader, shareUrl);
 
-	// The attachments section appears with the original file name.
+	// The attachments section appears with the original file name, which the
+	// download button repeats for screen readers.
 	await expect(reader.getByText(/1 file attached/i)).toBeVisible({ timeout: 15_000 });
-	await expect(reader.getByText("secret.txt")).toBeVisible();
+	const downloadButton = reader.getByRole("button", { name: /Download\s+secret\.txt/ });
+	await expect(downloadButton).toBeVisible();
 
 	// Downloading must yield the exact original bytes (proves the encrypted round-trip).
 	const downloadPromise = reader.waitForEvent("download");
-	await reader.getByRole("button", { name: /Download/i }).click();
+	await downloadButton.click();
 	const download = await downloadPromise;
 	expect(download.suggestedFilename()).toBe("secret.txt");
 
@@ -64,9 +66,11 @@ test("multiple files are all listed and downloadable", async ({ page, context })
 	const reader = await context.newPage();
 	await revealNote(reader, shareUrl);
 
-	await expect(reader.getByText("alpha.txt")).toBeVisible({ timeout: 15_000 });
-	await expect(reader.getByText("beta.txt")).toBeVisible();
-	// One Download button per attachment.
+	// One Download button per attachment, each naming its file.
+	await expect(reader.getByRole("button", { name: /Download\s+alpha\.txt/ })).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(reader.getByRole("button", { name: /Download\s+beta\.txt/ })).toBeVisible();
 	await expect(reader.getByRole("button", { name: /Download/i })).toHaveCount(2);
 });
 
@@ -89,10 +93,11 @@ test("a large file uploads in the instance's chunk size and downloads intact", a
 
 	const reader = await context.newPage();
 	await revealNote(reader, shareUrl);
-	await expect(reader.getByText("large.bin")).toBeVisible({ timeout: 30_000 });
+	const downloadButton = reader.getByRole("button", { name: /Download\s+large\.bin/ });
+	await expect(downloadButton).toBeVisible({ timeout: 30_000 });
 
 	const downloadPromise = reader.waitForEvent("download");
-	await reader.getByRole("button", { name: /Download/i }).click();
+	await downloadButton.click();
 	const download = await downloadPromise;
 
 	expect(readFileSync(await download.path()).equals(contents)).toBe(true);
