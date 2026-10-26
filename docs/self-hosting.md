@@ -67,7 +67,8 @@ Already running a reverse proxy? Skip that file, set `APP_URL` in `.env`, and se
 > permanently unreadable — the server checks a fingerprint and refuses to start
 > rather than let that pass silently. To manage the key yourself, pin it
 > **before the very first launch**; otherwise it lives in the data volume at
-> `.encryption_key`, so a volume backup already includes it. See
+> `.encryption_key`. Either way, back it up apart from the data
+> ([Backup & restore](#backup--restore)). See
 > [Container keeps restarting](#container-keeps-restarting--exits-immediately)
 > if you hit a mismatch.
 
@@ -277,8 +278,17 @@ grants no read access others don't have, and no ability to decrypt.
 
 ## Backup & restore
 
-Everything lives in one Docker volume: the SQLite database (`secret.db` + WAL
-files) and the encrypted `files/` directory.
+An instance is three things, backed up separately:
+
+| What | Where | Lost without a backup |
+|---|---|---|
+| The database | `secret.db` in the volume (`DATABASE_PATH`) | Every note |
+| The stored files | `files/` in the volume (`FILES_PATH`), or the S3 bucket | Every note with files |
+| The server key | `SERVER_ENCRYPTION_KEY`, or the generated `.encryption_key` in the volume (`KEY_FILE`) | Everything: each note is sealed with it, and the server refuses to start with another one |
+
+The key never changes, so it is backed up once, and kept apart from the data: in
+a password manager or a secret store. A backup that holds the data and the key
+together is protected by the end-to-end encryption alone.
 
 Compose prefixes the volume with the project name (the folder you ran
 `docker compose` from), so the real name is usually `secret_secret-data`.
@@ -292,42 +302,124 @@ Use that name in place of `<volume>` below.
 
 ### Back up
 
+The database first, then the files. A file stored in between has no note in that
+database copy: after a restore, the [storage sweep](#storage-cleanup) removes it.
+A note whose file went in between was read to its limit, deleted or expired: it
+was meant to go. In the other order, the notes created in between would come
+back without their files.
+
+**The database**, while the app runs:
+
 ```bash
-# Stop the container first so the API checkpoints the WAL on SIGTERM
-docker compose stop
-
-# Snapshot the volume into a tarball (tar preserves the uid 1001 ownership)
-docker run --rm \
-  -v <volume>:/data \
-  -v "$PWD":/backup \
-  alpine tar czf /backup/secret-backup.tgz -C /data .
-
-docker compose start
+docker compose exec app node apps/api/dist/backup.js /app/data/backup.db
+docker compose cp app:/app/data/backup.db ./secret-$(date +%F).db
+docker compose exec app rm /app/data/backup.db
 ```
 
-Store `secret-backup.tgz` **together with your `SERVER_ENCRYPTION_KEY`** — the
-data is useless without the key.
+The command copies the database at `DATABASE_PATH` with SQLite's `VACUUM INTO`:
+one consistent snapshot, taken without blocking the app, with no trace of the
+notes already deleted. It checks the copy, writes it under a temporary name and
+renames it into place, never overwrites an existing file, and exits with a
+non-zero code when anything fails, so a scheduled job notices. The container's
+root filesystem is read-only, so the copy is written to the volume first, then
+moved out.
+
+The copy is a single SQLite file. It keeps the schema version, the instance
+identity the sweep relies on, and the server key's fingerprint, so it restores
+as is, on the version of Secret that made it or a later one (which migrates it
+at startup). Outside Docker, from a build of the repository:
+`DATABASE_PATH=/path/to/secret.db node apps/api/dist/backup.js <destination>`.
+
+**The files**, right after. On local storage:
+
+```bash
+docker run --rm -v <volume>:/data:ro -v "$PWD":/backup alpine \
+  tar czf /backup/secret-files-$(date +%F).tgz -C /data files
+```
+
+On S3, copy the `notes/` prefix with your provider's tools (`aws s3 sync`,
+`rclone`).
+
+### Keeping backups
+
+A backup holds every note as it was. A note burned by its last read since then,
+or deleted with its deletion link, is still in it, and a restore brings it back
+for anyone who still has the link. Hence:
+
+- **Keep backups no longer than `MAX_EXPIRY`** (30 days by default), and shorter
+  when you can: a week of daily copies covers most needs. Every note in an older
+  backup has expired, so it restores nothing, and only holds ciphertexts and
+  metadata.
+- **No versioning, no long-lived snapshots.** A versioned bucket keeps every
+  deleted file: see [S3 bucket settings](#s3-bucket-settings). Snapshots of the
+  volume (ZFS, Btrfs, a VM, Synology Snapshot Replication) are backups too, and
+  need the same limit.
+- **Encrypt them** before they leave the host (`age`, `gpg`, or a backup tool
+  that encrypts, such as restic or borg), with a key of their own, stored apart
+  from the server key.
 
 ### Restore
 
-```bash
-# Let compose create the container and its volume first…
-docker compose up -d
-docker compose stop
+1. Stop the app with `docker compose stop`. On a new host, run
+   `docker compose up -d` first, so that compose creates the volume.
+2. Put the database back. Delete the `-wal` and `-shm` files next to it: left
+   there, SQLite would replay the old log onto the restored database.
 
-# …then extract the backup into that same <volume>
-# `./.[!.]*` too — the generated key is a dotfile, and leaving the fresh one
-# behind next to restored notes stops the container from starting.
-docker run --rm \
-  -v <volume>:/data \
-  -v "$PWD":/backup \
-  alpine sh -c "cd /data && rm -rf ./* ./.[!.]* && tar xzf /backup/secret-backup.tgz"
+   ```bash
+   docker run --rm -v <volume>:/data -v "$PWD":/backup alpine sh -c '
+     rm -f /data/secret.db-wal /data/secret.db-shm &&
+     cp /backup/secret-<date>.db /data/secret.db &&
+     chown 1001:1001 /data/secret.db'
+   ```
 
-docker compose start
-```
+3. If the files are lost too, restore the copy taken after that database (a later
+   one also works). On local storage:
 
-Make sure the restored instance uses the **same** `SERVER_ENCRYPTION_KEY` as the
-one that produced the backup, or the notes won't decrypt.
+   ```bash
+   docker run --rm -v <volume>:/data -v "$PWD":/backup alpine \
+     tar xzf /backup/secret-files-<date>.tgz -C /data
+   ```
+
+   On S3, copy `notes/` back into the bucket. Files the database does not know
+   can stay: the sweep removes them.
+4. Bring back the key: set `SERVER_ENCRYPTION_KEY` in `.env`, or write the saved
+   key over `.encryption_key` in the volume (owned by uid 1001, mode `600`). A new
+   volume holds a key generated on its first start: it is not the one you need.
+5. Run `docker compose start` and watch `docker compose logs -f`. A wrong key
+   stops the start with an explicit error.
+
+An archive of the whole volume, made with the app stopped as this guide used to
+advise, restores in one step: empty the volume (`rm -rf ./* ./.[!.]*`, so that
+no generated key stays behind), then extract the archive into it.
+
+### After a restore
+
+- Notes created after the backup are gone: their links find nothing, and the
+  sweep removes their files.
+- Notes read to their limit or deleted since the backup are back, readable by
+  anyone who still has the link until they expire, with their read count as it
+  was. No record says which ones: a deletion leaves none.
+- Notes that have expired since stay gone: the cleanup job deletes them, and an
+  expired note is never served.
+
+On an instance used for one-time secrets, tell its users: a link opened before
+the backup date may open again, and its deletion link still removes it.
+
+### What a stolen backup reveals
+
+Not the contents: notes are encrypted in the browser, and the key is in the link's
+fragment, which never reaches the server. The payloads, in the database and in
+the files, are also sealed with the server key: stolen without it, they are
+opaque even before the end-to-end layer comes into play.
+
+A backup does hold, in clear:
+
+- the metadata listed in [What the server can see](../SECURITY.md#what-the-server-can-see):
+  sizes, number of files, password set or not, read limits and reads so far,
+  creation and expiry times;
+- the note ids, the half of each link that decrypts nothing;
+- each note's deletion token: whoever holds the backup can delete those notes
+  while they last.
 
 ---
 

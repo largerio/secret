@@ -250,7 +250,7 @@ Step-by-step deployment guides for common setups are in
 - **VPS / any Docker host** — two-file deploy (`docker-compose.yml` + `.env`), no clone
 - **Synology NAS** — DSM Container Manager walkthrough, with volume/permission notes
 - **Reverse proxy & HTTPS** — including DSM's built-in reverse proxy
-- **Backup & restore** — snapshotting the `secret-data` volume safely
+- **Backup & restore** — a hot copy of the database, the files and the key, and how long to keep them
 
 ## Updating
 
