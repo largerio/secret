@@ -23,7 +23,7 @@ const offset = $derived(
 );
 </script>
 
-<section class="card pop flex flex-col items-center gap-4 px-6 pt-9 pb-7 text-center">
+<section class="card card-busy pop flex flex-col items-center gap-4 px-6 pt-9 pb-7 text-center">
 	<span class="progress-ring" aria-hidden="true">
 		<span class="arc" class:animate-spin={!measured}>
 			<svg viewBox="0 0 64 64" width="64" height="64">

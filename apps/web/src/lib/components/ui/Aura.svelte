@@ -1,4 +1,6 @@
-<!-- The glow behind the top of every page: two slow accent blobs over a dot grid. -->
+<!-- The glow behind the top of every page: two accent blobs over a dot grid. They
+     glide into place once, within five seconds: endless drifting would need a
+     pause control (WCAG 2.2.2). -->
 <div class="aura" aria-hidden="true">
 	<div class="dots"></div>
 	<div class="blob blob-a"></div>
@@ -37,7 +39,7 @@
 		width: 540px;
 		height: 420px;
 		background: var(--accent);
-		animation: drift-a 18s ease-in-out infinite;
+		animation: drift-a 4.5s ease-out both;
 	}
 
 	.blob-b {
@@ -46,17 +48,17 @@
 		width: 480px;
 		height: 380px;
 		background: var(--accent-2);
-		animation: drift-b 22s ease-in-out infinite;
+		animation: drift-b 4.5s ease-out both;
 	}
 
 	@keyframes drift-a {
-		50% {
+		from {
 			transform: translate3d(48px, -26px, 0) scale(1.1);
 		}
 	}
 
 	@keyframes drift-b {
-		50% {
+		from {
 			transform: translate3d(-40px, 20px, 0) scale(0.92);
 		}
 	}

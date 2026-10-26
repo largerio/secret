@@ -363,11 +363,15 @@ button:not(:disabled),
 		padding: 0;
 	}
 
-	/* The surface that matters on a page, ringed by an arc of accent that turns
-	   slowly. While something inside has focus the whole ring takes the accent,
-	   the arc still turning on it: that ring is the focus indicator of the
-	   fields that draw none themselves, such as the note's textarea. */
+	/* The surface that matters on a page, ringed by an arc of accent. The arc
+	   makes one turn when the card appears and another each time it takes the
+	   focus, then rests: motion that starts on its own and runs past five
+	   seconds would need a pause control (WCAG 2.2.2). While something inside
+	   has focus the whole ring takes the accent: that ring is the focus
+	   indicator of the fields that draw none themselves, such as the note's
+	   textarea. */
 	.card {
+		--turn: 4s cubic-bezier(0.45, 0, 0.25, 1);
 		--edge: var(--line);
 		--arc: color-mix(in srgb, var(--accent) 65%, var(--line));
 		--arc-2: color-mix(in srgb, var(--accent-2) 65%, var(--line));
@@ -385,19 +389,42 @@ button:not(:disabled),
 				)
 				border-box;
 		box-shadow: var(--shadow-card);
-		animation: border-turn 9s linear infinite;
+		animation: border-turn var(--turn);
 	}
 
+	/* The turn on focus is a transition: with none on the way back, the angle
+	   drops from 360deg to 0deg, the same position, so nothing moves on blur. */
 	.card:focus-within {
 		--edge: var(--accent-text);
 		--arc: var(--accent-2-text);
 		--arc-2: var(--accent-text);
+		--border-angle: 360deg;
+		transition: --border-angle var(--turn);
 	}
 
 	.card.rise {
 		animation:
 			rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards,
-			border-turn 9s linear infinite;
+			border-turn var(--turn);
+	}
+
+	.card.pop {
+		animation:
+			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+			border-turn var(--turn);
+	}
+
+	/* While encryption or the network is awaited nothing else can be done:
+	   the arc may then keep turning, as a loading indicator (2.2.2's essential
+	   exception). */
+	.card-busy {
+		animation: border-turn 3s linear infinite;
+	}
+
+	.card-busy.pop {
+		animation:
+			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+			border-turn 3s linear infinite;
 	}
 
 	.panel {
