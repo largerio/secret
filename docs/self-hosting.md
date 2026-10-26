@@ -13,7 +13,9 @@ and runs as a single container.
 
 Once it is up: [API keys](#api-keys-for-the-sdk) ·
 [Secrets in files](#secrets-in-files) ·
+[Restricting who can create notes](#restricting-who-can-create-notes) ·
 [Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
+[One instance per database](#one-instance-per-database) ·
 [Updating](#updating) ·
 [Verifying the image](#verifying-the-image) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
@@ -364,6 +366,103 @@ Secret as a volume and point the `_FILE` variables at its files.
 
 ---
 
+## Restricting who can create notes
+
+Out of the box, anyone who can reach the instance can create notes, with files
+up to `MAX_CHUNKED_FILE_SIZE` (500 MB by default). What stands in the way is the
+Proof-of-Work challenge a browser solves before each write, the per-IP rate
+limits and, if you set one, the storage quota (`STORAGE_QUOTA_BYTES`). To keep
+an instance for your own people, put a login in front of the paths that create
+notes, and only those: the people you send links to have no account.
+
+The API refuses to create or delete a note without a Proof-of-Work token or an
+[API key](#api-keys-for-the-sdk), and a browser gets its token from
+`/api/cap/`. The chunks of a large upload carry neither, but only extend an
+upload that one of them started. Behind a login, `/api/cap/` is enough to stop
+anyone without an account from writing; the two other paths spare them a form
+they could fill in but never send.
+
+| Behind the login | |
+|---|---|
+| `/api/cap/` and below | The Proof-of-Work challenge: without its token, no browser can create or delete a note |
+| `/` | The page that creates notes |
+| `/__data.json` | That page's data, fetched when a visitor moves to it from a note page. Behind the login, the visitor lands on the login page instead |
+
+| Left open | |
+|---|---|
+| `/note/` and below | The page a recipient opens, and the page behind a note's delete link. A login redirect would also drop the part of the link after `#`, which holds the key, or carry it along to the login pages |
+| `/api/v1/` and below | Reading notes, the checks a note page makes, `/api/v1/config` and the API docs. The writes there check their own token or key |
+| `/_app/`, `/wasm/`, `/favicon.svg`, `/og.png` | Scripts, styles and fonts, the challenge solver, the icon, and the image of link previews |
+| `/api/health`, `/robots.txt`, `/sitemap.xml` | Health checks and crawlers |
+
+Deleting a note from its delete link solves a challenge too, so it works in a
+browser that is logged in. Reading a note never does. Scripts and the SDK skip
+the login: they write with an [API key](#api-keys-for-the-sdk), which the API
+checks itself, on paths that stay open.
+
+Two things keep the login from being walked around:
+
+- The app must be reachable through the proxy alone. A published port `3000` is
+  a way in without it (`docker-compose.tls.yml` publishes Caddy's ports only),
+  and so is the API's own port: leave `API_HOST` unset.
+- The proxy must match the path once cleaned up, since the app reads
+  `/api/v1/../cap/challenge` as `/api/cap/challenge`. Caddy and Traefik do,
+  with the rules below.
+
+The proxy that asks for the login is a reverse proxy like any other: set
+`ADDRESS_HEADER` and `XFF_DEPTH`, as in
+[Making rate limiting work behind a proxy](#making-rate-limiting-work-behind-a-proxy).
+
+**Caddy with oauth2-proxy.** Adapted from oauth2-proxy's Caddy integration,
+with oauth2-proxy set up for your identity provider, its `--reverse-proxy` flag
+on, and `https://secret.example.com/oauth2/callback` as its redirect URL:
+
+```caddyfile
+secret.example.com {
+	# oauth2-proxy's own pages: sign-in and callback.
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Uri {uri}
+		}
+	}
+
+	# The paths that create notes: log in first.
+	@create path / /__data.json /api/cap/*
+	handle @create {
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			header_up X-Real-IP {remote_host}
+
+			@unauthenticated status 401
+			handle_response @unauthenticated {
+				redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+			}
+		}
+		reverse_proxy app:3000
+	}
+
+	# Everything else stays open.
+	handle {
+		reverse_proxy app:3000
+	}
+}
+```
+
+**Traefik.** The same three paths on a router of their own, carrying your
+`forwardAuth` middleware (oauth2-proxy's Traefik guide has one), next to the
+router you already have and with the same entry points and TLS settings. Its
+rule is the longer one, so Traefik tries it first:
+
+```yaml
+labels:
+  - traefik.http.routers.secret.rule=Host(`secret.example.com`)
+  - traefik.http.routers.secret-create.rule=Host(`secret.example.com`) && (Path(`/`) || Path(`/__data.json`) || PathPrefix(`/api/cap/`))
+  - traefik.http.routers.secret-create.middlewares=oauth2-proxy-auth  # your forwardAuth middleware
+```
+
+---
+
 ## Backup & restore
 
 An instance is three things, backed up separately:
@@ -592,6 +691,51 @@ aws s3api put-bucket-lifecycle-configuration --bucket <bucket> \
 
 Add `--endpoint-url` for a server other than AWS. If you lower `MAX_EXPIRY`,
 you can lower the expiration to match: one day more than the ceiling.
+
+---
+
+## One instance per database
+
+Run one container per database, and only one. The API keeps state in its own
+process, so it does not scale out, and replicas behind a load balancer fail in
+ways that look random:
+
+- **Proof-of-Work challenges live in memory.** The challenge, its solution and
+  the write that spends the token must all reach the same process; when one of
+  them lands on another replica, the note is refused.
+- **Rate limits are counted per process**, so every replica adds its own
+  allowance.
+- **SQLite takes one writer at a time.** A second process on the same database
+  file waits for the lock or fails with `database is locked`. And the locking
+  SQLite relies on does not hold over a network filesystem (NFS, SMB): keep the
+  data volume on a local disk.
+- **The background jobs run in every process**: the cleanup of expired notes,
+  every five minutes by default, and the daily
+  [storage sweep](#storage-cleanup).
+- **Migrations run at startup.** A new version upgrades the database as it
+  boots, and an older process still running on it, during a rolling update,
+  then works against a schema it does not know. Stop the old container before
+  starting the new one, as `docker compose up -d` does; on Kubernetes, that is
+  the `Recreate` strategy, not `RollingUpdate`.
+
+Two instances with databases of their own cannot share a bucket or a
+`FILES_PATH` either. A database only knows its own notes, so a link created on
+one is not found on the other, and the storage sweep of each finds the other's
+claim and stops: see
+[One storage location per instance](#one-storage-location-per-instance).
+
+High availability, then, means bringing the one instance back quickly, not
+running two:
+
+- The container stops as soon as the API or the web server inside it exits, so
+  its restart policy (`restart: unless-stopped` in `docker-compose.yml`) brings
+  it back within seconds.
+- Docker alone does not restart a container that is only `unhealthy`. An
+  orchestrator can, from `/api/health`: a Kubernetes liveness probe, a Swarm
+  service.
+- If the host fails, start the instance elsewhere on the same data: a volume
+  that can follow it, or the latest [backup](#backup--restore). On Kubernetes:
+  one replica, a `ReadWriteOnce` volume.
 
 ---
 
