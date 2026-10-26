@@ -25,15 +25,16 @@ test("a wrong password is rejected, then the correct one still works", async ({
 
 	const reader = await context.newPage();
 	// The server cannot check the password, so a wrong one still spends one of
-	// the three reads; with reads left, the inline error offers another try.
+	// the three reads — and the page says so, with the reads left.
 	await revealNote(reader, shareUrl, { password: "definitely-wrong" });
-	await expect(reader.getByText(/Wrong password or invalid key/i)).toBeVisible({
+	await expect(reader.getByText(/That attempt counted as a read: 2 left/i)).toBeVisible({
 		timeout: 15_000,
 	});
+	await expect(reader.getByText("2 reads left")).toBeVisible();
 
 	// Correcting the password in the same view must now succeed.
 	await reader.locator("#decrypt-password").fill(password);
-	await reader.getByRole("button", { name: /Reveal the secret/i }).click();
+	await reader.getByRole("button", { name: /Unlock the note/i }).click();
 
 	await expect(reader.getByTestId("note-text")).toHaveText(secret, { timeout: 15_000 });
 });
@@ -55,5 +56,5 @@ test("a wrong password on a burn-after-read note says the note is gone", async (
 	);
 	// No second attempt is offered: it could only end in "not found".
 	await expect(reader.locator("#decrypt-password")).toHaveCount(0);
-	await expect(reader.getByRole("button", { name: /Reveal the secret/i })).toHaveCount(0);
+	await expect(reader.getByRole("button", { name: /Unlock the note/i })).toHaveCount(0);
 });

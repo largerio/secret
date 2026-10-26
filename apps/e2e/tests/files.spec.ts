@@ -38,7 +38,7 @@ test("a file round-trips: attached on create, downloaded intact on read", async 
 	await revealNote(reader, shareUrl);
 
 	// The attachments section appears with the original file name.
-	await expect(reader.getByText(/Attachments/i)).toBeVisible({ timeout: 15_000 });
+	await expect(reader.getByText(/1 file attached/i)).toBeVisible({ timeout: 15_000 });
 	await expect(reader.getByText("secret.txt")).toBeVisible();
 
 	// Downloading must yield the exact original bytes (proves the encrypted round-trip).

@@ -3,11 +3,11 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
 export interface CreateNoteOptions {
-	/** Plain-text body, typed into the default "Text" editor. */
+	/** Plain-text body, typed into the note's textarea. */
 	text?: string;
-	/** Markdown body — switches to the Markdown tab and types into its editor. */
+	/** Markdown body — turns "Formatting" on, then types into the same textarea. */
 	markdown?: string;
-	/** Optional protection password (the "Additional password" field). */
+	/** Optional opening password ("with a password" in the lifetime sentence). */
 	password?: string;
 	/** Number of allowed reads. 1 = burn-after-read (the app default). */
 	maxReads?: 1 | 3 | 10 | 100;
@@ -29,7 +29,7 @@ export interface CreateNoteOptions {
 export async function gotoCreate(page: Page): Promise<void> {
 	await page.goto("/");
 	const textarea = page.locator("#note-text");
-	const submit = page.getByRole("button", { name: /Encrypt and generate a link/i });
+	const submit = page.getByRole("button", { name: /Encrypt and create the link/i });
 	await expect(async () => {
 		await textarea.fill("hydration-probe");
 		await expect(submit).toBeEnabled({ timeout: 1000 });
@@ -49,17 +49,14 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
 	await gotoCreate(page);
 
 	if (options.markdown !== undefined) {
-		await page.getByRole("tab", { name: /Markdown/i }).click();
-		// The Markdown editor replaces #note-text; its write textarea is the only
-		// textarea on the form in this mode.
-		const mdEditor = page.getByPlaceholder(/markdown/i);
-		await expect(mdEditor).toBeVisible();
-		await mdEditor.fill(options.markdown);
+		await page.getByRole("button", { name: "Formatting" }).click();
+		await page.locator("#note-text").fill(options.markdown);
 	} else {
 		await page.locator("#note-text").fill(options.text ?? "");
 	}
 
 	if (options.password !== undefined) {
+		await page.getByRole("button", { name: "with a password" }).click();
 		await page.locator("#password").fill(options.password);
 	}
 	if (options.maxReads !== undefined) {
@@ -69,9 +66,9 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
 		await page.locator("#expires").selectOption(String(options.expirySeconds));
 	}
 	if (options.files !== undefined) {
-		// The input is visually hidden behind the dropzone; setInputFiles works regardless.
+		// The input is visually hidden behind the "Attach" button; setInputFiles works regardless.
 		await page.locator("#file-upload").setInputFiles(options.files);
-		// Confirm the dropzone registered the selection before submitting.
+		// Confirm the composer registered the selection before submitting.
 		const first = options.files[0];
 		if (first) await expect(page.getByText(basename(first))).toBeVisible();
 	}
@@ -84,7 +81,7 @@ export async function createNote(page: Page, options: CreateNoteOptions = {}): P
  * tests that fill the form themselves; createNote() covers the usual cases.
  */
 export async function submitNote(page: Page): Promise<string> {
-	await page.getByRole("button", { name: /Encrypt and generate a link/i }).click();
+	await page.getByRole("button", { name: /Encrypt and create the link/i }).click();
 
 	const shareEl = page.getByTestId("share-url");
 	// PoW + client-side encryption + round-trip; allow generous headroom.
@@ -103,13 +100,12 @@ export async function submitNote(page: Page): Promise<string> {
  * token, like the decryption key, is never shown again.
  */
 export async function getManageUrl(page: Page): Promise<string> {
-	// The link lives inside a collapsed <details>; open it so the input is visible.
-	await page.getByText(/delete link/i).click();
-	const input = page.locator("#manage-url");
-	await expect(input).toBeVisible();
-	const url = await input.inputValue();
+	// The success screen offers it as a "copy" button that carries the link.
+	const button = page.getByTestId("manage-link");
+	await expect(button).toBeVisible();
+	const url = await button.getAttribute("data-url");
 	expect(url, "manage URL should be present").toContain("/manage#");
-	return url;
+	return url as string;
 }
 
 /**
@@ -125,9 +121,9 @@ export interface RevealOptions {
 }
 
 /**
- * Opens a note view, acknowledges the burn-after-read warning when present,
- * optionally enters a password, and triggers the decrypt. The caller asserts on
- * the resulting state.
+ * Opens a note view, optionally enters a password, and opens the note. A
+ * single-read note opens in the same click, its warning shown beside the
+ * button. The caller asserts on the resulting state.
  */
 export async function revealNote(
 	page: Page,
@@ -135,32 +131,16 @@ export async function revealNote(
 	options: RevealOptions = {},
 ): Promise<void> {
 	await page.goto(shareUrl);
-	const accept = page.getByRole("button", { name: /I understand, continue/i });
-	const reveal = page.getByRole("button", { name: /Reveal the secret/i });
+	const open = page.getByRole("button", { name: /Show the note|Unlock the note/i });
 
-	// Single-read notes gate behind a burn-after-read warning. Both the accept and
-	// reveal buttons are `disabled={!mounted}`, so waiting for one to be enabled
-	// guarantees Svelte has hydrated and the click handler is attached.
-	if (await accept.isVisible()) {
-		await expect(accept).toBeEnabled({ timeout: 30_000 });
-
-		if (options.password === undefined) {
-			// No password: acknowledging the warning decrypts in a single click —
-			// the separate "Reveal the secret" button never appears.
-			await accept.click();
-			return;
-		}
-
-		// Password-protected: acknowledging reveals the password field + reveal CTA.
-		await accept.click();
-	}
-
-	await expect(reveal).toBeEnabled({ timeout: 30_000 });
+	// The button is `disabled={!mounted}`, so waiting for it to be enabled
+	// guarantees Svelte has hydrated and the submit handler is attached.
+	await expect(open).toBeEnabled({ timeout: 30_000 });
 
 	if (options.password !== undefined) {
 		await page.locator("#decrypt-password").fill(options.password);
 	}
-	await reveal.click();
+	await open.click();
 }
 
 /**

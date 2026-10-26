@@ -11,10 +11,13 @@ test.describe("management (revocation) flow", () => {
 		const manageUrl = await getManageUrl(page);
 
 		await page.goto(manageUrl);
-		page.on("dialog", (dialog) => dialog.accept());
-		await page.getByRole("button", { name: /delete/i }).click();
+		// Deleting takes a confirmation step, inside the page rather than a dialog.
+		await page.getByRole("button", { name: "Delete the note" }).click();
+		await page.getByRole("button", { name: "Delete for good" }).click();
 
-		await expect(page.getByText(/deleted/i)).toBeVisible({ timeout: 15_000 });
+		await expect(page.getByRole("heading", { name: /Note deleted/i })).toBeVisible({
+			timeout: 15_000,
+		});
 
 		await page.goto(shareUrl);
 		await expect(page.getByText(/Note not found/i)).toBeVisible();

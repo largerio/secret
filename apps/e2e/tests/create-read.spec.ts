@@ -14,10 +14,6 @@ test("create a note, share it, and decrypt the plaintext in a fresh tab", async 
 	const reader = await context.newPage();
 	await revealNote(reader, shareUrl);
 
-	// A no-password note decrypts straight from the burn acknowledgement, so the
-	// separate "Reveal the secret" button is never shown — one click, not two.
-	await expect(reader.getByRole("button", { name: /Reveal the secret/i })).toHaveCount(0);
-
 	await expect(reader.getByTestId("note-text")).toHaveText(secret, { timeout: 15_000 });
 });
 
@@ -30,9 +26,7 @@ test("a wrong key (tampered fragment) fails to decrypt", async ({ page, context 
 	const reader = await context.newPage();
 	await revealNote(reader, tampered);
 
-	await expect(reader.getByRole("heading", { name: /Decryption failed/i })).toBeVisible({
-		timeout: 15_000,
-	});
+	await expect(reader.getByText(/Decryption failed/i)).toBeVisible({ timeout: 15_000 });
 });
 
 test("a link truncated before the # is reported as incomplete, and does not burn the note", async ({
