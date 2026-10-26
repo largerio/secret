@@ -31,18 +31,11 @@ const appName = $derived(getConfig().appName);
 		box-shadow:
 			inset 0 1px 0 rgb(255 255 255 / 0.25),
 			0 10px 24px -10px var(--accent);
-		animation: float 5s ease-in-out infinite;
 	}
 
 	.name {
 		font-size: 17px;
 		font-weight: 600;
 		letter-spacing: -0.015em;
-	}
-
-	@keyframes float {
-		50% {
-			transform: translateY(-3px);
-		}
 	}
 </style>

@@ -1,49 +1,74 @@
 <svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
   <defs>
-    <radialGradient id="glow" cx="22%" cy="14%" r="62%">
-      <stop offset="0%" stop-color="#e9603f" stop-opacity="0.20"/>
-      <stop offset="55%" stop-color="#e9603f" stop-opacity="0.05"/>
-      <stop offset="100%" stop-color="#e9603f" stop-opacity="0"/>
+    <radialGradient id="glow-a" cx="27%" cy="0%" r="55%">
+      <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#4f46e5" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-b" cx="62%" cy="2%" r="45%">
+      <stop offset="0%" stop-color="#7733e2" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#7733e2" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#f1764f"/>
-      <stop offset="100%" stop-color="#e0573b"/>
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#7733e2"/>
     </linearGradient>
+    <linearGradient id="card-edge" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7733e2"/>
+      <stop offset="30%" stop-color="#4f46e5"/>
+      <stop offset="55%" stop-color="#26262c"/>
+      <stop offset="100%" stop-color="#26262c"/>
+    </linearGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="11" cy="11" r="1.1" fill="#ffffff" fill-opacity="0.07"/>
+    </pattern>
+    <radialGradient id="dots-fade" cx="45%" cy="0%" r="75%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="dots-mask">
+      <rect width="1280" height="640" fill="url(#dots-fade)"/>
+    </mask>
   </defs>
 
-  <!-- background -->
-  <rect width="1280" height="640" fill="#0e0f13"/>
-  <rect width="1280" height="640" fill="url(#glow)"/>
-  <rect x="0.5" y="0.5" width="1279" height="639" rx="0" stroke="#1d2028"/>
+  <!-- background: near-black, the accent glow and a fading dot grid, as in the app -->
+  <rect width="1280" height="640" fill="#09090b"/>
+  <rect width="1280" height="640" fill="url(#glow-a)"/>
+  <rect width="1280" height="640" fill="url(#glow-b)"/>
+  <rect width="1280" height="640" fill="url(#dots)" mask="url(#dots-mask)"/>
 
-  <!-- left: wordmark + copy -->
+  <!-- left: brand and copy -->
   <g transform="translate(96, 150)">
-    <!-- small e2e badge -->
-    <g>
-      <circle cx="8" cy="7" r="5" fill="#36c08a"/>
-      <text x="26" y="13" font-size="20" letter-spacing="3" fill="#36c08a" font-weight="600" font-family="'JetBrains Mono', ui-monospace, monospace">E2E ENCRYPTED · AES-256-GCM</text>
+    <rect width="72" height="72" rx="17" fill="url(#accent)"/>
+    <g transform="translate(18, 16)" stroke="#ffffff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <rect x="2" y="17" width="32" height="22" rx="4.5"/>
+      <path d="M9 17V11a9 9 0 0 1 18 0v6"/>
     </g>
+    <text x="96" y="54" font-size="56" font-weight="600" letter-spacing="-1.2" fill="#f4f4f5">Secret</text>
 
-    <!-- wordmark -->
-    <text x="-4" y="160" font-size="172" fill="#ecedf1" font-family="'Instrument Serif', Georgia, 'Times New Roman', serif" font-style="italic">Secret</text>
+    <text x="0" y="178" font-size="46" font-weight="600" letter-spacing="-1" fill="#f4f4f5">Share notes and files,</text>
+    <text x="0" y="234" font-size="46" font-weight="600" letter-spacing="-1" fill="#f4f4f5">end-to-end encrypted.</text>
+    <text x="0" y="294" font-size="25" fill="#a1a1aa">Encrypted in your browser. The server never sees it.</text>
 
-    <!-- tagline -->
-    <text x="0" y="232" font-size="40" fill="#ecedf1" font-weight="500">Zero-knowledge encrypted note &amp; file sharing.</text>
-    <text x="0" y="288" font-size="27" fill="#a7adbd">Encrypted in your browser — the server never sees your content.</text>
-
-    <!-- alternative-to line -->
-    <text x="0" y="372" font-size="22" fill="#838a9e" font-family="'JetBrains Mono', ui-monospace, monospace">Open-source alternative to PrivateBin · OneTimeSecret · Yopass</text>
+    <text x="0" y="370" font-size="21" fill="#8b8b95">Open source · Self-hostable · Erased after reading</text>
   </g>
 
-  <!-- right: lock motif -->
-  <g transform="translate(958, 196)" stroke="url(#accent)" stroke-width="13" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="34" y="118" width="220" height="168" rx="26" fill="#16181e"/>
-    <path d="M86 118 V82 a58 58 0 0 1 116 0 V118"/>
-    <circle cx="144" cy="188" r="22" fill="url(#accent)" stroke="none"/>
-    <path d="M144 206 V236" stroke="url(#accent)"/>
+  <!-- right: the note card, its arc of accent on the border -->
+  <g transform="translate(856, 170)">
+    <rect x="0" y="0" width="328" height="300" rx="16" fill="#121215" stroke="url(#card-edge)" stroke-width="2"/>
+    <rect x="24" y="30" width="196" height="10" rx="5" fill="#2e2e35"/>
+    <rect x="24" y="54" width="248" height="10" rx="5" fill="#26262c"/>
+    <rect x="24" y="78" width="156" height="10" rx="5" fill="#26262c"/>
+    <rect x="24" y="112" width="280" height="48" rx="10" fill="#1b1b20" stroke="#26262c"/>
+    <text x="40" y="143" font-size="19" letter-spacing="1" font-family="'JetBrains Mono', ui-monospace, monospace"><tspan fill="#f4f4f5">X</tspan><tspan fill="#a1a1aa">k</tspan><tspan fill="#a5a0f2">7</tspan><tspan fill="#c2a3f0">#</tspan><tspan fill="#a1a1aa">m</tspan><tspan fill="#f4f4f5">Q</tspan><tspan fill="#a5a0f2">2</tspan><tspan fill="#a1a1aa">v</tspan><tspan fill="#c2a3f0">@</tspan><tspan fill="#a5a0f2">9</tspan><tspan fill="#a1a1aa">p</tspan><tspan fill="#f4f4f5">L</tspan><tspan fill="#a1a1aa">r</tspan><tspan fill="#c2a3f0">$</tspan><tspan fill="#a5a0f2">4</tspan><tspan fill="#a1a1aa">n</tspan></text>
+    <rect x="24" y="186" width="74" height="8" rx="4" fill="#26262c"/>
+    <rect x="108" y="186" width="58" height="8" rx="4" fill="#4f46e5" fill-opacity="0.55"/>
+    <rect x="176" y="186" width="52" height="8" rx="4" fill="#26262c"/>
+    <rect x="238" y="186" width="66" height="8" rx="4" fill="#7733e2" fill-opacity="0.55"/>
+    <rect x="24" y="226" width="280" height="48" rx="10" fill="url(#accent)"/>
+    <g transform="translate(110, 241)" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <rect x="1" y="7.5" width="14" height="9.5" rx="2"/>
+      <path d="M4 7.5V5a4 4 0 0 1 8 0v2.5"/>
+    </g>
+    <text x="134" y="256" font-size="17" font-weight="500" fill="#ffffff">Encrypt</text>
   </g>
-
-  <!-- footer: domain -->
-  <text x="96" y="588" font-size="26" fill="#838a9e" font-family="'JetBrains Mono', ui-monospace, monospace">secret<tspan fill="#e0573b">.larger.io</tspan></text>
-  <text x="1184" y="588" text-anchor="end" font-size="22" fill="#5a6072" font-family="'JetBrains Mono', ui-monospace, monospace">Svelte 5 · Hono · TypeScript · MIT</text>
 </svg>
