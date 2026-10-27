@@ -32,7 +32,9 @@ image. Each version links to its GitHub release. The SDK has
 - `node apps/api/dist/backup.js <destination>` copies the database while the
   app runs: one consistent snapshot, without the notes already deleted,
   checked, written under a temporary name and renamed into place, never over
-  an existing file. See [Backup & restore](docs/self-hosting.md#backup--restore),
+  an existing file, readable by its owner alone. Ctrl-C or a job's timeout lets
+  the copy finish rather than leave a partial one behind. See
+  [Backup & restore](docs/self-hosting.md#backup--restore),
   which now covers the files and the key, the order to back them up in, the
   restore, and what a stolen backup reveals.
 - Secrets can be read from files, the way Docker and Kubernetes hand them out:
@@ -63,9 +65,12 @@ image. Each version links to its GitHub release. The SDK has
 ### Fixed
 
 - An S3 endpoint that stopped answering held requests, the health check,
-  deletions and the storage sweep indefinitely. Connections now give up after
-  5 seconds, requests and response bodies after 30 seconds without a byte, and
-  the health probe after 5 seconds.
+  deletions and the storage sweep indefinitely; a stuck deletion also stopped
+  the cleanup job until a restart. Connections now give up after 5 seconds and
+  requests after 30 seconds without a byte, on each of three attempts; reading
+  a note gives up on content that stops arriving for 30 seconds; listings and
+  deletions give up after 2 minutes in all, even when the answer stalls after
+  its first bytes; the health probe gives up after 5 seconds.
 - On shutdown, the API cut in-flight requests after 8 seconds whatever the stop
   grace period: raising `stop_grace_period`, as the reference production
   compose file did, gave long uploads no more time. The API now waits
