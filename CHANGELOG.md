@@ -19,9 +19,8 @@ image. Each version links to its GitHub release. The SDK has
 ### Added
 
 - Liveness and readiness probes. `/api/health/live` answers as long as the API
-  process does; `/api/health/ready` checks the database and the storage, and
-  answers `503` as soon as the container starts stopping, so a load balancer
-  stops sending it requests. The image's `HEALTHCHECK` uses readiness. See
+  process does; `/api/health/ready` checks the database and the storage. The
+  image's `HEALTHCHECK` uses readiness. See
   [Monitoring](docs/self-hosting.md#monitoring).
 - `/api/health` and the API reference report the version, and `/api/health`
   the commit the image was built from. An image of `main` built after a
@@ -58,8 +57,8 @@ image. Each version links to its GitHub release. The SDK has
 - The image hands the generated server key to the API by its path rather than
   its value: no process environment holds the key any more. The web server gets
   none of the `_FILE` variables, nor the metrics token.
-- `/api/health` answers `503` with `"status":"draining"` once the container is
-  stopping.
+- Once the container is stopping, it refuses new connections, and a health
+  check still arriving on an open one gets `503` with `"status":"draining"`.
 
 ### Fixed
 

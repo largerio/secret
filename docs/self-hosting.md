@@ -769,8 +769,11 @@ starts but cannot reach its storage. Liveness is for orchestrators that tell
 the two apart, such as Kubernetes: restarting a container does not fix an S3
 outage, so its liveness probe should not fail on one.
 
-**Stopping.** On `SIGTERM`, readiness turns to `draining` at once and the
-container stops accepting connections. The requests in flight get
+**Stopping.** On `SIGTERM`, the container stops accepting connections at once;
+a health check still arriving on an open one gets `draining`. There is no
+window where it keeps taking new requests while reporting `draining`: with
+[one instance per database](#one-instance-per-database), there is no other
+instance to send them to. The requests in flight get
 `SHUTDOWN_TIMEOUT` seconds, 8 by default, then they are cut and the database is
 closed. Docker kills a container 10 seconds after asking it to stop, unless
 told otherwise: to give long uploads more time, raise both, the timeout a
