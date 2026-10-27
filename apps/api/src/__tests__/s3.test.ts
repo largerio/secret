@@ -115,7 +115,91 @@ describe("S3Storage", () => {
 		expect(clientConfigs.at(-1)).toMatchObject({
 			requestHandler: { connectionTimeout: 5_000, socketTimeout: 30_000 },
 		});
-		expect(S3_TIMEOUTS).toEqual({ connectionMs: 5_000, idleMs: 30_000, probeMs: 5_000 });
+		expect(S3_TIMEOUTS).toEqual({
+			connectionMs: 5_000,
+			idleMs: 30_000,
+			requestMs: 120_000,
+			probeMs: 5_000,
+		});
+	});
+
+	describe("the request deadline", () => {
+		/** The command sent and the abort signal it was given, call by call. */
+		function sentWithSignals(): Array<{ command: string; abortSignal: unknown }> {
+			return mockSend.mock.calls.map(([command, options]) => ({
+				command: (command as object).constructor.name,
+				abortSignal: (options as { abortSignal?: unknown } | undefined)?.abortSignal,
+			}));
+		}
+
+		it("is given to every request that moves no note payload, each its own", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend
+				// purge: the file object, a listing, a refused batch, its key alone.
+				.mockResolvedValueOnce({})
+				.mockResolvedValueOnce({ Contents: [{ Key: "notes/note123/chunk_0" }] })
+				.mockRejectedValueOnce(new Error("InvalidRequest"))
+				.mockResolvedValueOnce({})
+				// list, over two pages.
+				.mockResolvedValueOnce({ NextContinuationToken: "page-2" })
+				.mockResolvedValueOnce({})
+				// claim, listClaims.
+				.mockResolvedValueOnce({})
+				.mockResolvedValueOnce({});
+
+			await storage.purge("note123");
+			await collect(storage.list());
+			await storage.claim("instance-a");
+			await storage.listClaims();
+
+			const signals = timeout.mock.results.map((result) => result.value);
+			const durations = [...timeout.mock.calls];
+			timeout.mockRestore();
+
+			expect(sentWithSignals().map(({ command }) => command)).toEqual([
+				"MockDeleteObjectCommand",
+				"MockListObjectsV2Command",
+				"MockDeleteObjectsCommand",
+				"MockDeleteObjectCommand",
+				"MockListObjectsV2Command",
+				"MockListObjectsV2Command",
+				"MockPutObjectCommand",
+				"MockListObjectsV2Command",
+			]);
+			expect(durations).toEqual(Array.from({ length: 8 }, () => [120_000]));
+			for (const [index, { abortSignal }] of sentWithSignals().entries()) {
+				expect(abortSignal).toBe(signals[index]);
+			}
+		});
+
+		it("honors the bound it is given", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend.mockResolvedValueOnce({});
+
+			await new S3Storage(config, { ...S3_TIMEOUTS, requestMs: 1_000 }).claim("instance-a");
+
+			const durations = [...timeout.mock.calls];
+			timeout.mockRestore();
+			expect(durations).toEqual([[1_000]]);
+		});
+
+		it("is not given to a read or a chunk upload: they take as long as their size", async () => {
+			mockSend
+				.mockResolvedValueOnce({ Body: null })
+				.mockResolvedValueOnce({ Body: null })
+				.mockResolvedValueOnce({});
+
+			// No body: the request is all that matters here.
+			await expect(storage.read("notes/note123")).rejects.toThrow("Empty response");
+			await expect(storage.readChunk("note123", 0)).rejects.toThrow("Empty response");
+			await storage.saveChunk("note123", 0, Buffer.from("chunk-data"));
+
+			expect(sentWithSignals()).toEqual([
+				{ command: "MockGetObjectCommand", abortSignal: undefined },
+				{ command: "MockGetObjectCommand", abortSignal: undefined },
+				{ command: "MockPutObjectCommand", abortSignal: undefined },
+			]);
+		});
 	});
 
 	describe("probe", () => {

@@ -1,30 +1,44 @@
 import { once } from "node:events";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, it } from "vitest";
 import { S3_TIMEOUTS, S3Storage, type S3Timeouts } from "../storage/s3.js";
 
 /*
- * The real SDK client against an endpoint that takes every request and never
- * answers: what s3.test.ts cannot show with a mocked client, that the SDK
- * honors the timeouts S3Storage hands it. The bounds are shortened to keep the
- * test quick. Below 6 s the SDK sets its idle timeout as the request starts;
- * the production value is only set 3 s in, which is why a body that stalls
- * after a quick answer has a guard of its own (see s3.test.ts).
+ * The real SDK client against endpoints that misbehave: what s3.test.ts cannot
+ * show with a mocked client, that the SDK honors the timeouts S3Storage hands
+ * it. The bounds are shortened to keep the tests quick. Below 6 s the SDK sets
+ * its idle timeout as the request starts; the production value is only set
+ * 3 s in, and dropped once the headers are in, which is why a body that
+ * stalls after a quick answer needs a guard of its own.
  */
 
 let server: Server | undefined;
 let requests = 0;
 
-/** An endpoint that counts requests and answers none. */
-async function silentEndpoint(): Promise<string> {
+/** An endpoint that counts requests and hands each to `respond`. */
+async function endpoint(
+	respond: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<string> {
 	requests = 0;
-	server = createServer(() => {
+	server = createServer((request, response) => {
 		requests++;
+		respond(request, response);
 	});
 	server.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	return `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+}
+
+/** An endpoint that answers none of its requests. */
+function silentEndpoint(): Promise<string> {
+	return endpoint(() => {});
+}
+
+/** Answers with headers and the start of a body, then nothing. */
+function stall(response: ServerResponse): void {
+	response.writeHead(200, { "Content-Type": "application/xml" });
+	response.write('<?xml version="1.0" encoding="UTF-8"?>\n<ListBucketResult>');
 }
 
 function storageAt(endpoint: string, timeouts: Partial<S3Timeouts>): S3Storage {
@@ -63,6 +77,64 @@ it("holds the health probe to its deadline, without retrying", async () => {
 	await expect(storage.probe()).rejects.toMatchObject({ name: "AbortError" });
 	expect(Date.now() - started).toBeLessThan(2_000);
 	expect(requests).toBe(1);
+
+	await storage.close();
+});
+
+it("gives up on a listing that stops arriving after its headers, at the request deadline", async () => {
+	// The production idle bound, which the SDK has dropped by then: only the
+	// deadline ends the purge.
+	const storage = storageAt(
+		await endpoint((request, response) => {
+			if (request.method === "DELETE") {
+				response.writeHead(204).end();
+				return;
+			}
+			stall(response);
+		}),
+		{ requestMs: 300 },
+	);
+	const started = Date.now();
+
+	await expect(storage.purge("note123")).rejects.toMatchObject({ name: "AbortError" });
+	expect(Date.now() - started).toBeLessThan(2_000);
+	// The file object's delete, then the listing: no attempt past the deadline.
+	expect(requests).toBe(2);
+
+	await storage.close();
+});
+
+it("gives up on a batch delete that stalls the same way, and deletes its keys one by one", async () => {
+	const deleted: string[] = [];
+	const storage = storageAt(
+		await endpoint((request, response) => {
+			if (request.method === "DELETE") {
+				deleted.push(request.url ?? "");
+				response.writeHead(204).end();
+				return;
+			}
+			if (request.method === "GET") {
+				response
+					.writeHead(200, { "Content-Type": "application/xml" })
+					.end(
+						'<?xml version="1.0" encoding="UTF-8"?>\n<ListBucketResult><IsTruncated>false</IsTruncated>' +
+							"<Contents><Key>notes/note123/chunk_0</Key></Contents></ListBucketResult>",
+					);
+				return;
+			}
+			// The DeleteObjects call.
+			stall(response);
+		}),
+		{ requestMs: 300 },
+	);
+	const started = Date.now();
+
+	await expect(storage.purge("note123")).resolves.toBeUndefined();
+	expect(Date.now() - started).toBeLessThan(2_000);
+	expect(deleted).toEqual([
+		"/test-bucket/notes/note123?x-id=DeleteObject",
+		"/test-bucket/notes/note123/chunk_0?x-id=DeleteObject",
+	]);
 
 	await storage.close();
 });

@@ -26,18 +26,29 @@ export interface S3Config {
 }
 
 /**
- * How long a silent endpoint is waited on. These bound silence, not transfer
- * time: an upload keeps its socket busy however large and slow it is, so they
- * need no setting.
+ * How long S3 is waited on. connectionMs and idleMs bound silence, not
+ * transfer time: an upload keeps its socket busy however large and slow it
+ * is. They apply to each attempt, and the SDK makes three in all. requestMs
+ * and probeMs are deadlines, retries included.
  */
 export interface S3Timeouts {
-	/** Establishing the TCP connection. */
+	/** Establishing the TCP connection, on each attempt. */
 	readonly connectionMs: number;
 	/**
-	 * Not a byte either way on an open request, such as a server that took the
-	 * request and never answers, or a body that stops arriving.
+	 * Not a byte either way on an open request, on each attempt, such as a
+	 * server that took the request and never answers, or a body that stops
+	 * arriving.
 	 */
 	readonly idleMs: number;
+	/**
+	 * A request that moves no note payload (a listing, a delete, a claim),
+	 * retries included. Above 6 s the SDK drops its idle timeout once the
+	 * headers are in, so a body that stopped arriving after them would hold
+	 * the request, and the purge or sweep behind it, for good. A read has a
+	 * guard of its own (streamToBuffer), and an upload takes as long as its
+	 * size makes it.
+	 */
+	readonly requestMs: number;
 	/** The health probe, retries included. */
 	readonly probeMs: number;
 }
@@ -47,6 +58,10 @@ export const S3_TIMEOUTS: S3Timeouts = {
 	// Above the 6 s the SDK waits for a 100 Continue before sending a body
 	// anyway, and above what a server takes to delete 1000 keys in one call.
 	idleMs: 30_000,
+	// Above three attempts that each wait out connectionMs and idleMs, 105 s,
+	// so the SDK's own retries run their course first, and well above what a
+	// slow server takes to delete 1000 keys in one call.
+	requestMs: 120_000,
 	// HeadBucket answers in well under a second: a storage this slow cannot
 	// serve notes either.
 	probeMs: 5_000,
@@ -153,6 +168,16 @@ export class S3Storage implements StorageBackend {
 		await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }), {
 			abortSignal: AbortSignal.timeout(this.timeouts.probeMs),
 		});
+	}
+
+	/**
+	 * The options of a request that moves no note payload: a deadline of its
+	 * own, retries included (see S3Timeouts.requestMs). Once it passes, the
+	 * request fails with an AbortError, which callers take like any other
+	 * storage failure: a purge stays queued for a retry.
+	 */
+	private deadline(): { abortSignal: AbortSignal } {
+		return { abortSignal: AbortSignal.timeout(this.timeouts.requestMs) };
 	}
 
 	async save(noteId: string, data: Buffer): Promise<string> {
@@ -278,6 +303,7 @@ export class S3Storage implements StorageBackend {
 				Key: `${CLAIMS_PREFIX}${instanceId}`,
 				Body: Buffer.alloc(0),
 			}),
+			this.deadline(),
 		);
 	}
 
@@ -302,6 +328,7 @@ export class S3Storage implements StorageBackend {
 					Prefix: prefix,
 					...(continuationToken ? { ContinuationToken: continuationToken } : {}),
 				}),
+				this.deadline(),
 			);
 			yield page.Contents ?? [];
 			continuationToken = page.NextContinuationToken;
@@ -310,7 +337,10 @@ export class S3Storage implements StorageBackend {
 
 	private async deleteKey(key: string): Promise<void> {
 		try {
-			await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+			await this.client.send(
+				new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+				this.deadline(),
+			);
 		} catch (err) {
 			if (!isNotFoundError(err)) {
 				throw err;
@@ -327,11 +357,13 @@ export class S3Storage implements StorageBackend {
 					Bucket: this.bucket,
 					Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
 				}),
+				this.deadline(),
 			));
 		} catch {
 			// The batch call needs a checksum header, and not every S3 server
-			// accepts the one the SDK sends. One DELETE per key works everywhere;
-			// a failure there is the one that counts.
+			// accepts the one the SDK sends; some take too long over it. One
+			// DELETE per key works everywhere; a failure there is the one that
+			// counts.
 			await runWithConcurrency(keys, DELETE_CONCURRENCY, (key) => this.deleteKey(key));
 			return;
 		}
