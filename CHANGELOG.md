@@ -40,7 +40,8 @@ image. Each version links to its GitHub release. The SDK has
 - Secrets can be read from files, the way Docker and Kubernetes hand them out:
   `SERVER_ENCRYPTION_KEY_FILE`, `API_KEY_FILE` (and `API_KEY_1_FILE`…),
   `S3_ACCESS_KEY_ID_FILE`, `S3_SECRET_ACCESS_KEY_FILE`, `METRICS_TOKEN_FILE`.
-  See [Secrets in files](docs/self-hosting.md#secrets-in-files).
+  `docker-compose.yml` passes them all on from `.env`, `API_KEY_1_FILE` to
+  `API_KEY_3_FILE` included. See [Secrets in files](docs/self-hosting.md#secrets-in-files).
 - The self-hosting guide explains why an instance runs alone on its database
   ([One instance per database](docs/self-hosting.md#one-instance-per-database)),
   and how to keep note creation to your own users behind a login

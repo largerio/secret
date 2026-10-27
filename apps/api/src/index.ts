@@ -81,8 +81,8 @@ function shutdown(exitCode = 0): void {
 	shuttingDown = true;
 
 	log.info("graceful shutdown initiated");
-	// First, so a load balancer polling readiness stops sending requests while
-	// the ones in flight finish.
+	// server.close() below refuses new connections at once; a health check
+	// still arriving on an open one hears `draining` instead of `ok`.
 	drain();
 	stopJobs();
 	for (const limiter of rateLimiters) {

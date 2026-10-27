@@ -142,7 +142,7 @@ Run `pnpm test` before committing. New features must include tests.
 ### Patterns
 
 - API tests use Hono's `app.request()` — no HTTP server needed
-- App assembly is split into testable factories: `parseConfig` (`apps/api/src/config.ts`) and `createApp` (`apps/api/src/app.ts`); `index.ts` is thin bootstrap glue
+- App assembly is split into testable factories: `parseConfig` (`apps/api/src/config.ts`), `createApp` (`apps/api/src/app.ts`), and `startInstance` (`apps/api/src/instance.ts`: the app, its jobs and the one metrics registry they share); `index.ts` is thin bootstrap glue
 - Database tests use real SQLite (file-based, cleaned up in `beforeEach`)
 - S3 tests mock `@aws-sdk/client-s3` with class-based mocks
 - Crypto tests require `await initSodium()` in `beforeAll`; the test vectors in `packages/shared/src/test-vectors/vectors.json` are generated **and** consumed by the JS suite (`generate-test-vectors.test.ts`). They are structured for cross-language reuse, but there is currently no external (non-JS) implementation validating against them in CI — the "cross-language interoperability" framing is forward-looking, not an enforced guarantee.
