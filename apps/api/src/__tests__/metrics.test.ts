@@ -416,7 +416,7 @@ describe("GET /api/metrics", () => {
 		const nonce = Buffer.from("test-nonce-24-bytes!!!!").toString("base64");
 		const secrets: string[] = [];
 
-		async function createText(maxReads: number) {
+		async function createJson(options: { maxReads: number; fileCount: number }) {
 			const res = await app.request("/api/v1/notes", {
 				method: "POST",
 				headers: { ...auth, "Content-Type": "application/json" },
@@ -425,8 +425,7 @@ describe("GET /api/metrics", () => {
 					clientNonce: nonce,
 					hasPassword: false,
 					expiresIn: 3600,
-					maxReads,
-					fileCount: 0,
+					...options,
 				}),
 			});
 			expect(res.status).toBe(201);
@@ -436,10 +435,15 @@ describe("GET /api/metrics", () => {
 		}
 
 		// A text note burned by its only read.
-		const burned = await createText(1);
+		const burned = await createJson({ maxReads: 1, fileCount: 0 });
 		expect((await app.request(`/api/v1/notes/${burned.id}`)).status).toBe(200);
 
-		// A file note, read raw.
+		// A file note sent as JSON, which /:id serves like a text note.
+		const jsonFile = await createJson({ maxReads: 0, fileCount: 1 });
+		expect((await app.request(`/api/v1/notes/${jsonFile.id}`)).status).toBe(200);
+		expect((await app.request(`/api/v1/notes/${jsonFile.id}/exists`)).status).toBe(200);
+
+		// A file note, burned by its only read, raw.
 		const form = new FormData();
 		form.append(
 			"metadata",
@@ -447,7 +451,7 @@ describe("GET /api/metrics", () => {
 				clientNonce: nonce,
 				hasPassword: false,
 				expiresIn: 3600,
-				maxReads: 0,
+				maxReads: 1,
 				fileCount: 1,
 			}),
 		);
@@ -460,17 +464,16 @@ describe("GET /api/metrics", () => {
 		const file = (await fileRes.json()) as { id: string; deleteToken: string };
 		secrets.push(file.id, file.deleteToken);
 		expect((await app.request(`/api/v1/notes/${file.id}/raw`)).status).toBe(200);
-		expect((await app.request(`/api/v1/notes/${file.id}/exists`)).status).toBe(200);
 
 		// A text note deleted with its token.
-		const deleted = await createText(0);
+		const deleted = await createJson({ maxReads: 0, fileCount: 0 });
 		const del = await app.request(`/api/v1/notes/${deleted.id}`, {
 			method: "DELETE",
 			headers: { ...auth, "X-Delete-Token": deleted.deleteToken },
 		});
 		expect(del.status).toBe(200);
 
-		// A chunked note, streamed.
+		// A chunked note, burned by its only read, streamed.
 		const init = await app.request("/api/v1/notes/upload/init", {
 			method: "POST",
 			headers: { ...auth, "Content-Type": "application/json" },
@@ -479,7 +482,7 @@ describe("GET /api/metrics", () => {
 				clientNonce: nonce,
 				hasPassword: false,
 				expiresIn: 3600,
-				maxReads: 0,
+				maxReads: 1,
 				fileCount: 1,
 				chunkCount: 1,
 			}),
@@ -501,27 +504,32 @@ describe("GET /api/metrics", () => {
 		const stream = await app.request(`/api/v1/notes/${chunked.id}/stream`);
 		expect(stream.status).toBe(200);
 		await stream.arrayBuffer();
+		// The burned stream purges its chunks once the body is out.
+		await vi.waitFor(() =>
+			expect(sqlite.prepare("SELECT COUNT(*) AS n FROM pending_deletions").get()).toEqual({ n: 0 }),
+		);
 
 		const text = await (await scrape(app)).text();
 
 		expect(sample(text, 'secret_notes_created_total{type="text"}')).toBe(2);
-		expect(sample(text, 'secret_notes_created_total{type="file"}')).toBe(1);
+		expect(sample(text, 'secret_notes_created_total{type="file"}')).toBe(2);
 		expect(sample(text, 'secret_notes_created_total{type="chunked"}')).toBe(1);
 		expect(sample(text, 'secret_note_reads_total{type="text"}')).toBe(1);
-		expect(sample(text, 'secret_note_reads_total{type="file"}')).toBe(1);
+		expect(sample(text, 'secret_note_reads_total{type="file"}')).toBe(2);
 		expect(sample(text, 'secret_note_reads_total{type="chunked"}')).toBe(1);
-		expect(sample(text, "secret_notes_burned_total")).toBe(1);
+		// The text note by /:id, the file note by /raw, the chunked one by /stream.
+		expect(sample(text, "secret_notes_burned_total")).toBe(3);
 		expect(sample(text, "secret_notes_deleted_total")).toBe(1);
 		expect(sample(text, 'secret_notes{type="text"}')).toBe(0);
 		expect(sample(text, 'secret_notes{type="file"}')).toBe(1);
-		expect(sample(text, 'secret_notes{type="chunked"}')).toBe(1);
+		expect(sample(text, 'secret_notes{type="chunked"}')).toBe(0);
 		expect(sample(text, "secret_storage_used_bytes")).toBeGreaterThan(0);
 		expect(
 			sample(
 				text,
 				'secret_http_requests_total{method="GET",route="/api/v1/notes/:id",status="2xx"}',
 			),
-		).toBe(1);
+		).toBe(2);
 		expect(
 			sample(
 				text,
