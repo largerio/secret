@@ -10,6 +10,7 @@ import { parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { createLogger } from "../logger.js";
 import { type AppMetrics, countPurges, createMetrics } from "../metrics.js";
+import { getStorageUsedBytes } from "../quota.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { stubStorage } from "./storageDoubles.js";
@@ -131,6 +132,12 @@ describe("createMetrics", () => {
 				 VALUES ('upload0000000000000001', '{}', 2, 'pendingNote1', 'token', 1, 9999999999999)`,
 			)
 			.run();
+		sqlite
+			.prepare(
+				`INSERT INTO upload_chunks (upload_id, chunk_index, size_bytes)
+				 VALUES ('upload0000000000000001', 0, 300), ('upload0000000000000001', 1, 7)`,
+			)
+			.run();
 		const insertDeletion = sqlite.prepare(
 			"INSERT INTO pending_deletions (note_id, attempts, next_retry_at, created_at) VALUES (?, ?, 1, 1)",
 		);
@@ -144,7 +151,9 @@ describe("createMetrics", () => {
 		expect(sample(text, 'secret_notes{type="file"}')).toBe(1);
 		expect(sample(text, 'secret_notes{type="chunked"}')).toBe(1);
 		expect(sample(text, "secret_upload_sessions")).toBe(1);
-		expect(sample(text, "secret_storage_used_bytes")).toBe(3150);
+		// The notes, then the chunks of the upload in progress: what the quota counts.
+		expect(sample(text, "secret_storage_used_bytes")).toBe(3457);
+		expect(getStorageUsedBytes(db)).toBe(3457);
 		expect(sample(text, 'secret_pending_deletions{state="queued"}')).toBe(2);
 		expect(sample(text, 'secret_pending_deletions{state="retrying"}')).toBe(1);
 		expect(text).not.toMatch(/Note000|goneNote|upload0000/);

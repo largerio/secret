@@ -6,7 +6,6 @@ import type { AppDatabase } from "./db/index.js";
 import { type Logger, log } from "./logger.js";
 import { matchedRoute } from "./middleware/requestContext.js";
 import { createRegistry, EXPOSITION_CONTENT_TYPE } from "./prometheus.js";
-import { getStorageUsedBytes } from "./quota.js";
 import type { SweepOutcome } from "./reconcile.js";
 // Not storage/index.js: it loads both backends, and the shared schemas with them.
 import { describeStorageError } from "./storage/errors.js";
@@ -60,6 +59,7 @@ interface DatabaseCounts {
 	readonly textNotes: number;
 	readonly fileNotes: number;
 	readonly chunkedNotes: number;
+	readonly usedBytes: number;
 	readonly uploads: number;
 	readonly queued: number;
 	readonly retrying: number;
@@ -195,20 +195,30 @@ export function createMetrics(deps: {
 
 	function readDatabase(): void {
 		let counts: DatabaseCounts;
-		let usedBytes: number;
 		try {
-			// A scalar SELECT always yields exactly one row.
+			// Every scrape blocks the event loop for this: one pass per table.
+			// usedBytes is the sum getStorageUsedBytes takes for the quota
+			// (quota.ts), from the same pass over notes. Aggregates without
+			// GROUP BY always yield exactly one row.
 			counts = db.get<DatabaseCounts>(sql`
 				SELECT
-					(SELECT COUNT(*) FROM notes
-					  WHERE file_path IS NULL AND COALESCE(chunk_count, 0) = 0) AS textNotes,
-					(SELECT COUNT(*) FROM notes WHERE file_path IS NOT NULL) AS fileNotes,
-					(SELECT COUNT(*) FROM notes WHERE chunk_count > 0) AS chunkedNotes,
+					n.textNotes, n.fileNotes, n.chunkedNotes,
+					n.bytes + (SELECT COALESCE(SUM(size_bytes), 0) FROM upload_chunks) AS usedBytes,
 					(SELECT COUNT(*) FROM uploads) AS uploads,
-					(SELECT COUNT(*) FROM pending_deletions WHERE attempts = 0) AS queued,
-					(SELECT COUNT(*) FROM pending_deletions WHERE attempts > 0) AS retrying
+					d.queued, d.retrying
+				FROM
+					(SELECT
+						COUNT(*) FILTER (WHERE file_path IS NULL AND COALESCE(chunk_count, 0) = 0)
+							AS textNotes,
+						COUNT(*) FILTER (WHERE file_path IS NOT NULL) AS fileNotes,
+						COUNT(*) FILTER (WHERE chunk_count > 0) AS chunkedNotes,
+						COALESCE(SUM(size_bytes), 0) AS bytes
+					FROM notes) AS n,
+					(SELECT
+						COUNT(*) FILTER (WHERE attempts = 0) AS queued,
+						COUNT(*) FILTER (WHERE attempts > 0) AS retrying
+					FROM pending_deletions) AS d
 			`) as DatabaseCounts;
-			usedBytes = getStorageUsedBytes(db);
 		} catch (err) {
 			// Absent rather than stale: a scrape without them says the read failed.
 			for (const gauge of databaseGauges) {
@@ -223,7 +233,7 @@ export function createMetrics(deps: {
 		notes.set({ type: "file" }, counts.fileNotes);
 		notes.set({ type: "chunked" }, counts.chunkedNotes);
 		uploadSessions.set({}, counts.uploads);
-		storageUsed.set({}, usedBytes);
+		storageUsed.set({}, counts.usedBytes);
 		pending.set({ state: "queued" }, counts.queued);
 		pending.set({ state: "retrying" }, counts.retrying);
 	}
