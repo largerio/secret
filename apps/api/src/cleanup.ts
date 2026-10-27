@@ -28,6 +28,14 @@ interface Batch {
 	readonly deletions: readonly PendingDeletion[];
 }
 
+interface BatchOptions {
+	readonly batchSize: number;
+	/** The log line that reports how many rows went, once per pass. */
+	readonly logAs: string;
+	/** Hears of every batch that deleted rows, as soon as it commits. */
+	readonly onCommit?: (count: number) => void;
+}
+
 /**
  * Run `deleteBatch` in a transaction of its own until a batch comes back
  * short. Each batch queues the purges of what it deletes in that transaction,
@@ -37,22 +45,32 @@ interface Batch {
 async function deleteInBatches(
 	db: AppDatabase,
 	storage: StorageBackend,
-	batchSize: number,
+	{ batchSize, logAs, onCommit }: BatchOptions,
 	deleteBatch: (tx: Transaction) => Batch,
-): Promise<number> {
+): Promise<void> {
 	let deleted = 0;
-	for (;;) {
-		const batch = db.transaction(deleteBatch);
-		await runWithConcurrency(batch.deletions, CLEANUP_CONCURRENCY, (deletion) =>
-			runDeletion(db, storage, deletion),
-		);
-		deleted += batch.count;
-		if (batch.count < batchSize) {
-			return deleted;
+	try {
+		for (;;) {
+			const batch = db.transaction(deleteBatch);
+			if (batch.count > 0) {
+				deleted += batch.count;
+				onCommit?.(batch.count);
+			}
+			await runWithConcurrency(batch.deletions, CLEANUP_CONCURRENCY, (deletion) =>
+				runDeletion(db, storage, deletion),
+			);
+			if (batch.count < batchSize) {
+				return;
+			}
+			// A batch of inline notes awaits nothing that leaves the process: let
+			// the requests queued meanwhile run before the next one.
+			await nextTurn();
 		}
-		// A batch of inline notes awaits nothing that leaves the process: let the
-		// requests queued meanwhile run before the next one.
-		await nextTurn();
+	} finally {
+		// Even when a later batch failed: the ones committed before it are gone.
+		if (deleted > 0) {
+			log.info(logAs, { count: deleted });
+		}
 	}
 }
 
@@ -73,7 +91,12 @@ export async function runCleanup(
 	try {
 		const now = new Date();
 
-		const expiredNotes = await deleteInBatches(db, storage, batchSize, (tx) => {
+		const noteBatches: BatchOptions = {
+			batchSize,
+			logAs: "expired notes deleted",
+			onCommit: (count) => metrics?.notesExpired(count),
+		};
+		await deleteInBatches(db, storage, noteBatches, (tx) => {
 			const rows = tx
 				.select({
 					id: notes.id,
@@ -96,12 +119,8 @@ export async function runCleanup(
 			};
 		});
 
-		if (expiredNotes > 0) {
-			metrics?.notesExpired(expiredNotes);
-			log.info("expired notes deleted", { count: expiredNotes });
-		}
-
-		const expiredUploads = await deleteInBatches(db, storage, batchSize, (tx) => {
+		const uploadBatches: BatchOptions = { batchSize, logAs: "expired upload sessions deleted" };
+		await deleteInBatches(db, storage, uploadBatches, (tx) => {
 			const rows = tx
 				.select({ id: uploads.id, noteId: uploads.noteId })
 				.from(uploads)
@@ -119,10 +138,6 @@ export async function runCleanup(
 				deletions: rows.map((row) => enqueueDeletion(tx, row.noteId)),
 			};
 		});
-
-		if (expiredUploads > 0) {
-			log.info("expired upload sessions deleted", { count: expiredUploads });
-		}
 
 		const drainResult = await drainPendingDeletions(db, storage, CLEANUP_CONCURRENCY);
 		if (drainResult.abandoned > 0) {

@@ -338,6 +338,24 @@ describe("runCleanup in batches", () => {
 		}
 	}
 
+	// The same for upload sessions.
+	function insertExpiredUploads(count: number): void {
+		for (let i = 1; i <= count; i++) {
+			insertUpload(
+				`upload00000${String(i)}`,
+				`uploadnote0${String(i)}`,
+				new Date(Date.now() - 60_000 + i * 1000),
+			);
+		}
+	}
+
+	/** The lines logged with this message. */
+	function logged(spy: { mock: { calls: unknown[][] } }, msg: string): string[] {
+		return spy.mock.calls
+			.map(([line]) => String(line))
+			.filter((line) => line.includes(`"msg":"${msg}"`));
+	}
+
 	it("commits and purges each batch before taking the next", async () => {
 		const notesLeftAtPurge: Record<string, number> = {};
 		const tracked = stubStorage({
@@ -399,16 +417,45 @@ describe("runCleanup in batches", () => {
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"msg":"cleanup job failed"'));
 	});
 
+	it("reports the batches committed before a failure, in one log line", async () => {
+		// The third batch fails: the first two are gone all the same.
+		sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+			WHEN NEW.note_id = 'batched00005'
+			BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const metrics = { notesExpired: vi.fn(), deletionsAbandoned: vi.fn() };
+		insertExpiredFileNotes(6);
+
+		await runCleanup(db, stubStorage(), { batchSize: 2, metrics });
+
+		expect(noteIds()).toEqual(["batched00005", "batched00006"]);
+		expect(metrics.notesExpired.mock.calls).toEqual([[2], [2]]);
+		expect(logged(consoleLog, "expired notes deleted")).toEqual([
+			expect.stringContaining('"count":4'),
+		]);
+		expect(logged(consoleError, "cleanup job failed")).toHaveLength(1);
+	});
+
+	it("reports the upload sessions committed before a failure the same way", async () => {
+		sqlite.exec(`CREATE TRIGGER outbox_full BEFORE INSERT ON pending_deletions
+			WHEN NEW.note_id = 'uploadnote03'
+			BEGIN SELECT RAISE(ABORT, 'outbox full'); END`);
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		insertExpiredUploads(3);
+
+		await runCleanup(db, stubStorage(), { batchSize: 2 });
+
+		expect(logged(consoleLog, "expired upload sessions deleted")).toEqual([
+			expect.stringContaining('"count":2'),
+		]);
+	});
+
 	it("deletes expired upload sessions in batches too", async () => {
 		const tracked = stubStorage();
 		vi.spyOn(console, "log").mockImplementation(() => {});
-		for (let i = 1; i <= 3; i++) {
-			insertUpload(
-				`upload00000${String(i)}`,
-				`uploadnote0${String(i)}`,
-				new Date(Date.now() - 60_000 + i * 1000),
-			);
-		}
+		insertExpiredUploads(3);
 
 		await runCleanup(db, tracked, { batchSize: 2 });
 
