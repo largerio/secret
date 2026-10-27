@@ -20,18 +20,22 @@ function pragma(name: string): unknown {
 	return Object.values(sqlite.prepare(`PRAGMA ${name}`).get() ?? {})[0];
 }
 
-// Another connection, in a thread of its own, that holds the write lock for
-// `holdMs` and then commits.
+// Another connection, in a thread of its own, that takes the write lock, waits
+// for the main thread to be about to write, holds the lock `holdMs` longer,
+// then commits and reports when it let go.
 const LOCK_HOLDER = `
 const { DatabaseSync } = require("node:sqlite");
 const { parentPort, workerData } = require("node:worker_threads");
+const writing = new Int32Array(workerData.writing);
 const db = new DatabaseSync(workerData.path);
 db.exec("BEGIN IMMEDIATE");
 parentPort.postMessage("locked");
-setTimeout(() => {
-	db.exec("COMMIT");
-	db.close();
-}, workerData.holdMs);
+Atomics.wait(writing, 0, 0);
+Atomics.wait(writing, 0, 1, workerData.holdMs);
+const releasedAt = Date.now();
+db.exec("COMMIT");
+db.close();
+parentPort.postMessage(releasedAt);
 `;
 
 beforeAll(() => {
@@ -69,18 +73,26 @@ describe("createDatabase", () => {
 	});
 
 	it("waits for a lock another connection holds instead of failing at once", async () => {
+		const writing = new Int32Array(new SharedArrayBuffer(4));
 		const holder = new Worker(LOCK_HOLDER, {
 			eval: true,
-			workerData: { path: TEST_DB_PATH, holdMs: 300 },
+			workerData: { path: TEST_DB_PATH, holdMs: 200, writing: writing.buffer },
 		});
 		await once(holder, "message");
+		const released = once(holder, "message");
 
-		const started = performance.now();
+		// From here the holder keeps the lock 200 ms more: the insert below meets
+		// it, and without a busy timeout would fail at once with SQLITE_BUSY.
+		Atomics.store(writing, 0, 1);
+		Atomics.notify(writing, 0);
 		sqlite.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run("waited", "yes");
-		const waited = performance.now() - started;
+		const insertedAt = Date.now();
+		const [releasedAt] = (await released) as [number];
 		await once(holder, "exit");
 
-		expect(waited).toBeGreaterThan(200);
+		// It went through once the lock was let go, not before. An order rather
+		// than a duration: how late this thread runs cannot make it fail.
+		expect(insertedAt).toBeGreaterThanOrEqual(releasedAt);
 		expect(sqlite.prepare("SELECT value FROM meta WHERE key = 'waited'").get()).toEqual({
 			value: "yes",
 		});
