@@ -50,6 +50,21 @@ describe("docker-compose.yml", () => {
 		expect(dropped).toEqual([]);
 	});
 
+	// The secrets the API also reads from a file (readSecret in
+	// apps/api/src/config.ts). A secret forwarded without its _FILE leaves the
+	// file variant, which .env.example and the docs announce, ignored in silence.
+	it("forwards each secret it forwards with its _FILE", () => {
+		const secret =
+			/^(SERVER_ENCRYPTION_KEY|API_KEY(_\d+)?|S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY|METRICS_TOKEN)$/;
+		const forwarded = new Set(forwardedVariables(read("docker-compose.yml")));
+
+		const secrets = [...forwarded].filter((name) => secret.test(name));
+		const withoutFile = secrets.filter((name) => !forwarded.has(`${name}_FILE`));
+
+		expect(secrets).toContain("API_KEY_1");
+		expect(withoutFile).toEqual([]);
+	});
+
 	it("reads something from both files", () => {
 		expect(declaredVariables(read(".env.example")).length).toBeGreaterThan(20);
 		expect(forwardedVariables(read("docker-compose.yml")).length).toBeGreaterThan(20);

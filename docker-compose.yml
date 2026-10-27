@@ -42,6 +42,9 @@ services:
       - API_KEY_2=${API_KEY_2:-}
       - API_KEY_3=${API_KEY_3:-}
       - API_KEY_FILE=${API_KEY_FILE:-}
+      - API_KEY_1_FILE=${API_KEY_1_FILE:-}
+      - API_KEY_2_FILE=${API_KEY_2_FILE:-}
+      - API_KEY_3_FILE=${API_KEY_3_FILE:-}
       - CAP_DIFFICULTY=${CAP_DIFFICULTY:-4}
       - CAP_CHALLENGE_COUNT=${CAP_CHALLENGE_COUNT:-50}
       # Behind a reverse proxy, rate limits only tell clients apart once
