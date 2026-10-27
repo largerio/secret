@@ -370,6 +370,28 @@ describe("startReconcileJob", () => {
 		expect(logged[1]).toContain('"detail":"string"');
 	});
 
+	it("tells onSweep how each run ended", async () => {
+		vi.useFakeTimers();
+		claimedTwoDaysAgo();
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const swept = orphanStorage();
+		vi.mocked(swept.claim)
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error("down"));
+		const onSweep = vi.fn();
+
+		const job = startReconcileJob(db, swept, onSweep);
+		await vi.advanceTimersByTimeAsync(RECONCILE_FIRST_RUN_MS);
+		await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS);
+		job.stop();
+
+		expect(onSweep.mock.calls).toEqual([
+			[{ status: "done", scanned: 1, purged: 1, failed: 0 }],
+			[{ status: "failed" }],
+		]);
+	});
+
 	it("runs no more sweeps once stopped", async () => {
 		vi.useFakeTimers();
 		const swept = orphanStorage();

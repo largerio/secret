@@ -8,9 +8,11 @@ import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { UNKNOWN_BUILD } from "../buildInfo.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
+import { type AppMetrics, createMetrics } from "../metrics.js";
 import { createWriteAuth } from "../middleware/auth.js";
 import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
@@ -34,6 +36,7 @@ interface AppEnv {
 		maxChunkedFileSize: number;
 		maxExpirySeconds: number;
 		maxFilesPerNote: number;
+		metrics: AppMetrics;
 	};
 }
 
@@ -45,10 +48,15 @@ let db: AppDatabase;
 let sqlite: DatabaseSync;
 let app: Hono<AppEnv>;
 
+function testMetrics(database: AppDatabase): AppMetrics {
+	return createMetrics({ db: database, build: UNKNOWN_BUILD, quotaBytes: 0 });
+}
+
 function createApp(
 	database: AppDatabase,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
 ) {
+	const metrics = testMetrics(database);
 	const hono = new Hono<AppEnv>();
 	hono.onError((err, c) => {
 		if (err instanceof HTTPException) {
@@ -62,6 +70,7 @@ function createApp(
 		c.set("storage", storage);
 		c.set("chunkSize", 4_194_304);
 		c.set("maxChunkedFileSize", 524_288_000);
+		c.set("metrics", metrics);
 		await next();
 	});
 	const writeAuth = createWriteAuth([]);
@@ -249,6 +258,7 @@ describe("POST /api/v1/notes", () => {
 			c.set("maxChunkedFileSize", 524_288_000);
 			c.set("maxExpirySeconds", 2_592_000);
 			c.set("maxFilesPerNote", 10);
+			c.set("metrics", testMetrics(db));
 			await next();
 		});
 		const writeAuth = createWriteAuth(["valid-api-key"]);
@@ -2556,6 +2566,7 @@ describe("operator policy limits", () => {
 			c.set("maxChunkedFileSize", 524_288_000);
 			c.set("maxExpirySeconds", limits.maxExpirySeconds);
 			c.set("maxFilesPerNote", limits.maxFilesPerNote);
+			c.set("metrics", testMetrics(db));
 			await next();
 		});
 		hono.use("/api/v1/notes/*", createWriteAuth([]));

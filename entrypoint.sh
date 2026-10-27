@@ -10,31 +10,36 @@ trap term TERM INT
 
 # Resolve the server encryption key so a fresh instance boots with zero config.
 # Priority:
-#   1. SERVER_ENCRYPTION_KEY from the environment — explicit, never written to disk.
+#   1. SERVER_ENCRYPTION_KEY, or the file SERVER_ENCRYPTION_KEY_FILE names (a
+#      Docker or Kubernetes secret). The API reads either, and refuses both.
 #   2. A key previously persisted in the data volume — stable across restarts.
 #   3. Otherwise generate one, persist it to the volume, and warn loudly.
 # The key MUST stay stable for the life of the deployment: changing or losing it
 # makes every existing note permanently undecryptable. We store it next to the
 # database (inside the persistent volume) so backing up the volume backs up the key.
-if [ -z "${SERVER_ENCRYPTION_KEY:-}" ]; then
+# KEY_FILE moves it elsewhere. The API gets that file the way it gets a secret,
+# as SERVER_ENCRYPTION_KEY_FILE, so no process environment holds the key.
+if [ -z "${SERVER_ENCRYPTION_KEY:-}" ] && [ -z "${SERVER_ENCRYPTION_KEY_FILE:-}" ]; then
 	data_dir=$(dirname "${DATABASE_PATH:-/app/data/secret.db}")
 	KEY_FILE="${KEY_FILE:-$data_dir/.encryption_key}"
-	if [ -s "$KEY_FILE" ]; then
-		SERVER_ENCRYPTION_KEY=$(cat "$KEY_FILE")
-	else
-		SERVER_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+	if [ ! -s "$KEY_FILE" ]; then
+		# Not SERVER_ENCRYPTION_KEY: compose exports it blank, and the API
+		# would get the key both ways.
+		key=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
 		mkdir -p "$data_dir"
 		# Subshell + umask so the key file is created 0600 (owner-only) atomically.
-		( umask 077; printf '%s\n' "$SERVER_ENCRYPTION_KEY" > "$KEY_FILE" )
+		( umask 077; printf '%s\n' "$key" > "$KEY_FILE" )
+		unset key
 		echo "============================================================================"
 		echo "No SERVER_ENCRYPTION_KEY was provided — generated one and saved it to:"
 		echo "    $KEY_FILE"
 		echo "This key is REQUIRED to decrypt your notes. Back up the data volume and"
 		echo "NEVER change or lose it — all notes become permanently unreadable without it."
-		echo "To pin it explicitly, set SERVER_ENCRYPTION_KEY in your environment."
+		echo "To manage it yourself, set SERVER_ENCRYPTION_KEY or SERVER_ENCRYPTION_KEY_FILE."
 		echo "============================================================================"
 	fi
-	export SERVER_ENCRYPTION_KEY
+	SERVER_ENCRYPTION_KEY_FILE=$KEY_FILE
+	export SERVER_ENCRYPTION_KEY_FILE
 fi
 
 # `PORT` is the public web server's, never the API's: every PaaS injects it and
@@ -60,16 +65,19 @@ api_pid=$!
 # derived from MAX_FILE_SIZE and MAX_FILES_PER_NOTE. ORIGIN is the app's public
 # origin, read by that server (adapter-node 6 no longer supports it).
 #
-# The web server gets none of the API's secrets, so a compromised dependency
-# that dumps process.env finds nothing. This is not isolation: both processes
-# run as the same user.
+# The web server gets none of the API's secrets, nor the variables naming their
+# files, so a compromised dependency that dumps process.env finds nothing. This
+# is not isolation: both processes run as the same user, which can read those
+# files.
 #
 # Docker sends SIGKILL 10 seconds after SIGTERM: like the API, the web server
 # drains for at most 8.
 (
 	unset SERVER_ENCRYPTION_KEY API_KEY S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY \
+		SERVER_ENCRYPTION_KEY_FILE API_KEY_FILE S3_ACCESS_KEY_ID_FILE \
+		S3_SECRET_ACCESS_KEY_FILE KEY_FILE METRICS_TOKEN METRICS_TOKEN_FILE \
 		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-	for name in $(env | sed -n 's/^\(API_KEY_[0-9][0-9]*\)=.*/\1/p'); do
+	for name in $(env | sed -n 's/^\(API_KEY_[0-9][0-9]*\(_FILE\)\{0,1\}\)=.*/\1/p'); do
 		unset "$name"
 	done
 	exec env PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \

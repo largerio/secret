@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StorageNotFoundError } from "../storage/errors.js";
-import { S3Storage } from "../storage/s3.js";
+import { S3_TIMEOUTS, S3Storage } from "../storage/s3.js";
 
 const mockSend = vi.fn();
 const mockDestroy = vi.fn();
@@ -109,13 +109,122 @@ describe("S3Storage", () => {
 		});
 	});
 
+	it("bounds how long the SDK client waits on a silent endpoint", () => {
+		// socketTimeout, not requestTimeout: that one is a deadline on the whole
+		// request, which only logs a warning unless told to throw.
+		expect(clientConfigs.at(-1)).toMatchObject({
+			requestHandler: { connectionTimeout: 5_000, socketTimeout: 30_000 },
+		});
+		expect(S3_TIMEOUTS).toEqual({
+			connectionMs: 5_000,
+			idleMs: 30_000,
+			requestMs: 120_000,
+			probeMs: 5_000,
+		});
+	});
+
+	describe("the request deadline", () => {
+		/** The command sent and the abort signal it was given, call by call. */
+		function sentWithSignals(): Array<{ command: string; abortSignal: unknown }> {
+			return mockSend.mock.calls.map(([command, options]) => ({
+				command: (command as object).constructor.name,
+				abortSignal: (options as { abortSignal?: unknown } | undefined)?.abortSignal,
+			}));
+		}
+
+		it("is given to every request that moves no note payload, each its own", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend
+				// purge: the file object, a listing, a refused batch, its key alone.
+				.mockResolvedValueOnce({})
+				.mockResolvedValueOnce({ Contents: [{ Key: "notes/note123/chunk_0" }] })
+				.mockRejectedValueOnce(new Error("InvalidRequest"))
+				.mockResolvedValueOnce({})
+				// list, over two pages.
+				.mockResolvedValueOnce({ NextContinuationToken: "page-2" })
+				.mockResolvedValueOnce({})
+				// claim, listClaims.
+				.mockResolvedValueOnce({})
+				.mockResolvedValueOnce({});
+
+			await storage.purge("note123");
+			await collect(storage.list());
+			await storage.claim("instance-a");
+			await storage.listClaims();
+
+			const signals = timeout.mock.results.map((result) => result.value);
+			const durations = [...timeout.mock.calls];
+			timeout.mockRestore();
+
+			expect(sentWithSignals().map(({ command }) => command)).toEqual([
+				"MockDeleteObjectCommand",
+				"MockListObjectsV2Command",
+				"MockDeleteObjectsCommand",
+				"MockDeleteObjectCommand",
+				"MockListObjectsV2Command",
+				"MockListObjectsV2Command",
+				"MockPutObjectCommand",
+				"MockListObjectsV2Command",
+			]);
+			expect(durations).toEqual(Array.from({ length: 8 }, () => [120_000]));
+			for (const [index, { abortSignal }] of sentWithSignals().entries()) {
+				expect(abortSignal).toBe(signals[index]);
+			}
+		});
+
+		it("honors the bound it is given", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend.mockResolvedValueOnce({});
+
+			await new S3Storage(config, { ...S3_TIMEOUTS, requestMs: 1_000 }).claim("instance-a");
+
+			const durations = [...timeout.mock.calls];
+			timeout.mockRestore();
+			expect(durations).toEqual([[1_000]]);
+		});
+
+		it("is not given to a read or a chunk upload: they take as long as their size", async () => {
+			mockSend
+				.mockResolvedValueOnce({ Body: null })
+				.mockResolvedValueOnce({ Body: null })
+				.mockResolvedValueOnce({});
+
+			// No body: the request is all that matters here.
+			await expect(storage.read("notes/note123")).rejects.toThrow("Empty response");
+			await expect(storage.readChunk("note123", 0)).rejects.toThrow("Empty response");
+			await storage.saveChunk("note123", 0, Buffer.from("chunk-data"));
+
+			expect(sentWithSignals()).toEqual([
+				{ command: "MockGetObjectCommand", abortSignal: undefined },
+				{ command: "MockGetObjectCommand", abortSignal: undefined },
+				{ command: "MockPutObjectCommand", abortSignal: undefined },
+			]);
+		});
+	});
+
 	describe("probe", () => {
 		it("issues a HeadBucket against the configured bucket", async () => {
 			mockSend.mockResolvedValueOnce({});
 			await storage.probe();
 			expect(mockSend).toHaveBeenCalledWith(
 				expect.objectContaining({ params: { Bucket: "test-bucket" } }),
+				expect.anything(),
 			);
+		});
+
+		it("gives the probe, retries included, a deadline", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend.mockResolvedValueOnce({});
+
+			await storage.probe();
+
+			const signal = timeout.mock.results[0]?.value;
+			const options = mockSend.mock.calls[0]?.[1] as { abortSignal?: unknown } | undefined;
+			const calls = [...timeout.mock.calls];
+			timeout.mockRestore();
+
+			expect(calls).toEqual([[5_000]]);
+			expect(options?.abortSignal).toBe(signal);
 		});
 
 		it("propagates a failure so the health endpoint can report it", async () => {
@@ -205,6 +314,98 @@ describe("S3Storage", () => {
 		it("re-throws primitive rejections as-is", async () => {
 			mockSend.mockRejectedValueOnce("plain-string");
 			await expect(storage.read("notes/x")).rejects.toBe("plain-string");
+		});
+	});
+
+	describe("a body that stops arriving", () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		/** A body that sends `sent`, then nothing. */
+		function stallingBody(sent: Uint8Array, cancel: () => void = vi.fn()) {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(sent);
+				},
+				cancel,
+			});
+			return { Body: { transformToWebStream: () => stream } };
+		}
+
+		it("is given up after a silence, and its connection closed", async () => {
+			vi.useFakeTimers();
+			const cancel = vi.fn();
+			mockSend.mockResolvedValueOnce(stallingBody(new Uint8Array([1, 2]), cancel));
+
+			const reading = storage.read("notes/note123");
+			const failed = expect(reading).rejects.toThrow("S3 response stalled for 30 s");
+			await vi.advanceTimersByTimeAsync(30_000);
+
+			await failed;
+			expect(cancel).toHaveBeenCalledOnce();
+		});
+
+		it("is given up the same way on a chunk", async () => {
+			vi.useFakeTimers();
+			mockSend.mockResolvedValueOnce(stallingBody(new Uint8Array([3])));
+
+			const reading = storage.readChunk("note123", 0);
+			const failed = expect(reading).rejects.toThrow("S3 response stalled");
+			await vi.advanceTimersByTimeAsync(30_000);
+
+			await failed;
+		});
+
+		it("still fails cleanly when closing the stream fails too", async () => {
+			vi.useFakeTimers();
+			mockSend.mockResolvedValueOnce(
+				stallingBody(new Uint8Array([1]), () => {
+					throw new Error("cancel failed");
+				}),
+			);
+
+			const reading = storage.read("notes/note123");
+			const failed = expect(reading).rejects.toThrow("S3 response stalled");
+			await vi.advanceTimersByTimeAsync(30_000);
+
+			await failed;
+		});
+
+		it("is not a deadline: a slow body that keeps coming is read whole", async () => {
+			vi.useFakeTimers();
+			let sent = 0;
+			const stream = new ReadableStream<Uint8Array>({
+				async pull(controller) {
+					// 25 s between chunks, 75 s in all: within the idle bound each time.
+					await new Promise((resolve) => setTimeout(resolve, 25_000));
+					if (sent === 3) {
+						controller.close();
+						return;
+					}
+					controller.enqueue(new Uint8Array([sent++]));
+				},
+			});
+			mockSend.mockResolvedValueOnce({ Body: { transformToWebStream: () => stream } });
+
+			const reading = storage.read("notes/note123");
+			await vi.advanceTimersByTimeAsync(100_000);
+
+			await expect(reading).resolves.toEqual(Buffer.from([0, 1, 2]));
+			// Every read's timer is cleared once its chunk is in.
+			expect(vi.getTimerCount()).toBe(0);
+		});
+
+		it("honors the idle bound it is given", async () => {
+			vi.useFakeTimers();
+			const quick = new S3Storage(config, { ...S3_TIMEOUTS, idleMs: 1_000 });
+			mockSend.mockResolvedValueOnce(stallingBody(new Uint8Array([1])));
+
+			const reading = quick.read("notes/note123");
+			const failed = expect(reading).rejects.toThrow("S3 response stalled for 1 s");
+			await vi.advanceTimersByTimeAsync(1_000);
+
+			await failed;
 		});
 	});
 

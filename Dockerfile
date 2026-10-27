@@ -79,7 +79,8 @@ COPY --from=builder /build/packages/sdk-js/dist packages/sdk-js/dist
 COPY --from=builder /build/apps/api/dist apps/api/dist
 COPY --from=builder /build/apps/web/build apps/web/build
 COPY --from=builder /build/apps/web/dist apps/web/dist
-COPY entrypoint.sh ./
+# The API reads its version from the changelog (apps/api/src/buildInfo.ts).
+COPY entrypoint.sh CHANGELOG.md ./
 
 RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
 
@@ -93,8 +94,19 @@ ENV FILES_PATH=/app/data/files
 
 EXPOSE 3000
 
+# The commit built, and whether it is the release CHANGELOG.md names: true, or
+# false for a later commit of main, which then reports <version>-dev. CI passes
+# both (deploy.yml, rebuild-release.yml). A build without them reports the
+# changelog's version and an unknown revision. Last, so a new commit rebuilds
+# nothing.
+ARG REVISION=""
+ARG RELEASE=""
+ENV BUILD_REVISION=$REVISION BUILD_RELEASE=$RELEASE
+
 # Node-based healthcheck avoids shipping curl (smaller image, less attack surface).
+# Readiness, through the web server: the database and the storage answer, and
+# the deploy's rollback catches a container that boots but cannot serve.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-	CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+	CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["sh", "entrypoint.sh"]

@@ -53,6 +53,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			salt: salt ?? null,
 			quotaBytes: c.get("storageQuotaBytes"),
 		});
+		c.get("metrics").noteCreated(fileCount > 0 ? "file" : "text");
 
 		return c.json(result, 201);
 	});
@@ -107,6 +108,8 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			salt: salt ?? null,
 			quotaBytes: c.get("storageQuotaBytes"),
 		});
+		// The multipart schema asks for at least one file.
+		c.get("metrics").noteCreated("file");
 
 		return c.json(result, 201);
 	});
@@ -150,12 +153,13 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 
 	app.openapi(readNoteRoute, async (c) => {
 		const { id } = c.req.valid("param");
-		const { clientBlob, note } = await consumeNote(
+		const { clientBlob, note, burned } = await consumeNote(
 			c.get("db"),
 			c.get("serverKey"),
 			c.get("storage"),
 			id,
 		);
+		c.get("metrics").noteRead(note.filePath ? "file" : "text", burned);
 
 		return c.json({
 			encryptedData: clientBlob.toString("base64"),
@@ -176,12 +180,13 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			return c.json({ error: "Invalid note ID" }, 400);
 		}
 
-		const { clientBlob, note } = await consumeNote(
+		const { clientBlob, note, burned } = await consumeNote(
 			c.get("db"),
 			c.get("serverKey"),
 			c.get("storage"),
 			id,
 		);
+		c.get("metrics").noteRead(note.filePath ? "file" : "text", burned);
 
 		const headers = buildNoteHeaders(note);
 		headers["Content-Length"] = String(clientBlob.length);
@@ -230,6 +235,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 		if (result.deletion) {
 			await runDeletion(db, storage, result.deletion);
 		}
+		c.get("metrics").noteDeleted();
 
 		return c.json({ deleted: true as const });
 	});

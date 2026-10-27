@@ -12,8 +12,11 @@ and runs as a single container.
 | Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
 
 Once it is up: [API keys](#api-keys-for-the-sdk) ·
+[Secrets in files](#secrets-in-files) ·
+[Restricting who can create notes](#restricting-who-can-create-notes) ·
 [Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
-[Updating](#updating) ·
+[One instance per database](#one-instance-per-database) ·
+[Monitoring](#monitoring) · [Updating](#updating) ·
 [Verifying the image](#verifying-the-image) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
@@ -67,7 +70,8 @@ Already running a reverse proxy? Skip that file, set `APP_URL` in `.env`, and se
 > permanently unreadable — the server checks a fingerprint and refuses to start
 > rather than let that pass silently. To manage the key yourself, pin it
 > **before the very first launch**; otherwise it lives in the data volume at
-> `.encryption_key`, so a volume backup already includes it. See
+> `.encryption_key`. Either way, back it up apart from the data
+> ([Backup & restore](#backup--restore)). See
 > [Container keeps restarting](#container-keeps-restarting--exits-immediately)
 > if you hit a mismatch.
 
@@ -275,10 +279,204 @@ grants no read access others don't have, and no ability to decrypt.
 
 ---
 
+## Secrets in files
+
+Each secret can be read from a file instead of a variable, the way Docker and
+Kubernetes hand secrets to a container: append `_FILE` to the variable's name
+and give the file's path.
+
+| Variable | From a file |
+|---|---|
+| `SERVER_ENCRYPTION_KEY` | `SERVER_ENCRYPTION_KEY_FILE` |
+| `API_KEY`, `API_KEY_1`… | `API_KEY_FILE`, `API_KEY_1_FILE`… |
+| `S3_ACCESS_KEY_ID` | `S3_ACCESS_KEY_ID_FILE` |
+| `S3_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY_FILE` |
+| `METRICS_TOKEN` | `METRICS_TOKEN_FILE` |
+
+The file holds the value alone; line breaks at its end are ignored. A variable
+set together with its `_FILE`, or a file that is missing, unreadable or empty,
+stops the server at startup, with an error that names the variable and the path
+but never what the file holds.
+
+With Compose, declare the secrets in a `docker-compose.override.yml` next to
+`docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    environment:
+      - SERVER_ENCRYPTION_KEY_FILE=/run/secrets/server_key
+      - API_KEY_FILE=/run/secrets/api_key
+    secrets:
+      - server_key
+      - api_key
+
+secrets:
+  server_key:
+    file: ./secrets/server_key
+  api_key:
+    file: ./secrets/api_key
+```
+
+```bash
+mkdir secrets
+openssl rand -base64 32 > secrets/server_key
+openssl rand -base64 32 > secrets/api_key
+chmod 400 secrets/*
+# Compose mounts each file as it is on the host: the container's user must read it
+sudo chown 1001:1001 secrets/*
+```
+
+`docker compose up -d` reads the override on its own. A command that lists its
+files with `-f`, like the HTTPS setup's, must list it too:
+`-f docker-compose.override.yml`.
+
+**What this protects.** A value in `.env` or under `environment:` shows in
+`docker inspect` and in the environment of the processes in the container. A
+secret file keeps it out of both: only its path shows. Inside the container the
+API reads the files; the web server gets neither the secrets nor the `_FILE`
+variables, so a dependency of the web server that dumps its environment finds
+nothing to leak. That is not isolation: both processes run as the same user, so
+code running in the web server could still read the files, as it could read the
+data volume.
+
+**The server key.** Without `SERVER_ENCRYPTION_KEY` or
+`SERVER_ENCRYPTION_KEY_FILE`, the image generates the key on first start and
+keeps it in the data volume, at `/app/data/.encryption_key`, which it hands to
+the API as `SERVER_ENCRYPTION_KEY_FILE`. (`KEY_FILE` moves that generated file;
+it plays no part once you give a key either way.) Held in a secret instead, the
+key no longer travels with the volume and its backups, so the server's
+encryption layer also protects a stolen copy of the volume. To move a generated
+key out of the volume:
+
+```bash
+mkdir -p secrets
+docker compose exec -T app cat /app/data/.encryption_key > secrets/server_key
+chmod 400 secrets/server_key && sudo chown 1001:1001 secrets/server_key
+# With the override above in place:
+docker compose up -d
+# Once the instance is up and serves its notes:
+docker compose exec app rm /app/data/.encryption_key
+```
+
+The server refuses to start on a key that does not match its notes, so a wrong
+file fails loudly. Backups made before the move still hold the key.
+
+Outside the image the API reads the same variables. On Kubernetes, mount the
+Secret as a volume and point the `_FILE` variables at its files.
+
+---
+
+## Restricting who can create notes
+
+Out of the box, anyone who can reach the instance can create notes, with files
+up to `MAX_CHUNKED_FILE_SIZE` (500 MB by default). What stands in the way is the
+Proof-of-Work challenge a browser solves before each write, the per-IP rate
+limits and, if you set one, the storage quota (`STORAGE_QUOTA_BYTES`). To keep
+an instance for your own people, put a login in front of the paths that create
+notes, and only those: the people you send links to have no account.
+
+The API refuses to create or delete a note without a Proof-of-Work token or an
+[API key](#api-keys-for-the-sdk), and a browser gets its token from
+`/api/cap/`. The chunks of a large upload carry neither, but only extend an
+upload that one of them started. Behind a login, `/api/cap/` is enough to stop
+anyone without an account from writing; the two other paths spare them a form
+they could fill in but never send.
+
+| Behind the login | |
+|---|---|
+| `/api/cap/` and below | The Proof-of-Work challenge: without its token, no browser can create or delete a note |
+| `/` | The page that creates notes |
+| `/__data.json` | That page's data, fetched when a visitor moves to it from a note page. Behind the login, the visitor lands on the login page instead |
+
+| Left open | |
+|---|---|
+| `/note/` and below | The page a recipient opens, and the page behind a note's delete link. A login redirect would also drop the part of the link after `#`, which holds the key, or carry it along to the login pages |
+| `/api/v1/` and below | Reading notes, the checks a note page makes, `/api/v1/config` and the API docs. The writes there check their own token or key |
+| `/_app/`, `/wasm/`, `/favicon.svg`, `/og.png` | Scripts, styles and fonts, the challenge solver, the icon, and the image of link previews |
+| `/api/health`, `/robots.txt`, `/sitemap.xml` | Health checks and crawlers |
+
+Deleting a note from its delete link solves a challenge too, so it works in a
+browser that is logged in. Reading a note never does. Scripts and the SDK skip
+the login: they write with an [API key](#api-keys-for-the-sdk), which the API
+checks itself, on paths that stay open.
+
+Two things keep the login from being walked around:
+
+- The app must be reachable through the proxy alone. A published port `3000` is
+  a way in without it (`docker-compose.tls.yml` publishes Caddy's ports only),
+  and so is the API's own port: leave `API_HOST` unset.
+- The proxy must match the path once cleaned up, since the app reads
+  `/api/v1/../cap/challenge` as `/api/cap/challenge`. Caddy and Traefik do,
+  with the rules below.
+
+The proxy that asks for the login is a reverse proxy like any other: set
+`ADDRESS_HEADER` and `XFF_DEPTH`, as in
+[Making rate limiting work behind a proxy](#making-rate-limiting-work-behind-a-proxy).
+
+**Caddy with oauth2-proxy.** Adapted from oauth2-proxy's Caddy integration,
+with oauth2-proxy set up for your identity provider, its `--reverse-proxy` flag
+on, and `https://secret.example.com/oauth2/callback` as its redirect URL:
+
+```caddyfile
+secret.example.com {
+	# oauth2-proxy's own pages: sign-in and callback.
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Uri {uri}
+		}
+	}
+
+	# The paths that create notes: log in first.
+	@create path / /__data.json /api/cap/*
+	handle @create {
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			header_up X-Real-IP {remote_host}
+
+			@unauthenticated status 401
+			handle_response @unauthenticated {
+				redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+			}
+		}
+		reverse_proxy app:3000
+	}
+
+	# Everything else stays open.
+	handle {
+		reverse_proxy app:3000
+	}
+}
+```
+
+**Traefik.** The same three paths on a router of their own, carrying your
+`forwardAuth` middleware (oauth2-proxy's Traefik guide has one), next to the
+router you already have and with the same entry points and TLS settings. Its
+rule is the longer one, so Traefik tries it first:
+
+```yaml
+labels:
+  - traefik.http.routers.secret.rule=Host(`secret.example.com`)
+  - traefik.http.routers.secret-create.rule=Host(`secret.example.com`) && (Path(`/`) || Path(`/__data.json`) || PathPrefix(`/api/cap/`))
+  - traefik.http.routers.secret-create.middlewares=oauth2-proxy-auth  # your forwardAuth middleware
+```
+
+---
+
 ## Backup & restore
 
-Everything lives in one Docker volume: the SQLite database (`secret.db` + WAL
-files) and the encrypted `files/` directory.
+An instance is three things, backed up separately:
+
+| What | Where | Lost without a backup |
+|---|---|---|
+| The database | `secret.db` in the volume (`DATABASE_PATH`) | Every note |
+| The stored files | `files/` in the volume (`FILES_PATH`), or the S3 bucket | Every note with files |
+| The server key | `SERVER_ENCRYPTION_KEY`, or the generated `.encryption_key` in the volume (`KEY_FILE`) | Everything: each note is sealed with it, and the server refuses to start with another one |
+
+The key never changes, so it is backed up once, and kept apart from the data: in
+a password manager or a secret store. A backup that holds the data and the key
+together is protected by the end-to-end encryption alone.
 
 Compose prefixes the volume with the project name (the folder you ran
 `docker compose` from), so the real name is usually `secret_secret-data`.
@@ -292,42 +490,136 @@ Use that name in place of `<volume>` below.
 
 ### Back up
 
+The database first, then the files. A file stored in between has no note in that
+database copy: after a restore, the [storage sweep](#storage-cleanup) removes it.
+A note whose file went in between was read to its limit, deleted or expired: it
+was meant to go. In the other order, the notes created in between would come
+back without their files.
+
+**The database**, while the app runs:
+
 ```bash
-# Stop the container first so the API checkpoints the WAL on SIGTERM
-docker compose stop
-
-# Snapshot the volume into a tarball (tar preserves the uid 1001 ownership)
-docker run --rm \
-  -v <volume>:/data \
-  -v "$PWD":/backup \
-  alpine tar czf /backup/secret-backup.tgz -C /data .
-
-docker compose start
+docker compose exec app node apps/api/dist/backup.js /app/data/backup.db
+docker compose cp app:/app/data/backup.db ./secret-$(date +%F).db
+docker compose exec app rm /app/data/backup.db
 ```
 
-Store `secret-backup.tgz` **together with your `SERVER_ENCRYPTION_KEY`** — the
-data is useless without the key.
+The command copies the database at `DATABASE_PATH` with SQLite's `VACUUM INTO`:
+one consistent snapshot, taken without blocking the app, with no trace of the
+notes already deleted. It checks the copy, writes it under a temporary name and
+renames it into place, never overwrites an existing file, and exits with a
+non-zero code when anything fails, so a scheduled job notices. The container's
+root filesystem is read-only, so the copy is written to the volume first, then
+moved out. Only its owner can read it (mode `600`), since it holds every note's
+deletion token; `docker compose cp` keeps that mode, and hands the file to the
+user who runs it.
+
+A signal (Ctrl-C, a closed terminal, a job's timeout) does not cut the copy
+short: the command finishes it, or fails and removes it, then exits, with `0`
+only when the destination holds a complete, checked copy. A command killed
+outright can leave a `<destination>.<hex>.partial` file next to the
+destination, and its `-journal`: by `SIGKILL` (a hard timeout, the OOM killer),
+or with the container if it stops or is recreated during the backup. Delete
+them: they hold the notes like any backup.
+
+The copy is a single SQLite file. It keeps the schema version, the instance
+identity the sweep relies on, and the server key's fingerprint, so it restores
+as is, on the version of Secret that made it or a later one (which migrates it
+at startup). Outside Docker, from a build of the repository:
+`DATABASE_PATH=/path/to/secret.db node apps/api/dist/backup.js <destination>`.
+
+**The files**, right after. On local storage:
+
+```bash
+docker run --rm -v <volume>:/data:ro -v "$PWD":/backup alpine \
+  tar czf /backup/secret-files-$(date +%F).tgz -C /data files
+```
+
+On S3, copy the `notes/` prefix with your provider's tools (`aws s3 sync`,
+`rclone`).
+
+### Keeping backups
+
+A backup holds every note as it was. A note burned by its last read since then,
+or deleted with its deletion link, is still in it, and a restore brings it back
+for anyone who still has the link. Hence:
+
+- **Keep backups no longer than `MAX_EXPIRY`** (30 days by default), and shorter
+  when you can: a week of daily copies covers most needs. Every note in an older
+  backup has expired, so it restores nothing, and only holds ciphertexts and
+  metadata.
+- **No versioning, no long-lived snapshots.** A versioned bucket keeps every
+  deleted file: see [S3 bucket settings](#s3-bucket-settings). Snapshots of the
+  volume (ZFS, Btrfs, a VM, Synology Snapshot Replication) are backups too, and
+  need the same limit.
+- **Encrypt them** before they leave the host (`age`, `gpg`, or a backup tool
+  that encrypts, such as restic or borg), with a key of their own, stored apart
+  from the server key.
 
 ### Restore
 
-```bash
-# Let compose create the container and its volume first…
-docker compose up -d
-docker compose stop
+1. Stop the app with `docker compose stop`. On a new host, run
+   `docker compose up -d` first, so that compose creates the volume.
+2. Put the database back. Delete the `-wal` and `-shm` files next to it: left
+   there, SQLite would replay the old log onto the restored database. The copy
+   is readable by its owner alone (mode `600`), hence the `chown` to the app's
+   user.
 
-# …then extract the backup into that same <volume>
-# `./.[!.]*` too — the generated key is a dotfile, and leaving the fresh one
-# behind next to restored notes stops the container from starting.
-docker run --rm \
-  -v <volume>:/data \
-  -v "$PWD":/backup \
-  alpine sh -c "cd /data && rm -rf ./* ./.[!.]* && tar xzf /backup/secret-backup.tgz"
+   ```bash
+   docker run --rm -v <volume>:/data -v "$PWD":/backup alpine sh -c '
+     rm -f /data/secret.db-wal /data/secret.db-shm &&
+     cp /backup/secret-<date>.db /data/secret.db &&
+     chown 1001:1001 /data/secret.db'
+   ```
 
-docker compose start
-```
+3. If the files are lost too, restore the copy taken after that database (a later
+   one also works). On local storage:
 
-Make sure the restored instance uses the **same** `SERVER_ENCRYPTION_KEY` as the
-one that produced the backup, or the notes won't decrypt.
+   ```bash
+   docker run --rm -v <volume>:/data -v "$PWD":/backup alpine \
+     tar xzf /backup/secret-files-<date>.tgz -C /data
+   ```
+
+   On S3, copy `notes/` back into the bucket. Files the database does not know
+   can stay: the sweep removes them.
+4. Bring back the key: set `SERVER_ENCRYPTION_KEY` in `.env`, or write the saved
+   key over `.encryption_key` in the volume (owned by uid 1001, mode `600`). A new
+   volume holds a key generated on its first start: it is not the one you need.
+5. Run `docker compose start` and watch `docker compose logs -f`. A wrong key
+   stops the start with an explicit error.
+
+An archive of the whole volume, made with the app stopped as this guide used to
+advise, restores in one step: empty the volume (`rm -rf ./* ./.[!.]*`, so that
+no generated key stays behind), then extract the archive into it.
+
+### After a restore
+
+- Notes created after the backup are gone: their links find nothing, and the
+  sweep removes their files.
+- Notes read to their limit or deleted since the backup are back, readable by
+  anyone who still has the link until they expire, with their read count as it
+  was. No record says which ones: a deletion leaves none.
+- Notes that have expired since stay gone: the cleanup job deletes them, and an
+  expired note is never served.
+
+On an instance used for one-time secrets, tell its users: a link opened before
+the backup date may open again, and its deletion link still removes it.
+
+### What a stolen backup reveals
+
+Not the contents: notes are encrypted in the browser, and the key is in the link's
+fragment, which never reaches the server. The payloads, in the database and in
+the files, are also sealed with the server key: stolen without it, they are
+opaque even before the end-to-end layer comes into play.
+
+A backup does hold, in clear:
+
+- the metadata listed in [What the server can see](../SECURITY.md#what-the-server-can-see):
+  sizes, number of files, password set or not, read limits and reads so far,
+  creation and expiry times;
+- the note ids, the half of each link that decrypts nothing;
+- each note's deletion token: whoever holds the backup can delete those notes
+  while they last.
 
 ---
 
@@ -412,6 +704,179 @@ aws s3api put-bucket-lifecycle-configuration --bucket <bucket> \
 
 Add `--endpoint-url` for a server other than AWS. If you lower `MAX_EXPIRY`,
 you can lower the expiration to match: one day more than the ceiling.
+
+---
+
+## One instance per database
+
+Run one container per database, and only one. The API keeps state in its own
+process, so it does not scale out, and replicas behind a load balancer fail in
+ways that look random:
+
+- **Proof-of-Work challenges live in memory.** The challenge, its solution and
+  the write that spends the token must all reach the same process; when one of
+  them lands on another replica, the note is refused.
+- **Rate limits are counted per process**, so every replica adds its own
+  allowance.
+- **SQLite takes one writer at a time.** A second process on the same database
+  file waits for the lock or fails with `database is locked`. And the locking
+  SQLite relies on does not hold over a network filesystem (NFS, SMB): keep the
+  data volume on a local disk.
+- **The background jobs run in every process**: the cleanup of expired notes,
+  every five minutes by default, and the daily
+  [storage sweep](#storage-cleanup).
+- **Migrations run at startup.** A new version upgrades the database as it
+  boots, and an older process still running on it, during a rolling update,
+  then works against a schema it does not know. Stop the old container before
+  starting the new one, as `docker compose up -d` does; on Kubernetes, that is
+  the `Recreate` strategy, not `RollingUpdate`.
+
+Two instances with databases of their own cannot share a bucket or a
+`FILES_PATH` either. A database only knows its own notes, so a link created on
+one is not found on the other, and the storage sweep of each finds the other's
+claim and stops: see
+[One storage location per instance](#one-storage-location-per-instance).
+
+High availability, then, means bringing the one instance back quickly, not
+running two:
+
+- The container stops as soon as the API or the web server inside it exits, so
+  its restart policy (`restart: unless-stopped` in `docker-compose.yml`) brings
+  it back within seconds.
+- Docker alone does not restart a container that is only `unhealthy`. An
+  orchestrator can, from the [health probes](#health-probes): a Kubernetes
+  liveness probe, a Swarm service.
+- If the host fails, start the instance elsewhere on the same data: a volume
+  that can follow it, or the latest [backup](#backup--restore). On Kubernetes:
+  one replica, a `ReadWriteOnce` volume.
+
+---
+
+## Monitoring
+
+### Health probes
+
+Three endpoints answer on the app's port, with no token:
+
+| Path | `200` when | For |
+|---|---|---|
+| `/api/health/live` | the API process answers; nothing else is checked | a liveness probe |
+| `/api/health/ready` | the database and the storage answer, and the container is not stopping; `503` otherwise | a readiness probe, a load balancer, the image's `HEALTHCHECK` |
+| `/api/health` | as `/api/health/ready`, with the version and the quota added | a look by hand, and the checks that already call it |
+
+```bash
+curl http://localhost:3000/api/health
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.5.0","revision":"<commit>"}
+```
+
+`status` is `ok`, `degraded` when a check fails (`database` is the volume,
+`storage` is `FILES_PATH` or the S3 bucket), or `draining` once the container
+is stopping. The checks are cached for 10 seconds, so polling cannot hammer the
+storage.
+
+The image's `HEALTHCHECK` polls readiness. Docker keeps a single health status,
+and a deploy that waits for it, such as
+[Deploying from CI](#deploying-from-ci), must not accept a container that
+starts but cannot reach its storage. Liveness is for orchestrators that tell
+the two apart, such as Kubernetes: restarting a container does not fix an S3
+outage, so its liveness probe should not fail on one.
+
+**Stopping.** On `SIGTERM`, the container stops accepting connections at once;
+a health check still arriving on an open one gets `draining`. There is no
+window where it keeps taking new requests while reporting `draining`: with
+[one instance per database](#one-instance-per-database), there is no other
+instance to send them to. The requests in flight get
+`SHUTDOWN_TIMEOUT` seconds, 8 by default, then they are cut and the database is
+closed. Docker kills a container 10 seconds after asking it to stop, unless
+told otherwise: to give long uploads more time, raise both, the timeout a
+couple of seconds under the grace period.
+
+```yaml
+services:
+  app:
+    environment:
+      - SHUTDOWN_TIMEOUT=25
+    stop_grace_period: 30s
+```
+
+### Version
+
+`/api/health` reports the version and the commit the image was built from
+(`revision`); the API reference (`/api/v1/openapi.json`) reports the version
+too.
+
+- A release reports its number, such as `1.5.0`.
+- An image built from `main` after a release, such as `:main`, reports that
+  release suffixed `-dev` (`1.5.0-dev`), next to its own revision: it holds
+  changes the release does not.
+- An image you build yourself reports the latest version in its `CHANGELOG.md`,
+  whichever commit you built, and an `unknown` revision. Pass the commit to
+  record it: `docker build --build-arg REVISION=$(git rev-parse HEAD) .`
+
+### Metrics
+
+`GET /api/metrics` exposes counters and gauges in the Prometheus text format. It
+is off by default: the path answers `404` until `METRICS_TOKEN` is set, and then
+`401` to any request without that token.
+
+```env
+METRICS_TOKEN=<openssl rand -base64 32>   # 32 characters minimum
+```
+
+The endpoint is served on the app's port, like the rest of the API: the token
+is what keeps it private. Your reverse proxy can also refuse `/api/metrics` from
+outside your network. Prometheus sends the token as a bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: secret
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      credentials_file: /etc/prometheus/secret-metrics-token
+    static_configs:
+      - targets: ["secret.example.com"]
+```
+
+Successful scrapes stay out of the logs; refused ones are logged.
+
+| Metric | Type | Labels | |
+|---|---|---|---|
+| `secret_build_info` | gauge | `version`, `revision` | Always 1 |
+| `secret_process_start_time_seconds` | gauge | | Uptime is `time() - secret_process_start_time_seconds` |
+| `secret_process_resident_memory_bytes` | gauge | | |
+| `secret_process_heap_used_bytes` | gauge | | |
+| `secret_http_requests_total` | counter | `method`, `route`, `status` | `route` is the pattern (`/api/v1/notes/:id`), `status` the class (`2xx`) |
+| `secret_http_request_duration_seconds` | histogram | `method`, `route` | Up to the response headers |
+| `secret_notes_created_total` | counter | `type` | `text`, `file`, or `chunked` (a large upload) |
+| `secret_note_reads_total` | counter | `type` | |
+| `secret_notes_burned_total` | counter | | Deleted by the read that reached their limit |
+| `secret_notes_deleted_total` | counter | | Deleted with their delete token |
+| `secret_notes_expired_total` | counter | | Deleted by the cleanup job once expired |
+| `secret_notes` | gauge | `type` | Notes in the database |
+| `secret_upload_sessions` | gauge | | Chunked uploads in progress |
+| `secret_storage_used_bytes` | gauge | | What `STORAGE_QUOTA_BYTES` counts |
+| `secret_storage_quota_bytes` | gauge | | Only when a quota is set |
+| `secret_storage_purges_total` | counter | `result` | Deletions of a note's files: `ok` or `error` |
+| `secret_pending_deletions` | gauge | `state` | Deletions owed: `queued`, or `retrying` after a failed retry |
+| `secret_pending_deletions_abandoned_total` | counter | | Deletions given up after their last retry |
+| `secret_storage_sweep_last_run_timestamp_seconds` | gauge | | When the [storage sweep](#storage-cleanup) last ended |
+| `secret_storage_sweep_last_status` | gauge | `status` | 1 for how it ended: `done`, `trial`, `skipped` or `failed` |
+| `secret_storage_sweep_last_orphans` | gauge | | Files no note points to, found by the last sweep that ran |
+
+Counters start again from zero when the container restarts. Worth an alert:
+readiness failing; `secret_pending_deletions{state="retrying"}` above zero for
+hours, or `secret_pending_deletions_abandoned_total` rising, as deletions are
+failing (the logs say why, often the storage credentials); a sweep `skipped`
+(see [One storage location per instance](#one-storage-location-per-instance));
+`secret_storage_used_bytes` close to the quota.
+
+**What they reveal.** No metric carries a note id, an address or a path, and
+none helps decrypt anything. They are still metadata about how the instance is
+used: how many notes are created and read, of which kind, when, and how much is
+stored. That is why they are off by default, and why the token deserves the
+care of an API key. The volume stored, which `/api/health` used to show anyone,
+is now only here.
 
 ---
 
@@ -592,12 +1057,13 @@ endpoint from inside the host:
 
 ```bash
 curl http://localhost:3000/api/health
-# {"status":"ok","checks":{"database":"ok","storage":"ok"}}
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},…}
 ```
 
 A failing check answers `503` and names the subsystem — `database` (the volume)
 or `storage` (`FILES_PATH`, or the S3 credentials). The error itself is in the
-logs, prefixed `[health]`.
+logs: `database probe failed` or `storage probe failed`. See
+[Health probes](#health-probes).
 
 ### Uploads fail behind a reverse proxy
 

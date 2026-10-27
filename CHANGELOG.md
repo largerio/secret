@@ -7,6 +7,97 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Security
+
+- The database now syncs every commit to disk. With the previous setting, a
+  power cut could undo the last commits, a read that burned a note among them,
+  and the note became readable again.
+- `/api/health` no longer reports `storage.usedBytes`: it told anyone how much
+  the instance stores. The value is in the metrics, as
+  `secret_storage_used_bytes`.
+
+### Added
+
+- Liveness and readiness probes. `/api/health/live` answers as long as the API
+  process does; `/api/health/ready` checks the database and the storage. The
+  image's `HEALTHCHECK` uses readiness. See
+  [Monitoring](docs/self-hosting.md#monitoring).
+- `/api/health` and the API reference report the version, and `/api/health`
+  the commit the image was built from. An image of `main` built after a
+  release reports that release suffixed `-dev`.
+- Prometheus metrics at `/api/metrics`, off unless `METRICS_TOKEN` is set:
+  requests by route, notes created, read, burned, deleted and expired, storage
+  used, owed and failed deletions, the storage sweep. No metric carries a note
+  id, an address or a path.
+- `node apps/api/dist/backup.js <destination>` copies the database while the
+  app runs: one consistent snapshot, without the notes already deleted,
+  checked, written under a temporary name and renamed into place, never over
+  an existing file, readable by its owner alone. Ctrl-C or a job's timeout lets
+  the copy finish rather than leave a partial one behind. See
+  [Backup & restore](docs/self-hosting.md#backup--restore),
+  which now covers the files and the key, the order to back them up in, the
+  restore, and what a stolen backup reveals.
+- Secrets can be read from files, the way Docker and Kubernetes hand them out:
+  `SERVER_ENCRYPTION_KEY_FILE`, `API_KEY_FILE` (and `API_KEY_1_FILE`…),
+  `S3_ACCESS_KEY_ID_FILE`, `S3_SECRET_ACCESS_KEY_FILE`, `METRICS_TOKEN_FILE`.
+  `docker-compose.yml` passes them all on from `.env`, `API_KEY_1_FILE` to
+  `API_KEY_3_FILE` included. See [Secrets in files](docs/self-hosting.md#secrets-in-files).
+- The self-hosting guide explains why an instance runs alone on its database
+  ([One instance per database](docs/self-hosting.md#one-instance-per-database)),
+  and how to keep note creation to your own users behind a login
+  ([Restricting who can create notes](docs/self-hosting.md#restricting-who-can-create-notes)),
+  with examples for Caddy and Traefik.
+
+### Changed
+
+- The cleanup job deletes expired notes and upload sessions 200 at a time, each
+  batch in its own transaction, and lets requests through between batches.
+  After a long outage it no longer holds up every request until the whole
+  backlog is gone.
+- The database waits up to 5 seconds for a lock another connection holds (a
+  backup, an operator's `sqlite3` shell) instead of failing at once, and
+  truncates its WAL back to 64 MiB after a burst.
+- The image hands the generated server key to the API by its path rather than
+  its value: no process environment holds the key any more. The web server gets
+  none of the `_FILE` variables, nor the metrics token.
+- Once the container is stopping, it refuses new connections, and a health
+  check still arriving on an open one gets `503` with `"status":"draining"`.
+
+### Fixed
+
+- An S3 endpoint that stopped answering held requests, the health check,
+  deletions and the storage sweep indefinitely; a stuck deletion also stopped
+  the cleanup job until a restart. Connections now give up after 5 seconds and
+  requests after 30 seconds without a byte, on each of three attempts; reading
+  a note gives up on content that stops arriving for 30 seconds; listings and
+  deletions give up after 2 minutes in all, even when the answer stalls after
+  its first bytes; the health probe gives up after 5 seconds.
+- On shutdown, the API cut in-flight requests after 8 seconds whatever the stop
+  grace period: raising `stop_grace_period`, as the reference production
+  compose file did, gave long uploads no more time. The API now waits
+  `SHUTDOWN_TIMEOUT` seconds (8 by default), like the web server.
+
+### Upgrade notes
+
+- `/api/health` no longer has `storage.usedBytes`. A script or dashboard that
+  read it should scrape `secret_storage_used_bytes` from `/api/metrics`, after
+  setting `METRICS_TOKEN`. `/api/health` keeps working otherwise; a health
+  check of your own can move to `/api/health/ready` once this version runs.
+- Keep backups no longer than `MAX_EXPIRY`: a restore brings back every note
+  burned or deleted since, for anyone who still has its link. Back up the key
+  apart from the data. The volume archive this guide used to recommend held
+  both.
+- Each write now waits for the disk. On slow storage (spinning disks, a network
+  volume), creating and reading notes takes a few milliseconds longer.
+- A secret set both as a variable and as a `_FILE`, or a `_FILE` naming a
+  missing, unreadable or empty file, stops the server at startup. `KEY_FILE`,
+  which was undocumented, still moves the generated key, and plays no part once
+  `SERVER_ENCRYPTION_KEY` or `SERVER_ENCRYPTION_KEY_FILE` is set.
+- To give in-flight requests more than 8 seconds on shutdown, set
+  `SHUTDOWN_TIMEOUT` and raise `stop_grace_period` a couple of seconds above
+  it.
+- No database migration.
+
 ## [1.4.1] - 2026-10-26
 
 ### Security

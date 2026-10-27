@@ -107,11 +107,15 @@ export async function runDeletion(
 	}
 }
 
+/**
+ * Retry the purges that are due. `failed` counts the attempts that failed
+ * again, `abandoned` those of them that were the last.
+ */
 export async function drainPendingDeletions(
 	db: AppDatabase,
 	storage: StorageBackend,
 	concurrency = 8,
-): Promise<{ drained: number; failed: number }> {
+): Promise<{ drained: number; failed: number; abandoned: number }> {
 	const due = db
 		.select()
 		.from(pendingDeletions)
@@ -119,10 +123,11 @@ export async function drainPendingDeletions(
 		.limit(DRAIN_BATCH_LIMIT)
 		.all();
 
-	if (due.length === 0) return { drained: 0, failed: 0 };
+	if (due.length === 0) return { drained: 0, failed: 0, abandoned: 0 };
 
 	let drained = 0;
 	let failed = 0;
+	let abandoned = 0;
 
 	await runWithConcurrency(due, concurrency, async (row) => {
 		const failure = await settle(db, storage, row);
@@ -138,6 +143,7 @@ export async function drainPendingDeletions(
 			// is gone.
 			log.error("giving up on pending deletion", { deletionId: row.id, attempts, detail: failure });
 			db.delete(pendingDeletions).where(eq(pendingDeletions.id, row.id)).run();
+			abandoned++;
 			return;
 		}
 
@@ -147,5 +153,5 @@ export async function drainPendingDeletions(
 			.run();
 	});
 
-	return { drained, failed };
+	return { drained, failed, abandoned };
 }

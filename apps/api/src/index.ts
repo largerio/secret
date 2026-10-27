@@ -1,13 +1,15 @@
 import { serve } from "@hono/node-server";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, which config.js loads first and the routes extend.
+import "@hono/zod-openapi";
 import { parseServerKey } from "@largerio/secret-crypto/server";
-import { createApp } from "./app.js";
-import { startCleanupJob } from "./cleanup.js";
+import { readBuildInfo } from "./buildInfo.js";
 import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
+import { startInstance } from "./instance.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { log } from "./logger.js";
-import { claimStorage, startReconcileJob } from "./reconcile.js";
 import { createStorageBackend } from "./storage/index.js";
 
 function fail(message: string, hint?: string): never {
@@ -48,15 +50,14 @@ try {
 	throw err;
 }
 
-const storage = createStorageBackend(config.storage);
-
-const { app, rateLimiters } = createApp({ db, serverKey, storage, config });
-
-const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs);
-// Claimed whether this instance sweeps or not, so a sweeping one sharing the
-// storage by mistake stops instead of taking these notes for orphans.
-void claimStorage(db, storage);
-const reconcileJob = config.storageReconcile ? startReconcileJob(db, storage) : undefined;
+const build = readBuildInfo(process.env);
+const { app, rateLimiters, drain, storage, stopJobs } = startInstance({
+	db,
+	serverKey,
+	config,
+	build,
+	backend: createStorageBackend(config.storage),
+});
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port });
 
@@ -80,20 +81,26 @@ function shutdown(exitCode = 0): void {
 	shuttingDown = true;
 
 	log.info("graceful shutdown initiated");
-	clearInterval(cleanupTimer);
-	reconcileJob?.stop();
+	// server.close() below refuses new connections at once; a health check
+	// still arriving on an open one hears `draining` instead of `ok`.
+	drain();
+	stopJobs();
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}
 	// Hard fallback: never let a hung close() keep the process alive forever.
-	// Kept under Docker's default 10s stop grace period so the WAL checkpoint in
-	// sqlite.close() still runs before SIGKILL; the compose file raises that
-	// grace period to 30s to leave room for in-flight requests to drain.
+	// Docker sends SIGKILL 10 s after SIGTERM unless told otherwise
+	// (`stop_grace_period`, which docker-compose.yml leaves at that default, or
+	// `--stop-timeout`), and entrypoint.sh relays the signal within a second.
+	// So in-flight requests get SHUTDOWN_TIMEOUT, 8 s by default, as in the web
+	// server in front: then they are cut and sqlite.close() checkpoints the WAL
+	// before the SIGKILL. A longer drain needs both raised, the timeout a couple
+	// of seconds under the grace period.
 	const forceExit = setTimeout(() => {
 		log.error("shutdown timed out waiting for connections to close");
 		sqlite.close();
 		process.exit(exitCode || 1);
-	}, 8_000);
+	}, config.shutdownTimeoutMs);
 	forceExit.unref();
 
 	server.close(async () => {
@@ -121,4 +128,7 @@ log.info("secret api listening", {
 	host: config.host,
 	port: config.port,
 	storage: config.storageBackend,
+	version: build.version,
+	revision: build.revision,
+	metrics: config.metricsToken !== "",
 });

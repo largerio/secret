@@ -14,6 +14,8 @@
 **/.DS_Store
 **/*.tgz
 *.md
+# The API's version (apps/api/src/buildInfo.ts).
+!CHANGELOG.md
 LICENSE
 biome.json
 vitest.config.ts

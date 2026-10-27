@@ -33,12 +33,16 @@ export function matchedRoute(c: Context): string {
 	return c.req.matchedRoutes.at(-1)?.path ?? "*";
 }
 
-/** One structured line per request: id, method, route, status, duration. */
+/**
+ * One structured line per request: id, method, route, status, duration.
+ * `skipPaths` are never logged, `quietPaths` only when they fail (400 and up).
+ */
 export function createRequestLogger(
 	logger: Logger,
-	options?: { readonly skipPaths?: readonly string[] },
+	options?: { readonly skipPaths?: readonly string[]; readonly quietPaths?: readonly string[] },
 ): MiddlewareHandler<RequestIdEnv> {
 	const skip = new Set(options?.skipPaths ?? []);
+	const quiet = new Set(options?.quietPaths ?? []);
 	return async (c, next) => {
 		if (skip.has(c.req.path)) {
 			await next();
@@ -47,6 +51,10 @@ export function createRequestLogger(
 
 		const start = performance.now();
 		await next();
+
+		if (quiet.has(c.req.path) && c.res.status < 400) {
+			return;
+		}
 
 		logger.info("request", {
 			requestId: c.get("requestId"),
