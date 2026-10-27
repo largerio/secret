@@ -14,9 +14,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # The build runs the lockfile's packages (tsup, esbuild, their scripts). It
+  # gets a read-only token and no secret: whatever it runs cannot take the
+  # App's token or the OIDC token that publishes.
+  build:
     # Forks cannot satisfy the npm trusted publisher, and must not publish.
     if: github.repository == 'largerio/secret'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Build the SDK
+        run: pnpm --filter @largerio/secret-sdk build
+
+      - name: Verify the publishable SDK artifact
+        run: pnpm --filter @largerio/secret-sdk verify-package
+
+      - name: Upload the build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-dist
+          path: packages/sdk-js/dist/
+          if-no-files-found: error
+          # Long enough to re-run a failed publish alone.
+          retention-days: 7
+
+  release:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -39,7 +70,7 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           # Not the App's Workflows permission: this job runs third-party code
-          # (pnpm install, changesets).
+          # (changesets, pnpm).
           permission-contents: write
           permission-pull-requests: write
 
@@ -49,7 +80,21 @@ jobs:
           # The version commit and the PR branch are pushed as the App too.
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
+      # Only what changesets and pnpm publish need: the root, for the
+      # changesets CLI, and the SDK, whose workspace dependencies pnpm
+      # resolves when it packs. No package's script runs, and no cache is
+      # restored: a cache entry is written by jobs that run the whole
+      # lockfile.
       - uses: ./.github/actions/setup
+        with:
+          install-args: --ignore-scripts --filter secret --filter @largerio/secret-sdk
+          cache: ""
+
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-dist
+          path: packages/sdk-js/dist/
 
       # With changesets pending, opens or updates the Version Packages PR.
       # Without, publishes the versions npm does not have yet.

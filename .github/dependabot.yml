@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Proposes no version published less than three days ago: past the two
+    # days pnpm requires (minimumReleaseAge in pnpm-workspace.yaml), so the
+    # lockfile it writes passes them.
+    cooldown:
+      default-days: 3
     groups:
       dependencies:
         patterns: ["*"]
@@ -17,29 +22,20 @@ updates:
       prefix: deps
     labels: ["dependencies"]
 
-  # Base image digest in the Dockerfile (node:26-alpine@sha256:...).
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      docker:
-        patterns: ["*"]
-        update-types:
-          - minor
-          - patch
-    commit-message:
-      prefix: build
-    labels: ["docker"]
+  # The base image digest in the Dockerfiles is bumped by
+  # .github/workflows/base-image.yml.
 
   # Actions pinned by commit SHA in .github/workflows/*.yml, and in the local
   # composite actions, which Dependabot only reads from the directories listed.
+  # Never auto-merged: an action runs with the workflow's tokens.
   - package-ecosystem: github-actions
     directories:
       - /
       - /.github/actions/*
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       actions:
         patterns: ["*"]

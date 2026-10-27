@@ -353,9 +353,10 @@ stay private — so consumers install a single self-contained package. Releases 
 through [changesets](https://github.com/changesets/changesets):
 
 ```bash
-pnpm changeset          # describe the change + pick the version bump
-pnpm version-packages   # apply pending changesets (bump version + changelog)
-pnpm release            # build (bundles internals), then publish to npm
+pnpm changeset                            # describe the change + pick the version bump
+pnpm version-packages                     # apply pending changesets (bump version + changelog)
+pnpm --filter @largerio/secret-sdk build  # bundle the internals into dist/
+pnpm release                              # publish the built SDK to npm
 ```
 
 In development everything resolves to TypeScript sources (`exports` → `./src`);

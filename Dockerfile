@@ -1,6 +1,6 @@
 # Stage 1: Build
 # The base is pinned by digest, the same in both stages: CI refuses a mix
-# (.github/scripts/base-image.sh). Dependabot bumps it on main, and
+# (.github/scripts/base-image.sh). base-image.yml bumps it on main, and
 # rebuild-release.yml rebuilds the latest release on a newer one.
 FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS builder
 

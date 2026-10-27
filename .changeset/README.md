@@ -11,7 +11,9 @@ Workflow:
    This writes a markdown file in this folder; commit it with your PR.
 2. `pnpm version-packages` — consume pending changesets, bump the version, and
    update the changelog.
-3. `pnpm release` — build (tsup bundles crypto + shared into the SDK) and publish
-   to npm. pnpm applies `publishConfig` (which points `exports` at the compiled
-   `dist/` output) at pack time. In CI this runs under the Release SDK workflow,
-   which authenticates via **npm trusted publishing (OIDC)** — no token.
+3. `pnpm --filter @largerio/secret-sdk build`, then `pnpm release` — build
+   (tsup bundles crypto + shared into the SDK), then publish it to npm. pnpm
+   applies `publishConfig` (which points `exports` at the compiled `dist/`
+   output) at pack time. In CI the Release SDK workflow builds in a job with no
+   secret, then publishes that build from another, which authenticates via
+   **npm trusted publishing (OIDC)** — no token.

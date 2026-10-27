@@ -183,22 +183,40 @@ pnpm changeset
 
 On merge to `main`, the Release SDK workflow collects pending changesets into a
 "chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` to
-npm via OIDC trusted publishing — no token is stored.
+npm via OIDC trusted publishing — no token is stored. The SDK is built in a job
+with a read-only token and no secret. The job that publishes it installs only
+what changesets and pnpm need, runs no package's script, and publishes that
+build.
 
 The workflow opens that PR as a GitHub App rather than with the default
 `GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions
 taken by `GITHUB_TOKEN`: the version PR would otherwise reach `main` with no CI
-run at all. The same App arms auto-merge on Dependabot PRs
-(`dependabot-delayed-merge.yml`): a merge made with `GITHUB_TOKEN` starts no
-workflow on `main`, so nothing would be built, scanned or deployed.
+run at all. The same App opens the base image PRs (`base-image.yml`) and arms
+auto-merge on the PRs labeled `auto-merge-48h` (`dependabot-delayed-merge.yml`):
+a merge made with `GITHUB_TOKEN` starts no workflow on `main`, so nothing would
+be built, scanned or deployed.
 
 Maintainers configuring a fork need an App installed on the repository with
 three repository permissions — Contents (read/write), Pull requests
-(read/write) and Workflows (read/write, so it can merge the GitHub Actions
-bumps) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets. Each workflow
-scopes its token down to what it needs. Without the App both workflows fall back
-to `GITHUB_TOKEN`: releases still ship, but the version PR gets no CI run and
-Dependabot merges never reach the CI/CD pipeline.
+(read/write) and Workflows (read/write, so it can update a PR with `main` when
+`main` changed a workflow) — exposed as the `APP_ID` and `APP_PRIVATE_KEY`
+secrets. Each workflow scopes its
+token down to what it needs. Without the App these workflows fall back to
+`GITHUB_TOKEN`: releases still ship, but the version and base image PRs get no
+CI run and Dependabot merges never reach the CI/CD pipeline.
+
+### Dependencies
+
+- pnpm resolves no version published less than two days ago
+  (`minimumReleaseAge` in `pnpm-workspace.yaml`), so a compromised release has
+  time to be yanked before it reaches the lockfile. To take an urgent fix
+  sooner, list its package under `minimumReleaseAgeExclude` for that update.
+- Dependabot proposes no version less than three days old. Its npm patch and
+  minor PRs are labeled `auto-merge-48h` and merged once 48 hours old and
+  green. Majors and GitHub Actions updates are reviewed and merged by hand: an
+  action runs with the tokens and secrets of the workflows that use it.
+- Every Monday, `base-image.yml` opens a PR moving every Dockerfile to the
+  newest digest of the base image, merged the same way.
 
 ### The app image
 
