@@ -1,7 +1,9 @@
 name: Dependabot label
 
-# Labels Dependabot's patch and minor PRs auto-merge-48h when they open:
-# dependabot-delayed-merge.yml arms the merge later. Majors stay for review.
+# Labels Dependabot's npm patch and minor PRs auto-merge-48h when they open:
+# dependabot-delayed-merge.yml arms the merge later. Majors stay for review,
+# and so does every GitHub Actions update: an action runs with the tokens and
+# secrets of the workflows that use it.
 #
 # `pull_request`, not `pull_request_target`: a fork's PR gets a read-only
 # token and no secrets, so it could not add a label even past the guard. The
@@ -29,8 +31,11 @@ jobs:
 
       # --force creates the label or updates it, so it never fails on an
       # existing one.
-      - name: Label patch and minor updates
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+      - name: Label npm patch and minor updates
+        if: >-
+          steps.meta.outputs.package-ecosystem == 'npm_and_yarn' && (
+            steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No checkout, so no git remote to infer the repository from.
@@ -39,5 +44,5 @@ jobs:
         run: |
           gh label create auto-merge-48h --force \
             --color 0e8a16 \
-            --description "Dependabot patch/minor PR, auto-merged once >=48h old and CI is green"
+            --description "Auto-merged once >=48h old and CI is green"
           gh pr edit "$PR_URL" --add-label auto-merge-48h

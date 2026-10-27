@@ -1,3 +1,9 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# pnpm resolves no version published less than two days ago (in minutes), so
+# a compromised release has time to be yanked before it reaches the lockfile.
+# A frozen install trusts the lockfile and ignores it. To take an urgent fix
+# sooner, list its package under minimumReleaseAgeExclude for that update.
+minimumReleaseAge: 2880

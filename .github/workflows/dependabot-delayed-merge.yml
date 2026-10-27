@@ -1,9 +1,10 @@
 name: Dependabot delayed merge
 
-# Arms auto-merge on the Dependabot PRs labeled auto-merge-48h
-# (dependabot-label.yml) that are at least 48 hours old, so a compromised
-# release has time to be yanked, and already green. The merge itself still
-# waits for the required checks of main's branch protection.
+# Arms auto-merge on the PRs labeled auto-merge-48h that are at least 48 hours
+# old, so a compromised release has time to be yanked, and already green:
+# Dependabot's (dependabot-label.yml) and the base image bumps the release App
+# opens (base-image.yml). The merge itself still waits for the required
+# checks of main's branch protection.
 on:
   schedule:
     - cron: "0 */6 * * *"
@@ -29,7 +30,9 @@ jobs:
       # GitHub starts no workflow for a push made with GITHUB_TOKEN: a merge
       # armed with it would reach main with no CI/CD run, so nothing would be
       # built, scanned or deployed. Armed as the release App, it gets one.
-      # Workflows (write) lets the App merge the bumps of .github/workflows/.
+      # Workflows (write): updating a PR with main brings main's workflow
+      # changes into its branch, which GitHub refuses an App without it. The
+      # PRs that change .github/ themselves are left to a human, below.
       - name: Mint a GitHub App token
         id: app-token
         if: env.HAS_RELEASE_APP == 'true'
@@ -48,15 +51,31 @@ jobs:
           # Only the merge needs the App. Without it (a fork), merges fall
           # back to GITHUB_TOKEN and skip CI/CD.
           MERGE_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           cutoff=$(date -u -d '48 hours ago' +%s)
-          gh pr list --state open --author "app/dependabot" \
-            --label auto-merge-48h --json number,createdAt \
-            --jq '.[] | "\(.number) \(.createdAt)"' |
-          while read -r number created; do
+          authors=(app/dependabot)
+          if [ -n "$APP_SLUG" ]; then authors+=("app/$APP_SLUG"); fi
+          for author in "${authors[@]}"; do
+            gh pr list --state open --author "$author" --label auto-merge-48h \
+              --json number,createdAt,mergeStateStatus,author,files \
+              --jq '.[] | "\(.number) \(.createdAt) \(.mergeStateStatus) \(.author.login) \([.files[].path | select(startswith(".github/"))] | length)"'
+          done |
+          while read -r number created state author workflows; do
             [ -n "$number" ] || continue
             created_ts=$(date -u -d "$created" +%s)
             [ "$created_ts" -le "$cutoff" ] || continue
+            if [ "$workflows" -gt 0 ]; then
+              echo "Skipping PR #$number: it changes .github/, review it by hand"
+              continue
+            fi
+            # main only takes a branch up to date with it. Dependabot updates
+            # its own; nothing else updates the App's.
+            if [ "$state" = BEHIND ] && [ "$author" != app/dependabot ]; then
+              echo "Updating PR #$number with main; its checks run again"
+              GH_TOKEN="$MERGE_TOKEN" gh pr update-branch "$number"
+              continue
+            fi
             # gh pr checks exits non-zero while any check is pending or failing.
             if gh pr checks "$number"; then
               echo "Arming auto-merge for PR #$number"
