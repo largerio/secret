@@ -157,6 +157,7 @@ jobs:
       # Deploy this exact image: a tag could move between the scan and the
       # rollout.
       digest: ${{ steps.build.outputs.digest }}
+      current: ${{ steps.current.outputs.current }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,6 +176,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Re-running an older commit's run gives it its image, as a release
+      # commit whose run was cancelled needs (release-image.yml). Once main
+      # has moved on, that must not take :main or production back to it.
+      - name: Tell whether main has moved on
+        id: current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" -gt 1 ]; then
+            tip=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+            if [ "$tip" != "$GITHUB_SHA" ]; then
+              echo "::notice::main is at $tip now: this run tags sha-${GITHUB_SHA:0:7} only, and deploys nothing."
+              echo "current=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "current=true" >> "$GITHUB_OUTPUT"
+
       # Recorded on the image, so rebuild-release.yml can tell when a newer
       # base is out.
       - name: Read the base image
@@ -187,17 +207,7 @@ jobs:
       # of main never passes for the release before it.
       - name: Tell a release commit
         id: release
-        run: |
-          # Reads to the end: stopping at the first match could leave git show
-          # writing to a closed pipe, and pipefail would take that for no parent.
-          latest() { awk '!found && /^## \[[0-9]+\.[0-9]+\.[0-9]+/ { sub(/\].*/, "]"); print; found = 1 }'; }
-          current=$(latest < CHANGELOG.md)
-          previous=$(git show HEAD^:CHANGELOG.md 2> /dev/null | latest) || previous=""
-          if [ -n "$current" ] && [ "$current" != "$previous" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: .github/scripts/changelog-release.sh >> "$GITHUB_OUTPUT"
 
       - name: Compute the tags and labels
         id: meta
@@ -213,7 +223,7 @@ jobs:
           # up as sha-<first 7 characters>, the default format.
           tags: |
             type=sha,priority=700
-            type=ref,event=branch
+            type=ref,event=branch,enable=${{ steps.current.outputs.current == 'true' }}
           labels: |
             org.opencontainers.image.base.name=${{ steps.base.outputs.name }}
             org.opencontainers.image.base.digest=${{ steps.base.outputs.digest }}
@@ -242,13 +252,15 @@ jobs:
           image: ghcr.io/largerio/secret
           digest: ${{ steps.build.outputs.digest }}
           tags: ${{ steps.meta.outputs.tags }}
+          version: ${{ steps.release.outputs.version }}
           sign: "true"
 
-  # Production runs the tip of main. A release tag deploys nothing: on a
-  # commit behind main, it would roll production back.
+  # Production runs the tip of main. A release tag deploys nothing, nor does
+  # a re-run once main has moved on: on a commit behind main, either would
+  # roll production back.
   deploy:
     needs: docker
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.docker.outputs.current == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions: {}

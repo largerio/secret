@@ -3,8 +3,9 @@
 # its CSRF check all behave. Every image is run through this before it gets a
 # tag: the e2e suite runs the dev servers, so nothing else exercises the image.
 #
-# Usage: smoke-test.sh <image-ref>
-# The image must be built with REVISION, as CI builds it (Dockerfile).
+# Usage: [EXPECTED_VERSION=<version>] smoke-test.sh <image-ref>
+# The image must be built with REVISION, as CI builds it (Dockerfile). Given
+# EXPECTED_VERSION, the version /api/health reports must be that one.
 set -euo pipefail
 
 IMAGE=$1
@@ -93,6 +94,9 @@ revision=$(jq -r .revision <<< "$health")
 # CHANGELOG.md's latest version, -dev on a later commit (apps/api/src/buildInfo.ts).
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
 	|| fail "/api/health reports the version $version"
+if [ -n "${EXPECTED_VERSION:-}" ] && [ "$version" != "$EXPECTED_VERSION" ]; then
+	fail "/api/health reports the version $version, not $EXPECTED_VERSION"
+fi
 # CI labels the image with the commit it passes as REVISION (deploy.yml,
 # rebuild-release.yml), and release-image.yml promotes such an image.
 labelled=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' smoke)

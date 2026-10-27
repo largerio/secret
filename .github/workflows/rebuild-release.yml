@@ -194,6 +194,8 @@ jobs:
         with:
           image: ghcr.io/largerio/secret
           digest: ${{ steps.build.outputs.digest }}
+          # The release, without -dev: RELEASE=true above.
+          version: ${{ needs.check.outputs.version }}
           sign: "true"
           # Only the base is new: the npm packages are those of the image being
           # replaced, which the daily scan already reports. Failing on them
