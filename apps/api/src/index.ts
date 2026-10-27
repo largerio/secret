@@ -1,15 +1,15 @@
 import { serve } from "@hono/node-server";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, which config.js loads first and the routes extend.
+import "@hono/zod-openapi";
 import { parseServerKey } from "@largerio/secret-crypto/server";
-import { createApp } from "./app.js";
 import { readBuildInfo } from "./buildInfo.js";
-import { startCleanupJob } from "./cleanup.js";
 import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
+import { startInstance } from "./instance.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { log } from "./logger.js";
-import { countPurges, createMetrics } from "./metrics.js";
-import { claimStorage, startReconcileJob } from "./reconcile.js";
 import { createStorageBackend } from "./storage/index.js";
 
 function fail(message: string, hint?: string): never {
@@ -51,18 +51,13 @@ try {
 }
 
 const build = readBuildInfo(process.env);
-const metrics = createMetrics({ db, build, quotaBytes: config.storageQuotaBytes });
-const storage = countPurges(createStorageBackend(config.storage), metrics);
-
-const { app, rateLimiters, drain } = createApp({ db, serverKey, storage, config, metrics, build });
-
-const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs, metrics);
-// Claimed whether this instance sweeps or not, so a sweeping one sharing the
-// storage by mistake stops instead of taking these notes for orphans.
-void claimStorage(db, storage);
-const reconcileJob = config.storageReconcile
-	? startReconcileJob(db, storage, (outcome) => metrics.sweepFinished(outcome))
-	: undefined;
+const { app, rateLimiters, drain, storage, stopJobs } = startInstance({
+	db,
+	serverKey,
+	config,
+	build,
+	backend: createStorageBackend(config.storage),
+});
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port });
 
@@ -89,8 +84,7 @@ function shutdown(exitCode = 0): void {
 	// First, so a load balancer polling readiness stops sending requests while
 	// the ones in flight finish.
 	drain();
-	clearInterval(cleanupTimer);
-	reconcileJob?.stop();
+	stopJobs();
 	for (const limiter of rateLimiters) {
 		limiter.cleanup();
 	}
