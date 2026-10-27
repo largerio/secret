@@ -326,27 +326,53 @@ describe("runCleanup in batches", () => {
 			.sort();
 	}
 
-	// Expired, oldest first: batches take them in this order.
+	/**
+	 * Expiry dates a second apart, the oldest first. One clock reading for all:
+	 * dates are stored to the second, and one read per row could land two rows
+	 * on the same second when the clock ticks over in between.
+	 */
+	function expiredSecondsApart(count: number): Date[] {
+		const oldest = Date.now() - 60_000;
+		return Array.from({ length: count }, (_, i) => new Date(oldest + i * 1000));
+	}
+
+	// Expired, the oldest the lowest number: batches take them in this order.
+	// Inserted newest first, so the table's own order is not that one.
 	function insertExpiredFileNotes(count: number): void {
-		for (let i = 1; i <= count; i++) {
+		const expiries = expiredSecondsApart(count);
+		for (let i = count; i >= 1; i--) {
 			const id = `batched0000${String(i)}`;
 			insertNote(id, {
 				fileCount: 1,
 				filePath: `/data/files/${id}`,
-				expiresAt: new Date(Date.now() - 60_000 + i * 1000),
+				expiresAt: expiries[i - 1] as Date,
 			});
 		}
 	}
 
 	// The same for upload sessions.
 	function insertExpiredUploads(count: number): void {
-		for (let i = 1; i <= count; i++) {
-			insertUpload(
-				`upload00000${String(i)}`,
-				`uploadnote0${String(i)}`,
-				new Date(Date.now() - 60_000 + i * 1000),
-			);
+		const expiries = expiredSecondsApart(count);
+		for (let i = count; i >= 1; i--) {
+			insertUpload(`upload00000${String(i)}`, `uploadnote0${String(i)}`, expiries[i - 1] as Date);
 		}
+	}
+
+	const notesLeft = (): number => db.select().from(notes).all().length;
+	const uploadsLeft = (): number => db.select().from(uploads).all().length;
+
+	/**
+	 * A storage that records, at each purge, the rows `left` counts: which
+	 * batch took which row.
+	 */
+	function recordingLeftAtPurge(left: () => number) {
+		const leftAtPurge: Record<string, number> = {};
+		const storage = stubStorage({
+			purge: vi.fn(async (noteId: string) => {
+				leftAtPurge[noteId] = left();
+			}),
+		});
+		return { storage, leftAtPurge };
 	}
 
 	/** The lines logged with this message. */
@@ -357,12 +383,7 @@ describe("runCleanup in batches", () => {
 	}
 
 	it("commits and purges each batch before taking the next", async () => {
-		const notesLeftAtPurge: Record<string, number> = {};
-		const tracked = stubStorage({
-			purge: vi.fn(async (noteId: string) => {
-				notesLeftAtPurge[noteId] = db.select().from(notes).all().length;
-			}),
-		});
+		const { storage: tracked, leftAtPurge } = recordingLeftAtPurge(notesLeft);
 		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		insertExpiredFileNotes(5);
 		insertNote("stillgood001", { expiresAt: new Date(Date.now() + 3_600_000) });
@@ -370,7 +391,7 @@ describe("runCleanup in batches", () => {
 		await runCleanup(db, tracked, { batchSize: 2 });
 
 		// Two, two, then a short batch of one ends the pass.
-		expect(notesLeftAtPurge).toEqual({
+		expect(leftAtPurge).toEqual({
 			batched00001: 4,
 			batched00002: 4,
 			batched00003: 2,
@@ -453,15 +474,39 @@ describe("runCleanup in batches", () => {
 	});
 
 	it("deletes expired upload sessions in batches too", async () => {
-		const tracked = stubStorage();
+		const { storage: tracked, leftAtPurge } = recordingLeftAtPurge(uploadsLeft);
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		insertExpiredUploads(3);
 
 		await runCleanup(db, tracked, { batchSize: 2 });
 
-		expect(db.select().from(uploads).all()).toHaveLength(0);
-		expect(tracked.purge).toHaveBeenCalledTimes(3);
+		// Two, then a short batch of one ends the pass.
+		expect(leftAtPurge).toEqual({ uploadnote01: 1, uploadnote02: 1, uploadnote03: 0 });
 		expect(db.select().from(pendingDeletions).all()).toHaveLength(0);
+	});
+
+	// The expiry indexes hand rows over oldest first already. Without them, as
+	// with any plan that scans the table, only the ORDER BY does.
+	it("takes the oldest notes first whatever plan SQLite picks", async () => {
+		sqlite.exec("DROP INDEX idx_notes_expires_at");
+		const { storage: tracked, leftAtPurge } = recordingLeftAtPurge(notesLeft);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		insertExpiredFileNotes(3);
+
+		await runCleanup(db, tracked, { batchSize: 2 });
+
+		expect(leftAtPurge).toEqual({ batched00001: 1, batched00002: 1, batched00003: 0 });
+	});
+
+	it("takes the oldest upload sessions first whatever plan SQLite picks", async () => {
+		sqlite.exec("DROP INDEX idx_uploads_expires_at");
+		const { storage: tracked, leftAtPurge } = recordingLeftAtPurge(uploadsLeft);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		insertExpiredUploads(3);
+
+		await runCleanup(db, tracked, { batchSize: 2 });
+
+		expect(leftAtPurge).toEqual({ uploadnote01: 1, uploadnote02: 1, uploadnote03: 0 });
 	});
 
 	it("lets other work run between batches", async () => {
