@@ -66,7 +66,8 @@ export function verifyBackup(path: string): number {
  * process writes between two of its steps.
  *
  * The copy is written next to `destination`, synced and checked, then renamed
- * into place, so `destination` is either missing or complete.
+ * into place, so `destination` is either missing or complete. Its owner alone
+ * can read it (mode 600): it holds every note's deletion token.
  */
 export function backupDatabase(source: string, destination: string): BackupResult {
 	const sourcePath = resolve(source);
@@ -86,6 +87,10 @@ export function backupDatabase(source: string, destination: string): BackupResul
 
 	// Named per run: what a killed run left behind cannot get in the way.
 	const partialPath = `${destinationPath}.${randomBytes(4).toString("hex")}.partial`;
+	// VACUUM INTO writes into an empty file, keeping its mode, and gives its
+	// journal the same one. Created before the try: a name already taken is
+	// not ours to remove.
+	closeSync(openSync(partialPath, "wx", 0o600));
 	try {
 		// Read-write, though it writes nothing: with the app stopped, closing
 		// the last connection removes the -wal and -shm files opening created.
@@ -112,6 +117,8 @@ export function backupDatabase(source: string, destination: string): BackupResul
 		};
 	} catch (err) {
 		rmSync(partialPath, { force: true });
+		// A copy that fills the disk leaves its journal behind too.
+		rmSync(`${partialPath}-journal`, { force: true });
 		throw err;
 	}
 }

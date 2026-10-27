@@ -7,15 +7,17 @@ import {
 	openSync,
 	readdirSync,
 	readFileSync,
+	readSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 	writeSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, StatementSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseConfig } from "../config.js";
 import { backupDatabase, runBackupCommand, verifyBackup } from "../db/backup.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { getSchemaVersion, MIGRATIONS, type Migration } from "../db/migrations.js";
@@ -23,14 +25,33 @@ import { meta, notes } from "../db/schema.js";
 import { assertServerKeyMatches } from "../keyGuard.js";
 import { getInstance } from "../reconcile.js";
 
-// Fails the rename that puts the copy in place, on cue.
-const renameFailure = vi.hoisted(() => ({ armed: false }));
+// Watches the fsyncs and renames of a backup: `calls` records them in order,
+// `onSync` runs before a file is synced, and the rename fails while
+// `renameFails` is set.
+const fsHooks = vi.hoisted(() => ({
+	paths: new Map<number, string>(),
+	calls: [] as string[][],
+	onSync: undefined as ((path: string) => void) | undefined,
+	renameFails: false,
+}));
 vi.mock("node:fs", async (importOriginal) => {
 	const fs = await importOriginal<typeof import("node:fs")>();
 	return {
 		...fs,
+		openSync: (...args: Parameters<typeof fs.openSync>) => {
+			const fd = fs.openSync(...args);
+			fsHooks.paths.set(fd, String(args[0]));
+			return fd;
+		},
+		fsyncSync: (fd: number) => {
+			const path = fsHooks.paths.get(fd) ?? "";
+			fsHooks.calls.push(["fsync", path]);
+			fsHooks.onSync?.(path);
+			fs.fsyncSync(fd);
+		},
 		renameSync: (...args: Parameters<typeof fs.renameSync>) => {
-			if (renameFailure.armed) {
+			fsHooks.calls.push(["rename", String(args[0]), String(args[1])]);
+			if (fsHooks.renameFails) {
 				throw new Error("EXDEV: cross-device link not permitted");
 			}
 			fs.renameSync(...args);
@@ -83,6 +104,23 @@ function schemaOf(sqlite: DatabaseSync): unknown[] {
 	return sqlite.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY name").all();
 }
 
+function backupFiles(): string[] {
+	return readdirSync(DIR).filter((name) => name.startsWith("backup"));
+}
+
+/** Points the first free block of page 2, the first table's root, past the page's end. */
+function corrupt(path: string): void {
+	const fd = openSync(path, "r+");
+	try {
+		const header = Buffer.alloc(100);
+		readSync(fd, header, 0, header.length, 0);
+		const pageSize = header.readUInt16BE(16);
+		writeSync(fd, Buffer.from([0x0f, 0xff]), 0, 2, pageSize + 1);
+	} finally {
+		closeSync(fd);
+	}
+}
+
 beforeEach(() => {
 	rmSync(DIR, { recursive: true, force: true });
 	mkdirSync(DIR, { recursive: true });
@@ -94,7 +132,9 @@ afterEach(() => {
 			sqlite.close();
 		}
 	}
-	renameFailure.armed = false;
+	fsHooks.calls.length = 0;
+	fsHooks.onSync = undefined;
+	fsHooks.renameFails = false;
 	vi.restoreAllMocks();
 });
 
@@ -146,7 +186,41 @@ describe("backupDatabase", () => {
 		});
 		expect(noteIds(openCopy())).toEqual(["inwal0000001", "inwal0000002"]);
 		// A single file, with no WAL of its own to carry along.
-		expect(readdirSync(DIR).filter((name) => name.startsWith("backup"))).toEqual(["backup.db"]);
+		expect(backupFiles()).toEqual(["backup.db"]);
+	});
+
+	it("makes a copy only its owner can read: it holds the deletion tokens", () => {
+		openSource();
+
+		backupDatabase(SOURCE, DESTINATION);
+
+		expect(statSync(DESTINATION).mode & 0o777).toBe(0o600);
+	});
+
+	it("syncs the copy before putting it in place, and the directory after", () => {
+		openSource();
+
+		backupDatabase(SOURCE, DESTINATION);
+
+		const partial = expect.stringMatching(/\/backup\.db\.[0-9a-f]{8}\.partial$/);
+		expect(fsHooks.calls).toEqual([
+			["fsync", partial],
+			["rename", partial, resolve(DESTINATION)],
+			["fsync", resolve(DIR)],
+		]);
+	});
+
+	it("checks the copy as synced, before putting it in place", () => {
+		openSource();
+		// Damaged on its way to the disk.
+		fsHooks.onSync = (path) => {
+			if (path.endsWith(".partial")) {
+				corrupt(path);
+			}
+		};
+
+		expect(() => backupDatabase(SOURCE, DESTINATION)).toThrow(/integrity check/);
+		expect(backupFiles()).toEqual([]);
 	});
 
 	it("leaves no WAL files behind with the app stopped", () => {
@@ -218,18 +292,36 @@ describe("backupDatabase", () => {
 			workerData: { path: SOURCE, state: state.buffer },
 		});
 		const stopped = once(writer, "message");
-		await vi.waitFor(() => expect(Atomics.load(state, 0)).toBeGreaterThan(10), {
-			timeout: 10_000,
+		// The writer's count right before and right after VACUUM INTO: the sync
+		// and the check that follow would let a writer it blocked catch up.
+		const vacuum = { before: 0, after: 0 };
+		const run = StatementSync.prototype.run;
+		vi.spyOn(StatementSync.prototype, "run").mockImplementation(function (
+			this: StatementSync,
+			...params: Parameters<StatementSync["run"]>
+		) {
+			if (this.sourceSQL !== "VACUUM INTO ?") {
+				return run.apply(this, params);
+			}
+			vacuum.before = Atomics.load(state, 0);
+			const result = run.apply(this, params);
+			vacuum.after = Atomics.load(state, 0);
+			return result;
 		});
 
-		const before = Atomics.load(state, 0);
-		backupDatabase(SOURCE, DESTINATION);
-		const after = Atomics.load(state, 0);
-		Atomics.store(state, 1, 1);
-		await stopped;
+		try {
+			await vi.waitFor(() => expect(Atomics.load(state, 0)).toBeGreaterThan(10), {
+				timeout: 10_000,
+			});
+			backupDatabase(SOURCE, DESTINATION);
+		} finally {
+			Atomics.store(state, 1, 1);
+			await stopped;
+		}
 
-		// The writer was never blocked by the copy...
-		expect(after).toBeGreaterThan(before);
+		// The writer kept committing while VACUUM INTO ran, beyond the commit it
+		// may have had in flight as the copy began...
+		expect(vacuum.after - vacuum.before).toBeGreaterThan(1);
 		// ...which holds every write up to one moment, and the count that goes
 		// with them.
 		const copy = openCopy();
@@ -238,8 +330,8 @@ describe("backupDatabase", () => {
 			copy.prepare("SELECT value FROM meta WHERE key = 'writes'").get()?.["value"],
 		);
 		expect(copied).toBe(counted);
-		expect(copied).toBeGreaterThanOrEqual(before);
-		expect(copied).toBeLessThanOrEqual(after);
+		expect(copied).toBeGreaterThanOrEqual(vacuum.before);
+		expect(copied).toBeLessThanOrEqual(vacuum.after);
 	}, 30_000);
 
 	it("never overwrites an existing file", () => {
@@ -274,12 +366,27 @@ describe("backupDatabase", () => {
 		expect(readdirSync(DIR)).toEqual(["secret.db"]);
 	});
 
+	it("removes the journal a failed copy leaves", () => {
+		openSource();
+		// A VACUUM INTO that fills the disk fails and leaves its journal behind:
+		// the same, one step later.
+		fsHooks.onSync = (path) => {
+			if (path.endsWith(".partial")) {
+				writeFileSync(`${path}-journal`, "");
+				throw new Error("database or disk is full");
+			}
+		};
+
+		expect(() => backupDatabase(SOURCE, DESTINATION)).toThrow("database or disk is full");
+		expect(backupFiles()).toEqual([]);
+	});
+
 	it("removes the finished copy when it cannot be put in place", () => {
 		openSource();
-		renameFailure.armed = true;
+		fsHooks.renameFails = true;
 
 		expect(() => backupDatabase(SOURCE, DESTINATION)).toThrow("EXDEV");
-		expect(readdirSync(DIR).filter((name) => name.startsWith("backup"))).toEqual([]);
+		expect(backupFiles()).toEqual([]);
 	});
 });
 
@@ -293,18 +400,14 @@ describe("verifyBackup", () => {
 
 	it("rejects a copy that fails SQLite's integrity check", () => {
 		const path = `${DIR}/corrupt.db`;
-		const corrupt = new DatabaseSync(path);
-		corrupt.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v BLOB)");
-		const insert = corrupt.prepare("INSERT INTO t VALUES (?, ?)");
+		const damaged = new DatabaseSync(path);
+		damaged.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v BLOB)");
+		const insert = damaged.prepare("INSERT INTO t VALUES (?, ?)");
 		for (let i = 0; i < 200; i++) {
 			insert.run(i, Buffer.alloc(100, i));
 		}
-		const pageSize = Number(corrupt.prepare("PRAGMA page_size").get()?.["page_size"]);
-		corrupt.close();
-		// Point the first free block of the table's root page past its end.
-		const fd = openSync(path, "r+");
-		writeSync(fd, Buffer.from([0x0f, 0xff]), 0, 2, pageSize + 1);
-		closeSync(fd);
+		damaged.close();
+		corrupt(path);
 
 		expect(() => verifyBackup(path)).toThrow(/integrity check: .*free space corruption/s);
 	});
@@ -334,15 +437,30 @@ describe("runBackupCommand", () => {
 		);
 	});
 
-	it("looks for the database where the API does without DATABASE_PATH", () => {
+	it("backs up the database where the API keeps it without DATABASE_PATH", () => {
+		// The default is relative to the working directory: run from one of the
+		// test's own, whatever ./data holds where the tests run.
+		const home = resolve(DIR, "home");
+		const { databasePath } = parseConfig({
+			SERVER_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+		} as NodeJS.ProcessEnv);
+		mkdirSync(resolve(home, "data"), { recursive: true });
+		connections.push(createDatabase(resolve(home, databasePath)).sqlite);
 		const out = vi.spyOn(console, "log").mockImplementation(() => {});
-		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		const cwd = process.cwd();
 
-		runBackupCommand([DESTINATION], {});
+		process.chdir(home);
+		try {
+			expect(runBackupCommand(["backup.db"], {})).toBe(0);
+		} finally {
+			process.chdir(cwd);
+		}
 
-		// Found or not, the path is the API's default.
-		const printed = [...out.mock.calls, ...err.mock.calls].flat().join("\n");
-		expect(printed).toContain(resolve("./data/secret.db"));
+		expect(out).toHaveBeenCalledWith(
+			expect.stringContaining(
+				`Backed up ${resolve(home, databasePath)} to ${resolve(home, "backup.db")} (`,
+			),
+		);
 	});
 
 	it("prints the usage and exits with 2 unless given one destination", () => {

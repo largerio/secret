@@ -510,7 +510,17 @@ notes already deleted. It checks the copy, writes it under a temporary name and
 renames it into place, never overwrites an existing file, and exits with a
 non-zero code when anything fails, so a scheduled job notices. The container's
 root filesystem is read-only, so the copy is written to the volume first, then
-moved out.
+moved out. Only its owner can read it (mode `600`), since it holds every note's
+deletion token; `docker compose cp` keeps that mode, and hands the file to the
+user who runs it.
+
+A signal (Ctrl-C, a closed terminal, a job's timeout) does not cut the copy
+short: the command finishes it, or fails and removes it, then exits, with `0`
+only when the destination holds a complete, checked copy. A command killed
+outright can leave a `<destination>.<hex>.partial` file next to the
+destination, and its `-journal`: by `SIGKILL` (a hard timeout, the OOM killer),
+or with the container if it stops or is recreated during the backup. Delete
+them: they hold the notes like any backup.
 
 The copy is a single SQLite file. It keeps the schema version, the instance
 identity the sweep relies on, and the server key's fingerprint, so it restores
@@ -551,7 +561,9 @@ for anyone who still has the link. Hence:
 1. Stop the app with `docker compose stop`. On a new host, run
    `docker compose up -d` first, so that compose creates the volume.
 2. Put the database back. Delete the `-wal` and `-shm` files next to it: left
-   there, SQLite would replay the old log onto the restored database.
+   there, SQLite would replay the old log onto the restored database. The copy
+   is readable by its owner alone (mode `600`), hence the `chown` to the app's
+   user.
 
    ```bash
    docker run --rm -v <volume>:/data -v "$PWD":/backup alpine sh -c '
