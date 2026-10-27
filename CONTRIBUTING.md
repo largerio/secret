@@ -202,8 +202,8 @@ Dependabot merges never reach the CI/CD pipeline.
 
 ### The app image
 
-The app is released by tagging a commit of `main` that has its
-[CHANGELOG.md](CHANGELOG.md) entry and a green CI/CD run:
+The app is released by tagging the commit of `main` that adds its
+[CHANGELOG.md](CHANGELOG.md) entry, once its CI/CD run is green:
 
 ```bash
 git tag v1.4.0 <commit> && git push origin v1.4.0
@@ -213,6 +213,16 @@ Nothing is rebuilt: `release-image.yml` gives the image CI tested for that
 commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
 `main` and is not redeployed. Once that run is green, publish the release
 (`gh release create`), starting its notes from the CHANGELOG entry.
+
+Only that commit's image reports the version: an image of any later commit
+reports it suffixed `-dev`. So `release-image.yml` refuses a tag on any other
+commit and names the one to tag, and every promotion checks the version the
+image reports.
+
+A merge right after the release can leave the release commit without an
+image: GitHub cancels a pending run when a newer one queues. Re-run that
+commit's CI/CD run, then the Release image run. Once `main` has moved on, a
+re-run tags the image `sha-<commit>` but neither moves `:main` nor deploys.
 
 Every week, `rebuild-release.yml` rebuilds the latest release if its base image
 has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild. Every

@@ -15,6 +15,13 @@ inputs:
   tags:
     description: Full references to point at the image, one per line.
     required: true
+  version:
+    description: >
+      The version the image must report on /api/health: a release, or the
+      release before it suffixed -dev (apps/api/src/buildInfo.ts). Empty
+      skips the check.
+    required: false
+    default: ""
   vuln-type:
     description: >
       Package types Trivy fails on. rebuild-release.yml passes `os`: a rebuild
@@ -55,6 +62,7 @@ runs:
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}@${{ inputs.digest }}
+        EXPECTED_VERSION: ${{ inputs.version }}
       run: '"$GITHUB_ACTION_PATH/smoke-test.sh" "$IMAGE"'
 
     # cosign-release is not tracked by Dependabot: bump it by hand.
