@@ -1,5 +1,5 @@
 # Base image pinned by digest for reproducibility + integrity. Same base as the
-# production Dockerfile: .github/workflows/base-image.yml bumps both.
+# production Dockerfile: Dependabot bumps both.
 FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797
 
 # Enable corepack (pnpm version comes from package.json "packageManager",
