@@ -141,10 +141,10 @@ Run `pnpm test` before committing. New features must include tests.
 
 ### Patterns
 
-- API tests use Hono's `app.request()` — no HTTP server needed
+- API tests use Hono's `app.request()` — no HTTP server needed. They run on the real `createApp` (middleware, limits, auth, error handler), configured through `parseConfig` as an operator would; `sdk.test.ts` points the real SDK at it with a `fetch` that calls `app.request()`
 - App assembly is split into testable factories: `parseConfig` (`apps/api/src/config.ts`), `createApp` (`apps/api/src/app.ts`), and `startInstance` (`apps/api/src/instance.ts`: the app, its jobs and the one metrics registry they share); `index.ts` is thin bootstrap glue
 - Database tests use real SQLite (file-based, cleaned up in `beforeEach`)
 - S3 tests mock `@aws-sdk/client-s3` with class-based mocks
-- Crypto tests require `await initSodium()` in `beforeAll`; the test vectors in `packages/shared/src/test-vectors/vectors.json` are generated **and** consumed by the JS suite (`generate-test-vectors.test.ts`). They are structured for cross-language reuse, but there is currently no external (non-JS) implementation validating against them in CI — the "cross-language interoperability" framing is forward-looking, not an enforced guarantee.
+- Crypto tests require `await initSodium()` in `beforeAll`. The test vectors in `packages/shared/src/test-vectors/vectors.json` are frozen: `generate-test-vectors.test.ts` recomputes them with libsodium and fails on any difference (`UPDATE_TEST_VECTORS=1` rewrites the file after a deliberate format change). `test-vectors.test.ts` checks the crypto package against them, and `vectors-openssl.test.ts` checks them with a second implementation, OpenSSL through `node:crypto` (HChaCha20 + ChaCha20-Poly1305, Argon2id), which shares no code with libsodium
 - Frontend logic tests run under jsdom; `$state` rune modules need the `.svelte.ts` extension and the `web` Vitest project to compile
 - Test files live in `__tests__/` directories alongside source

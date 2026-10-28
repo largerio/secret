@@ -1,16 +1,22 @@
 /**
- * One-shot script to generate deterministic crypto test vectors.
- * Run with: docker compose -f docker-compose.dev.yml run --rm app pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
+ * Deterministic crypto test vectors, frozen in packages/shared/src/test-vectors/vectors.json.
+ *
+ * Every run recomputes them with libsodium and fails if the committed file says
+ * otherwise, instead of rewriting the file that test-vectors.test.ts and
+ * vectors-openssl.test.ts check the code against. After a deliberate format
+ * change, write the new file with:
+ *   docker compose -f docker-compose.dev.yml run --rm -e UPDATE_TEST_VECTORS=1 app \
+ *     pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { NotePayload } from "@largerio/secret-shared";
 import { encode } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
 import { expect, test } from "vitest";
 
-test("generate test vectors", async () => {
+test("the committed test vectors match what the crypto produces", async () => {
 	await sodium.ready;
 
 	function toB64(data: Uint8Array): string {
@@ -337,10 +343,15 @@ test("generate test vectors", async () => {
 	if (!dirname) {
 		throw new Error("import.meta.dirname is undefined");
 	}
-	const outDir = resolve(dirname, "../../../shared/src/test-vectors");
-	mkdirSync(outDir, { recursive: true });
-	const outPath = resolve(outDir, "vectors.json");
-	writeFileSync(outPath, `${JSON.stringify(vectors, null, "\t")}\n`);
+	const outPath = resolve(dirname, "../../../shared/src/test-vectors/vectors.json");
+	if (process.env["UPDATE_TEST_VECTORS"] === "1") {
+		writeFileSync(outPath, `${JSON.stringify(vectors, null, "\t")}\n`);
+	}
+
+	// generatedWith only records the libsodium that wrote the file: another
+	// release producing the same bytes is no change.
+	const committed = JSON.parse(readFileSync(outPath, "utf8")) as typeof vectors;
+	expect({ ...vectors, generatedWith: committed.generatedWith }).toEqual(committed);
 
 	expect(vectors.vectors.xchacha20poly1305).toHaveLength(5);
 	expect(vectors.vectors.argon2id).toHaveLength(2);
