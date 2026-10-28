@@ -906,8 +906,9 @@ Full tag list: [Pinning a version](../README.md#pinning-a-version).
 
 Every image this repository publishes is signed by the GitHub Actions workflow
 that built it, once the image has passed the vulnerability scan and the smoke
-test. It also carries a [SLSA](https://slsa.dev) build provenance attestation:
-the workflow, commit and run that produced it. Both are keyless
+test, on `linux/amd64` and `linux/arm64` alike. It also carries a
+[SLSA](https://slsa.dev) build provenance attestation: the workflow, commit and
+run that produced it. Both are keyless
 [Sigstore](https://www.sigstore.dev) signatures: there is no public key to
 fetch, the signing certificate names the workflow, and each signature is
 recorded in the public Rekor transparency log.

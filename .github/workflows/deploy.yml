@@ -164,8 +164,8 @@ jobs:
         run: gitleaks git . --redact --no-banner --verbose
 
   # Builds each commit of main once and pushes it by digest. It is tagged
-  # sha-<commit> and :main only once it has passed the gates of
-  # .github/actions/promote-image, and a release promotes it unchanged
+  # sha-<commit> and :main only once it has passed the gates, on arm64
+  # (image-arm64) then amd64 (promote), and a release promotes it unchanged
   # (release-image.yml).
   docker:
     # Every gate: with `needs: check` alone, an image could ship while e2e
@@ -177,14 +177,13 @@ jobs:
     permissions:
       contents: read
       packages: write
-      # Keyless signing and the provenance attestation (promote-image).
-      id-token: write
-      attestations: write
     outputs:
       # Deploy this exact image: a tag could move between the scan and the
       # rollout.
       digest: ${{ steps.build.outputs.digest }}
       current: ${{ steps.current.outputs.current }}
+      tags: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -273,20 +272,69 @@ jobs:
           sbom: true
           provenance: mode=max
 
+  # The arm64 image, built under QEMU, booted and scanned on an arm64 runner
+  # before any tag points at it.
+  image-arm64:
+    needs: docker
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan and smoke-test the arm64 image
+        uses: ./.github/actions/check-image
+        with:
+          image: ghcr.io/largerio/secret
+          digest: ${{ needs.docker.outputs.digest }}
+          platform: linux/arm64
+          version: ${{ needs.docker.outputs.version }}
+
+  promote:
+    needs: [docker, image-arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      # Keyless signing and the provenance attestation (promote-image).
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Scan, smoke-test, sign and tag the image
         uses: ./.github/actions/promote-image
         with:
           image: ghcr.io/largerio/secret
-          digest: ${{ steps.build.outputs.digest }}
-          tags: ${{ steps.meta.outputs.tags }}
-          version: ${{ steps.release.outputs.version }}
+          digest: ${{ needs.docker.outputs.digest }}
+          tags: ${{ needs.docker.outputs.tags }}
+          version: ${{ needs.docker.outputs.version }}
           sign: "true"
 
   # Production runs the tip of main. A release tag deploys nothing, nor does
   # a re-run once main has moved on: on a commit behind main, either would
   # roll production back.
   deploy:
-    needs: docker
+    needs: [docker, promote]
     if: github.ref == 'refs/heads/main' && needs.docker.outputs.current == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
