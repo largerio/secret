@@ -131,8 +131,16 @@ export function proxyToApi(req: IncomingMessage, res: ServerResponse, target: Pr
 			return;
 		}
 
+		// Answered before the client finished sending (an early 413, a refused
+		// write): the rest of its body has nowhere to go, and the connection
+		// does not outlive this answer. Saying so keeps the client from sending
+		// its next request down it.
+		const headers = endToEndHeaders(upstreamRes.headers);
+		if (!req.complete) {
+			headers.connection = "close";
+		}
 		// Always set on a response received by an http client.
-		res.writeHead(upstreamRes.statusCode as number, endToEndHeaders(upstreamRes.headers));
+		res.writeHead(upstreamRes.statusCode as number, headers);
 		// A client that disconnects mid-download destroys the upstream response
 		// too, which releases the API connection.
 		pipeline(upstreamRes, res, () => {});

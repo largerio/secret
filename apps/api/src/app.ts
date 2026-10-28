@@ -16,6 +16,7 @@ import {
 } from "./metrics.js";
 import { createWriteAuth } from "./middleware/auth.js";
 import { createBodyLimits } from "./middleware/bodyLimit.js";
+import { createCloseAfterError } from "./middleware/connection.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
 import {
 	classifyNotesPath,
@@ -111,6 +112,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
 	app.use("*", createCors([new URL(config.appUrl).origin]));
 	app.use("*", compress());
+
+	// Around the limits and the auth below, which answer before reading a body.
+	app.use("*", createCloseAfterError());
 
 	app.use(
 		"*",
