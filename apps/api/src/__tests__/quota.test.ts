@@ -1,20 +1,21 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, as the routes expect (the production entry point does the same).
+import "@hono/zod-openapi";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AppEnv, createApp } from "../app.js";
-import { parseConfig } from "../config.js";
+import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
-import { createLogger } from "../logger.js";
-import type { RateLimitResult } from "../middleware/rateLimit.js";
 import { assertStorageQuota, getStorageUsedBytes } from "../quota.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage } from "./storageDoubles.js";
+import { createTestApp } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -37,28 +38,22 @@ const CHUNK_OVERHEAD = 28;
 let db: AppDatabase;
 let sqlite: ReturnType<typeof createDatabase>["sqlite"];
 
-const rateLimiters: RateLimitResult[] = [];
+const stops: Array<() => void> = [];
 
-/** The application as the server assembles it, with STORAGE_QUOTA_BYTES set. */
+/** The real application, with STORAGE_QUOTA_BYTES set. */
 function createQuotaApp(
 	database: AppDatabase,
 	quotaBytes: number,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
 ): Hono<AppEnv> {
-	const config = parseConfig({
-		SERVER_ENCRYPTION_KEY: TEST_SERVER_KEY.toString("base64"),
-		STORAGE_QUOTA_BYTES: String(quotaBytes),
-		RATE_LIMIT_MULTIPLIER: "100",
-	} as NodeJS.ProcessEnv);
-	const created = createApp({
+	const { app, stop } = createTestApp({
 		db: database,
 		serverKey: TEST_SERVER_KEY,
 		storage,
-		config,
-		logger: createLogger({ write: () => {} }),
+		env: { STORAGE_QUOTA_BYTES: String(quotaBytes) },
 	});
-	rateLimiters.push(...created.rateLimiters);
-	return created.app;
+	stops.push(stop);
+	return app;
 }
 
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -136,7 +131,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-	for (const limiter of rateLimiters) limiter.cleanup();
+	for (const stop of stops) stop();
 	try {
 		sqlite?.close();
 	} catch {

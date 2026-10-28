@@ -7,16 +7,14 @@ import "@hono/zod-openapi";
 import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AppEnv, createApp as assembleApp } from "../app.js";
-import { parseConfig } from "../config.js";
+import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
-import { createLogger } from "../logger.js";
-import type { RateLimitResult } from "../middleware/rateLimit.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage, stubStorage } from "./storageDoubles.js";
+import { createTestApp } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -36,33 +34,22 @@ let db: AppDatabase;
 let sqlite: DatabaseSync;
 let app: Hono<AppEnv>;
 
-const rateLimiters: RateLimitResult[] = [];
+const stops: Array<() => void> = [];
 
-/**
- * The application as the server assembles it (middleware, limits, auth, error
- * handler), over the given storage. `env` sets the configuration as an
- * operator would. Request logs stay quiet; the routes still log to the console.
- */
+/** The real application over the given storage; `env` configures it. */
 function createApp(
 	database: AppDatabase,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
 	env: Record<string, string> = {},
 ): Hono<AppEnv> {
-	const config = parseConfig({
-		SERVER_ENCRYPTION_KEY: TEST_SERVER_KEY.toString("base64"),
-		// Every request comes from the same address: lift the per-IP bounds.
-		RATE_LIMIT_MULTIPLIER: "100",
-		...env,
-	} as NodeJS.ProcessEnv);
-	const created = assembleApp({
+	const { app: created, stop } = createTestApp({
 		db: database,
 		serverKey: TEST_SERVER_KEY,
 		storage,
-		config,
-		logger: createLogger({ write: () => {} }),
+		env,
 	});
-	rateLimiters.push(...created.rateLimiters);
-	return created.app;
+	stops.push(stop);
+	return created;
 }
 
 function createAppWithFailingPurge(database: AppDatabase) {
@@ -152,7 +139,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
-	for (const limiter of rateLimiters) limiter.cleanup();
+	for (const stop of stops) stop();
 	try {
 		rmSync(TEST_DB_PATH, { force: true });
 		rmSync(`${TEST_DB_PATH}-wal`, { force: true });

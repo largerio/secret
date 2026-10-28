@@ -155,6 +155,54 @@
 				"ciphertext": "xkh+eM8pDdgWAA3vGFzGs5DJ8ELeY6StUC/vgkPXm06lIsxGKiMPXiFPADf2UQpPi1JejX4cqdefHXWPUVVd8woTjxIImAFH/GLuCBkpXbvCAbMkcyL6IjycSHPyMGK0rjzPCbzouWceOL1rZP1UzSF4/G3shPT4pq0FZsxsEYc7X04JqN12Xl6dLv/ot8tfDYn36qKUqtQvvkWK8X5oRelLXMZH5JBxLih8Xw=="
 			}
 		],
+		"secretstream": [
+			{
+				"description": "two files over five chunks: a 10-byte file in 4-byte chunks, then a 4-byte file",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"keyFragment": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+				"chunkSize": 4,
+				"payload": {
+					"text": "chunked",
+					"contentMode": "text",
+					"files": [
+						{
+							"name": "a.bin",
+							"type": "application/octet-stream",
+							"size": 10,
+							"data": "AAECAwQFBgcICQ=="
+						},
+						{
+							"name": "b.txt",
+							"type": "text/plain",
+							"size": 4,
+							"data": "dGFpbA=="
+						}
+					]
+				},
+				"headerMsgpack": "g6R0ZXh0p2NodW5rZWSrY29udGVudE1vZGWkdGV4dKVmaWxlc5KDpG5hbWWlYS5iaW6kdHlwZbhhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW2kc2l6ZQqDpG5hbWWlYi50eHSkdHlwZap0ZXh0L3BsYWlupHNpemUE",
+				"header": "l/k+8S4pcC0tqYmm0Hx6NzmqsGXpGJuW",
+				"chunks": [
+					"pf/n257TyG12oNo2K3ji5/viVG7VFPtWA7OqYhqAFkXI4YwsxllIJoTrnimKH9v6tBsZOeYbo19IbKO5sUofsoaLGUMZJADh17AaoxciZkcHVFIv6BZaF6Z4nROCXPndKC387v2jukmS2svPXHA6MH0S2M+62x382lBuzjfveixAsTh/jxAglnM=",
+					"QQwT/CJXZdiZ8230pAzFcYAlc7CV",
+					"YUekyl9Gzls0wY42uudh0IyBRr2h",
+					"9M+MqQ+TiCtQAPwFarZz2D/BQg==",
+					"8IWBPgLOxMhPzBJxS0qQBoDvV8uQ"
+				]
+			},
+			{
+				"description": "text only: the metadata chunk is the final one",
+				"key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+				"keyFragment": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+				"chunkSize": 4,
+				"payload": {
+					"text": "only text",
+					"contentMode": "markdown"
+				},
+				"headerMsgpack": "gqR0ZXh0qW9ubHkgdGV4dKtjb250ZW50TW9kZahtYXJrZG93bg==",
+				"header": "QxXHcxgR7lJ+nx8tFeHxhYBEuAN+fZth",
+				"chunks": ["AcgmUt6YCFoI0UCRCWSKfA8ZlAbTliTxqYXLSK8iNZXUf9JolWNf5PFutH3Vpkn02AA5FXQ8"]
+			}
+		],
 		"encoding": [
 			{
 				"description": "base64url key encoding (32 bytes)",

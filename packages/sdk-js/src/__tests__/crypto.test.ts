@@ -1,8 +1,13 @@
 import {
+	decryptChunk,
+	decryptRaw,
 	encodeRaw,
 	encryptChunk,
+	fromBase64,
 	generateKey,
+	initStreamDecrypt,
 	initStreamEncrypt,
+	keyFromBase64Url,
 	keyToBase64Url,
 	toBase64,
 } from "@largerio/secret-crypto/client";
@@ -376,7 +381,6 @@ describe("SDK crypto", () => {
 		await ensureInit();
 
 		for (const v of testVectors.vectors.pipeline) {
-			const { fromBase64 } = await import("@largerio/secret-crypto/client");
 			const nonce = fromBase64(v.nonce);
 			const key = fromBase64(v.key);
 
@@ -385,7 +389,64 @@ describe("SDK crypto", () => {
 			expect(payload.text).toBe(v.payload.text);
 		}
 	});
+
+	// The vectors with no password: the plaintext does not depend on it.
+	test("writes inline notes as the pipeline vectors record", async () => {
+		await ensureInit();
+
+		for (const v of testVectors.vectors.pipeline.filter((vector) => !vector.password)) {
+			const written = await encryptNote(vectorPayload(v.payload));
+			const plaintext = decryptRaw(
+				written.encryptedBytes,
+				fromBase64(written.clientNonce),
+				keyFromBase64Url(written.keyFragment),
+			);
+			expect(toBase64(plaintext), v.description).toBe(v.payloadMsgpack);
+		}
+	});
+
+	test("reads the chunked notes the secretstream vectors record", async () => {
+		for (const v of testVectors.vectors.secretstream) {
+			const payload = await decryptNoteChunked(v.chunks.map(fromBase64), v.header, v.keyFragment);
+			expect(payload, v.description).toEqual(vectorPayload(v.payload));
+		}
+	});
+
+	// The stream header is random, so the ciphertexts differ: the plaintext of
+	// each chunk, and which one is FINAL, must not.
+	test("cuts chunked notes as the secretstream vectors record", async () => {
+		await ensureInit();
+		const open = (chunks: Uint8Array[], header: string, keyFragment: string) => {
+			const state = initStreamDecrypt(fromBase64(header), keyFromBase64Url(keyFragment));
+			return chunks.map((chunk) => {
+				const { decrypted, isFinal } = decryptChunk(state, chunk);
+				return { data: toBase64(decrypted), isFinal };
+			});
+		};
+
+		for (const v of testVectors.vectors.secretstream) {
+			const written = await encryptNoteChunked(vectorPayload(v.payload), v.chunkSize);
+			expect(open(written.chunks, written.header, written.keyFragment), v.description).toEqual(
+				open(v.chunks.map(fromBase64), v.header, v.keyFragment),
+			);
+		}
+	});
 });
+
+/** A vector's payload, its files' base64 data decoded. */
+function vectorPayload(payload: {
+	readonly text: string;
+	readonly contentMode: string;
+	readonly files?: ReadonlyArray<{ name: string; type: string; size: number; data: string }>;
+}): NotePayload {
+	return {
+		text: payload.text,
+		contentMode: payload.contentMode as NotePayload["contentMode"] & string,
+		...(payload.files
+			? { files: payload.files.map((file) => ({ ...file, data: fromBase64(file.data) })) }
+			: {}),
+	};
+}
 
 describe("decryption guards", () => {
 	test("reports a missing salt instead of failing as a wrong password", async () => {

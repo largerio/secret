@@ -82,6 +82,10 @@ function argon2id(password: string, salt: Buffer, baseKey: Buffer): Buffer {
 
 const b64 = (value: string): Buffer => Buffer.from(value, "base64");
 
+// Argon2id at libsodium's moderate setting (256 MiB) runs in several test
+// files at once.
+const ARGON2_TIMEOUT = 30_000;
+
 describe("test vectors, checked by OpenSSL", () => {
 	test("HChaCha20 matches its specification", () => {
 		const key = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
@@ -106,44 +110,52 @@ describe("test vectors, checked by OpenSSL", () => {
 		expect(() => openXChaCha(tampered, b64(v.nonce), b64(v.key))).toThrow();
 	});
 
-	test("derives every Argon2id key", () => {
-		for (const v of vectors.argon2id) {
-			expect(v.algorithm).toBe("argon2id13");
-			expect(v.baseKeyUrl).toBe(b64(v.baseKey).toString("base64url"));
-			expect(v.combinedInput).toBe(`${v.password}:${v.baseKeyUrl}`);
-			expect(v.opsLimit).toBe(ARGON2?.opsLimit);
-			expect(v.memLimit).toBe(ARGON2?.memLimit);
-			const derived = argon2id(v.password, b64(v.salt), b64(v.baseKey));
-			expect(derived.toString("base64"), v.description).toBe(v.derivedKey);
-		}
-	});
-
-	test("opens every note, password ones included, to its MessagePack payload", () => {
-		for (const v of vectors.pipeline) {
-			let key = b64(v.key);
-			if (v.password !== undefined) {
-				const derived = argon2id(v.password, b64(v.salt ?? ""), b64(v.baseKey ?? ""));
-				expect(derived.equals(key), v.description).toBe(true);
-				key = derived;
+	test(
+		"derives every Argon2id key",
+		() => {
+			for (const v of vectors.argon2id) {
+				expect(v.algorithm).toBe("argon2id13");
+				expect(v.baseKeyUrl).toBe(b64(v.baseKey).toString("base64url"));
+				expect(v.combinedInput).toBe(`${v.password}:${v.baseKeyUrl}`);
+				expect(v.opsLimit).toBe(ARGON2?.opsLimit);
+				expect(v.memLimit).toBe(ARGON2?.memLimit);
+				const derived = argon2id(v.password, b64(v.salt), b64(v.baseKey));
+				expect(derived.toString("base64"), v.description).toBe(v.derivedKey);
 			}
-			const plaintext = openXChaCha(b64(v.ciphertext), b64(v.nonce), key);
-			expect(plaintext.toString("base64"), v.description).toBe(v.payloadMsgpack);
+		},
+		ARGON2_TIMEOUT,
+	);
 
-			const payload = decode(plaintext) as {
-				text?: string;
-				contentMode?: string;
-				files?: Array<{ name: string; type: string; size: number; data: Uint8Array }>;
-			};
-			expect(payload.text).toBe(v.payload.text);
-			expect(payload.contentMode).toBe(v.payload.contentMode);
-			expect(
-				payload.files?.map((file) => ({
-					...file,
-					data: Buffer.from(file.data).toString("base64"),
-				})),
-			).toEqual(v.payload.files);
-		}
-	});
+	test(
+		"opens every note, password ones included, to its MessagePack payload",
+		() => {
+			for (const v of vectors.pipeline) {
+				let key = b64(v.key);
+				if (v.password !== undefined) {
+					const derived = argon2id(v.password, b64(v.salt ?? ""), b64(v.baseKey ?? ""));
+					expect(derived.equals(key), v.description).toBe(true);
+					key = derived;
+				}
+				const plaintext = openXChaCha(b64(v.ciphertext), b64(v.nonce), key);
+				expect(plaintext.toString("base64"), v.description).toBe(v.payloadMsgpack);
+
+				const payload = decode(plaintext) as {
+					text?: string;
+					contentMode?: string;
+					files?: Array<{ name: string; type: string; size: number; data: Uint8Array }>;
+				};
+				expect(payload.text).toBe(v.payload.text);
+				expect(payload.contentMode).toBe(v.payload.contentMode);
+				expect(
+					payload.files?.map((file) => ({
+						...file,
+						data: Buffer.from(file.data).toString("base64"),
+					})),
+				).toEqual(v.payload.files);
+			}
+		},
+		ARGON2_TIMEOUT,
+	);
 
 	test("encodes keys as unpadded base64url", () => {
 		for (const v of vectors.encoding) {
