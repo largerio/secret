@@ -107,6 +107,11 @@ image. Each version links to its GitHub release. The SDK has
   note's page reloads to show where the note stands.
 - "Readable N times in total" and the message about ignored attachments now
   agree with their number in every language, Russian's three forms included.
+- A request sent right after one the server refused before reading its body
+  (a chunk or note too large, a write without a valid token) could fail as a
+  network error: the API, and the web server in front of it, announced the
+  connection as kept alive, then dropped it while discarding the rest of the
+  body. Both now close it with the refusal, and the client opens a new one.
 
 ### Removed
 

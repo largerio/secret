@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
-import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
@@ -40,8 +39,6 @@ let db: AppDatabase;
 let server: ServerType;
 let baseUrl: string;
 let stopApp: () => void;
-/** Closed by the server, each connection it answered 413 on. */
-let droppedAfter413: Array<Promise<unknown>> = [];
 
 /** The requests the clients made, as `METHOD /path`: ids as `:id`, numbers as `:n`. */
 let calls: string[] = [];
@@ -93,18 +90,10 @@ beforeAll(async () => {
 		);
 	});
 	baseUrl = `http://127.0.0.1:${String(port)}`;
-	(server as Server).on("request", (request, response) => {
-		response.on("finish", () => {
-			if (response.statusCode === 413) {
-				droppedAfter413.push(new Promise((resolve) => request.socket.once("close", resolve)));
-			}
-		});
-	});
 });
 
 beforeEach(() => {
 	calls = [];
-	droppedAfter413 = [];
 });
 
 afterAll(async () => {
@@ -244,12 +233,6 @@ describe("the SDK against the application", () => {
 
 		await expect(attempt).rejects.toBeInstanceOf(SecretApiError);
 		await expect(attempt).rejects.toMatchObject({ status: 413 });
-
-		// The API answers 413 before reading the chunk and keeps the connection
-		// alive, then drops it once it gives up draining the rest (500 ms in
-		// @hono/node-server): a request sent on it meanwhile fails as a network
-		// error. Let it go, so the next test does not inherit it.
-		await Promise.all(droppedAfter413);
 	});
 
 	it(

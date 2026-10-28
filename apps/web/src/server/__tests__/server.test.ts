@@ -119,6 +119,13 @@ beforeAll(async () => {
 			return;
 		}
 
+		if (req.url === "/api/v1/notes/upload/early/chunks/0") {
+			// Refused before the body is read, as a body limit does.
+			res.writeHead(413, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "Chunk too large" }));
+			return;
+		}
+
 		if (req.url === "/api/v1/notes/slow") {
 			// Answered whenever the test decides.
 			req.socket.on("close", () => reportSlowConnectionClosed());
@@ -296,6 +303,33 @@ describe("API requests", () => {
 		answer.end("too late");
 
 		await slowConnectionClosed;
+	});
+
+	it("close the connection when answered before the client finished sending", async () => {
+		const web = await startWeb();
+		const req = request(`${web}/api/v1/notes/upload/early/chunks/0`, {
+			method: "PUT",
+			headers: { "content-length": String(1024 * 1024) },
+		});
+		req.on("error", () => {});
+		const answered = new Promise<IncomingMessage>((resolve) => req.once("response", resolve));
+		req.write(Buffer.alloc(64 * 1024));
+
+		const res = await answered;
+		res.resume();
+		req.destroy();
+
+		expect(res.statusCode).toBe(413);
+		expect(res.headers.connection).toBe("close");
+	});
+
+	it("keep the connection when the client had finished sending", async () => {
+		const web = await startWeb();
+
+		const res = await rawRequest(web, { method: "POST", path: "/api/v1/notes", body: "{}" });
+
+		expect(res.status).toBe(401);
+		expect(res.headers.connection).toBe("keep-alive");
 	});
 
 	it("answer 502 when the API is unreachable", async () => {
