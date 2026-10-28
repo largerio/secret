@@ -1,9 +1,10 @@
 name: Dependabot label
 
-# Labels Dependabot's npm patch and minor PRs auto-merge-48h when they open:
-# dependabot-delayed-merge.yml arms the merge later. Majors stay for review,
-# and so does every GitHub Actions update: an action runs with the tokens and
-# secrets of the workflows that use it.
+# Labels Dependabot's npm patch and minor PRs, and its base image digest
+# bumps, auto-merge-48h when they open: dependabot-delayed-merge.yml arms the
+# merge later. Majors stay for review, and so does every GitHub Actions
+# update: an action runs with the tokens and secrets of the workflows that use
+# it.
 #
 # `pull_request`, not `pull_request_target`: a fork's PR gets a read-only
 # token and no secrets, so it could not add a label even past the guard. The
@@ -31,11 +32,15 @@ jobs:
 
       # --force creates the label or updates it, so it never fails on an
       # existing one.
-      - name: Label npm patch and minor updates
+      # Every docker PR is a digest bump: dependabot.yml ignores Node majors.
+      # Its update-type cannot tell: it reads a digest bump (`7c6af15` to
+      # 26-alpine) as a major.
+      - name: Label npm patch and minor updates and base image digest bumps
         if: >-
+          steps.meta.outputs.package-ecosystem == 'docker' || (
           steps.meta.outputs.package-ecosystem == 'npm_and_yarn' && (
             steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-            steps.meta.outputs.update-type == 'version-update:semver-minor')
+            steps.meta.outputs.update-type == 'version-update:semver-minor'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No checkout, so no git remote to infer the repository from.

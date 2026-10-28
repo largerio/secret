@@ -22,9 +22,8 @@ updates:
       prefix: deps
     labels: ["dependencies"]
 
-  # Base image digest in the Dockerfiles (node:26-alpine@sha256:...).
-  # .github/workflows/base-image.yml proposes them too until this is shown to
-  # work again; whichever PR lands first, the other closes itself.
+  # Base image digest in the Dockerfiles (node:26-alpine@sha256:...). Digest
+  # bumps are labeled auto-merge-48h (dependabot-label.yml).
   - package-ecosystem: docker
     directory: /
     schedule:
