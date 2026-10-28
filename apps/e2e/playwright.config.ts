@@ -14,6 +14,11 @@ const TEST_SERVER_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 const WEB_PORT = Number(process.env["E2E_WEB_PORT"] ?? 4173);
 const API_PORT = Number(process.env["E2E_API_PORT"] ?? 4001);
 
+// Set, the suite runs against that instance and starts no server: CI points it
+// at the image it builds, on S3 storage (.github/scripts/e2e-image.sh, which
+// applies the settings below to the image).
+const BASE_URL = process.env["E2E_BASE_URL"];
+
 // Absolute paths so they resolve the same regardless of each pnpm script's cwd.
 const TMP_DIR = path.resolve(import.meta.dirname, ".e2e-tmp");
 
@@ -44,7 +49,7 @@ export default defineConfig({
 	workers: 1,
 	reporter: process.env["CI"] ? [["list"], ["html", { open: "never" }]] : "list",
 	use: {
-		baseURL: `http://localhost:${WEB_PORT}`,
+		baseURL: BASE_URL ?? `http://localhost:${WEB_PORT}`,
 		// Pinned: the assertions match English UI copy, and the app picks its
 		// locale from Accept-Language. A runner (or a local Chromium) in another
 		// language fails every test with an opaque 30s timeout.
@@ -57,24 +62,26 @@ export default defineConfig({
 		trace: "on-first-retry",
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-	webServer: [
-		{
-			// Wipe the temp dir first: it is keyed to a per-run random server key,
-			// so leftovers from a previous run are undecryptable dead weight.
-			command: `rm -rf "${TMP_DIR}" && mkdir -p "${path.join(TMP_DIR, "files")}" && pnpm --filter @largerio/api dev`,
-			port: API_PORT,
-			env: apiEnv,
-			reuseExistingServer: !process.env["CI"],
-			timeout: 120_000,
-		},
-		{
-			command: `pnpm --filter @largerio/web dev --port ${String(WEB_PORT)}`,
-			port: WEB_PORT,
-			// The web dev server proxies to the API; without this it falls back to
-			// the hardcoded http://localhost:3001 default.
-			env: { API_URL: `http://localhost:${String(API_PORT)}`, CHUNK_SIZE },
-			reuseExistingServer: !process.env["CI"],
-			timeout: 120_000,
-		},
-	],
+	webServer: BASE_URL
+		? []
+		: [
+				{
+					// Wipe the temp dir first: it is keyed to a per-run random server key,
+					// so leftovers from a previous run are undecryptable dead weight.
+					command: `rm -rf "${TMP_DIR}" && mkdir -p "${path.join(TMP_DIR, "files")}" && pnpm --filter @largerio/api dev`,
+					port: API_PORT,
+					env: apiEnv,
+					reuseExistingServer: !process.env["CI"],
+					timeout: 120_000,
+				},
+				{
+					command: `pnpm --filter @largerio/web dev --port ${String(WEB_PORT)}`,
+					port: WEB_PORT,
+					// The web dev server proxies to the API; without this it falls back to
+					// the hardcoded http://localhost:3001 default.
+					env: { API_URL: `http://localhost:${String(API_PORT)}`, CHUNK_SIZE },
+					reuseExistingServer: !process.env["CI"],
+					timeout: 120_000,
+				},
+			],
 });

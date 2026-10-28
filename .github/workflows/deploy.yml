@@ -64,6 +64,10 @@ jobs:
       - name: Lint the CI scripts
         run: find .github -name '*.sh' -print0 | xargs -0 shellcheck
 
+  # The suite runs against the image this commit builds, on S3 storage
+  # (RustFS), rather than the dev servers: a fault of the image, its proxy or
+  # the S3 backend shows up before the merge. `pnpm test:e2e` alone still
+  # starts the dev servers.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -79,8 +83,31 @@ jobs:
       - name: Install the Playwright browser
         run: pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # For this runner's platform, loaded rather than pushed. The layers come
+      # from the cache the docker job writes on main.
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: secret:e2e
+          build-args: |
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+
+      - name: Start the image on S3 storage
+        run: .github/scripts/e2e-image.sh secret:e2e
+
       - name: Run the e2e suite
+        env:
+          E2E_BASE_URL: http://localhost:3000
         run: pnpm test:e2e
+
+      - name: Show the logs of the image
+        if: failure()
+        run: docker logs secret-e2e-app
 
       - name: Upload the Playwright report
         if: ${{ !cancelled() }}
