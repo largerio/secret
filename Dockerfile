@@ -104,9 +104,11 @@ ARG RELEASE=""
 ENV BUILD_REVISION=$REVISION BUILD_RELEASE=$RELEASE
 
 # Node-based healthcheck avoids shipping curl (smaller image, less attack surface).
-# Readiness, through the web server: the database and the storage answer, and
-# the deploy's rollback catches a container that boots but cannot serve.
+# Liveness, through the web server: both processes answer. Not readiness:
+# proxies that route by Docker's health status, such as Traefik, drop an
+# unhealthy container, and a slow storage would take the whole site down, text
+# notes included. The deploy checks readiness on its own.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-	CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+	CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["sh", "entrypoint.sh"]

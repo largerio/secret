@@ -295,13 +295,20 @@ jobs:
             docker compose up -d --remove-orphans
 
             # Healthy, not just started: a container can boot and then fail
-            # every request.
+            # every request. Then ready: the image's health check is liveness,
+            # and a container that cannot reach its database or its storage
+            # must not count as a good deploy either.
             HEALTH=starting
             for _ in $(seq 1 40); do
               CID=$(docker compose ps -q app)
               HEALTH=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo starting)
               case "$HEALTH" in
-                healthy|none) break ;;
+                healthy|none)
+                  if docker exec "$CID" node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+                    break
+                  fi
+                  HEALTH=unready
+                  ;;
               esac
               sleep 5
             done

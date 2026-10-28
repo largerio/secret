@@ -12,9 +12,12 @@
 #                  Deploying by tag lets a later push move it underneath you,
 #                  and leaves nothing to roll back to. The default keeps manual
 #                  `docker compose up -d` working.
-#   healthcheck    The deploy waits for this before declaring success, and
-#                  rolls back if it never goes healthy. Without it a container
-#                  that boots and fails every request counts as a good deploy.
+#   healthcheck    The deploy waits for this, then for readiness, before
+#                  declaring success, and rolls back if either never comes.
+#                  Without it a container that boots and fails every request
+#                  counts as a good deploy. It polls liveness: a proxy that
+#                  routes by Docker's health status drops an unhealthy
+#                  container, and a slow storage would take the site down.
 #   mem_limit      Reads are buffered in memory; size it above your largest
 #                  expected file, not below.
 #   logging        The json-file driver is unbounded by default and will fill
@@ -55,7 +58,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://localhost:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
