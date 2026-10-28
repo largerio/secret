@@ -61,6 +61,10 @@ The first time you run the e2e suite:
 pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 ```
 
+It starts the dev servers. CI runs it against the image instead, on S3
+storage: `.github/scripts/e2e-image.sh <image>` starts both, then
+`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them.
+
 4. Commit with a clear message (see [Commit Messages](#commit-messages))
 5. Open a pull request
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boot an image the way a PaaS would and check that the site, its API proxy and
 # its CSRF check all behave. Every image is run through this before it gets a
-# tag: the e2e suite runs the dev servers, so nothing else exercises the image.
+# tag: the e2e suite runs on an image built from the same sources, not on this
+# digest.
 #
 # Usage: [EXPECTED_VERSION=<version>] smoke-test.sh <image-ref>
 # The image must be built with REVISION, as CI builds it (Dockerfile). Given
