@@ -217,14 +217,12 @@ button:not(:disabled),
 	inherits: false;
 }
 
+/* Entrances have no `to`: they end on the element's own values. Ending on
+   opacity 1, they lit a disabled button up, then dropped it to its 0.5. */
 @keyframes rise {
 	from {
 		opacity: 0;
 		transform: translateY(12px);
-	}
-	to {
-		opacity: 1;
-		transform: none;
 	}
 }
 
@@ -232,10 +230,6 @@ button:not(:disabled),
 	from {
 		opacity: 0;
 		transform: translateY(-6px) scale(0.985);
-	}
-	to {
-		opacity: 1;
-		transform: none;
 	}
 }
 
@@ -269,7 +263,7 @@ button:not(:disabled),
 
 	/* Something that appears in place: a panel opening, a state swap. */
 	.pop {
-		animation: pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+		animation: pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
 	}
 
 	.btn {
@@ -393,10 +387,15 @@ button:not(:disabled),
 	}
 
 	/* The turn on focus is a transition: with none on the way back, the angle
-	   drops from 360deg to 0deg, the same position, so nothing moves on blur. */
+	   drops from 360deg to 0deg, the same position, so nothing moves on blur.
+	   The arc leans toward the card: in the accent's second shade it had the
+	   ring's lightness and turned unseen, the arrival turn included, as on a
+	   computer the textarea takes the focus on load. With the built-in indigo
+	   it stands 2:1 off the ring and keeps 3:1 against the card, so the whole
+	   ring still marks the focus. */
 	.card:focus-within {
 		--edge: var(--accent-text);
-		--arc: var(--accent-2-text);
+		--arc: color-mix(in srgb, var(--accent-2-text) 65%, var(--surface));
 		--arc-2: var(--accent-text);
 		--border-angle: 360deg;
 		transition: --border-angle var(--turn);
@@ -410,7 +409,7 @@ button:not(:disabled),
 
 	.card.pop {
 		animation:
-			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) backwards,
 			border-turn var(--turn);
 	}
 
@@ -423,7 +422,7 @@ button:not(:disabled),
 
 	.card-busy.pop {
 		animation:
-			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+			pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) backwards,
 			border-turn 3s linear infinite;
 	}
 
