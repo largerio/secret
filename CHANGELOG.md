@@ -61,6 +61,8 @@ image. Each version links to its GitHub release. The SDK has
   none of the `_FILE` variables, nor the metrics token.
 - Once the container is stopping, it refuses new connections, and a health
   check still arriving on an open one gets `503` with `"status":"draining"`.
+- The `linux/arm64` image is scanned and smoke-tested before any tag points at
+  it, like the `linux/amd64` one: it was built, but never run nor scanned.
 
 ### Fixed
 

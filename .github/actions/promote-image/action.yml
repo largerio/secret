@@ -1,9 +1,11 @@
 name: Promote an image
 description: >
   Tag an image already pushed by digest, once it has passed the gates every
-  published image goes through: a Trivy scan, the smoke test and a signature
-  check. The only way deploy.yml, release-image.yml and rebuild-release.yml
-  move a tag.
+  published image goes through: a Trivy scan and the smoke test
+  (check-image, for linux/amd64) and a signature check. The only way
+  deploy.yml, release-image.yml and rebuild-release.yml move a tag; the two
+  that build an image run check-image for linux/arm64 first, on an arm64
+  runner.
 
 inputs:
   image:
@@ -48,22 +50,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Trivy vulnerability scan
-      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+    - name: Scan and smoke-test the image
+      uses: ./.github/actions/check-image
       with:
-        image-ref: ${{ inputs.image }}@${{ inputs.digest }}
-        format: table
-        exit-code: "1"
-        severity: HIGH,CRITICAL
-        ignore-unfixed: true
+        image: ${{ inputs.image }}
+        digest: ${{ inputs.digest }}
+        version: ${{ inputs.version }}
         vuln-type: ${{ inputs.vuln-type }}
-
-    - name: Smoke-test the image
-      shell: bash
-      env:
-        IMAGE: ${{ inputs.image }}@${{ inputs.digest }}
-        EXPECTED_VERSION: ${{ inputs.version }}
-      run: '"$GITHUB_ACTION_PATH/smoke-test.sh" "$IMAGE"'
 
     # cosign-release is not tracked by Dependabot: bump it by hand.
     - name: Install cosign

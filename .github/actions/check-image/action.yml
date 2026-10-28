@@ -1,0 +1,52 @@
+name: Check an image
+description: >
+  The gates an image passes before any tag points at it, for one platform: a
+  Trivy scan and the smoke test. promote-image runs them for linux/amd64; the
+  workflows that build an image also run them on an arm64 runner, natively,
+  for linux/arm64.
+
+inputs:
+  image:
+    description: Repository, without tag (ghcr.io/owner/name).
+    required: true
+  digest:
+    description: Digest of the image (sha256:...), an index for a multi-arch image.
+    required: true
+  platform:
+    description: >
+      The platform of the index to check, which the runner must run natively:
+      the smoke test boots the image.
+    required: false
+    default: linux/amd64
+  version:
+    description: The version the image must report on /api/health; empty skips the check.
+    required: false
+    default: ""
+  vuln-type:
+    description: Package types Trivy fails on (see promote-image).
+    required: false
+    default: os,library
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        # Unset, Trivy reads linux/amd64 from an index, whatever the runner.
+        TRIVY_PLATFORM: ${{ inputs.platform }}
+      with:
+        image-ref: ${{ inputs.image }}@${{ inputs.digest }}
+        format: table
+        exit-code: "1"
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        vuln-type: ${{ inputs.vuln-type }}
+
+    - name: Smoke-test the image
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}@${{ inputs.digest }}
+        EXPECTED_VERSION: ${{ inputs.version }}
+        DOCKER_DEFAULT_PLATFORM: ${{ inputs.platform }}
+      run: '"$GITHUB_ACTION_PATH/smoke-test.sh" "$IMAGE"'
