@@ -112,6 +112,15 @@ image. Each version links to its GitHub release. The SDK has
   network error: the API, and the web server in front of it, announced the
   connection as kept alive, then dropped it while discarding the rest of the
   body. Both now close it with the refusal, and the client opens a new one.
+- The read that burns a file note waited for its files to be deleted from the
+  storage before answering: a slow S3 kept the reader waiting, for minutes at
+  worst. The deletion now runs after the answer; one cut short by a restart is
+  retried by the cleanup job, as before.
+- An upload to S3 that kept trickling never timed out: only silence did. It
+  now gives up after 2 minutes plus 1 second per MiB of the payload, retries
+  included.
+- `secret_notes_expired_total` missed the expired notes a read found and
+  deleted before the cleanup job did.
 
 ### Removed
 

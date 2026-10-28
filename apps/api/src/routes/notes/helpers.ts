@@ -209,8 +209,9 @@ export async function insertNote(
 }
 
 // Finds the note a read is about to be served from: enforces existence and
-// expiry, purges the payload of an expired row, and throws HTTPException for
-// caller-observable errors. It counts nothing — callers load and verify the
+// expiry, deletes an expired row (counted with the ones the cleanup job
+// deletes) and purges its payload, and throws HTTPException for
+// caller-observable errors. It counts no read — callers load and verify the
 // payload first, then call consumeRead.
 //
 // `expect` declares which storage shape the calling endpoint can actually
@@ -218,11 +219,14 @@ export async function insertNote(
 // burns a read. Both directions are enforced: the streaming endpoint cannot
 // serve an inline note, and the inline endpoints cannot serve a chunked note
 // (whose `encryptedData` is an empty buffer).
-export async function findReadableNote(
+export function findReadableNote(
 	db: AppDatabase,
 	storage: StorageBackend,
 	id: string,
-	options?: { expect?: "chunked" | "inline" },
+	options: {
+		readonly metrics: Pick<AppMetrics, "notesExpired">;
+		readonly expect?: "chunked" | "inline";
+	},
 ) {
 	const result = db.transaction((tx) => {
 		const note = tx.select().from(notes).where(eq(notes.id, id)).get();
@@ -239,17 +243,18 @@ export async function findReadableNote(
 			return {
 				error: "Note not found" as const,
 				status: 404 as const,
+				expired: true,
 				...(hasStoredPayload(note) ? { deletion: enqueueDeletion(tx, id) } : {}),
 			};
 		}
 
 		const isChunked = Boolean(note.chunkCount && note.streamHeader);
 
-		if (options?.expect === "chunked" && !isChunked) {
+		if (options.expect === "chunked" && !isChunked) {
 			return { error: "Note is not a chunked note" as const, status: 400 as const };
 		}
 
-		if (options?.expect === "inline" && isChunked) {
+		if (options.expect === "inline" && isChunked) {
 			return {
 				error: "Note is chunked; read it from /:id/stream" as const,
 				status: 400 as const,
@@ -260,8 +265,11 @@ export async function findReadableNote(
 	});
 
 	if ("error" in result) {
+		if ("expired" in result) {
+			options.metrics.notesExpired(1);
+		}
 		if ("deletion" in result) {
-			await runDeletion(db, storage, result.deletion);
+			purgeLater(db, storage, result.deletion);
 		}
 		httpError(result.status as 400 | 404, result.error);
 	}
@@ -322,13 +330,23 @@ export function consumeRead(
 	return result;
 }
 
+/**
+ * Purge in the background: a reader does not wait on the storage, which a
+ * slow S3 could make take minutes. runDeletion never rejects, and a purge cut
+ * short by a restart stays queued for the cleanup job.
+ */
+function purgeLater(db: AppDatabase, storage: StorageBackend, deletion: PendingDeletion): void {
+	void runDeletion(db, storage, deletion);
+}
+
 export async function consumeNote(
 	db: AppDatabase,
 	serverKey: Buffer,
 	storage: StorageBackend,
 	id: string,
+	metrics: Pick<AppMetrics, "notesExpired">,
 ) {
-	const note = await findReadableNote(db, storage, id, { expect: "inline" });
+	const note = findReadableNote(db, storage, id, { expect: "inline", metrics });
 	const serverIv = Buffer.from(note.serverNonce, "base64");
 
 	let clientBlob: Buffer;
@@ -352,7 +370,8 @@ export async function consumeNote(
 
 	const { burned, deletion } = consumeRead(db, id);
 	if (deletion) {
-		await runDeletion(db, storage, deletion);
+		// The payload is in memory already: the answer does not need it.
+		purgeLater(db, storage, deletion);
 	}
 
 	return { clientBlob, note, burned };

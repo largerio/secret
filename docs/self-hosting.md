@@ -855,7 +855,7 @@ Successful scrapes stay out of the logs; refused ones are logged.
 | `secret_note_reads_total` | counter | `type` | |
 | `secret_notes_burned_total` | counter | | Deleted by the read that reached their limit |
 | `secret_notes_deleted_total` | counter | | Deleted with their delete token |
-| `secret_notes_expired_total` | counter | | Deleted by the cleanup job once expired |
+| `secret_notes_expired_total` | counter | | Deleted once expired, by the cleanup job or by a read that found one |
 | `secret_notes` | gauge | `type` | Notes in the database |
 | `secret_upload_sessions` | gauge | | Chunked uploads in progress |
 | `secret_storage_used_bytes` | gauge | | What `STORAGE_QUOTA_BYTES` counts |

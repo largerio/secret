@@ -158,6 +158,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			c.get("serverKey"),
 			c.get("storage"),
 			id,
+			c.get("metrics"),
 		);
 		c.get("metrics").noteRead(note.filePath ? "file" : "text", burned);
 
@@ -185,6 +186,7 @@ export function registerStandardRoutes(app: OpenAPIHono<NotesEnv>): void {
 			c.get("serverKey"),
 			c.get("storage"),
 			id,
+			c.get("metrics"),
 		);
 		c.get("metrics").noteRead(note.filePath ? "file" : "text", burned);
 

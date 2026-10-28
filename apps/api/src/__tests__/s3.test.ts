@@ -119,6 +119,8 @@ describe("S3Storage", () => {
 			connectionMs: 5_000,
 			idleMs: 30_000,
 			requestMs: 120_000,
+			uploadBaseMs: 120_000,
+			uploadBytesPerSecond: 1024 * 1024,
 			probeMs: 5_000,
 		});
 	});
@@ -183,22 +185,30 @@ describe("S3Storage", () => {
 			expect(durations).toEqual([[1_000]]);
 		});
 
-		it("is not given to a read or a chunk upload: they take as long as their size", async () => {
-			mockSend
-				.mockResolvedValueOnce({ Body: null })
-				.mockResolvedValueOnce({ Body: null })
-				.mockResolvedValueOnce({});
+		it("is not given to a read, which has a guard of its own", async () => {
+			mockSend.mockResolvedValueOnce({ Body: null }).mockResolvedValueOnce({ Body: null });
 
 			// No body: the request is all that matters here.
 			await expect(storage.read("notes/note123")).rejects.toThrow("Empty response");
 			await expect(storage.readChunk("note123", 0)).rejects.toThrow("Empty response");
-			await storage.saveChunk("note123", 0, Buffer.from("chunk-data"));
 
 			expect(sentWithSignals()).toEqual([
 				{ command: "MockGetObjectCommand", abortSignal: undefined },
 				{ command: "MockGetObjectCommand", abortSignal: undefined },
-				{ command: "MockPutObjectCommand", abortSignal: undefined },
 			]);
+		});
+
+		it("gives a chunk upload a deadline that grows with its size", async () => {
+			const timeout = vi.spyOn(AbortSignal, "timeout");
+			mockSend.mockResolvedValueOnce({});
+
+			await storage.saveChunk("note123", 0, Buffer.alloc(8 * 1024 * 1024));
+
+			const durations = [...timeout.mock.calls];
+			timeout.mockRestore();
+			// 120 s, then 8 MiB at 1 MiB/s.
+			expect(durations).toEqual([[128_000]]);
+			expect(sentWithSignals()[0]?.abortSignal).toBeInstanceOf(AbortSignal);
 		});
 	});
 

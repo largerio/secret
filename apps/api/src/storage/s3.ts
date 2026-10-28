@@ -28,8 +28,8 @@ export interface S3Config {
 /**
  * How long S3 is waited on. connectionMs and idleMs bound silence, not
  * transfer time: an upload keeps its socket busy however large and slow it
- * is. They apply to each attempt, and the SDK makes three in all. requestMs
- * and probeMs are deadlines, retries included.
+ * is. They apply to each attempt, and the SDK makes three in all. requestMs,
+ * probeMs and the upload deadline are deadlines, retries included.
  */
 export interface S3Timeouts {
 	/** Establishing the TCP connection, on each attempt. */
@@ -45,10 +45,17 @@ export interface S3Timeouts {
 	 * retries included. Above 6 s the SDK drops its idle timeout once the
 	 * headers are in, so a body that stopped arriving after them would hold
 	 * the request, and the purge or sweep behind it, for good. A read has a
-	 * guard of its own (streamToBuffer), and an upload takes as long as its
-	 * size makes it.
+	 * guard of its own (streamToBuffer), an upload the deadline below.
 	 */
 	readonly requestMs: number;
+	/**
+	 * An upload of a note payload, retries included, may take uploadBaseMs
+	 * plus the time its size takes at uploadBytesPerSecond. One that keeps
+	 * trickling never trips idleMs, and would hold the request, and the
+	 * payload in memory, for good.
+	 */
+	readonly uploadBaseMs: number;
+	readonly uploadBytesPerSecond: number;
 	/** The health probe, retries included. */
 	readonly probeMs: number;
 }
@@ -62,6 +69,10 @@ export const S3_TIMEOUTS: S3Timeouts = {
 	// so the SDK's own retries run their course first, and well above what a
 	// slow server takes to delete 1000 keys in one call.
 	requestMs: 120_000,
+	// The same allowance for silence, then 1 MiB/s, far below what a server
+	// sends its object storage: 128 s for an 8 MiB chunk, 220 s for 100 MiB.
+	uploadBaseMs: 120_000,
+	uploadBytesPerSecond: 1024 * 1024,
 	// HeadBucket answers in well under a second: a storage this slow cannot
 	// serve notes either.
 	probeMs: 5_000,
@@ -180,9 +191,17 @@ export class S3Storage implements StorageBackend {
 		return { abortSignal: AbortSignal.timeout(this.timeouts.requestMs) };
 	}
 
+	/** How long an upload of `bytes` may take, retries included (see S3Timeouts). */
+	private uploadDeadlineMs(bytes: number): number {
+		return Math.ceil(
+			this.timeouts.uploadBaseMs + (bytes / this.timeouts.uploadBytesPerSecond) * 1000,
+		);
+	}
+
 	async save(noteId: string, data: Buffer): Promise<string> {
 		assertId(noteId);
 		const key = `notes/${noteId}`;
+		const abortController = new AbortController();
 		const upload = new Upload({
 			client: this.client,
 			params: {
@@ -191,8 +210,14 @@ export class S3Storage implements StorageBackend {
 				Body: data,
 				ContentType: "application/octet-stream",
 			},
+			abortController,
 		});
-		await upload.done();
+		const timer = setTimeout(() => abortController.abort(), this.uploadDeadlineMs(data.length));
+		try {
+			await upload.done();
+		} finally {
+			clearTimeout(timer);
+		}
 		return key;
 	}
 
@@ -228,6 +253,7 @@ export class S3Storage implements StorageBackend {
 				Body: data,
 				ContentType: "application/octet-stream",
 			}),
+			{ abortSignal: AbortSignal.timeout(this.uploadDeadlineMs(data.length)) },
 		);
 		return key;
 	}

@@ -29,6 +29,7 @@ const TEST_DB_PATH = "./data/test.db";
 const TEST_FILES_PATH = "./data/test-files";
 const TEST_SERVER_KEY = randomBytes(32);
 const API_KEY = randomBytes(32).toString("base64url");
+const METRICS_TOKEN = randomBytes(32).toString("base64url");
 
 let db: AppDatabase;
 let sqlite: DatabaseSync;
@@ -672,7 +673,9 @@ describe("GET /api/v1/notes/:id", () => {
 		const readRes = await app.request(`/api/v1/notes/${id}`);
 		expect(readRes.status).toBe(200);
 
-		expect(existsSync(filePath)).toBe(false);
+		// Purged once the answer is out, not before it.
+		await vi.waitFor(() => expect(existsSync(filePath)).toBe(false));
+		expect(pendingNoteIds()).toEqual([]);
 	});
 
 	it("increments readCount for non-burn notes", async () => {
@@ -695,6 +698,25 @@ describe("GET /api/v1/notes/:id", () => {
 		expect(secondRead.status).toBe(404);
 	});
 
+	it("answers a burned file note without waiting for its purge", async () => {
+		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
+		let release: (() => void) | undefined;
+		const purge = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+		);
+		const slowStorage = overrideStorage(new LocalStorage(TEST_FILES_PATH), { purge });
+
+		// A purge that never ends used to hold the answer with it.
+		const res = await createApp(db, slowStorage).request(`/api/v1/notes/${id}`);
+
+		expect(res.status).toBe(200);
+		expect(purge).toHaveBeenCalledExactlyOnceWith(id);
+		release?.();
+	});
+
 	it("deletes file when maxReads is exceeded on file note", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
 
@@ -704,7 +726,7 @@ describe("GET /api/v1/notes/:id", () => {
 		await app.request(`/api/v1/notes/${id}`);
 		const secondRead = await app.request(`/api/v1/notes/${id}`);
 		expect(secondRead.status).toBe(404);
-		expect(existsSync(filePath)).toBe(false);
+		await vi.waitFor(() => expect(existsSync(filePath)).toBe(false));
 	});
 
 	it("reads note with file data from disk", async () => {
@@ -747,8 +769,27 @@ describe("GET /api/v1/notes/:id", () => {
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(404);
-		expect(existsSync(filePath)).toBe(false);
+		await vi.waitFor(() => expect(existsSync(filePath)).toBe(false));
 		expect(pendingNoteIds()).toEqual([]);
+	});
+
+	it("counts an expired note a read deletes with the ones the cleanup job deletes", async () => {
+		const { id } = await createTestNote({ expiresIn: 300 });
+		const { notes } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		db.update(notes)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(notes.id, id))
+			.run();
+
+		const metered = createApp(db, undefined, { METRICS_TOKEN });
+		const res = await metered.request(`/api/v1/notes/${id}`);
+		expect(res.status).toBe(404);
+
+		const scrape = await metered.request("/api/metrics", {
+			headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+		});
+		expect(await scrape.text()).toMatch(/^secret_notes_expired_total 1$/m);
 	});
 
 	it("does not return salt for non-password notes", async () => {

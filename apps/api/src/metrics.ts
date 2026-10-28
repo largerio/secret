@@ -45,7 +45,7 @@ export interface AppMetrics {
 	/** A read served; `burned` when it was the last one the note allowed. */
 	noteRead(type: NoteType, burned: boolean): void;
 	noteDeleted(): void;
-	/** Expired notes the cleanup job deleted. */
+	/** Expired notes deleted, by the cleanup job or by a read that found one. */
 	notesExpired(count: number): void;
 	purgeSettled(result: "ok" | "error"): void;
 	/** Purges the cleanup job gave up on (`drainPendingDeletions().abandoned`). */
@@ -130,7 +130,7 @@ export function createMetrics(deps: {
 	);
 	const expired = registry.counter(
 		"secret_notes_expired_total",
-		"Expired notes deleted by the cleanup job.",
+		"Expired notes deleted, by the cleanup job or by a read that found one.",
 	);
 	for (const type of NOTE_TYPES) {
 		created.inc({ type }, 0);
