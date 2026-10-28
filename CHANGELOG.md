@@ -19,8 +19,7 @@ image. Each version links to its GitHub release. The SDK has
 ### Added
 
 - Liveness and readiness probes. `/api/health/live` answers as long as the API
-  process does; `/api/health/ready` checks the database and the storage. The
-  image's `HEALTHCHECK` uses readiness. See
+  process does; `/api/health/ready` checks the database and the storage. See
   [Monitoring](docs/self-hosting.md#monitoring).
 - `/api/health` and the API reference report the version, and `/api/health`
   the commit the image was built from. An image of `main` built after a
@@ -65,6 +64,12 @@ image. Each version links to its GitHub release. The SDK has
 
 ### Fixed
 
+- Behind a proxy that routes by Docker's health status, such as Traefik, a
+  slow or unreachable storage took the whole site down, text notes included:
+  the image's `HEALTHCHECK` checked the storage, and an unhealthy container
+  gets no traffic. It now polls `/api/health/live`, which only checks that the
+  app answers. Point an uptime monitor at `/api/health/ready` to hear about the
+  storage; the deploy workflow checks it before it accepts a new image.
 - An S3 endpoint that stopped answering held requests, the health check,
   deletions and the storage sweep indefinitely; a stuck deletion also stopped
   the cleanup job until a restart. Connections now give up after 5 seconds and
@@ -83,6 +88,12 @@ image. Each version links to its GitHub release. The SDK has
   read it should scrape `secret_storage_used_bytes` from `/api/metrics`, after
   setting `METRICS_TOKEN`. `/api/health` keeps working otherwise; a health
   check of your own can move to `/api/health/ready` once this version runs.
+- The image's `HEALTHCHECK` no longer checks the database and the storage. A
+  deploy that waits for the container to turn healthy should then check
+  `/api/health/ready` too, as the workflow in
+  [Deploying from CI](docs/self-hosting.md#deploying-from-ci) does. A compose
+  file that overrides the health check, as the reference production one does,
+  should poll `/api/health/live`.
 - Keep backups no longer than `MAX_EXPIRY`: a restore brings back every note
   burned or deleted since, for anyone who still has its link. Back up the key
   apart from the data. The volume archive this guide used to recommend held

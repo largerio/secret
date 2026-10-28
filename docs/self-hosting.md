@@ -760,8 +760,8 @@ Three endpoints answer on the app's port, with no token:
 
 | Path | `200` when | For |
 |---|---|---|
-| `/api/health/live` | the API process answers; nothing else is checked | a liveness probe |
-| `/api/health/ready` | the database and the storage answer, and the container is not stopping; `503` otherwise | a readiness probe, a load balancer, the image's `HEALTHCHECK` |
+| `/api/health/live` | the API process answers; nothing else is checked | a liveness probe, the image's `HEALTHCHECK` |
+| `/api/health/ready` | the database and the storage answer, and the container is not stopping; `503` otherwise | a readiness probe, an uptime monitor, a deploy |
 | `/api/health` | as `/api/health/ready`, with the version and the quota added | a look by hand, and the checks that already call it |
 
 ```bash
@@ -774,12 +774,15 @@ curl http://localhost:3000/api/health
 is stopping. The checks are cached for 10 seconds, so polling cannot hammer the
 storage.
 
-The image's `HEALTHCHECK` polls readiness. Docker keeps a single health status,
-and a deploy that waits for it, such as
-[Deploying from CI](#deploying-from-ci), must not accept a container that
-starts but cannot reach its storage. Liveness is for orchestrators that tell
-the two apart, such as Kubernetes: restarting a container does not fix an S3
-outage, so its liveness probe should not fail on one.
+The image's `HEALTHCHECK` polls liveness. Docker keeps a single health status,
+and proxies that route by it, such as Traefik reading Docker labels, stop
+sending traffic to a container that is not healthy: polling readiness, a slow
+or unreachable storage would take the whole site down, text notes included,
+which do not need it. Restarting the container does not fix an S3 outage
+either. Readiness is for what must notice one without cutting traffic: an
+uptime monitor, so you hear about it, and a deploy, which must not accept a
+container that starts but cannot reach its storage, as
+[Deploying from CI](#deploying-from-ci) does.
 
 **Stopping.** On `SIGTERM`, the container stops accepting connections at once;
 a health check still arriving on an open one gets `draining`. There is no
@@ -973,11 +976,12 @@ Your compose file needs to accept it, with a default so manual runs still work:
 image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:1}
 ```
 
-**Wait for healthy, and roll back if it never is.** A container that starts and
-then fails every request is a successful `docker compose up` — the exit code
-says nothing about whether the app works. The workflow polls the health status
-and, if it does not turn healthy, prints the last 50 log lines and restores the
-image that was running before.
+**Wait for healthy and ready, and roll back if it never is.** A container that
+starts and then fails every request is a successful `docker compose up` — the
+exit code says nothing about whether the app works. The workflow polls the
+health status, then `/api/health/ready` inside the container, since the health
+status only says the processes answer. If either does not come, it prints the
+last 50 log lines and restores the image that was running before.
 
 That is also why `docker image prune -f` is scoped: an unfiltered prune deletes
 the previous image, which is the one a rollback needs.
