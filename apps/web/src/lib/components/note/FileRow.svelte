@@ -40,8 +40,6 @@ function download(): void {
 			<audio controls class="w-full p-3" aria-label={name}>
 				<source src={previewUrl} {type} />
 			</audio>
-		{:else if category === "pdf"}
-			<iframe src={previewUrl} class="h-96 w-full" title={name} sandbox=""></iframe>
 		{/if}
 	{/if}
 	<div class="flex items-center gap-3 p-2">

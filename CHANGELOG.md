@@ -89,6 +89,29 @@ image. Each version links to its GitHub release. The SDK has
   on a computer the text field takes it on load: it was as light as the rest
   of the ring. It is now lighter than the ring on the light theme, darker on
   the dark one.
+- A failed request showed the server's message, in English and meant for
+  developers ("Too many requests", "Network request failed"), whatever the
+  page's language. It now says what happened in the reader's language: no
+  connection, too many requests, the anti-spam check refused, a note larger
+  than the server accepts, no room left, a server error. A deletion link whose
+  token does not match the note says so, and a note gone in the meantime shows
+  "Note not found".
+- Opening a note while the server was unreachable or failing said "Decryption
+  failed". It now says the server is unavailable, or that the note is gone
+  when the failed read was its last.
+- Back, after leaving for another site, could show a note already read, or a
+  new note's link with the only copy of its key: the browser kept the page as
+  it stood (the back-forward cache). The link's page now starts over, and a
+  note's page reloads to show where the note stands.
+- "Readable N times in total" and the message about ignored attachments now
+  agree with their number in every language, Russian's three forms included.
+
+### Removed
+
+- The inline preview of PDF attachments. It never showed in Chrome, which
+  draws a PDF with a plugin, and plugins never run in the sandboxed frame an
+  attachment gets. A PDF comes with a download button, like other files, and
+  the CSP no longer allows `blob:` frames.
 
 ### Upgrade notes
 

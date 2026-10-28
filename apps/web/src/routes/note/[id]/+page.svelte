@@ -1,7 +1,7 @@
 <script lang="ts">
 import { SecretApiError, SecretDecryptionError } from "@largerio/secret-sdk";
 import type { NotePayload } from "@largerio/secret-shared";
-import { onMount, tick } from "svelte";
+import { flushSync, onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon, { type IconName } from "#lib/components/Icon.svelte";
 import FileRow from "#lib/components/note/FileRow.svelte";
@@ -15,6 +15,8 @@ import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { formatDateTime, type MessageKey, t, tn } from "#lib/i18n/index.svelte.js";
+import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
+import { isUnreachable, requestErrorMessage } from "#lib/utils/errors.js";
 import { isPreviewable } from "#lib/utils/fileType.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
 import { type ProgressView, readProgress } from "#lib/utils/progress.js";
@@ -130,18 +132,34 @@ onMount(() => {
 	};
 	window.addEventListener("hashchange", onHashChange);
 
+	// Back would show the note again, read or not: the page forgets it as it
+	// is put away, and reloads on the way back to show where the note stands.
+	const stopCaching = onBackForwardCache(
+		() =>
+			flushSync(() => {
+				forgetPreviews();
+				status = initialStatus();
+				password = "";
+			}),
+		() => location.reload(),
+	);
+
 	return () => {
 		window.removeEventListener("hashchange", onHashChange);
-		if (status.state === "revealed") {
-			for (const url of status.previewUrls) URL.revokeObjectURL(url);
-		}
+		stopCaching();
+		forgetPreviews();
 	};
 });
+
+function forgetPreviews(): void {
+	if (status.state !== "revealed") return;
+	for (const url of status.previewUrls) URL.revokeObjectURL(url);
+}
 
 function readsText(info: NoteInfo): string {
 	const reads = readsBefore(info.maxReads, info.readCount);
 	if (reads.kind === "left") return tn("un_reads_left", reads.count);
-	return reads.kind === "total" ? t("un_reads_total", { count: reads.count }) : "";
+	return reads.kind === "total" ? tn("un_reads_total", reads.count) : "";
 }
 
 /**
@@ -224,6 +242,12 @@ async function handleOpen(): Promise<void> {
 		} else if (e instanceof SecretDecryptionError && current.hasPassword) {
 			// A wrong password, or a damaged key: which of them cannot be told, by design.
 			await failPassword(id, current);
+		} else if (isUnreachable(e)) {
+			// The server may have counted the read before the failure.
+			const fresh = await recheck(id);
+			status = { state: "notice", notice: fresh?.exists === false ? "not_found" : "unavailable" };
+		} else if (e instanceof SecretApiError) {
+			status = { state: "error", message: requestErrorMessage(e) };
 		} else {
 			status = { state: "error", message: t("error_decryption") };
 		}

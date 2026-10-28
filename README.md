@@ -66,7 +66,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Markdown** — Optional formatting with a preview, sanitized (DOMPurify) before the reader sees it
 - **Password generator** — Inserts a strong password where you type, or shares one on its own
 - **Light & dark themes** — Follows the system, switchable from the footer
-- **File previews** — Images, PDF, video, audio rendered in-browser after decryption
+- **File previews** — Images, video, audio rendered in-browser after decryption
 - **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
 - **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
 - **QR codes** — Share links easily on mobile
@@ -81,7 +81,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Client cipher          | XChaCha20-Poly1305  | AES-256-GCM         | —                   | OpenPGP             |
 | Encryption at rest     | Yes (AES-256-GCM)¹  | No                  | Yes                 | No                  |
 | File attachments       | Up to 10, 500 MB    | Single, opt-in      | No                  | Single, streaming   |
-| File previews          | Image/PDF/AV        | Image/PDF/media     | No                  | No                  |
+| File previews          | Image/AV            | Image/PDF/media     | No                  | No                  |
 | Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
 | Read limits (N reads)  | Yes                 | No                  | No                  | No                  |
 | Password protection    | Yes (Argon2id)      | Yes (PBKDF2)        | Yes (passphrase)    | Yes                 |

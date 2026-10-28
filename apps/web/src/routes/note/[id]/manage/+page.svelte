@@ -1,4 +1,5 @@
 <script lang="ts">
+import { SecretApiError } from "@largerio/secret-sdk";
 import { onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
@@ -9,6 +10,7 @@ import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { solveCap } from "#lib/utils/cap.js";
+import { requestErrorMessage } from "#lib/utils/errors.js";
 import type { PageData } from "./$types";
 
 const { data }: { data: PageData } = $props();
@@ -19,6 +21,8 @@ let deleteToken = $state("");
 let confirming = $state(false);
 let isDeleting = $state(false);
 let isDeleted = $state(false);
+// Expired, read for the last time or deleted since the page loaded.
+let gone = $state(false);
 let error = $state("");
 // The button that replaces the one just clicked takes the focus, so the
 // keyboard never falls back to the top of the page.
@@ -48,7 +52,9 @@ async function handleDelete(): Promise<void> {
 		await client.deleteNote(id, deleteToken, capToken);
 		isDeleted = true;
 	} catch (e) {
-		error = e instanceof Error ? e.message : t("error_generic");
+		if (e instanceof SecretApiError && e.status === 404) gone = true;
+		else if (e instanceof SecretApiError && e.status === 403) error = t("manage_wrong_token");
+		else error = requestErrorMessage(e);
 	} finally {
 		isDeleting = false;
 	}
@@ -69,8 +75,13 @@ async function handleDelete(): Promise<void> {
 	<div class="rise flex justify-center" style:animation-delay="0.18s">
 		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
 	</div>
-{:else if !data.noteExists}
-	<NoticeView icon="file-x" title={t("not_found_title")} sub={t("not_found_description")} />
+{:else if !data.noteExists || gone}
+	<NoticeView
+		icon="file-x"
+		title={t("not_found_title")}
+		sub={t("not_found_description")}
+		afterAction={gone}
+	/>
 {:else if mounted && !deleteToken}
 	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} />
 {:else}

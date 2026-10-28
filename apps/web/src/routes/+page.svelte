@@ -1,6 +1,6 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
-import { onMount } from "svelte";
+import { flushSync, onMount } from "svelte";
 import Composer from "#lib/components/create/Composer.svelte";
 import Lifetime from "#lib/components/create/Lifetime.svelte";
 import SuccessView from "#lib/components/create/SuccessView.svelte";
@@ -13,8 +13,10 @@ import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { defaultExpiration } from "#lib/server-config.js";
+import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { resolveContentMode } from "#lib/utils/contentMode.js";
+import { requestErrorMessage } from "#lib/utils/errors.js";
 import { DONE, type ProgressView, sendProgress } from "#lib/utils/progress.js";
 
 // How long "Link ready" stays on screen before the link itself replaces it.
@@ -26,6 +28,11 @@ const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 let mounted = $state(false);
 onMount(() => {
 	mounted = true;
+	// Back would show the link again, with the only copy of its key: the page
+	// starts over as it is put away.
+	return onBackForwardCache(() => {
+		if (phase === "done") flushSync(reset);
+	});
 });
 
 // The note being written
@@ -141,7 +148,7 @@ async function handleSubmit(): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, DONE_PAUSE_MS));
 		phase = "done";
 	} catch (e) {
-		error = e instanceof Error ? e.message : t("error_generic");
+		error = requestErrorMessage(e);
 		phase = "compose";
 	}
 }
