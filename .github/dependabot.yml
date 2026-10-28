@@ -22,8 +22,23 @@ updates:
       prefix: deps
     labels: ["dependencies"]
 
-  # The base image digest in the Dockerfiles is bumped by
-  # .github/workflows/base-image.yml.
+  # Base image digest in the Dockerfiles (node:26-alpine@sha256:...). Back on
+  # trial: since June its jobs dropped every digest as already proposed by
+  # #53, closed since May. .github/workflows/base-image.yml proposes them
+  # meanwhile; whichever PR lands first, the other closes itself.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: build
+    labels: ["docker"]
 
   # Actions pinned by commit SHA in .github/workflows/*.yml, and in the local
   # composite actions, which Dependabot only reads from the directories listed.
