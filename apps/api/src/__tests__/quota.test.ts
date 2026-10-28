@@ -1,20 +1,21 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, as the routes expect (the production entry point does the same).
+import "@hono/zod-openapi";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { UNKNOWN_BUILD } from "../buildInfo.js";
+import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
-import { type AppMetrics, createMetrics } from "../metrics.js";
-import { createWriteAuth } from "../middleware/auth.js";
 import { assertStorageQuota, getStorageUsedBytes } from "../quota.js";
-import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage } from "./storageDoubles.js";
+import { createTestApp } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -22,21 +23,8 @@ vi.mock("../routes/cap.js", () => ({
 			Promise.resolve({ success: token === "valid-cap-token" }),
 		),
 	},
+	createCapRoutes: () => new Hono(),
 }));
-
-interface AppEnv {
-	Variables: {
-		db: AppDatabase;
-		serverKey: Buffer;
-		storage: StorageBackend;
-		chunkSize: number;
-		maxChunkedFileSize: number;
-		maxExpirySeconds: number;
-		maxFilesPerNote: number;
-		storageQuotaBytes: number;
-		metrics: AppMetrics;
-	};
-}
 
 const TEST_DB_PATH = "./data/test-quota.db";
 const TEST_FILES_PATH = "./data/test-quota-files";
@@ -50,35 +38,22 @@ const CHUNK_OVERHEAD = 28;
 let db: AppDatabase;
 let sqlite: ReturnType<typeof createDatabase>["sqlite"];
 
+const stops: Array<() => void> = [];
+
+/** The real application, with STORAGE_QUOTA_BYTES set. */
 function createQuotaApp(
 	database: AppDatabase,
 	quotaBytes: number,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
-) {
-	const metrics = createMetrics({ db: database, build: UNKNOWN_BUILD, quotaBytes });
-	const hono = new Hono<AppEnv>();
-	hono.onError((err, c) => {
-		if (err instanceof HTTPException) {
-			return c.json({ error: err.message }, err.status);
-		}
-		return c.json({ error: "Internal server error" }, 500);
+): Hono<AppEnv> {
+	const { app, stop } = createTestApp({
+		db: database,
+		serverKey: TEST_SERVER_KEY,
+		storage,
+		env: { STORAGE_QUOTA_BYTES: String(quotaBytes) },
 	});
-	hono.use("*", async (c, next) => {
-		c.set("db", database);
-		c.set("serverKey", TEST_SERVER_KEY);
-		c.set("storage", storage);
-		c.set("chunkSize", 4_194_304);
-		c.set("maxChunkedFileSize", 524_288_000);
-		c.set("maxExpirySeconds", 2_592_000);
-		c.set("maxFilesPerNote", 10);
-		c.set("storageQuotaBytes", quotaBytes);
-		c.set("metrics", metrics);
-		await next();
-	});
-	const writeAuth = createWriteAuth([]);
-	hono.use("/api/v1/notes/*", writeAuth);
-	hono.route("/api/v1/notes", createNotesRoutes());
-	return hono;
+	stops.push(stop);
+	return app;
 }
 
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -156,6 +131,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+	for (const stop of stops) stop();
 	try {
 		sqlite?.close();
 	} catch {

@@ -1,0 +1,335 @@
+import { randomBytes } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { type ServerType, serve } from "@hono/node-server";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, which the SDK imports too (the production entry point does the same).
+import "@hono/zod-openapi";
+import { SecretApiError, SecretClient, SecretDecryptionError } from "@largerio/secret-sdk";
+import { Hono } from "hono";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AppDatabase, createDatabase } from "../db/index.js";
+import { pendingDeletions } from "../db/schema.js";
+import { LocalStorage } from "../storage/local.js";
+import { createTestApp } from "./testApp.js";
+
+// The SDK and the API each have their own tests, against a mocked other side.
+// Here the real client talks to the real application over HTTP, as it does
+// once deployed, so a mismatch between them (an endpoint, a header, a limit, a
+// chunk size, an encoding, what compression does to a response) fails a test.
+// Writes authenticate with an API key, as an SDK user does; the Cap widget is
+// a browser concern.
+vi.mock("../routes/cap.js", () => ({
+	cap: { validateToken: vi.fn(() => Promise.resolve({ success: false })) },
+	createCapRoutes: () => new Hono(),
+}));
+
+const TEST_DB_PATH = "./data/sdk-test.db";
+const TEST_FILES_PATH = "./data/sdk-test-files";
+const SERVER_KEY = randomBytes(32);
+const API_KEY = randomBytes(32).toString("base64url");
+// Far below the 4 MiB default, so a chunked note needs only a few hundred KiB.
+const CHUNK_SIZE = 64 * 1024;
+// Argon2id at libsodium's moderate setting (256 MiB) runs in several test
+// files at once.
+const ARGON2_TIMEOUT = 30_000;
+
+let sqlite: ReturnType<typeof createDatabase>["sqlite"];
+let db: AppDatabase;
+let server: ServerType;
+let baseUrl: string;
+let stopApp: () => void;
+/** Closed by the server, each connection it answered 413 on. */
+let droppedAfter413: Array<Promise<unknown>> = [];
+
+/** The requests the clients made, as `METHOD /path`: ids as `:id`, numbers as `:n`. */
+let calls: string[] = [];
+
+const PATH_WORDS = new Set([
+	"api",
+	"v1",
+	"notes",
+	"upload",
+	"init",
+	"chunks",
+	"complete",
+	"raw",
+	"stream",
+	"exists",
+]);
+
+function route(method: string, url: string): string {
+	const parts = new URL(url).pathname.split("/").map((part) => {
+		if (part === "" || PATH_WORDS.has(part)) return part;
+		return /^\d+$/.test(part) ? ":n" : ":id";
+	});
+	return `${method} ${parts.join("/")}`;
+}
+
+function removeFiles(): void {
+	for (const path of [TEST_DB_PATH, `${TEST_DB_PATH}-wal`, `${TEST_DB_PATH}-shm`]) {
+		rmSync(path, { force: true });
+	}
+	rmSync(TEST_FILES_PATH, { recursive: true, force: true });
+}
+
+// One instance for the file, as a server runs: each test works on notes of its
+// own.
+beforeAll(async () => {
+	removeFiles();
+	mkdirSync(TEST_FILES_PATH, { recursive: true });
+	({ db, sqlite } = createDatabase(TEST_DB_PATH));
+	const { app, stop } = createTestApp({
+		db,
+		serverKey: SERVER_KEY,
+		storage: new LocalStorage(TEST_FILES_PATH),
+		env: { API_KEY, CHUNK_SIZE: String(CHUNK_SIZE) },
+	});
+	stopApp = stop;
+	const port = await new Promise<number>((resolve) => {
+		server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info: AddressInfo) =>
+			resolve(info.port),
+		);
+	});
+	baseUrl = `http://127.0.0.1:${String(port)}`;
+	(server as Server).on("request", (request, response) => {
+		response.on("finish", () => {
+			if (response.statusCode === 413) {
+				droppedAfter413.push(new Promise((resolve) => request.socket.once("close", resolve)));
+			}
+		});
+	});
+});
+
+beforeEach(() => {
+	calls = [];
+	droppedAfter413 = [];
+});
+
+afterAll(async () => {
+	// A chunked note read for the last time is purged once its stream ends,
+	// after the response: let the last purges finish before the database
+	// closes under them.
+	await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
+	await new Promise((resolve) => server.close(resolve));
+	stopApp();
+	sqlite.close();
+	removeFiles();
+});
+
+/** A client of the server above, whose every request is recorded in `calls`. */
+function connect(apiKey: string | null = API_KEY): Promise<SecretClient> {
+	return SecretClient.create({
+		baseUrl,
+		...(apiKey ? { apiKey } : {}),
+		fetch: (input, init) => {
+			const request = input instanceof Request ? input : null;
+			calls.push(route(init?.method ?? request?.method ?? "GET", request?.url ?? String(input)));
+			return fetch(input, init);
+		},
+	});
+}
+
+function bytes(size: number): Uint8Array {
+	return new Uint8Array(randomBytes(size));
+}
+
+describe("the SDK against the application", () => {
+	it("round-trips a text note, then finds it burned", async () => {
+		const client = await connect();
+		const { id, keyFragment } = await client.createNote({ text: "hello, server", maxReads: 1 });
+
+		const info = await client.checkNote(id);
+		expect(info).toMatchObject({ exists: true, hasPassword: false, chunked: false, fileCount: 0 });
+
+		const { payload } = await client.readNote(id, keyFragment);
+		expect(payload.text).toBe("hello, server");
+
+		await expect(client.readNote(id, keyFragment)).rejects.toMatchObject({ status: 404 });
+		expect(await client.checkNote(id)).toMatchObject({ exists: false });
+
+		// Unhinted, the client tries the stream first: refused (400) for an
+		// inline note, at no cost to its single read.
+		expect(calls).toEqual([
+			"POST /api/v1/notes",
+			"GET /api/v1/notes/:id/exists",
+			"GET /api/v1/notes/:id/stream",
+			"GET /api/v1/notes/:id/raw",
+			"GET /api/v1/notes/:id/stream",
+			"GET /api/v1/notes/:id/exists",
+		]);
+	});
+
+	it("round-trips files through the multipart upload", async () => {
+		const client = await connect();
+		const data = bytes(20 * 1024);
+		const { id, keyFragment } = await client.createNote({
+			text: "two attachments",
+			files: [
+				{ name: "a.bin", type: "application/octet-stream", data },
+				{ name: "empty.txt", type: "text/plain", data: new Uint8Array() },
+			],
+			chunkSize: CHUNK_SIZE,
+		});
+
+		const info = await client.checkNote(id);
+		expect(info).toMatchObject({ exists: true, chunked: false, fileCount: 2 });
+
+		// Over HTTP the binary read keeps its Content-Length, which the progress needs.
+		const downloaded: number[] = [];
+		const { payload } = await client.readNote(id, keyFragment, {
+			chunked: false,
+			onDownloadProgress: (progress) => downloaded.push(progress),
+		});
+		expect(downloaded.at(-1)).toBe(1);
+		expect(payload.text).toBe("two attachments");
+		expect(payload.files?.map((file) => file.name)).toEqual(["a.bin", "empty.txt"]);
+		expect(payload.files?.[0]?.data).toEqual(data);
+		expect(payload.files?.[1]?.data).toEqual(new Uint8Array());
+
+		expect(calls).toEqual([
+			"POST /api/v1/notes/upload",
+			"GET /api/v1/notes/:id/exists",
+			"GET /api/v1/notes/:id/raw",
+		]);
+	});
+
+	it("round-trips a chunked note at the instance's chunk size", async () => {
+		const client = await connect();
+		const data = bytes(5 * CHUNK_SIZE + 123);
+		const progress: number[] = [];
+		const { id, keyFragment } = await client.createNote({
+			files: [{ name: "big.bin", type: "application/octet-stream", data }],
+			chunkSize: CHUNK_SIZE,
+			maxReads: 2,
+			onProgress: (info) => progress.push(info.overallProgress),
+		});
+		expect(progress.at(-1)).toBe(1);
+		// The metadata chunk, then six of file data.
+		expect(calls).toEqual([
+			"POST /api/v1/notes/upload/init",
+			...Array.from({ length: 7 }, () => "PUT /api/v1/notes/upload/:id/chunks/:n"),
+			"POST /api/v1/notes/upload/:id/complete",
+		]);
+
+		const info = await client.checkNote(id);
+		expect(info).toMatchObject({ exists: true, chunked: true, fileCount: 1, readCount: 0 });
+
+		const first = await client.readNote(id, keyFragment, { chunked: true });
+		expect(first.payload.files?.[0]?.data).toEqual(data);
+
+		// Without the hint, the client finds the stream on its own.
+		const second = await client.readNote(id, keyFragment);
+		expect(second.payload.files?.[0]?.data).toEqual(data);
+
+		await expect(client.readNote(id, keyFragment)).rejects.toMatchObject({ status: 404 });
+		expect(calls.slice(-4)).toEqual([
+			"GET /api/v1/notes/:id/exists",
+			"GET /api/v1/notes/:id/stream",
+			"GET /api/v1/notes/:id/stream",
+			"GET /api/v1/notes/:id/stream",
+		]);
+	});
+
+	it("refuses chunks larger than the instance's chunk size", async () => {
+		const client = await connect();
+		const data = bytes(3 * CHUNK_SIZE);
+
+		// The SDK's 4 MiB default would send the whole file in one chunk.
+		const attempt = client.createNote({
+			files: [{ name: "big.bin", type: "application/octet-stream", data }],
+			chunked: true,
+		});
+
+		await expect(attempt).rejects.toBeInstanceOf(SecretApiError);
+		await expect(attempt).rejects.toMatchObject({ status: 413 });
+
+		// The API answers 413 before reading the chunk and keeps the connection
+		// alive, then drops it once it gives up draining the rest (500 ms in
+		// @hono/node-server): a request sent on it meanwhile fails as a network
+		// error. Let it go, so the next test does not inherit it.
+		await Promise.all(droppedAfter413);
+	});
+
+	it(
+		"needs the password, and spends a read on a wrong one",
+		async () => {
+			const client = await connect();
+			const { id, keyFragment } = await client.createNote({
+				text: "behind a password",
+				password: "correct horse battery staple",
+				maxReads: 3,
+			});
+			expect(await client.checkNote(id)).toMatchObject({ exists: true, hasPassword: true });
+
+			await expect(
+				client.readNote(id, keyFragment, { password: "wrong", chunked: false }),
+			).rejects.toBeInstanceOf(SecretDecryptionError);
+			expect(await client.checkNote(id)).toMatchObject({ readCount: 1 });
+
+			const { payload } = await client.readNote(id, keyFragment, {
+				password: "correct horse battery staple",
+				chunked: false,
+			});
+			expect(payload.text).toBe("behind a password");
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	it(
+		"protects a chunked note with the password too",
+		async () => {
+			const client = await connect();
+			const data = bytes(2 * CHUNK_SIZE);
+			const { id, keyFragment } = await client.createNote({
+				files: [{ name: "big.bin", type: "application/octet-stream", data }],
+				password: "pw",
+				chunkSize: CHUNK_SIZE,
+				maxReads: 2,
+			});
+
+			await expect(client.readNote(id, keyFragment, { chunked: true })).rejects.toBeInstanceOf(
+				SecretDecryptionError,
+			);
+			const { payload } = await client.readNote(id, keyFragment, { chunked: true, password: "pw" });
+			expect(payload.files?.[0]?.data).toEqual(data);
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	it("deletes a note with its delete token, and only with it", async () => {
+		const client = await connect();
+		const { id, keyFragment, deleteToken } = await client.createNote({ text: "to delete" });
+
+		await expect(client.deleteNote(id, "x".repeat(deleteToken.length))).rejects.toMatchObject({
+			status: 403,
+		});
+		await client.deleteNote(id, deleteToken);
+
+		expect(await client.checkNote(id)).toMatchObject({ exists: false });
+		await expect(client.readNote(id, keyFragment)).rejects.toMatchObject({ status: 404 });
+	});
+
+	it("reads without a key, but writes only with one", async () => {
+		const writer = await connect();
+		const { id, keyFragment } = await writer.createNote({ text: "public read", maxReads: 2 });
+
+		const reader = await connect(null);
+		const { payload } = await reader.readNote(id, keyFragment);
+		expect(payload.text).toBe("public read");
+
+		await expect(reader.createNote({ text: "no key" })).rejects.toMatchObject({ status: 401 });
+	});
+
+	it("reads a note from the share URL it builds", async () => {
+		const client = await connect();
+		const { id, keyFragment } = await client.createNote({ text: "by URL" });
+
+		const url = client.buildShareUrl(id, keyFragment);
+		expect(url).toBe(`${baseUrl}/note/${id}#${keyFragment}`);
+		const parsed = SecretClient.parseShareUrl(url);
+		const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
+		expect(payload.text).toBe("by URL");
+	});
+});

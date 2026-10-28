@@ -23,6 +23,7 @@ export type {
 	Argon2idVector,
 	EncodingVector,
 	PipelineVector,
+	SecretstreamVector,
 	TestVectors,
 	XChaCha20Vector,
 } from "./test-vectors/index.js";

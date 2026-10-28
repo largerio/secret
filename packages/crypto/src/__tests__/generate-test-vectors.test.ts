@@ -1,16 +1,22 @@
 /**
- * One-shot script to generate deterministic crypto test vectors.
- * Run with: docker compose -f docker-compose.dev.yml run --rm app pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
+ * Deterministic crypto test vectors, frozen in packages/shared/src/test-vectors/vectors.json.
+ *
+ * Every run recomputes them with libsodium and fails if the committed file says
+ * otherwise, instead of rewriting the file that test-vectors.test.ts and
+ * vectors-openssl.test.ts check the code against. After a deliberate format
+ * change, write the new file with:
+ *   docker compose -f docker-compose.dev.yml run --rm -e UPDATE_TEST_VECTORS=1 app \
+ *     pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { NotePayload } from "@largerio/secret-shared";
 import { encode } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
 import { expect, test } from "vitest";
 
-test("generate test vectors", async () => {
+test("the committed test vectors match what the crypto produces", async () => {
 	await sodium.ready;
 
 	function toB64(data: Uint8Array): string {
@@ -144,6 +150,76 @@ test("generate test vectors", async () => {
 	};
 	const multiFileMsgpack = encode(multiFilePayload);
 	const multiFileCiphertext = encryptXcc(multiFileMsgpack);
+
+	// --- Secretstream vectors (chunked notes) ---
+
+	// A chunked note is one secretstream: first the MessagePack of its text and
+	// file metadata, then each file's bytes cut at chunkSize, the last chunk
+	// tagged FINAL. The stream header is random (init_push draws it), so these
+	// are written once: a normal run checks every other field against the file
+	// and leaves the header and the chunks as committed.
+	const secretstreamVector = (description: string, payload: NotePayload, chunkSize: number) => {
+		const files = payload.files ?? [];
+		const headerBytes = encode({
+			...(payload.text !== undefined ? { text: payload.text } : {}),
+			...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
+			...(files.length > 0
+				? { files: files.map(({ name, type, size }) => ({ name, type, size })) }
+				: {}),
+		});
+		const pieces: Uint8Array[] = [headerBytes];
+		for (const file of files) {
+			for (let offset = 0; offset < file.data.length; offset += chunkSize) {
+				pieces.push(file.data.subarray(offset, offset + chunkSize));
+			}
+		}
+		const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(KEY_32);
+		const chunks = pieces.map((piece, i) =>
+			sodium.crypto_secretstream_xchacha20poly1305_push(
+				state,
+				piece,
+				null,
+				i === pieces.length - 1
+					? sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
+					: sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
+			),
+		);
+		return {
+			description,
+			key: toB64(KEY_32),
+			keyFragment: toB64Url(KEY_32),
+			chunkSize,
+			payload: {
+				...payload,
+				...(files.length > 0
+					? { files: files.map((file) => ({ ...file, data: toB64(file.data) })) }
+					: {}),
+			},
+			headerMsgpack: toB64(headerBytes),
+			header: toB64(header),
+			chunks: chunks.map(toB64),
+		};
+	};
+
+	const streamFileA = new Uint8Array(10).map((_, i) => i);
+	const streamFileB = new TextEncoder().encode("tail");
+	const streamFiles = secretstreamVector(
+		"two files over five chunks: a 10-byte file in 4-byte chunks, then a 4-byte file",
+		{
+			text: "chunked",
+			contentMode: "text",
+			files: [
+				{ name: "a.bin", type: "application/octet-stream", size: 10, data: streamFileA },
+				{ name: "b.txt", type: "text/plain", size: 4, data: streamFileB },
+			],
+		},
+		4,
+	);
+	const streamTextOnly = secretstreamVector(
+		"text only: the metadata chunk is the final one",
+		{ text: "only text", contentMode: "markdown" },
+		4,
+	);
 
 	// --- Build vectors object ---
 
@@ -293,6 +369,7 @@ test("generate test vectors", async () => {
 					ciphertext: toB64(multiFileCiphertext),
 				},
 			],
+			secretstream: [streamFiles, streamTextOnly],
 			encoding: [
 				{
 					description: "base64url key encoding (32 bytes)",
@@ -337,13 +414,33 @@ test("generate test vectors", async () => {
 	if (!dirname) {
 		throw new Error("import.meta.dirname is undefined");
 	}
-	const outDir = resolve(dirname, "../../../shared/src/test-vectors");
-	mkdirSync(outDir, { recursive: true });
-	const outPath = resolve(outDir, "vectors.json");
-	writeFileSync(outPath, `${JSON.stringify(vectors, null, "\t")}\n`);
+	const outPath = resolve(dirname, "../../../shared/src/test-vectors/vectors.json");
+	if (process.env["UPDATE_TEST_VECTORS"] === "1") {
+		// In CI the flag would only make this test pass, against the file it wrote.
+		if (process.env["CI"]) throw new Error("UPDATE_TEST_VECTORS is for a deliberate local change");
+		writeFileSync(outPath, `${JSON.stringify(vectors, null, "\t")}\n`);
+	}
+
+	// generatedWith only records the libsodium that wrote the file: another
+	// release producing the same bytes is no change. The secretstream headers
+	// and chunks are random, so they are taken as committed.
+	const committed = JSON.parse(readFileSync(outPath, "utf8")) as typeof vectors;
+	expect({
+		...vectors,
+		generatedWith: committed.generatedWith,
+		vectors: {
+			...vectors.vectors,
+			secretstream: vectors.vectors.secretstream.map((v, i) => ({
+				...v,
+				header: committed.vectors.secretstream[i]?.header,
+				chunks: committed.vectors.secretstream[i]?.chunks,
+			})),
+		},
+	}).toEqual(committed);
 
 	expect(vectors.vectors.xchacha20poly1305).toHaveLength(5);
 	expect(vectors.vectors.argon2id).toHaveLength(2);
 	expect(vectors.vectors.pipeline).toHaveLength(5);
 	expect(vectors.vectors.encoding).toHaveLength(7);
-});
+	expect(vectors.vectors.secretstream).toHaveLength(2);
+}, 30_000);

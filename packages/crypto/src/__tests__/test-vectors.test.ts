@@ -1,6 +1,13 @@
-import { testVectors } from "@largerio/secret-shared";
+import { type NotePayload, testVectors } from "@largerio/secret-shared";
 import { describe, expect, test } from "vitest";
-import { decryptPayload, decryptRaw } from "../decrypt.js";
+import {
+	decodeRawBytes,
+	decryptChunk,
+	decryptPayload,
+	decryptRaw,
+	initStreamDecrypt,
+} from "../decrypt.js";
+import { encodePayload } from "../encrypt.js";
 import {
 	deriveKeyFromPassword,
 	fromBase64,
@@ -75,6 +82,49 @@ describe("test vectors", () => {
 					expect(actual?.data).toEqual(fromBase64(expected?.data as string));
 				}
 			}
+		}
+	});
+
+	// Decrypting proves the reader; this pins the writer, so a change to how a
+	// payload is encoded cannot pass while new notes no longer match the file.
+	test("pipeline payloads encode to the recorded MessagePack", () => {
+		for (const v of testVectors.vectors.pipeline) {
+			const payload = {
+				...v.payload,
+				...(v.payload.files
+					? { files: v.payload.files.map((file) => ({ ...file, data: fromBase64(file.data) })) }
+					: {}),
+			};
+			expect(encodePayload(payload as NotePayload), v.description).toEqual(
+				fromBase64(v.payloadMsgpack),
+			);
+		}
+	});
+
+	test("secretstream vectors open chunk by chunk, FINAL on the last", async () => {
+		await initSodium();
+
+		for (const v of testVectors.vectors.secretstream) {
+			const state = initStreamDecrypt(fromBase64(v.header), fromBase64(v.key));
+			const chunks = v.chunks.map((chunk) => decryptChunk(state, fromBase64(chunk)));
+
+			expect(
+				chunks.map((chunk) => chunk.isFinal),
+				v.description,
+			).toEqual(v.chunks.map((_, i) => i === v.chunks.length - 1));
+			const [first, ...rest] = chunks;
+			expect(first?.decrypted).toEqual(fromBase64(v.headerMsgpack));
+			expect(decodeRawBytes(fromBase64(v.headerMsgpack))).toEqual({
+				text: v.payload.text,
+				contentMode: v.payload.contentMode,
+				...(v.payload.files
+					? { files: v.payload.files.map(({ name, type, size }) => ({ name, type, size })) }
+					: {}),
+			});
+			const data = Buffer.concat(rest.map((chunk) => chunk.decrypted));
+			const files = Buffer.concat((v.payload.files ?? []).map((file) => fromBase64(file.data)));
+			expect(new Uint8Array(data)).toEqual(new Uint8Array(files));
+			expect(rest.every((chunk) => chunk.decrypted.length <= v.chunkSize)).toBe(true);
 		}
 	});
 

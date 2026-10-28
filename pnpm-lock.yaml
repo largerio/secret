@@ -72,6 +72,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@largerio/secret-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk-js
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5

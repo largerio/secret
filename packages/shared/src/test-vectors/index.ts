@@ -46,6 +46,20 @@ export interface PipelineVector {
 	readonly baseKey?: string;
 }
 
+/** A chunked note: one secretstream, written once since its header is random. */
+export interface SecretstreamVector {
+	readonly description: string;
+	/** The stream key, the bytes of `keyFragment` (no password). */
+	readonly key: string;
+	readonly keyFragment: string;
+	readonly chunkSize: number;
+	readonly payload: PipelineVector["payload"];
+	/** The first chunk's plaintext: text and file metadata, no file bytes. */
+	readonly headerMsgpack: string;
+	readonly header: string;
+	readonly chunks: ReadonlyArray<string>;
+}
+
 export interface EncodingVector {
 	readonly description: string;
 	readonly raw: string;
@@ -59,6 +73,7 @@ export interface TestVectors {
 		readonly xchacha20poly1305: ReadonlyArray<XChaCha20Vector>;
 		readonly argon2id: ReadonlyArray<Argon2idVector>;
 		readonly pipeline: ReadonlyArray<PipelineVector>;
+		readonly secretstream: ReadonlyArray<SecretstreamVector>;
 		readonly encoding: ReadonlyArray<EncodingVector>;
 	};
 }

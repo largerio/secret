@@ -6,18 +6,15 @@ import type { DatabaseSync } from "node:sqlite";
 import "@hono/zod-openapi";
 import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
 import { Hono } from "hono";
-import { HTTPException } from "hono/http-exception";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { UNKNOWN_BUILD } from "../buildInfo.js";
+import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { pendingDeletions } from "../db/schema.js";
-import { type AppMetrics, createMetrics } from "../metrics.js";
-import { createWriteAuth } from "../middleware/auth.js";
-import { createNotesRoutes } from "../routes/notes/index.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage, stubStorage } from "./storageDoubles.js";
+import { createTestApp } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -25,58 +22,34 @@ vi.mock("../routes/cap.js", () => ({
 			Promise.resolve({ success: token === "valid-cap-token" }),
 		),
 	},
+	createCapRoutes: () => new Hono(),
 }));
-
-interface AppEnv {
-	Variables: {
-		db: AppDatabase;
-		serverKey: Buffer;
-		storage: StorageBackend;
-		chunkSize: number;
-		maxChunkedFileSize: number;
-		maxExpirySeconds: number;
-		maxFilesPerNote: number;
-		metrics: AppMetrics;
-	};
-}
 
 const TEST_DB_PATH = "./data/test.db";
 const TEST_FILES_PATH = "./data/test-files";
 const TEST_SERVER_KEY = randomBytes(32);
+const API_KEY = randomBytes(32).toString("base64url");
 
 let db: AppDatabase;
 let sqlite: DatabaseSync;
 let app: Hono<AppEnv>;
 
-function testMetrics(database: AppDatabase): AppMetrics {
-	return createMetrics({ db: database, build: UNKNOWN_BUILD, quotaBytes: 0 });
-}
+const stops: Array<() => void> = [];
 
+/** The real application over the given storage; `env` configures it. */
 function createApp(
 	database: AppDatabase,
 	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
-) {
-	const metrics = testMetrics(database);
-	const hono = new Hono<AppEnv>();
-	hono.onError((err, c) => {
-		if (err instanceof HTTPException) {
-			return c.json({ error: err.message }, err.status);
-		}
-		return c.json({ error: "Internal server error" }, 500);
+	env: Record<string, string> = {},
+): Hono<AppEnv> {
+	const { app: created, stop } = createTestApp({
+		db: database,
+		serverKey: TEST_SERVER_KEY,
+		storage,
+		env,
 	});
-	hono.use("*", async (c, next) => {
-		c.set("db", database);
-		c.set("serverKey", TEST_SERVER_KEY);
-		c.set("storage", storage);
-		c.set("chunkSize", 4_194_304);
-		c.set("maxChunkedFileSize", 524_288_000);
-		c.set("metrics", metrics);
-		await next();
-	});
-	const writeAuth = createWriteAuth([]);
-	hono.use("/api/v1/notes/*", writeAuth);
-	hono.route("/api/v1/notes", createNotesRoutes());
-	return hono;
+	stops.push(stop);
+	return created;
 }
 
 function createAppWithFailingPurge(database: AppDatabase) {
@@ -166,6 +139,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
+	for (const stop of stops) stop();
 	try {
 		rmSync(TEST_DB_PATH, { force: true });
 		rmSync(`${TEST_DB_PATH}-wal`, { force: true });
@@ -242,34 +216,13 @@ describe("POST /api/v1/notes", () => {
 	});
 
 	it("accepts a valid API key instead of Cap token", async () => {
-		const storage = new LocalStorage(TEST_FILES_PATH);
-		const apiApp = new Hono<AppEnv>();
-		apiApp.onError((err, c) => {
-			if (err instanceof HTTPException) {
-				return c.json({ error: err.message }, err.status);
-			}
-			return c.json({ error: "Internal server error" }, 500);
-		});
-		apiApp.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", storage);
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", 2_592_000);
-			c.set("maxFilesPerNote", 10);
-			c.set("metrics", testMetrics(db));
-			await next();
-		});
-		const writeAuth = createWriteAuth(["valid-api-key"]);
-		apiApp.use("/api/v1/notes/*", writeAuth);
-		apiApp.route("/api/v1/notes", createNotesRoutes());
+		const apiApp = createApp(db, undefined, { API_KEY: API_KEY });
 
 		const res = await apiApp.request("/api/v1/notes", {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: "Bearer valid-api-key",
+				Authorization: `Bearer ${API_KEY}`,
 			},
 			body: JSON.stringify(validBody()),
 		});
@@ -327,6 +280,16 @@ describe("POST /api/v1/notes", () => {
 			body: JSON.stringify(validBody({ fileCount: 2 })),
 		});
 		expect(res.status).toBe(201);
+		const { id } = (await res.json()) as { id: string };
+
+		// The ciphertext lives in the storage; the row only points to it.
+		const { notes: notesTable } = await import("../db/schema.js");
+		const { eq } = await import("drizzle-orm");
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.fileCount).toBe(2);
+		expect(row?.encryptedData.length).toBe(0);
+		expect(row?.filePath).toBeTruthy();
+		expect(existsSync(row?.filePath ?? "")).toBe(true);
 	});
 
 	it("creates a note with password and salt", async () => {
@@ -2553,25 +2516,10 @@ describe("DELETE /api/v1/notes/:id (chunked)", () => {
 // server kept accepting 30-day notes.
 describe("operator policy limits", () => {
 	function policyApp(limits: { maxExpirySeconds: number; maxFilesPerNote: number }) {
-		const hono = new Hono<AppEnv>();
-		hono.onError((err, c) => {
-			if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
-			return c.json({ error: "Internal server error" }, 500);
+		return createApp(db, undefined, {
+			MAX_EXPIRY: String(limits.maxExpirySeconds),
+			MAX_FILES_PER_NOTE: String(limits.maxFilesPerNote),
 		});
-		hono.use("*", async (c, next) => {
-			c.set("db", db);
-			c.set("serverKey", TEST_SERVER_KEY);
-			c.set("storage", new LocalStorage(TEST_FILES_PATH));
-			c.set("chunkSize", 4_194_304);
-			c.set("maxChunkedFileSize", 524_288_000);
-			c.set("maxExpirySeconds", limits.maxExpirySeconds);
-			c.set("maxFilesPerNote", limits.maxFilesPerNote);
-			c.set("metrics", testMetrics(db));
-			await next();
-		});
-		hono.use("/api/v1/notes/*", createWriteAuth([]));
-		hono.route("/api/v1/notes", createNotesRoutes());
-		return hono;
 	}
 
 	it("rejects an expiry beyond the operator ceiling", async () => {
