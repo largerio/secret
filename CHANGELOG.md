@@ -81,6 +81,14 @@ image. Each version links to its GitHub release. The SDK has
   grace period: raising `stop_grace_period`, as the reference production
   compose file did, gave long uploads no more time. The API now waits
   `SHUTDOWN_TIMEOUT` seconds (8 by default), like the web server.
+- The "Encrypt and create the link" button, disabled until there is something
+  to encrypt, lit up as the page appeared, then dimmed: its entrance ended at
+  full opacity. Entrances now end on each element's own look.
+- The arc that turns around the note's card when it appears or takes the
+  focus went unseen while the card had the focus, on arrival included, since
+  on a computer the text field takes it on load: it was as light as the rest
+  of the ring. It is now lighter than the ring on the light theme, darker on
+  the dark one.
 
 ### Upgrade notes
 
