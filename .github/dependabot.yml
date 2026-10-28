@@ -22,20 +22,25 @@ updates:
       prefix: deps
     labels: ["dependencies"]
 
-  # Base image digest in the Dockerfiles (node:26-alpine@sha256:...). Back on
-  # trial: since June its jobs dropped every digest as already proposed by
-  # #53, closed since May. .github/workflows/base-image.yml proposes them
-  # meanwhile; whichever PR lands first, the other closes itself.
+  # Base image digest in the Dockerfiles (node:26-alpine@sha256:...).
+  # .github/workflows/base-image.yml proposes them too until this is shown to
+  # work again; whichever PR lands first, the other closes itself.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    # Moving to a new Node major is a change of its own (engines, CI), not a
+    # bump: every docker PR is then a digest bump.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
     groups:
+      # No update-types: a digest bump keeps the tag, so it is neither minor
+      # nor patch. Left out of the group, it falls to an ungrouped update,
+      # which Dependabot names by the tag alone and takes for #53, closed
+      # since May, so it proposes nothing (June to October 2026).
       docker:
         patterns: ["*"]
-        update-types:
-          - minor
-          - patch
     commit-message:
       prefix: build
     labels: ["docker"]
