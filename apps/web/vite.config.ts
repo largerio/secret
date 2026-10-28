@@ -28,7 +28,6 @@ export default defineConfig({
 					"font-src": ["self"],
 					"worker-src": ["self", "blob:"],
 					"media-src": ["self", "blob:"],
-					"frame-src": ["blob:"],
 					"object-src": ["none"],
 					"frame-ancestors": ["none"],
 					"base-uri": ["self"],

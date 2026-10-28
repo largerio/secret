@@ -67,7 +67,7 @@ const limits = $derived(
 const attachMessage = $derived.by(() => {
 	if (!attachError) return "";
 	if (attachError.kind === "tooMany") {
-		return t("error_too_many_files", { max: attachError.max, ignored: attachError.ignored });
+		return tn("error_too_many_files", attachError.ignored, { max: attachError.max });
 	}
 	const size = formatSize(attachError.limit, locale);
 	return attachError.kind === "fileTooLarge"

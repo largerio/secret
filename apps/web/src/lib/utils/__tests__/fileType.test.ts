@@ -18,14 +18,11 @@ describe("getFileCategory", () => {
 		expect(getFileCategory("audio/ogg")).toBe("audio");
 	});
 
-	it("categorizes PDF", () => {
-		expect(getFileCategory("application/pdf")).toBe("pdf");
-	});
-
 	it("categorizes everything else as other", () => {
 		expect(getFileCategory("application/zip")).toBe("other");
 		expect(getFileCategory("text/plain")).toBe("other");
 		expect(getFileCategory("application/octet-stream")).toBe("other");
+		expect(getFileCategory("application/pdf")).toBe("other");
 		expect(getFileCategory("")).toBe("other");
 	});
 });
@@ -35,12 +32,12 @@ describe("isPreviewable", () => {
 		expect(isPreviewable("image/png")).toBe(true);
 		expect(isPreviewable("video/mp4")).toBe(true);
 		expect(isPreviewable("audio/mpeg")).toBe(true);
-		expect(isPreviewable("application/pdf")).toBe(true);
 	});
 
 	it("returns false for non-previewable types", () => {
 		expect(isPreviewable("application/zip")).toBe(false);
 		expect(isPreviewable("text/plain")).toBe(false);
+		expect(isPreviewable("application/pdf")).toBe(false);
 		expect(isPreviewable("")).toBe(false);
 	});
 });

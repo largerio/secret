@@ -123,6 +123,19 @@ describe("tn", () => {
 		);
 	});
 
+	it("agrees with the count it is given, whatever the other numbers", () => {
+		expect(tn("error_too_many_files", 1, { max: 10 })).toBe(
+			"1 file ignored: a note holds 10 at most.",
+		);
+		setLocale("fr");
+		expect(tn("error_too_many_files", 2, { max: 10 })).toBe(
+			"2 fichiers ignorés : une note en contient 10 au plus.",
+		);
+		setLocale("ru");
+		expect(tn("un_reads_total", 3)).toBe("Всего можно прочитать 3 раза");
+		expect(tn("un_reads_total", 5)).toBe("Всего можно прочитать 5 раз");
+	});
+
 	it("survives a locale with no table, through the English fallback", () => {
 		setLocale("xx" as Locale);
 		expect(tn("reads_count", 3)).toBe("3 reads");
