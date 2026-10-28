@@ -305,7 +305,10 @@ export function registerChunkedRoutes(app: OpenAPIHono<NotesEnv>): void {
 		const serverKey = c.get("serverKey");
 		const storage = c.get("storage");
 
-		const note = await findReadableNote(db, storage, id, { expect: "chunked" });
+		const note = findReadableNote(db, storage, id, {
+			expect: "chunked",
+			metrics: c.get("metrics"),
+		});
 		const chunkCount = note.chunkCount as number;
 
 		const headers = buildNoteHeaders(note);

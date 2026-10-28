@@ -138,3 +138,46 @@ it("gives up on a batch delete that stalls the same way, and deletes its keys on
 
 	await storage.close();
 });
+
+/** Takes each request's body, then answers nothing: no silence before the body ends. */
+function swallowingEndpoint(): Promise<string> {
+	return endpoint((request) => {
+		request.resume();
+	});
+}
+
+it.each([
+	["a file note", (storage: S3Storage) => storage.save("note123", Buffer.alloc(1024))],
+	["a chunk", (storage: S3Storage) => storage.saveChunk("note123", 0, Buffer.alloc(1024))],
+])("holds the upload of %s to its deadline", async (_what, upload) => {
+	// The production idle bound, which this test would wait out: only the
+	// deadline ends the upload.
+	const storage = storageAt(await swallowingEndpoint(), {
+		uploadBaseMs: 300,
+		uploadBytesPerSecond: 1024 * 1024,
+	});
+	const started = Date.now();
+
+	await expect(upload(storage)).rejects.toMatchObject({ name: "AbortError" });
+	expect(Date.now() - started).toBeLessThan(2_000);
+
+	await storage.close();
+});
+
+it("gives a larger upload a longer deadline", async () => {
+	const storage = storageAt(await swallowingEndpoint(), {
+		uploadBaseMs: 100,
+		uploadBytesPerSecond: 1024,
+	});
+	const started = Date.now();
+
+	// 100 ms, then 1 KiB/s for 600 bytes: about 0.7 s.
+	await expect(storage.saveChunk("note123", 0, Buffer.alloc(600))).rejects.toMatchObject({
+		name: "AbortError",
+	});
+	const elapsed = Date.now() - started;
+	expect(elapsed).toBeGreaterThanOrEqual(650);
+	expect(elapsed).toBeLessThan(2_000);
+
+	await storage.close();
+});
