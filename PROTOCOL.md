@@ -275,7 +275,9 @@ server checks the length of neither the stream header nor the salt.
    The body is the message's ciphertext. `X-Chunk-Hash` is required: a
    missing or upper-case hash, or one that does not match the body, answers
    `400`. The answer is `200` with
-   `{"received": true}`. Sending a message again replaces it.
+   `{"received": true}`. Sending a message again replaces it, once the
+   first sending has answered: while a message is being written, sending it
+   again answers `409`.
 
 3. Close the session:
 
@@ -284,8 +286,10 @@ server checks the length of neither the stream header nor the salt.
    ```
 
    The answer is `201` with `{"id", "expiresAt", "deleteToken"}`, the expiry
-   counting from now, or `400` while a message is missing. The session is
-   then gone: completing it again, or sending it a message, answers `404`.
+   counting from now, `400` while a message is missing, or `409` while a
+   message is still being written: complete once every sending has
+   answered. The session is then gone: completing it again, or sending it a
+   message, answers `404`.
 
 ### Reading
 
@@ -296,7 +300,10 @@ GET /api/v1/notes/{id}/stream
 The headers are those of `/raw`, with `X-Stream-Header` (the secretstream
 header, in base64) and `X-Chunk-Count` in place of `X-Client-Nonce`. The body
 is every message's ciphertext in order, each preceded by its length as a
-4-byte unsigned big-endian integer.
+4-byte unsigned big-endian integer. A message is therefore at most
+4,294,967,295 bytes: an instance's `chunkSize` stays 17 bytes below that,
+and the server refuses (`413`) a [format 1](#upload-2) note sent in one
+request whose message is longer.
 
 ## Reading a note
 
@@ -392,7 +399,7 @@ developer: tell errors apart by their status.
 | 401 | Write authentication missing or refused |
 | 403 | Wrong delete token, or a wrong read proof |
 | 404 | The note, or the upload session, does not exist |
-| 409 | A message sent while its upload session was being completed |
+| 409 | A message sent again while it is still being written, `/complete` while any message of its session is, or a message sent while its upload session was being completed |
 | 413 | Too large |
 | 415 | A body that is not JSON, or not multipart for `/notes/upload` |
 | 429 | Rate limited |
@@ -761,7 +768,8 @@ format 0's reads do, once it has loaded the first message. It answers `200`,
 `/stream` serves them, each preceded by its length, whether the note went up
 in one request or in a session. The headers are those of `/stream` but for
 `X-Stream-Header` and `X-Salt`: `X-Chunk-Count` gives the number of
-messages.
+messages. For a note sent in one request, `Content-Length` gives the body's
+length, 4 bytes and the message; a session's is not known before it is read.
 
 The reader opens the messages with the envelope it derived the proofs from.
 `/raw`, `/stream` and the JSON endpoint
@@ -774,9 +782,10 @@ format is refused, not opened.
 
 In `/exists`, the settings of a format 1 note come from its envelope:
 `hasPassword`, `fileCount`, `maxReads`, and `expiresAt` from its `expiresIn`.
-`chunked` is true for a note that went up in a session; a format 1 reader
-has no use for it. A reader goes by the envelope, which the ciphertext
-authenticates, not by these fields.
+`chunked` is always false: a format 1 note has one read, however it went up,
+and the field would tell anyone who knows the id whether it went up in a
+session, which hints at its size. A reader goes by the envelope, which the
+ciphertext authenticates, not by these fields.
 
 A format 1 reader MUST refuse, before it sends a proof:
 
