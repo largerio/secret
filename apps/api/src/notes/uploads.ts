@@ -55,8 +55,8 @@ interface Format1SessionMetadata {
 
 /**
  * What a session keeps of its note's settings: read back, and checked again, on
- * completion. Format 1's verifiers are kept sealed with the note's id, as its
- * row will keep them.
+ * completion. Format 1's verifiers are kept sealed with the note's id and its
+ * envelope, as its row will keep them.
  */
 function sessionMetadata(
 	settings: UploadSettings,
@@ -111,9 +111,14 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			assertStorageAvailable(db, limits, 0);
 
 			const uploadId = nanoid(UPLOAD_ID_LENGTH);
-			// The note's id comes first: its verifiers are sealed with it.
+			// The note's id comes first: its verifiers are sealed with it, and with
+			// the envelope, here already as the row will keep it.
 			const noteId = newNoteId();
-			const verifiers = settings.verifiers && serverLayer.sealVerifiers(noteId, settings.verifiers);
+			const { opening } = settings;
+			const verifiers =
+				opening.format === 1 && settings.verifiers
+					? serverLayer.sealVerifiers(noteId, opening.envelope, settings.verifiers)
+					: undefined;
 			const now = new Date();
 			const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL * 1000);
 

@@ -15,7 +15,7 @@ import { NoteError } from "./errors.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
 import {
 	chunkedOpeningOf,
-	countFailedAttempt,
+	type Format1Reading,
 	format1ReadingOf,
 	isChunked,
 	isFormat1,
@@ -29,8 +29,10 @@ import {
 	type PlacementKind,
 	placementOf,
 	removeNote,
+	settlePasswordAttempt,
 	singleShotPlacement,
 	spendRead,
+	takePasswordAttempt,
 } from "./rows.js";
 import { createServerLayer } from "./serverLayer.js";
 import { chunkStream } from "./stream.js";
@@ -46,7 +48,6 @@ import type {
 	NoteStream,
 	ProvenRead,
 	ReadProofs,
-	SealedVerifiers,
 } from "./types.js";
 import { createUploads, type Uploads } from "./uploads.js";
 
@@ -56,6 +57,8 @@ const SAVE_WINDOW_MS = 60 * 60_000;
 
 // How long a stream that burned its note may keep reading chunks before the
 // cleanup job purges them: past it, a crash mid-stream no longer strands them.
+// A chunked note its wrong passwords deleted keeps its chunks as long, for a
+// reader served before them.
 const STREAM_WINDOW_MS = 24 * 60 * 60_000;
 
 /** The metrics' word for where a note is stored. */
@@ -132,8 +135,8 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 
 	/**
 	 * The note a format 0 read is about to be served from. A format 1 note is
-	 * refused, whatever its kind: those reads would serve it to anyone who knows
-	 * its id.
+	 * refused, whatever its kind, and so is a corrupt one that lost its envelope:
+	 * those reads would serve it to anyone who knows its id.
 	 */
 	function format0Note(id: string): NoteRow {
 		const note = readableNote(id);
@@ -180,12 +183,18 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 
 	/**
 	 * Checks a format 1 read's proofs against the note's verifiers, before
-	 * anything is spent or loaded. A wrong link proof counts nothing, a wrong
-	 * password one failed attempt; the last attempt the note takes deletes it,
-	 * as a burn would, and is refused like the others.
+	 * anything is spent or loaded. A wrong link proof counts nothing, nor does a
+	 * missing password proof. A password proof takes an attempt before it is
+	 * compared, and a right one gets it back (rows.ts); the last wrong one the
+	 * note takes deletes it, as a burn would, and is refused like the others.
+	 * A crash between taking the attempt and settling it costs a right password
+	 * that attempt: the price of never letting one go uncounted.
 	 */
-	function checkProofs(id: string, verifiers: SealedVerifiers, proofs: ReadProofs): void {
-		if (!serverLayer.proves(id, proofs.linkProof, verifiers.link)) {
+	function checkProofs(note: NoteRow, reading: Format1Reading, proofs: ReadProofs): void {
+		const { id } = note;
+		const { envelope } = reading.opening;
+		const { verifiers } = reading;
+		if (!serverLayer.proves(id, envelope, "link", proofs.linkProof, verifiers.link)) {
 			metrics.proofRefused("link", false);
 			throw new NoteError("wrong_link_proof");
 		}
@@ -196,12 +205,41 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 		if (proofs.passwordProof === undefined) {
 			throw new NoteError("password_proof_missing");
 		}
-		if (serverLayer.proves(id, proofs.passwordProof, verifiers.password)) {
-			return;
+
+		// Deleted by its attempts, a chunked note keeps its chunks for the window
+		// a burned stream gets: it may take several reads, and a reader served
+		// before may still be streaming them. The cleanup job purges them past
+		// it. A single-shot note is purged at once: a reader served before holds
+		// its ciphertext already, and one still loading it is refused once the
+		// row is gone.
+		const chunked = isChunked(note);
+		const purgeDelayMs = chunked ? STREAM_WINDOW_MS : undefined;
+		const purgeDeleted = (purge: PendingDeletion | undefined): void => {
+			if (!chunked) {
+				purgeLater(purge);
+			}
+		};
+
+		const attempt = takePasswordAttempt(db, id, purgeDelayMs);
+		if (attempt.status === "exhausted") {
+			purgeDeleted(attempt.purge);
+		}
+		if (attempt.status !== "taken") {
+			throw new NoteError("note_not_found");
 		}
 
-		const { deleted, purge } = countFailedAttempt(db, id);
-		purgeLater(purge);
+		const proven = serverLayer.proves(
+			id,
+			envelope,
+			"password",
+			proofs.passwordProof,
+			verifiers.password,
+		);
+		const { deleted, purge } = settlePasswordAttempt(db, id, proven, purgeDelayMs);
+		if (proven) {
+			return;
+		}
+		purgeDeleted(purge);
 		metrics.proofRefused("password", deleted);
 		throw new NoteError("wrong_password");
 	}
@@ -287,7 +325,11 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			// sealed verifiers, to it.
 			const id = newNoteId();
 			const { sealed, iv } = serverLayer.sealSingleShot(id, ciphertext);
-			const verifiers = settings.verifiers && serverLayer.sealVerifiers(id, settings.verifiers);
+			const { opening } = settings;
+			const verifiers =
+				opening.format === 1 && settings.verifiers
+					? serverLayer.sealVerifiers(id, opening.envelope, settings.verifiers)
+					: undefined;
 
 			// Checked against the stored size before anything is written, so a full
 			// instance refuses cleanly instead of failing half-way.
@@ -335,6 +377,8 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 					readCount: notes.readCount,
 					chunkCount: notes.chunkCount,
 					envelope: notes.envelope,
+					linkVerifier: notes.linkVerifier,
+					passwordVerifier: notes.passwordVerifier,
 					failedAttempts: notes.failedAttempts,
 				})
 				.from(notes)
@@ -360,14 +404,19 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			if (!isFormat1(note)) {
 				return info;
 			}
-			// What a format 1 reader derives its proofs with, and how many wrong
-			// passwords it may still try.
+			const passwordAttemptsLeft = MAX_PASSWORD_ATTEMPTS - note.failedAttempts;
+			// A password note without an attempt left, which only a crash leaves, is
+			// deleted by the next read whose link proof checks out
+			// (takePasswordAttempt): to a reader, it is gone already.
+			if (note.hasPassword && passwordAttemptsLeft <= 0) {
+				return undefined;
+			}
+			// What a format 1 reader derives its proofs with, which a corrupt row
+			// may have lost, and how many wrong passwords it may still try.
 			return {
 				...info,
-				envelope: note.envelope,
-				...(note.hasPassword
-					? { passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - note.failedAttempts }
-					: {}),
+				...(note.envelope !== null ? { envelope: note.envelope } : {}),
+				...(note.hasPassword ? { passwordAttemptsLeft } : {}),
 			};
 		},
 
@@ -402,7 +451,7 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			if (reading === undefined) {
 				throw new NoteError("note_corrupted");
 			}
-			checkProofs(id, reading.verifiers, proofs);
+			checkProofs(note, reading, proofs);
 
 			if (isChunked(note)) {
 				return { kind: "chunked", ...(await serveChunked(note, reading.opening)) };

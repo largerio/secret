@@ -26,7 +26,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { AppEnv } from "../app.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { notes as notesTable, pendingDeletions, uploads as uploadsTable } from "../db/schema.js";
+import { drainPendingDeletions } from "../pendingDeletions.js";
+import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+import { overrideStorage } from "./storageDoubles.js";
 import { createTestApp } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/format1-test.db";
@@ -50,13 +53,11 @@ let sqlite: DatabaseSync;
 let app: Hono<AppEnv>;
 const stops: Array<() => void> = [];
 
-function createApp(env: Record<string, string> = {}): Hono<AppEnv> {
-	const created = createTestApp({
-		db,
-		serverKey: SERVER_KEY,
-		storage: new LocalStorage(TEST_FILES_PATH),
-		env: { API_KEY, ...env },
-	});
+function createApp(
+	env: Record<string, string> = {},
+	storage: StorageBackend = new LocalStorage(TEST_FILES_PATH),
+): Hono<AppEnv> {
+	const created = createTestApp({ db, serverKey: SERVER_KEY, storage, env: { API_KEY, ...env } });
 	stops.push(created.stop);
 	return created.app;
 }
@@ -176,8 +177,8 @@ function postInit(body: unknown, target: Hono<AppEnv> = app) {
 }
 
 /** A format 1 read: no write authentication, the proofs in the body. */
-function postReads(id: string, proofs: unknown = PROOFS) {
-	return app.request(`/api/v1/notes/${id}/reads`, {
+function postReads(id: string, proofs: unknown = PROOFS, target: Hono<AppEnv> = app) {
+	return target.request(`/api/v1/notes/${id}/reads`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(proofs),
@@ -229,6 +230,28 @@ function rowOf(id: string) {
 	return db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 }
 
+/** The purges queued, and how long the cleanup job is held off each, from now. */
+function queuedPurges() {
+	return db
+		.select()
+		.from(pendingDeletions)
+		.all()
+		.map((row) => ({ noteId: row.noteId, heldMs: row.nextRetryAt.getTime() - Date.now() }));
+}
+
+/** Runs the queued purges, as the cleanup job does once they are due. */
+function drainQueuedPurges(storage: StorageBackend = new LocalStorage(TEST_FILES_PATH)) {
+	db.update(pendingDeletions)
+		.set({ nextRetryAt: new Date(0) })
+		.run();
+	return drainPendingDeletions(db, storage);
+}
+
+/** What the storage still holds, of any note. */
+function storedObjects() {
+	return Array.fromAsync(new LocalStorage(TEST_FILES_PATH).list());
+}
+
 async function existsOf(id: string) {
 	return (await (await app.request(`/api/v1/notes/${id}/exists`)).json()) as Record<
 		string,
@@ -250,12 +273,25 @@ function unframe(body: Uint8Array): Buffer[] {
 }
 
 /** What the server keeps of a verifier: PROTOCOL.md's "Server layer", computed apart. */
-function sealedAs(noteId: string, verifier: string): Buffer {
+function sealedAs(
+	role: "link" | "password",
+	noteId: string,
+	envelope: Buffer,
+	verifier: string,
+): Buffer {
 	const key = Buffer.from(
 		hkdfSync("sha256", SERVER_KEY, new Uint8Array(32), "secret/server verifier", 32),
 	);
 	return createHmac("sha256", key)
-		.update(Buffer.concat([Buffer.from(noteId, "ascii"), Buffer.from(verifier, "base64")]))
+		.update(
+			Buffer.concat([
+				Buffer.from(role, "ascii"),
+				Buffer.from([0]),
+				Buffer.from(noteId, "ascii"),
+				sha256Of(envelope),
+				Buffer.from(verifier, "base64"),
+			]),
+		)
 		.digest();
 }
 
@@ -278,7 +314,7 @@ describe("format 1 writes", () => {
 			passwordVerifier: null,
 			failedAttempts: 0,
 		});
-		expect(row?.linkVerifier).toEqual(sealedAs(id, LINK_VERIFIER));
+		expect(row?.linkVerifier).toEqual(sealedAs("link", id, envelope, LINK_VERIFIER));
 		expect((row?.expiresAt.getTime() ?? 0) - (row?.createdAt.getTime() ?? 0)).toBe(600_000);
 		expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(590_000);
 	});
@@ -290,7 +326,9 @@ describe("format 1 writes", () => {
 		const { id } = await createNote(envelope);
 
 		expect(rowOf(id)).toMatchObject({ hasPassword: true, salt: null, envelope });
-		expect(rowOf(id)?.passwordVerifier).toEqual(sealedAs(id, PASSWORD_VERIFIER));
+		expect(rowOf(id)?.passwordVerifier).toEqual(
+			sealedAs("password", id, envelope, PASSWORD_VERIFIER),
+		);
 	});
 
 	// A copy of the database, without the instance key, gives nothing to test a
@@ -332,8 +370,8 @@ describe("format 1 writes", () => {
 				fileCount: 1,
 				clientNonce: "",
 				filePath: expect.any(String),
-				linkVerifier: sealedAs(id, LINK_VERIFIER),
-				passwordVerifier: password ? sealedAs(id, PASSWORD_VERIFIER) : null,
+				linkVerifier: sealedAs("link", id, envelope, LINK_VERIFIER),
+				passwordVerifier: password ? sealedAs("password", id, envelope, PASSWORD_VERIFIER) : null,
 			});
 		}
 	});
@@ -352,8 +390,8 @@ describe("format 1 writes", () => {
 		const noteId = session?.noteId ?? "";
 		expect(JSON.parse(session?.metadata ?? "")).toEqual({
 			envelope: b64(envelope),
-			linkVerifier: b64(sealedAs(noteId, LINK_VERIFIER)),
-			passwordVerifier: b64(sealedAs(noteId, PASSWORD_VERIFIER)),
+			linkVerifier: b64(sealedAs("link", noteId, envelope, LINK_VERIFIER)),
+			passwordVerifier: b64(sealedAs("password", noteId, envelope, PASSWORD_VERIFIER)),
 		});
 
 		await sendChunks(uploadId, CHUNKS);
@@ -371,8 +409,8 @@ describe("format 1 writes", () => {
 			hasPassword: true,
 			fileCount: 1,
 			maxReads: 0,
-			linkVerifier: sealedAs(id, LINK_VERIFIER),
-			passwordVerifier: sealedAs(id, PASSWORD_VERIFIER),
+			linkVerifier: sealedAs("link", id, envelope, LINK_VERIFIER),
+			passwordVerifier: sealedAs("password", id, envelope, PASSWORD_VERIFIER),
 			failedAttempts: 0,
 		});
 	});
@@ -698,6 +736,18 @@ describe("format 1 read refusals: the proofs", () => {
 		expect((await postReads(id)).status).toBe(200);
 	});
 
+	// The link proof is checked first: a request that has neither proof right
+	// learns nothing of what else the note asks.
+	it("refuses a wrong link proof sent without a password proof as a wrong link proof", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+
+		const res = await postReads(id, { linkProof: b64(PASSWORD_PROOF) });
+
+		expect(res.status).toBe(403);
+		expect(await res.json()).toEqual({ error: "Invalid link proof" });
+		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
+	});
+
 	it("asks a password note's read for its password proof, and counts nothing", async () => {
 		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
 
@@ -736,35 +786,63 @@ describe("format 1 read refusals: the proofs", () => {
 		});
 	});
 
-	it.each([
-		["in the database", "single-shot", 0],
-		["in the storage", "single-shot", 1],
-		["in chunks", "chunked", 1],
-	] as const)(
-		"deletes a note %s on its last wrong password, and purges it",
-		async (_, kind, fileCount) => {
-			const envelope = envelopeOf(kind, { fileCount, password: true, maxReads: 0 });
-			const { id } =
-				kind === "chunked" ? await createChunkedNote(envelope) : await createNote(envelope);
-
-			for (let attempt = 1; attempt <= MAX_PASSWORD_ATTEMPTS; attempt += 1) {
-				const res = await postReads(id, WRONG_PASSWORD);
-				expect(res.status).toBe(403);
-				expect(await res.json()).toEqual({ error: "Wrong password" });
-				if (attempt < MAX_PASSWORD_ATTEMPTS) {
-					expect(await existsOf(id)).toMatchObject({
-						passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - attempt,
-					});
-				}
+	/** Sends every wrong password a note takes, the last deleting it. */
+	async function exhaust(id: string, target: Hono<AppEnv> = app): Promise<void> {
+		for (let attempt = 1; attempt <= MAX_PASSWORD_ATTEMPTS; attempt += 1) {
+			const res = await postReads(id, WRONG_PASSWORD, target);
+			expect(res.status).toBe(403);
+			expect(await res.json()).toEqual({ error: "Wrong password" });
+			if (attempt < MAX_PASSWORD_ATTEMPTS) {
+				expect(await existsOf(id)).toMatchObject({
+					passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - attempt,
+				});
 			}
+		}
 
-			expect(rowOf(id)).toBeUndefined();
-			expect(await existsOf(id)).toEqual({ exists: false });
-			expect((await postReads(id)).status).toBe(404);
+		expect(rowOf(id)).toBeUndefined();
+		expect(await existsOf(id)).toEqual({ exists: false });
+		expect((await postReads(id)).status).toBe(404);
+	}
+
+	it.each([
+		["in the database", 0],
+		["in the storage", 1],
+	])(
+		"deletes a single-shot note %s on its last wrong password, and purges it",
+		async (_, fileCount) => {
+			const { id } = await createNote(
+				envelopeOf("single-shot", { fileCount, password: true, maxReads: 0 }),
+			);
+
+			await exhaust(id);
+
 			await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
-			expect(await Array.fromAsync(new LocalStorage(TEST_FILES_PATH).list())).toEqual([]);
+			expect(await storedObjects()).toEqual([]);
 		},
 	);
+
+	// A reader served before may still be streaming its chunks: they stay for
+	// the window a burned stream gets.
+	it("deletes a chunked note on its last wrong password, and holds its purge a day", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const purge = vi.fn((noteId: string) => storage.purge(noteId));
+		const watched = createApp({}, overrideStorage(storage, { purge }));
+		const { id } = await createChunkedNote(
+			envelopeOf("chunked", { fileCount: 1, password: true, maxReads: 0 }),
+		);
+
+		await exhaust(id, watched);
+
+		expect(purge).not.toHaveBeenCalled();
+		const [queued, ...others] = queuedPurges();
+		expect(others).toEqual([]);
+		expect(queued?.noteId).toBe(id);
+		expect(queued?.heldMs).toBeGreaterThan(23 * 60 * 60_000);
+		expect(await storedObjects()).not.toEqual([]);
+
+		expect(await drainQueuedPurges()).toMatchObject({ drained: 1, failed: 0 });
+		expect(await storedObjects()).toEqual([]);
+	});
 
 	it("counts wrong passwords sent at once, and deletes the note once", async () => {
 		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 0 }));
@@ -782,7 +860,7 @@ describe("format 1 read refusals: the proofs", () => {
 	});
 
 	// A row the server cannot check proofs against: never served, whatever the
-	// proofs, and nothing spent on it.
+	// proofs, and nothing spent nor counted on it.
 	it.each([
 		["has no link verifier", { password: false }, { linkVerifier: null }],
 		[
@@ -795,19 +873,304 @@ describe("format 1 read refusals: the proofs", () => {
 			{ password: false },
 			{ passwordVerifier: Buffer.alloc(32, 1) },
 		],
+		["has a link verifier too short", { password: true }, { linkVerifier: Buffer.alloc(31, 1) }],
+		["has a link verifier too long", { password: true }, { linkVerifier: Buffer.alloc(33, 1) }],
+		[
+			"has a password verifier too short",
+			{ password: true },
+			{ passwordVerifier: Buffer.alloc(31, 1) },
+		],
+		["has an empty password verifier", { password: true }, { passwordVerifier: Buffer.alloc(0) }],
 	] as const)(
 		"refuses a format 1 row that %s, before anything is spent",
 		async (_, declared, corrupt) => {
 			const { id } = await createNote(envelopeOf("single-shot", declared));
 			db.update(notesTable).set(corrupt).where(eq(notesTable.id, id)).run();
 
-			const res = await postReads(id);
+			for (const proofs of [PROOFS, WRONG_PASSWORD]) {
+				const res = await postReads(id, proofs);
 
-			expect(res.status).toBe(500);
-			expect((await res.json()).error).toBe("Failed to decrypt note");
+				expect(res.status).toBe(500);
+				expect((await res.json()).error).toBe("Failed to decrypt note");
+			}
 			expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
 		},
 	);
+
+	// A format 1 row that lost its envelope but kept a verifier is never taken
+	// for a format 0 note: the GET reads would serve it, and burn it, to whoever
+	// knows its id, with an empty nonce.
+	it.each([
+		["both its verifiers", {}],
+		["its link verifier alone", { passwordVerifier: null }],
+		["its password verifier alone", { linkVerifier: null }],
+	] as const)(
+		"refuses a row that lost its envelope but kept %s, on every read, spending nothing",
+		async (_, kept) => {
+			const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 1 }));
+			const { id: chunkedId } = await createChunkedNote(
+				envelopeOf("chunked", { fileCount: 1, password: true }),
+			);
+
+			for (const note of [id, chunkedId]) {
+				db.update(notesTable)
+					.set({ envelope: null, ...kept })
+					.where(eq(notesTable.id, note))
+					.run();
+
+				for (const path of ["", "/raw", "/stream"]) {
+					const res = await app.request(`/api/v1/notes/${note}${path}`);
+					expect(res.status, path).toBe(400);
+					expect((await res.json()).error, path).toBe(
+						"Note is in another format than the one asked for",
+					);
+				}
+				const res = await postReads(note);
+				expect(res.status).toBe(500);
+				expect((await res.json()).error).toBe("Failed to decrypt note");
+
+				expect(rowOf(note)).toMatchObject({ readCount: 0, failedAttempts: 0 });
+				// It has no envelope to give a format 1 reader, who refuses it then.
+				expect(await existsOf(note)).toMatchObject({ exists: true });
+				expect(await existsOf(note)).not.toHaveProperty("envelope");
+			}
+		},
+	);
+});
+
+describe("password attempts, taken before the proof is compared", () => {
+	// The database refusing writes (a full disk): the attempt cannot be taken,
+	// so the proof is never compared. A right password and a wrong one get the
+	// same answer, after the same work, nothing loaded: no guess goes uncounted,
+	// and none stands out by its time.
+	it("answers a right and a wrong password alike when their attempt cannot be counted", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const read = vi.fn((key: string) => storage.read(key));
+		const watched = createApp({}, overrideStorage(storage, { read }));
+		const { id } = await createNote(
+			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
+		);
+		sqlite.exec(`CREATE TRIGGER disk_full BEFORE UPDATE OF failed_attempts ON notes
+			BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+
+		const right = await postReads(id, PROOFS, watched);
+		const wrong = await postReads(id, WRONG_PASSWORD, watched);
+
+		for (const res of [right, wrong]) {
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: "Internal server error",
+				errorId: expect.any(String),
+			});
+		}
+		expect(read).not.toHaveBeenCalled();
+		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
+
+		sqlite.exec("DROP TRIGGER disk_full");
+		const res = await postReads(id, PROOFS, watched);
+		expect(res.status).toBe(200);
+		expect(Buffer.from(await res.arrayBuffer())).toEqual(CIPHERTEXT);
+		expect(read).toHaveBeenCalledOnce();
+	});
+
+	it("gives a right password back the attempt it took, even the last one left", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 0 }));
+		for (let attempt = 1; attempt < MAX_PASSWORD_ATTEMPTS; attempt += 1) {
+			expect((await postReads(id, WRONG_PASSWORD)).status).toBe(403);
+		}
+
+		for (let read = 1; read <= 2; read += 1) {
+			expect((await postReads(id)).status).toBe(200);
+			expect(rowOf(id)).toMatchObject({
+				readCount: read,
+				failedAttempts: MAX_PASSWORD_ATTEMPTS - 1,
+			});
+			expect(await existsOf(id)).toMatchObject({ passwordAttemptsLeft: 1 });
+		}
+	});
+
+	// Only a crash between taking an attempt and settling it leaves a note
+	// without an attempt left: its last one was taken, never settled.
+	it.each([
+		["at the limit", MAX_PASSWORD_ATTEMPTS],
+		["past it", MAX_PASSWORD_ATTEMPTS + 1],
+	])("deletes a note a crash left %s, refused as gone", async (_, failedAttempts) => {
+		const { id } = await createNote(
+			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
+		);
+		db.update(notesTable).set({ failedAttempts }).where(eq(notesTable.id, id)).run();
+
+		// Gone already, to a reader. A wrong link proof takes no attempt, and
+		// leaves it as it is.
+		expect(await existsOf(id)).toEqual({ exists: false });
+		expect((await postReads(id, WRONG_LINK)).status).toBe(403);
+		expect(rowOf(id)).toMatchObject({ failedAttempts });
+
+		const res = await postReads(id);
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(rowOf(id)).toBeUndefined();
+		await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
+		expect(await storedObjects()).toEqual([]);
+	});
+});
+
+describe("the last wrong password, while a right reader awaits the storage", () => {
+	/** Where a storage call stops, once reached, until it is released. */
+	function holdPoint() {
+		const reached = Promise.withResolvers<void>();
+		const released = Promise.withResolvers<void>();
+		return {
+			reached: reached.promise,
+			release: () => released.resolve(),
+			async stop(): Promise<void> {
+				reached.resolve();
+				await released.promise;
+			},
+		};
+	}
+
+	async function takeAllButOne(id: string, target: Hono<AppEnv>): Promise<void> {
+		for (let attempt = 1; attempt < MAX_PASSWORD_ATTEMPTS; attempt += 1) {
+			expect((await postReads(id, WRONG_PASSWORD, target)).status).toBe(403);
+		}
+	}
+
+	// Its proofs checked out and its attempt is back, but its read is not spent
+	// yet: the note goes before it is, and the reader is refused, as one that
+	// lost a race to a burn.
+	it("refuses a reader still loading a file note the last wrong password deleted", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const hold = holdPoint();
+		const racing = createApp(
+			{},
+			overrideStorage(storage, {
+				read: async (key) => {
+					await hold.stop();
+					return storage.read(key);
+				},
+			}),
+		);
+		const { id } = await createNote(
+			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
+		);
+		await takeAllButOne(id, racing);
+
+		const reader = postReads(id, PROOFS, racing);
+		await hold.reached;
+		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: MAX_PASSWORD_ATTEMPTS - 1 });
+
+		const last = await postReads(id, WRONG_PASSWORD, racing);
+		expect(last.status).toBe(403);
+		expect(rowOf(id)).toBeUndefined();
+		// Purged at once, as a single-shot note is.
+		await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
+		expect(await storedObjects()).toEqual([]);
+
+		hold.release();
+		const res = await reader;
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: "Note not found" });
+	});
+
+	// Its read spent, a reader of a chunked note that takes several reads is
+	// streaming it when the last wrong password deletes it: its chunks stay
+	// until the window is past, and its stream ends whole.
+	it("lets a reader finish streaming a chunked note the last wrong password deleted", async () => {
+		const storage = new LocalStorage(TEST_FILES_PATH);
+		const hold = holdPoint();
+		const purge = vi.fn((noteId: string) => storage.purge(noteId));
+		const racing = createApp(
+			{},
+			overrideStorage(storage, {
+				readChunk: async (noteId, index) => {
+					if (index > 0) {
+						await hold.stop();
+					}
+					return storage.readChunk(noteId, index);
+				},
+				purge,
+			}),
+		);
+		const { id } = await createChunkedNote(
+			envelopeOf("chunked", { fileCount: 1, password: true, maxReads: 3 }),
+		);
+		await takeAllButOne(id, racing);
+
+		const res = await postReads(id, PROOFS, racing);
+		expect(res.status).toBe(200);
+		const body = res.arrayBuffer();
+		await hold.reached;
+		expect(rowOf(id)).toMatchObject({ readCount: 1, failedAttempts: MAX_PASSWORD_ATTEMPTS - 1 });
+
+		const last = await postReads(id, WRONG_PASSWORD, racing);
+		expect(last.status).toBe(403);
+		expect(rowOf(id)).toBeUndefined();
+		expect(await existsOf(id)).toEqual({ exists: false });
+		const [queued, ...others] = queuedPurges();
+		expect(others).toEqual([]);
+		expect(queued?.noteId).toBe(id);
+		expect(queued?.heldMs).toBeGreaterThan(23 * 60 * 60_000);
+
+		hold.release();
+		expect(unframe(new Uint8Array(await body))).toEqual(CHUNKS);
+		expect(purge).not.toHaveBeenCalled();
+
+		// The cleanup job purges the chunks once the window is past.
+		expect(queuedPurges()).toHaveLength(1);
+		expect(await drainQueuedPurges()).toMatchObject({ drained: 1, failed: 0 });
+		expect(await storedObjects()).toEqual([]);
+	});
+});
+
+describe("the sealed verifiers, against a write to the database", () => {
+	// Whoever can write to the database, but lacks the instance key, holds the
+	// link but not the password.
+	it("refuses a note whose link verifier was copied over its password verifier", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		sqlite.prepare("UPDATE notes SET password_verifier = link_verifier WHERE id = ?").run(id);
+
+		for (const proofs of [WRONG_PASSWORD, PROOFS]) {
+			const res = await postReads(id, proofs);
+
+			expect(res.status).toBe(403);
+			expect(await res.json()).toEqual({ error: "Wrong password" });
+		}
+		expect(rowOf(id)).toMatchObject({ readCount: 0 });
+	});
+
+	it("refuses a note whose envelope was rewritten without a password, its verifier dropped", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		db.update(notesTable)
+			.set({ envelope: envelopeOf("single-shot"), hasPassword: false, passwordVerifier: null })
+			.where(eq(notesTable.id, id))
+			.run();
+
+		for (const proofs of [{ linkProof: b64(LINK_PROOF) }, PROOFS]) {
+			const res = await postReads(id, proofs);
+
+			expect(res.status).toBe(403);
+			expect(await res.json()).toEqual({ error: "Invalid link proof" });
+		}
+		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
+	});
+
+	it("seals the same verifier apart as the link's and as the password's", async () => {
+		const envelope = envelopeOf("single-shot", { password: true });
+		const res = await postNote({
+			envelope: b64(envelope),
+			linkVerifier: LINK_VERIFIER,
+			passwordVerifier: LINK_VERIFIER,
+			encryptedData: b64(CIPHERTEXT),
+		});
+		const { id } = (await res.json()) as { id: string };
+
+		const row = rowOf(id);
+		expect(row?.linkVerifier).toEqual(sealedAs("link", id, envelope, LINK_VERIFIER));
+		expect(row?.passwordVerifier).toEqual(sealedAs("password", id, envelope, LINK_VERIFIER));
+		expect(row?.linkVerifier?.equals(row.passwordVerifier ?? Buffer.alloc(0))).toBe(false);
+	});
 });
 
 describe("format 0 reads of a format 1 note", () => {

@@ -38,12 +38,15 @@ export interface ReadVerifiers {
 	readonly password?: Uint8Array | undefined;
 }
 
+/** Which proof a verifier checks: the link's, or the password's. */
+export type VerifierRole = keyof ReadVerifiers;
+
 declare const sealed: unique symbol;
 
 /**
- * A verifier as the server keeps it, sealed under its key and bound to the
- * note's id (serverLayer.ts). Branded, so that a writer's verifier is never
- * stored, nor checked against, as one.
+ * A verifier as the server keeps it, sealed under its key and bound to its
+ * role, the note's id and its envelope (serverLayer.ts). Branded, so that a
+ * writer's verifier is never stored, nor checked against, as one.
  */
 export type SealedVerifier = Buffer & { readonly [sealed]: true };
 
@@ -68,7 +71,7 @@ export interface NoteSettings<
 	readonly verifiers?: Verifiers | undefined;
 }
 
-/** A note's settings as its row records them: its verifiers sealed with its id. */
+/** A note's settings as its row records them: its verifiers sealed with its id and envelope. */
 export type StoredSettings<Opening extends NoteOpening = NoteOpening> = NoteSettings<
 	Opening,
 	SealedVerifiers

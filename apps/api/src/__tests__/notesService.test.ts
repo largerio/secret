@@ -10,7 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { notes as notesTable, pendingDeletions } from "../db/schema.js";
 import { NoteError, type NoteErrorCode } from "../notes/errors.js";
-import { countFailedAttempt, inStorage, placementOf } from "../notes/rows.js";
+import {
+	inStorage,
+	placementOf,
+	settlePasswordAttempt,
+	takePasswordAttempt,
+} from "../notes/rows.js";
 import { createServerLayer } from "../notes/serverLayer.js";
 import type { NotesService } from "../notes/service.js";
 import { chunkStream } from "../notes/stream.js";
@@ -389,10 +394,13 @@ describe("format 1 proofs, in the service", () => {
 		expect(await Array.fromAsync(storage.list())).toEqual([]);
 	});
 
-	it("refuses a failed attempt on a note that is gone", () => {
-		expect(() => countFailedAttempt(db, "no-such-note")).toThrow(
-			expect.objectContaining({ code: "note_not_found" }),
-		);
+	it("takes no attempt on a note that is gone, and settles none", () => {
+		expect(takePasswordAttempt(db, "no-such-note")).toEqual({ status: "missing" });
+		for (const proven of [true, false]) {
+			expect(() => settlePasswordAttempt(db, "no-such-note", proven)).toThrow(
+				expect.objectContaining({ code: "note_not_found" }),
+			);
+		}
 	});
 
 	it("ignores a password proof sent for a note without a password", async () => {
@@ -422,38 +430,79 @@ describe("format 1 proofs, in the service", () => {
 describe("the server layer's verifiers", () => {
 	const serverKey = randomBytes(32);
 	const layer = createServerLayer(serverKey);
+	const id = "aBcDeFgHiJkL";
 	const verifier = verifierOf(LINK_PROOF);
+	const passwordVerifier = verifierOf(PASSWORD_PROOF);
+	const envelope = format1Settings("single-shot", 0, { password: true }).opening.envelope;
+	const withoutPassword = format1Settings("single-shot", 0).opening.envelope;
 
-	it("seals a verifier as PROTOCOL.md says: HMAC-SHA256 of the id and the verifier, under an HKDF key", () => {
+	it("seals a verifier as PROTOCOL.md says: HMAC-SHA256 of its role, the id, the envelope's hash and the verifier, under an HKDF key", () => {
 		const key = Buffer.from(
 			hkdfSync("sha256", serverKey, new Uint8Array(32), "secret/server verifier", 32),
 		);
-		const expected = createHmac("sha256", key)
-			.update(Buffer.concat([Buffer.from("aBcDeFgHiJkL", "ascii"), verifier]))
-			.digest();
+		const expected = (role: string, writers: Uint8Array) =>
+			createHmac("sha256", key)
+				.update(
+					Buffer.concat([
+						Buffer.from(role, "ascii"),
+						Buffer.from([0]),
+						Buffer.from(id, "ascii"),
+						createHash("sha256").update(envelope).digest(),
+						writers,
+					]),
+				)
+				.digest();
 
-		const sealed = layer.sealVerifiers("aBcDeFgHiJkL", { link: verifier });
+		const sealed = layer.sealVerifiers(id, envelope, {
+			link: verifier,
+			password: passwordVerifier,
+		});
 
-		expect(sealed).toEqual({ link: expected });
+		expect(sealed).toEqual({
+			link: expected("link", verifier),
+			password: expected("password", passwordVerifier),
+		});
 		expect(sealed.link.equals(Buffer.from(verifier))).toBe(false);
 	});
 
-	it("binds a sealed verifier to its note, and checks a proof against it", () => {
-		const { link, password } = layer.sealVerifiers("aBcDeFgHiJkL", {
-			link: verifier,
-			password: verifierOf(PASSWORD_PROOF),
-		});
-		const other = layer.sealVerifiers("zYxWvUtSrQpO", { link: verifier });
+	it("binds a sealed verifier to its role, its note and its envelope", () => {
+		const { link } = layer.sealVerifiers(id, envelope, { link: verifier });
 
-		expect(other.link.equals(link)).toBe(false);
-		expect(layer.proves("aBcDeFgHiJkL", LINK_PROOF, link)).toBe(true);
-		expect(password && layer.proves("aBcDeFgHiJkL", PASSWORD_PROOF, password)).toBe(true);
-		expect(layer.proves("aBcDeFgHiJkL", PASSWORD_PROOF, link)).toBe(false);
-		// A verifier moved to another note, or the verifier sent as a proof, proves nothing.
-		expect(layer.proves("zYxWvUtSrQpO", LINK_PROOF, link)).toBe(false);
-		expect(layer.proves("aBcDeFgHiJkL", verifier, link)).toBe(false);
+		// The same verifier, sealed as the password's, for another note, or with
+		// another envelope: none is the link's.
+		const asPassword = layer.sealVerifiers(id, envelope, {
+			link: passwordVerifier,
+			password: verifier,
+		}).password;
+		const elsewhere = layer.sealVerifiers("zYxWvUtSrQpO", envelope, { link: verifier }).link;
+		const otherEnvelope = layer.sealVerifiers(id, withoutPassword, { link: verifier }).link;
+		for (const sealed of [asPassword, elsewhere, otherEnvelope]) {
+			expect(sealed).toHaveLength(32);
+			expect(sealed?.equals(link)).toBe(false);
+		}
+	});
+
+	it("checks a proof against the verifier sealed for its role, its note and its envelope", () => {
+		const { link, password } = layer.sealVerifiers(id, envelope, {
+			link: verifier,
+			password: passwordVerifier,
+		});
+
+		expect(layer.proves(id, envelope, "link", LINK_PROOF, link)).toBe(true);
+		expect(password && layer.proves(id, envelope, "password", PASSWORD_PROOF, password)).toBe(true);
+		expect(layer.proves(id, envelope, "link", PASSWORD_PROOF, link)).toBe(false);
+		// The link's verifier taken for the password's: the link's proof does not
+		// open it as the password's.
+		expect(layer.proves(id, envelope, "password", LINK_PROOF, link)).toBe(false);
+		// With its envelope rewritten, or moved to another note, a verifier proves
+		// nothing; nor does the verifier sent as a proof.
+		expect(layer.proves(id, withoutPassword, "link", LINK_PROOF, link)).toBe(false);
+		expect(layer.proves("zYxWvUtSrQpO", envelope, "link", LINK_PROOF, link)).toBe(false);
+		expect(layer.proves(id, envelope, "link", verifier, link)).toBe(false);
 		// Under another instance key, nothing matches either.
-		expect(createServerLayer(randomBytes(32)).proves("aBcDeFgHiJkL", LINK_PROOF, link)).toBe(false);
+		expect(createServerLayer(randomBytes(32)).proves(id, envelope, "link", LINK_PROOF, link)).toBe(
+			false,
+		);
 	});
 });
 
