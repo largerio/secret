@@ -1,15 +1,18 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { NotesService } from "../../notes/service.js";
-import type { NoteFormat } from "../../notes/types.js";
-import { existsRoute, rawNoteRoute, readNoteRoute, streamNoteRoute } from "./openapi-routes.js";
-import { lengthPrefixed, rawHeaders, streamHeaders } from "./responses.js";
+import {
+	existsRoute,
+	rawNoteRoute,
+	readNoteRoute,
+	readWithProofsRoute,
+	streamNoteRoute,
+} from "./openapi-routes.js";
+import { rawResponse, streamResponse } from "./responses.js";
 
-/** The format a binary read asks for: format 1 by name, format 0 without it. */
-function askedFormat(query: { readonly format?: "0" | "1" | undefined }): NoteFormat {
-	return query.format === "1" ? 1 : 0;
-}
-
-/** What reads a note: its state, and its ciphertext in one piece or as a stream. */
+/**
+ * What reads a note: its state, its ciphertext in one piece or as a stream in
+ * format 0, and either kind in format 1, once its proofs check out.
+ */
 export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void {
 	// Hono answers a HEAD with the GET route and drops the body: on the reads
 	// that spend, it would spend one, and burn a single-read note, without
@@ -41,12 +44,16 @@ export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void 
 			maxReads: info.maxReads,
 			readCount: info.readCount,
 			chunked: info.chunked,
+			...(info.envelope ? { envelope: info.envelope.toString("base64") } : {}),
+			...(info.passwordAttemptsLeft !== undefined
+				? { passwordAttemptsLeft: info.passwordAttemptsLeft }
+				: {}),
 		});
 	});
 
 	app.openapi(readNoteRoute, async (c) => {
-		// Its answer has format 0's fields, and no room for an envelope.
-		const { meta, ciphertext } = await notes.read(c.req.valid("param").id, 0);
+		// Its answer has format 0's fields: format 1 notes are not served here.
+		const { meta, ciphertext } = await notes.read(c.req.valid("param").id);
 		return c.json({
 			encryptedData: ciphertext.toString("base64"),
 			clientNonce: meta.opening.clientNonce,
@@ -59,24 +66,18 @@ export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void 
 	});
 
 	app.openapi(rawNoteRoute, async (c) => {
-		const { meta, ciphertext } = await notes.read(
-			c.req.valid("param").id,
-			askedFormat(c.req.valid("query")),
-		);
-		return new Response(new Uint8Array(ciphertext) as BodyInit, {
-			status: 200,
-			headers: rawHeaders(meta, ciphertext.length),
-		});
+		return rawResponse(await notes.read(c.req.valid("param").id));
 	});
 
 	app.openapi(streamNoteRoute, async (c) => {
-		const { meta, chunkCount, chunks } = await notes.stream(
-			c.req.valid("param").id,
-			askedFormat(c.req.valid("query")),
-		);
-		return new Response(lengthPrefixed(chunks) as BodyInit, {
-			status: 200,
-			headers: streamHeaders(meta, chunkCount),
-		});
+		return streamResponse(await notes.stream(c.req.valid("param").id));
+	});
+
+	// A POST: it changes the note (a read spent, or a wrong password counted),
+	// and its proofs travel in the body, out of the URLs that logs and caches
+	// keep. It answers as /raw or /stream do, by the note's kind.
+	app.openapi(readWithProofsRoute, async (c) => {
+		const read = await notes.readWithProofs(c.req.valid("param").id, c.req.valid("json"));
+		return read.kind === "chunked" ? streamResponse(read) : rawResponse(read);
 	});
 }

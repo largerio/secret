@@ -10,10 +10,23 @@ export type NoteErrorCode =
 	/** A stream was asked of a single-shot note. */
 	| "note_is_single_shot"
 	/**
-	 * A read asked for another format than the note's: a client that knows only
-	 * format 0 never spends a read on a format 1 note, nor the reverse.
+	 * A read of another format than the note's (the format 0 reads, or the
+	 * format 1 one): a client that knows only format 0 never spends a read on a
+	 * format 1 note, nor the reverse.
 	 */
 	| "note_format_mismatch"
+	/**
+	 * A format 1 read whose link proof is not the note's. It counts nothing:
+	 * whoever lacks the link's key cannot guess it.
+	 */
+	| "wrong_link_proof"
+	/** A format 1 password note's read without its password proof. It counts nothing. */
+	| "password_proof_missing"
+	/**
+	 * A format 1 password note's read whose password proof is not the note's.
+	 * It counts one failed attempt, and the last one the note takes deletes it.
+	 */
+	| "wrong_password"
 	/** A note without files larger than the database is meant to hold. */
 	| "note_too_large"
 	/** The stored note does not open: corrupt bytes, or a corrupt row. */
@@ -44,6 +57,9 @@ const MESSAGES: Readonly<Record<NoteErrorCode, string>> = {
 	note_is_chunked: "Note is chunked: read it as a stream",
 	note_is_single_shot: "Note is not a chunked note",
 	note_format_mismatch: "Note is in another format than the one asked for",
+	wrong_link_proof: "Invalid link proof",
+	password_proof_missing: "Password proof required",
+	wrong_password: "Wrong password",
 	note_too_large: "Payload too large",
 	note_corrupted: "Failed to decrypt note",
 	expiry_above_limit: "Expiry above the instance's limit",

@@ -14,7 +14,11 @@ import type { StorageBackend } from "./storage/interface.js";
 /** How a note is stored: inline in the database, as one file, or in chunks. */
 export type NoteType = "text" | "file" | "chunked";
 
+/** What a format 1 read proves: that it holds the link, and the password of a password note. */
+export type ReadProof = "link" | "password";
+
 const NOTE_TYPES: readonly NoteType[] = ["text", "file", "chunked"];
+const READ_PROOFS: readonly ReadProof[] = ["link", "password"];
 const SWEEP_STATUSES: ReadonlyArray<SweepOutcome["status"]> = [
 	"done",
 	"trial",
@@ -44,6 +48,11 @@ export interface AppMetrics {
 	noteCreated(type: NoteType): void;
 	/** A read served; `burned` when it was the last one the note allowed. */
 	noteRead(type: NoteType, burned: boolean): void;
+	/**
+	 * A format 1 read refused for a wrong proof; `deleted` when it was the last
+	 * wrong password the note took.
+	 */
+	proofRefused(proof: ReadProof, deleted: boolean): void;
 	noteDeleted(): void;
 	/** Expired notes deleted, by the cleanup job or by a read that found one. */
 	notesExpired(count: number): void;
@@ -124,6 +133,15 @@ export function createMetrics(deps: {
 		"secret_notes_burned_total",
 		"Notes deleted by the read that reached their read limit.",
 	);
+	const refusedProofs = registry.counter(
+		"secret_read_proofs_refused_total",
+		"Format 1 reads refused for a wrong proof, by proof: link (counts nothing) or password (counts a failed attempt).",
+		["proof"],
+	);
+	const exhausted = registry.counter(
+		"secret_notes_attempts_exhausted_total",
+		"Format 1 notes deleted by the wrong password that used up their attempts.",
+	);
 	const deleted = registry.counter(
 		"secret_notes_deleted_total",
 		"Notes deleted with their delete token.",
@@ -136,7 +154,11 @@ export function createMetrics(deps: {
 		created.inc({ type }, 0);
 		reads.inc({ type }, 0);
 	}
+	for (const proof of READ_PROOFS) {
+		refusedProofs.inc({ proof }, 0);
+	}
 	burned.inc({}, 0);
+	exhausted.inc({}, 0);
 	deleted.inc({}, 0);
 	expired.inc({}, 0);
 
@@ -255,6 +277,12 @@ export function createMetrics(deps: {
 			reads.inc({ type });
 			if (wasBurned) {
 				burned.inc({});
+			}
+		},
+		proofRefused(proof, wasDeleted) {
+			refusedProofs.inc({ proof });
+			if (wasDeleted) {
+				exhausted.inc({});
 			}
 		},
 		noteDeleted() {

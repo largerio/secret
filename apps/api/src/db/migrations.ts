@@ -192,6 +192,20 @@ const format1Envelope: Migration = {
 	},
 };
 
+// A format 1 note keeps the verifiers its reads are checked against, sealed,
+// and counts the wrong passwords tried on it. Format 0 notes leave the
+// verifiers NULL and never count one; a format 1 row written before has no
+// verifiers, and is never served.
+const format1ReadProofs: Migration = {
+	version: 6,
+	name: "format-1-read-proofs",
+	apply(sqlite) {
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN link_verifier BLOB`);
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN password_verifier BLOB`);
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0`);
+	},
+};
+
 /** Ordered, append-only. Versions are contiguous and start at 1. */
 export const MIGRATIONS: readonly Migration[] = [
 	baseline,
@@ -199,6 +213,7 @@ export const MIGRATIONS: readonly Migration[] = [
 	dropUnusedColumns,
 	pendingDeletionsByNote,
 	format1Envelope,
+	format1ReadProofs,
 ];
 
 export function getSchemaVersion(sqlite: DatabaseSync): number {

@@ -557,6 +557,7 @@ describe("classifyNotesPath", () => {
 		["/api/v1/notes/aBcDeFgHiJkL", "read"],
 		["/api/v1/notes/aBcDeFgHiJkL/raw", "read"],
 		["/api/v1/notes/aBcDeFgHiJkL/stream", "read"],
+		["/api/v1/notes/aBcDeFgHiJkL/reads", "read"],
 		["/api/v1/notes/upload/abc123/complete", "read"],
 	])("classifies %s as %s", (path, expected) => {
 		expect(classifyNotesPath(path)).toBe(expected);

@@ -1,6 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, as the routes expect (the production entry point does the same).
+import "@hono/zod-openapi";
+import { encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // First: it pulls in `@hono/zod-openapi`, which extends Zod before the shared
@@ -93,6 +97,9 @@ describe("createMetrics", () => {
 		}
 		for (const series of [
 			"secret_notes_burned_total",
+			"secret_notes_attempts_exhausted_total",
+			'secret_read_proofs_refused_total{proof="link"}',
+			'secret_read_proofs_refused_total{proof="password"}',
 			"secret_notes_deleted_total",
 			"secret_notes_expired_total",
 			'secret_storage_purges_total{result="ok"}',
@@ -228,6 +235,9 @@ describe("createMetrics", () => {
 		metrics.noteCreated("chunked");
 		metrics.noteRead("file", false);
 		metrics.noteRead("text", true);
+		metrics.proofRefused("link", false);
+		metrics.proofRefused("password", false);
+		metrics.proofRefused("password", true);
 		metrics.noteDeleted();
 		metrics.notesExpired(3);
 		metrics.purgeSettled("ok");
@@ -239,6 +249,9 @@ describe("createMetrics", () => {
 		expect(sample(text, 'secret_note_reads_total{type="file"}')).toBe(1);
 		expect(sample(text, 'secret_note_reads_total{type="text"}')).toBe(1);
 		expect(sample(text, "secret_notes_burned_total")).toBe(1);
+		expect(sample(text, 'secret_read_proofs_refused_total{proof="link"}')).toBe(1);
+		expect(sample(text, 'secret_read_proofs_refused_total{proof="password"}')).toBe(2);
+		expect(sample(text, "secret_notes_attempts_exhausted_total")).toBe(1);
 		expect(sample(text, "secret_notes_deleted_total")).toBe(1);
 		expect(sample(text, "secret_notes_expired_total")).toBe(3);
 		expect(sample(text, 'secret_storage_purges_total{result="ok"}')).toBe(1);
@@ -509,16 +522,77 @@ describe("GET /api/metrics", () => {
 			expect(sqlite.prepare("SELECT COUNT(*) AS n FROM pending_deletions").get()).toEqual({ n: 0 }),
 		);
 
+		// Format 1 text notes: one burned by its only read, once a wrong link
+		// proof was refused; one deleted by the wrong passwords it took.
+		const linkProof = randomBytes(32).toString("base64");
+		const passwordProof = randomBytes(32).toString("base64");
+		const verifierOf = (proof: string) =>
+			createHash("sha256").update(Buffer.from(proof, "base64")).digest("base64");
+		async function createFormat1(password: boolean) {
+			const envelope = encodeEnvelope({
+				kind: "single-shot",
+				nonce: new Uint8Array(24),
+				fileCount: 0,
+				maxReads: 1,
+				expiresIn: 3600,
+				...(password
+					? { argon2: { salt: new Uint8Array(16), iterations: 3, memoryKiB: 262_144 } }
+					: {}),
+			});
+			const res = await app.request("/api/v1/notes", {
+				method: "POST",
+				headers: { ...auth, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					envelope: Buffer.from(envelope).toString("base64"),
+					linkVerifier: verifierOf(linkProof),
+					...(password ? { passwordVerifier: verifierOf(passwordProof) } : {}),
+					encryptedData: Buffer.from("ciphertext").toString("base64"),
+				}),
+			});
+			expect(res.status).toBe(201);
+			const note = (await res.json()) as { id: string; deleteToken: string };
+			secrets.push(note.id, note.deleteToken);
+			return note;
+		}
+		const readWith = (id: string, proofs: Record<string, string>) =>
+			app.request(`/api/v1/notes/${id}/reads`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(proofs),
+			});
+		secrets.push(linkProof, passwordProof);
+
+		const proven = await createFormat1(false);
+		expect((await readWith(proven.id, { linkProof: passwordProof })).status).toBe(403);
+		expect((await readWith(proven.id, { linkProof })).status).toBe(200);
+		const guessed = await createFormat1(true);
+		for (let attempt = 0; attempt < MAX_PASSWORD_ATTEMPTS; attempt += 1) {
+			const res = await readWith(guessed.id, { linkProof, passwordProof: linkProof });
+			expect(res.status).toBe(403);
+		}
+
 		const text = await (await scrape(app)).text();
 
-		expect(sample(text, 'secret_notes_created_total{type="text"}')).toBe(2);
+		expect(sample(text, 'secret_notes_created_total{type="text"}')).toBe(4);
 		expect(sample(text, 'secret_notes_created_total{type="file"}')).toBe(2);
 		expect(sample(text, 'secret_notes_created_total{type="chunked"}')).toBe(1);
-		expect(sample(text, 'secret_note_reads_total{type="text"}')).toBe(1);
+		expect(sample(text, 'secret_note_reads_total{type="text"}')).toBe(2);
 		expect(sample(text, 'secret_note_reads_total{type="file"}')).toBe(2);
 		expect(sample(text, 'secret_note_reads_total{type="chunked"}')).toBe(1);
-		// The text note by /:id, the file note by /raw, the chunked one by /stream.
-		expect(sample(text, "secret_notes_burned_total")).toBe(3);
+		// The text notes by /:id and by their proofs, the file note by /raw, the
+		// chunked one by /stream.
+		expect(sample(text, "secret_notes_burned_total")).toBe(4);
+		expect(sample(text, 'secret_read_proofs_refused_total{proof="link"}')).toBe(1);
+		expect(sample(text, 'secret_read_proofs_refused_total{proof="password"}')).toBe(
+			MAX_PASSWORD_ATTEMPTS,
+		);
+		expect(sample(text, "secret_notes_attempts_exhausted_total")).toBe(1);
+		expect(
+			sample(
+				text,
+				'secret_http_requests_total{method="POST",route="/api/v1/notes/:id/reads",status="4xx"}',
+			),
+		).toBe(1 + MAX_PASSWORD_ATTEMPTS);
 		expect(sample(text, "secret_notes_deleted_total")).toBe(1);
 		expect(sample(text, 'secret_notes{type="text"}')).toBe(0);
 		expect(sample(text, 'secret_notes{type="file"}')).toBe(1);
@@ -543,6 +617,7 @@ describe("GET /api/metrics", () => {
 			["POST", "/api/v1/notes/upload"],
 			["POST", "/api/v1/notes/upload/init"],
 			["POST", "/api/v1/notes/upload/:uploadId/complete"],
+			["POST", "/api/v1/notes/:id/reads"],
 			["DELETE", "/api/v1/notes/:id"],
 		]) {
 			expect(

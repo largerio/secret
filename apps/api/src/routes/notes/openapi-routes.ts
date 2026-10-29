@@ -7,9 +7,11 @@ import {
 	createNoteRequestSchema,
 	createNoteResponseSchema,
 	deleteNoteResponseSchema,
+	MAX_PASSWORD_ATTEMPTS,
 	noteExistsResponseSchema,
 	noteIdSchema,
 	noteNotFoundResponseSchema,
+	noteReadRequestSchema,
 	readNoteResponseSchema,
 	UPLOAD_ID_LENGTH,
 } from "@largerio/secret-shared";
@@ -28,20 +30,6 @@ const uploadIdParam = z
 
 const binaryBody = z.string().openapi({ format: "binary" });
 
-// A binary read serves the note only in the format it asks for, so that a
-// client that knows only format 0 is refused a format 1 note before it spends
-// a read on it.
-const formatQuery = z.object({
-	format: z
-		.enum(["0", "1"])
-		.optional()
-		.openapi({
-			param: { name: "format", in: "query" },
-			description:
-				"The note's format, as its link names it: 1 for a format 1 note; 0, or nothing, for format 0. A note in another format is refused with 400, no read spent.",
-		}),
-});
-
 // Every route below validates its parameters, headers and JSON or multipart
 // body with these schemas (app.openapi): what the documentation says is what
 // the API accepts. Two things are checked past them: a chunk's bytes, by the
@@ -50,11 +38,17 @@ const formatQuery = z.object({
 // its validation and reach the handler empty.
 //
 // A write takes either format (PROTOCOL.md): format 1 sends one `envelope`,
-// format 0 its settings field by field. A request with an envelope is format
-// 1's (the shared request schemas).
+// and the verifiers of its readers' proofs beside it, format 0 its settings
+// field by field. A request with an envelope is format 1's (the shared request
+// schemas). A read is of one format: the GETs serve format 0, `POST
+// /{id}/reads` format 1, so that a client that knows only format 0 is refused
+// a format 1 note before it spends a read on it.
 
 const WRITE_FORMATS =
-	"Format 1 sends `envelope`, the note's envelope in base64, which holds its settings; format 0 sends them as fields.";
+	"Format 1 sends `envelope`, the note's envelope in base64, which holds its settings, with `linkVerifier` and, for a password note, `passwordVerifier`; format 0 sends its settings as fields.";
+
+const FORMAT_0_ONLY =
+	"Format 0 notes only: a format 1 note is refused with 400 before any read is spent, and is read from POST /{id}/reads.";
 
 export const createNoteRoute = createRoute({
 	method: "post",
@@ -84,14 +78,15 @@ export const uploadNoteRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Create an encrypted note with a binary payload (multipart)",
 	description:
-		'Same as POST / but the encrypted payload travels as a binary multipart part (no base64 overhead). `metadata` is a JSON string with the same fields as the JSON create request, minus `encryptedData`: `{"envelope"}` for format 1. The note has at least one file.',
+		'Same as POST / but the encrypted payload travels as a binary multipart part (no base64 overhead). `metadata` is a JSON string with the same fields as the JSON create request, minus `encryptedData`: `{"envelope", "linkVerifier"}`, with `"passwordVerifier"` for a password note, in format 1. The note has at least one file.',
 	request: {
 		body: {
 			content: {
 				"multipart/form-data": {
 					schema: z.object({
 						metadata: z.string().openapi({
-							description: "JSON-encoded note metadata: the envelope, or format 0's fields",
+							description:
+								"JSON-encoded note metadata: the envelope and its verifiers, or format 0's fields",
 						}),
 						data: z.instanceof(File).openapi({
 							type: "string",
@@ -117,6 +112,8 @@ export const existsRoute = createRoute({
 	path: "/{id}/exists",
 	tags: ["Notes"],
 	summary: "Check if a note exists",
+	description:
+		"Spends no read. For a format 1 note, the answer also carries its envelope, which its reader derives its proofs from, and for a password note the wrong passwords it still takes.",
 	request: {
 		params: z.object({ id: noteIdParam }),
 	},
@@ -137,8 +134,7 @@ export const readNoteRoute = createRoute({
 	path: "/{id}",
 	tags: ["Notes"],
 	summary: "Read and decrypt a note (server-side decryption layer only)",
-	description:
-		"The legacy JSON read, for format 0 notes only: a format 1 note is refused with 400 before any read is spent, and is read from /raw?format=1. A chunked note is refused likewise, and is read from /stream.",
+	description: `The legacy JSON read. ${FORMAT_0_ONLY} A chunked note is refused likewise, and is read from /stream.`,
 	request: {
 		params: z.object({ id: noteIdParam }),
 	},
@@ -155,11 +151,9 @@ export const rawNoteRoute = createRoute({
 	path: "/{id}/raw",
 	tags: ["Notes"],
 	summary: "Read a note as raw bytes (server-side decryption layer only)",
-	description:
-		"Returns the still client-encrypted payload as a binary body. Note metadata travels in response headers: X-Has-Password, X-File-Count, X-Created-At and X-Expires-At, then X-Envelope (the envelope as it was sent, in base64) for a format 1 note, or X-Client-Nonce and X-Salt (when password-protected) for a format 0 note. Format 1 is read with `?format=1`.",
+	description: `Returns the still client-encrypted payload as a binary body. Note metadata travels in response headers: X-Has-Password, X-File-Count, X-Created-At, X-Expires-At, X-Client-Nonce and X-Salt (when password-protected). ${FORMAT_0_ONLY}`,
 	request: {
 		params: z.object({ id: noteIdParam }),
-		query: formatQuery,
 	},
 	responses: {
 		200: {
@@ -263,16 +257,38 @@ export const streamNoteRoute = createRoute({
 	path: "/{id}/stream",
 	tags: ["Notes"],
 	summary: "Read a chunked note as a binary stream",
-	description:
-		"Streams the still client-encrypted chunks with length-prefix framing: each chunk is preceded by a 4-byte big-endian length. Note metadata travels in response headers: X-Chunk-Count, X-Has-Password, X-File-Count, X-Created-At and X-Expires-At, then X-Envelope (the envelope as it was sent, in base64) for a format 1 note, or X-Stream-Header and X-Salt (when password-protected) for a format 0 note. Format 1 is read with `?format=1`. Returns 400 for non-chunked notes.",
+	description: `Streams the still client-encrypted chunks with length-prefix framing: each chunk is preceded by a 4-byte big-endian length. Note metadata travels in response headers: X-Chunk-Count, X-Has-Password, X-File-Count, X-Created-At, X-Expires-At, X-Stream-Header and X-Salt (when password-protected). Returns 400 for non-chunked notes. ${FORMAT_0_ONLY}`,
 	request: {
 		params: z.object({ id: noteIdParam }),
-		query: formatQuery,
 	},
 	responses: {
 		200: {
 			content: { "application/octet-stream": { schema: binaryBody } },
 			description: "Length-prefixed client-encrypted chunks; metadata in X-* headers",
+		},
+	},
+});
+
+export const readWithProofsRoute = createRoute({
+	method: "post",
+	path: "/{id}/reads",
+	tags: ["Notes"],
+	summary: "Read a format 1 note with the proofs of its link and password",
+	description: `Format 1 notes only, of either kind: a format 0 note is refused with 400, no read spent. Nothing is spent before the proofs check out: a wrong link proof answers 403 and counts nothing; a password note's read needs \`passwordProof\` (400 without it), and a wrong one answers 403 and counts a failed attempt. A note takes ${String(MAX_PASSWORD_ATTEMPTS)} over its life, and the last deletes it. Then a single-shot note is served as /raw serves one, without X-Client-Nonce and X-Salt, and a chunked note as /stream does, without X-Stream-Header and X-Salt: the reader has its envelope from /exists.`,
+	request: {
+		params: z.object({ id: noteIdParam }),
+		body: {
+			content: {
+				"application/json": { schema: noteReadRequestSchema },
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			content: { "application/octet-stream": { schema: binaryBody } },
+			description:
+				"Client-encrypted note bytes, length-prefixed chunks for a chunked note (X-Chunk-Count); metadata in X-* headers",
 		},
 	},
 });
