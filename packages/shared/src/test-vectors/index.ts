@@ -146,12 +146,30 @@ export interface Format1InvalidEnvelopeVector {
 }
 
 /**
- * A format 1 note a reader MUST refuse once it has read it, written once: what
- * breaks a rule of the stream or of the body is in its messages, which its key
- * and password open as far as they go.
+ * The rule of PROTOCOL.md's "Reading strictly" an invalid note breaks: its
+ * messages do not open (`decryption`), or their tags (`stream`), the body's
+ * length against its head (`body`), the head (`head`), a file in it (`file`),
+ * the envelope's file count (`file-count`), the file sizes against the body
+ * (`file-sizes`), or the size class and the padding (`padding`).
+ */
+export type Format1InvalidNoteRule =
+	| "decryption"
+	| "stream"
+	| "body"
+	| "head"
+	| "file"
+	| "file-count"
+	| "file-sizes"
+	| "padding";
+
+/**
+ * A format 1 note a reader MUST refuse once it has read it: what breaks a
+ * rule is in its messages, which its key opens as far as they go. Each breaks
+ * the one rule it names, and no other.
  */
 export interface Format1InvalidNoteVector {
 	readonly description: string;
+	readonly rule: Format1InvalidNoteRule;
 	readonly keyFragment: string;
 	readonly password?: string;
 	readonly envelope: string;

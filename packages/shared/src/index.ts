@@ -47,6 +47,7 @@ export type {
 	Format1EnvelopeVector,
 	Format1InvalidEnvelopeVector,
 	Format1InvalidFragmentVector,
+	Format1InvalidNoteRule,
 	Format1InvalidNoteVector,
 	Format1KeyVector,
 	Format1NoteVector,

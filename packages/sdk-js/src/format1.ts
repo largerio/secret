@@ -13,6 +13,7 @@ import {
 	keyFromBase64Url,
 	keyToBase64Url,
 	type PasswordInput,
+	SECRETSTREAM_ABYTES,
 	toBase64,
 	verifierOf,
 	zeroFormat1Keys,
@@ -30,14 +31,7 @@ import {
 	parseEnvelope,
 	sizeClass,
 } from "@largerio/secret-shared";
-import {
-	buildPayload,
-	CONTENT_MODES,
-	concatUint8Arrays,
-	ensureInit,
-	headOf,
-	type StreamingHeader,
-} from "./crypto.js";
+import { buildPayload, CONTENT_MODES, ensureInit, headOf, type StreamingHeader } from "./crypto.js";
 import { SecretValidationError } from "./errors.js";
 import type { NotePayload } from "./types.js";
 
@@ -168,9 +162,11 @@ function verifiersOf(keys: Format1Keys): Format1Verifiers {
 
 /** A note's body, before it is encrypted: its parts, and the length padding takes it to. */
 export interface Format1Body {
-	/** The head's length, the head, then each file's bytes. */
-	readonly parts: ReadonlyArray<Uint8Array>;
-	/** The size class of the parts' length: the rest of the body is zeros. */
+	/** The head's length, 4 bytes big-endian, then the head: wiped once encrypted. */
+	readonly head: Uint8Array;
+	/** Each file's bytes, the caller's own: read, never written. */
+	readonly files: ReadonlyArray<Uint8Array>;
+	/** The size class of the head and files' length: the rest of the body is zeros. */
 	readonly length: number;
 }
 
@@ -180,13 +176,14 @@ export interface Format1Body {
  * the file bytes are only read as the messages are cut.
  */
 export function format1BodyOf(payload: NotePayload): Format1Body {
-	const files = payload.files ?? [];
-	const head = encodeRaw(headOf(wellFormedPayload(payload)));
-	const headLength = new Uint8Array(HEAD_LENGTH_BYTES);
-	new DataView(headLength.buffer).setUint32(0, head.length);
-	const parts = [headLength, head, ...files.map((file) => file.data)];
-	const content = parts.reduce((sum, part) => sum + part.length, 0);
-	return { parts, length: sizeClass(content) };
+	const encoded = encodeRaw(headOf(wellFormedPayload(payload)));
+	const head = new Uint8Array(HEAD_LENGTH_BYTES + encoded.length);
+	new DataView(head.buffer).setUint32(0, encoded.length);
+	head.set(encoded, HEAD_LENGTH_BYTES);
+	zeroMemory(encoded);
+	const files = (payload.files ?? []).map((file) => file.data);
+	const content = files.reduce((sum, data) => sum + data.length, head.length);
+	return { head, files, length: sizeClass(content) };
 }
 
 /**
@@ -195,14 +192,15 @@ export function format1BodyOf(payload: NotePayload): Format1Body {
  * once encrypted, and only one is held at a time.
  */
 function* bodyMessages(body: Format1Body, messageSize: number): Generator<Uint8Array> {
+	const parts = [body.head, ...body.files];
 	let part = 0;
 	let offset = 0;
 	for (let start = 0; start < body.length; start += messageSize) {
 		const message = new Uint8Array(Math.min(messageSize, body.length - start));
 		let filled = 0;
 		// Past the last part, the message keeps the zeros it was made with.
-		while (filled < message.length && part < body.parts.length) {
-			const source = body.parts[part] as Uint8Array;
+		while (filled < message.length && part < parts.length) {
+			const source = parts[part] as Uint8Array;
 			const taken = Math.min(source.length - offset, message.length - filled);
 			message.set(source.subarray(offset, offset + taken), filled);
 			filled += taken;
@@ -227,7 +225,8 @@ export interface Format1EncryptResult {
 /**
  * Encrypts a note in format 1: one secretstream, the body cut into messages of
  * `messageSize` bytes, each authenticating the envelope. A note sent in one
- * request is one message: `messageSize` is then the body's length.
+ * request is one message: `messageSize` is then the body's length. A body is
+ * encrypted once: its head is wiped on the way out, whatever happens.
  */
 export async function encryptNoteFormat1(
 	body: Format1Body,
@@ -252,8 +251,11 @@ export async function encryptNoteFormat1(
 		const count = Math.ceil(body.length / messageSize);
 		const messages: Uint8Array[] = [];
 		for (const plaintext of bodyMessages(body, messageSize)) {
-			messages.push(encryptChunk(state, plaintext, messages.length === count - 1, envelope));
-			zeroMemory(plaintext);
+			try {
+				messages.push(encryptChunk(state, plaintext, messages.length === count - 1, envelope));
+			} finally {
+				zeroMemory(plaintext);
+			}
 		}
 		return {
 			messages,
@@ -266,6 +268,7 @@ export async function encryptNoteFormat1(
 			zeroFormat1Keys(keys);
 		}
 		zeroMemory(linkKey);
+		zeroMemory(body.head);
 	}
 }
 
@@ -351,19 +354,34 @@ export function openNoteFormat1(
 	if (messages.length === 0) {
 		throw new Error("No message to open");
 	}
-	const state = initStreamDecrypt(envelope.streamHeader, encryptionKey);
-	const plaintexts = messages.map((message, index) => {
-		const { decrypted, isFinal, isMessage } = decryptChunk(state, message, envelopeBytes);
-		// The last message, and only it, is FINAL: secretstream authenticates
-		// each message and their order, but only the tags prove none were
-		// dropped from the end.
-		const isLast = index === messages.length - 1;
-		if (isLast ? !isFinal : !isMessage) {
-			throw new Error("Encrypted stream is truncated or extended");
+	// Each message opens straight into the body, its own plaintext wiped: one
+	// copy of the note, which a refused note does not keep either.
+	const length = messages.reduce(
+		(sum, message) => sum + Math.max(0, message.length - SECRETSTREAM_ABYTES),
+		0,
+	);
+	const body = new Uint8Array(length);
+	try {
+		const state = initStreamDecrypt(envelope.streamHeader, encryptionKey);
+		let offset = 0;
+		for (const [index, message] of messages.entries()) {
+			const { decrypted, isFinal, isMessage } = decryptChunk(state, message, envelopeBytes);
+			body.set(decrypted, offset);
+			offset += decrypted.length;
+			zeroMemory(decrypted);
+			// The last message, and only it, is FINAL: secretstream authenticates
+			// each message and their order, but only the tags prove none were
+			// dropped from the end.
+			const isLast = index === messages.length - 1;
+			if (isLast ? !isFinal : !isMessage) {
+				throw new Error("Encrypted stream is truncated or extended");
+			}
 		}
-		return decrypted;
-	});
-	return openBody(concatUint8Arrays(plaintexts), envelope);
+		return openBody(body, envelope);
+	} catch (err) {
+		zeroMemory(body);
+		throw err;
+	}
 }
 
 /** A note's payload, from its body: read as PROTOCOL.md lays it out, and refused otherwise. */

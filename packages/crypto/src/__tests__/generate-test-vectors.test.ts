@@ -387,6 +387,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 
 	const MESSAGE = sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
 	const PUSH = sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH;
+	const REKEY = sodium.crypto_secretstream_xchacha20poly1305_TAG_REKEY;
 	const FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL;
 
 	// libsodium's push and pull states are the same: a key from HChaCha20 over
@@ -486,17 +487,20 @@ test("the committed test vectors match what the crypto produces", async () => {
 	});
 
 	/**
-	 * A note under KEY_32 and the vectors' stream header, its plaintexts pushed
-	 * with FINAL on the last, and the envelope as additional data, unless told
-	 * otherwise: each breaks one rule.
+	 * A note a reader must refuse, and the rule it breaks: under KEY_32 and the
+	 * vectors' stream header, its plaintexts pushed with FINAL on the last and
+	 * the envelope as additional data, unless told otherwise.
 	 */
 	const invalidNote = (
+		rule: string,
 		description: string,
 		plaintexts: ReadonlyArray<Uint8Array>,
 		options: {
 			readonly fileCount?: number;
 			readonly tags?: ReadonlyArray<number>;
 			readonly additionalData?: Uint8Array | null;
+			/** What becomes of the messages once pushed. */
+			readonly alter?: (messages: Uint8Array[]) => Uint8Array[];
 		} = {},
 	) => {
 		const keys = format1Keys(KEY_32);
@@ -513,18 +517,23 @@ test("the committed test vectors match what the crypto produces", async () => {
 		);
 		return {
 			description,
+			rule,
 			keyFragment: keys.keyFragment,
 			envelope: toB64(envelope),
-			messages: messages.map(toB64),
+			messages: (options.alter ? options.alter(messages) : messages).map(toB64),
 		};
 	};
 
 	const textHead = headOf({ text: "invalid", contentMode: "text" });
 	const textBody = bodyOf(textHead);
 	const textHalves = cut(textBody, textBody.length / 2);
+	const nulEndedHead = headOf({ text: "invalid\u0000" });
+	const nulEndedBody = bodyOf(nulEndedHead);
 	const withHeadLength = (body: Uint8Array, length: number): Uint8Array =>
 		withUint32(body, 0, length);
 	const oneFileHead = (file: Record<string, unknown>) => encode({ files: [file] });
+	// 4 + 1 + 5 + 3 + 4,083: a head that fills the floor, so the body has no padding.
+	const fullText = "a".repeat(4083);
 
 	const format1 = {
 		keys: [
@@ -544,6 +553,12 @@ test("the committed test vectors match what the crypto produces", async () => {
 				{ fileCount: 3, maxReads: 0, expiresIn: 2_592_000 },
 				STREAM_HEADER_24,
 				defaultArgon2,
+			),
+			envelopeVector(
+				"with the heaviest Argon2id parameters a reader runs",
+				{ fileCount: 10, maxReads: 1000, expiresIn: 300 },
+				STREAM_HEADER_24,
+				{ salt: SALT_16_B, iterations: 6, memoryKiB: 524_288 },
 			),
 		],
 		sizeClasses: [
@@ -641,6 +656,15 @@ test("the committed test vectors match what the crypto produces", async () => {
 				payload: {},
 				streamHeader: STREAM_HEADER_24,
 			}),
+			// Messages whose length is 9 and 12 modulo 16, where libsodium's MAC
+			// padding (the length modulo 16) and RFC 8439's part ways.
+			noteVector("a text that fills its size class, no padding, in messages of 1,001 bytes", {
+				linkKey: KEY_32,
+				settings: oneDay,
+				payload: { text: fullText },
+				streamHeader: STREAM_HEADER_24,
+				messageSize: 1001,
+			}),
 		],
 		invalid: {
 			fragments: [
@@ -684,41 +708,73 @@ test("the committed test vectors match what the crypto produces", async () => {
 				),
 			],
 			notes: [
-				invalidNote("no message", []),
+				invalidNote("stream", "no message", []),
 				invalidNote(
-					"the final message missing: the stream stops on TAG_MESSAGE",
-					[textHalves[0] ?? new Uint8Array(0)],
-					{ tags: [MESSAGE] },
+					"stream",
+					"no message tagged TAG_FINAL: the whole body, every message TAG_MESSAGE",
+					textHalves,
+					{
+						tags: [MESSAGE, MESSAGE],
+					},
 				),
-				invalidNote("TAG_FINAL on a message before the last", textHalves, {
+				invalidNote("stream", "TAG_FINAL on a message before the last", textHalves, {
 					tags: [FINAL, FINAL],
 				}),
-				invalidNote("TAG_PUSH on a message before the last", textHalves, { tags: [PUSH, FINAL] }),
-				invalidNote("pushed with another envelope as additional data", [textBody], {
+				invalidNote("stream", "TAG_PUSH on a message before the last", textHalves, {
+					tags: [PUSH, FINAL],
+				}),
+				invalidNote("stream", "TAG_REKEY on a message before the last", textHalves, {
+					tags: [REKEY, FINAL],
+				}),
+				invalidNote("stream", "TAG_PUSH on the last message", textHalves, {
+					tags: [MESSAGE, PUSH],
+				}),
+				invalidNote("decryption", "two messages swapped", textHalves, {
+					alter: (messages) => [...messages].reverse(),
+				}),
+				invalidNote("decryption", "a message shorter than 17 bytes", [textBody], {
+					alter: (messages) => messages.map((message) => message.subarray(0, 16)),
+				}),
+				invalidNote("decryption", "pushed with another envelope as additional data", [textBody], {
 					additionalData: envelopeBytes({ ...oneDay, maxReads: 2 }, STREAM_HEADER_24),
 				}),
-				invalidNote("pushed without additional data", [textBody], { additionalData: null }),
-				invalidNote("a body without padding", [textBody.subarray(0, 4 + textHead.length)]),
-				invalidNote("a body padded past its size class", [bodyOf(textHead, [], 8192)]),
-				invalidNote("a padding byte other than zero", [withByte(textBody, textBody.length - 1, 1)]),
-				invalidNote("a head longer than the body", [withHeadLength(textBody, textBody.length)]),
-				invalidNote("a head whose MessagePack runs past its length", [
-					withHeadLength(textBody, textHead.length - 1),
+				invalidNote("decryption", "pushed without additional data", [textBody], {
+					additionalData: null,
+				}),
+				invalidNote("padding", "a body without padding", [
+					textBody.subarray(0, 4 + textHead.length),
 				]),
-				invalidNote("a byte after the head's map, within its length", [
+				invalidNote("padding", "a body padded past its size class", [bodyOf(textHead, [], 8192)]),
+				invalidNote("padding", "a padding byte other than zero", [
+					withByte(textBody, textBody.length - 1, 1),
+				]),
+				invalidNote("body", "a head longer than the body", [
+					withHeadLength(textBody, textBody.length),
+				]),
+				// The head's last byte is zero: cut from the head, it reads as padding.
+				invalidNote("head", "a head whose MessagePack runs past its length", [
+					withHeadLength(nulEndedBody, nulEndedHead.length - 1),
+				]),
+				invalidNote("head", "a byte after the head's map, within its length", [
 					bodyOf(new Uint8Array([...textHead, 0])),
 				]),
-				invalidNote("a head that is an array", [bodyOf(encode(["invalid"]))]),
-				invalidNote("a head that is a timestamp extension", [bodyOf(encode(new Date(0)))]),
-				invalidNote("text that is not a string", [bodyOf(encode({ text: 5 }))]),
-				invalidNote("text: nil", [bodyOf(encode({ text: null }))]),
-				invalidNote("an unknown contentMode", [
+				invalidNote("head", "a head that is an array", [bodyOf(encode(["invalid"]))]),
+				invalidNote("head", "a head that is a timestamp extension", [bodyOf(encode(new Date(0)))]),
+				invalidNote("head", "text that is not a string", [bodyOf(encode({ text: 5 }))]),
+				invalidNote("head", "text: nil", [bodyOf(encode({ text: null }))]),
+				invalidNote("head", "an unknown contentMode", [
 					bodyOf(encode({ text: "invalid", contentMode: "html" })),
 				]),
-				invalidNote("files that is not an array", [bodyOf(encode({ files: { name: "a" } }))], {
-					fileCount: 1,
-				}),
 				invalidNote(
+					"head",
+					"files that is not an array",
+					[bodyOf(encode({ files: { name: "a" } }))],
+					{
+						fileCount: 1,
+					},
+				),
+				invalidNote(
+					"head",
 					"eleven files",
 					[
 						bodyOf(
@@ -733,34 +789,49 @@ test("the committed test vectors match what the crypto produces", async () => {
 					],
 					{ fileCount: 11 },
 				),
+				invalidNote("file", "a file that is not a map", [bodyOf(encode({ files: [["a"]] }))], {
+					fileCount: 1,
+				}),
 				invalidNote(
+					"file",
 					"a file without its size",
 					[bodyOf(oneFileHead({ name: "a", type: "text/plain" }))],
-					{
-						fileCount: 1,
-					},
+					{ fileCount: 1 },
 				),
+				// The head ends on a zero, so that a reader adding the size without its
+				// sign check lands on padding that holds only zeros.
 				invalidNote(
+					"file",
 					"a negative file size",
-					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: -1 }))],
+					[bodyOf(oneFileHead({ name: "a", size: -1, type: "\u0000" }))],
 					{ fileCount: 1 },
 				),
 				invalidNote(
+					"file",
 					"a file size that is not an integer",
 					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 1.5 }), [new Uint8Array(1)])],
 					{ fileCount: 1 },
 				),
 				invalidNote(
+					"file",
 					"a file name that is not a string",
 					[bodyOf(oneFileHead({ name: 7, type: "text/plain", size: 0 }))],
 					{ fileCount: 1 },
 				),
 				invalidNote(
+					"file",
+					"a file type that is not a string",
+					[bodyOf(oneFileHead({ name: "a", type: 7, size: 0 }))],
+					{ fileCount: 1 },
+				),
+				invalidNote(
+					"file-count",
 					"fewer files than the envelope declares",
 					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 0 }))],
 					{ fileCount: 2 },
 				),
 				invalidNote(
+					"file-sizes",
 					"file sizes beyond the body",
 					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 5000 }))],
 					{ fileCount: 1 },
@@ -993,10 +1064,14 @@ test("the committed test vectors match what the crypto produces", async () => {
 	expect(vectors.vectors.encoding).toHaveLength(7);
 	expect(vectors.vectors.secretstream).toHaveLength(2);
 	expect(vectors.vectors.format1.keys).toHaveLength(3);
-	expect(vectors.vectors.format1.envelopes).toHaveLength(2);
+	expect(vectors.vectors.format1.envelopes).toHaveLength(3);
 	expect(vectors.vectors.format1.sizeClasses).toHaveLength(23);
-	expect(vectors.vectors.format1.notes).toHaveLength(6);
+	expect(vectors.vectors.format1.notes).toHaveLength(7);
 	expect(vectors.vectors.format1.invalid.fragments).toHaveLength(8);
 	expect(vectors.vectors.format1.invalid.envelopes).toHaveLength(13);
-	expect(vectors.vectors.format1.invalid.notes).toHaveLength(25);
+	expect(vectors.vectors.format1.invalid.notes).toHaveLength(31);
+	// A text of 4,083 bytes fills the floor: the body holds no padding.
+	expect(Buffer.from(vectors.vectors.format1.notes[6]?.body ?? "", "base64").readUInt32BE(0)).toBe(
+		4092,
+	);
 }, 60_000);

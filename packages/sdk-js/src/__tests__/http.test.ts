@@ -1327,6 +1327,32 @@ describe("postNoteRead", () => {
 		expect(headers["Authorization"]).toBe("Bearer read-key");
 	});
 
+	test("reports a note sent whole by its bytes, against its Content-Length", async () => {
+		const message = new Uint8Array(1000).fill(7);
+		const body = framed([message]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				new Response(body as BodyInit, {
+					status: 200,
+					headers: {
+						...readHeaders,
+						"X-Chunk-Count": "1",
+						"Content-Length": String(body.length),
+					},
+				}),
+			),
+		);
+		const onProgress = vi.fn();
+
+		const result = await postNoteRead(createConfig(fetchMock), "noteId123456", proofs, onProgress);
+
+		expect(result.chunks).toEqual([message]);
+		expect(onProgress).toHaveBeenLastCalledWith(1);
+		for (const [progress] of onProgress.mock.calls) {
+			expect(progress).toBeGreaterThan(0);
+		}
+	});
+
 	test("answers a note sent whole as its one message", async () => {
 		const message = new Uint8Array([7, 8, 9]);
 		const fetchMock = vi.fn<typeof fetch>(() =>

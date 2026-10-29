@@ -24,7 +24,7 @@ import type { ContentMode, NotePayload } from "./types.js";
 
 export { sha256Hex, toBase64 } from "@largerio/secret-crypto/client";
 
-export function concatUint8Arrays(arrays: ReadonlyArray<Uint8Array>): Uint8Array {
+function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
 	const result = new Uint8Array(totalLen);
 	let offset = 0;

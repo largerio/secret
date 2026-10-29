@@ -5,7 +5,6 @@ import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
 
 const UINT32_SIZE = 4;
-const MAX_REASONABLE_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB sanity limit
 const MAX_REASONABLE_CHUNK_COUNT = 10_000;
 
 /**
@@ -265,12 +264,15 @@ function noteReadMeta(headers: Headers): NoteReadMeta {
 	};
 }
 
-/** A single-shot note's ciphertext: the whole body, its progress reported against Content-Length. */
-async function readCiphertext(
+/**
+ * The whole response body, its progress reported against Content-Length when
+ * the server sent one: without it, the progress is unknown until the end.
+ */
+async function download(
 	res: Response,
 	onProgress?: (progress: number) => void,
-): Promise<Uint8Array> {
-	const data = await readBody(async () => {
+): Promise<ArrayBuffer> {
+	return readBody(async () => {
 		const body = res.body;
 		const total = parsePositiveInt(res.headers.get("Content-Length"), 0);
 		if (!onProgress || !body || total === 0) return res.arrayBuffer();
@@ -289,10 +291,21 @@ async function readCiphertext(
 
 		return new Blob(chunks as BlobPart[]).arrayBuffer();
 	});
-	return new Uint8Array(data);
 }
 
-/** A chunked note's messages: X-Chunk-Count of them, each preceded by its length. */
+/** A single-shot note's ciphertext: the whole body. */
+async function readCiphertext(
+	res: Response,
+	onProgress?: (progress: number) => void,
+): Promise<Uint8Array> {
+	return new Uint8Array(await download(res, onProgress));
+}
+
+/**
+ * A chunked note's messages: X-Chunk-Count of them, each preceded by its
+ * length. The body bounds each one: a message may be as long as the length
+ * prefix allows.
+ */
 async function readChunks(
 	res: Response,
 	onProgress?: (progress: number) => void,
@@ -302,8 +315,11 @@ async function readChunks(
 		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
 	}
 
-	// Read entire body then parse length-prefixed chunks
-	const bodyData = await readBody(() => res.arrayBuffer());
+	// A note sent whole comes with its length, and its download reports its
+	// progress; a note sent in a session reports it message by message, once
+	// downloaded.
+	const sized = parsePositiveInt(res.headers.get("Content-Length"), 0) > 0;
+	const bodyData = await download(res, sized ? onProgress : undefined);
 	const view = new DataView(bodyData);
 	const chunks: Uint8Array[] = [];
 	let offset = 0;
@@ -312,10 +328,10 @@ async function readChunks(
 		if (offset + UINT32_SIZE > bodyData.byteLength) break;
 		const len = view.getUint32(offset, false); // explicit big-endian
 		offset += UINT32_SIZE;
-		if (len > MAX_REASONABLE_CHUNK_SIZE || offset + len > bodyData.byteLength) break;
+		if (offset + len > bodyData.byteLength) break;
 		chunks.push(new Uint8Array(bodyData, offset, len));
 		offset += len;
-		onProgress?.((i + 1) / chunkCount);
+		if (!sized) onProgress?.((i + 1) / chunkCount);
 	}
 
 	if (chunks.length !== chunkCount) {

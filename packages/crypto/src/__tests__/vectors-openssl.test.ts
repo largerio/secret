@@ -196,44 +196,58 @@ interface ReadFile {
 const isMap = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
 
+/** A refusal, named by the rule of "Reading strictly" it enforces, as the invalid vectors name theirs. */
+class Refused extends Error {}
+
+const refuse = (rule: string): never => {
+	throw new Refused(rule);
+};
+
 /**
  * A format 1 body read as "Reading strictly" says, written from PROTOCOL.md
- * apart from the SDK's reader: the payload, or a throw for whatever a reader
+ * apart from the SDK's reader: the payload, or a Refused for whatever a reader
  * must refuse.
  */
 function readBody(
 	body: Buffer,
 	fileCount: number,
 ): { text?: unknown; contentMode?: unknown; files: ReadFile[] } {
-	if (body.length < 4) throw new Error("body shorter than 4 bytes");
+	if (body.length < 4) refuse("body");
 	const headEnd = 4 + body.readUInt32BE(0);
-	if (headEnd > body.length) throw new Error("head longer than the body");
-	const head: unknown = decode(body.subarray(4, headEnd));
-	if (!isMap(head)) throw new Error("head not a map");
-	if ("text" in head && typeof head["text"] !== "string") throw new Error("text not a string");
+	if (headEnd > body.length) refuse("body");
+	let head: unknown;
+	try {
+		head = decode(body.subarray(4, headEnd));
+	} catch {
+		refuse("head");
+	}
+	if (!isMap(head)) return refuse("head");
+	if ("text" in head && typeof head["text"] !== "string") refuse("head");
 	if (
 		"contentMode" in head &&
 		!["text", "markdown", "secret"].includes(head["contentMode"] as string)
 	)
-		throw new Error("unknown contentMode");
+		refuse("head");
 	const declared = head["files"] ?? [];
-	if (!Array.isArray(declared) || declared.length > 10) throw new Error("files not a list of 10");
-	if (declared.length !== fileCount) throw new Error("not the envelope's fileCount");
+	if (!Array.isArray(declared) || declared.length > 10) return refuse("head");
+	const listed = declared.map((file: unknown) => {
+		if (!isMap(file) || typeof file["name"] !== "string" || typeof file["type"] !== "string")
+			return refuse("file");
+		const size = file["size"];
+		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return refuse("file");
+		return { name: file["name"], type: file["type"], size };
+	});
+	if (listed.length !== fileCount) refuse("file-count");
 
 	let offset = headEnd;
-	const files = declared.map((file: unknown): ReadFile => {
-		if (!isMap(file) || typeof file["name"] !== "string" || typeof file["type"] !== "string")
-			throw new Error("file without a name or a type");
-		const size = file["size"];
-		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0)
-			throw new Error("size not a non-negative integer");
-		if (size > body.length - offset) throw new Error("sizes beyond the body");
-		const data = body.subarray(offset, offset + size);
-		offset += size;
-		return { name: file["name"], type: file["type"], size, data };
+	const files = listed.map((file): ReadFile => {
+		if (file.size > body.length - offset) refuse("file-sizes");
+		const data = body.subarray(offset, offset + file.size);
+		offset += file.size;
+		return { ...file, data };
 	});
-	if (body.length !== sizeClassOf(offset)) throw new Error("not the size class");
-	if (body.subarray(offset).some((byte) => byte !== 0)) throw new Error("padding not zero");
+	if (body.length !== sizeClassOf(offset)) refuse("padding");
+	if (body.subarray(offset).some((byte) => byte !== 0)) refuse("padding");
 	return {
 		...("text" in head ? { text: head["text"] } : {}),
 		...("contentMode" in head ? { contentMode: head["contentMode"] } : {}),
@@ -357,6 +371,24 @@ describe("test vectors, checked by OpenSSL", () => {
 	test("encodes keys as unpadded base64url", () => {
 		for (const v of vectors.encoding) {
 			expect(b64(v.raw).toString("base64url"), v.description).toBe(v.base64url);
+		}
+	});
+
+	test("opens every format 0 chunked note, from its head to its file bytes", () => {
+		for (const v of vectors.secretstream) {
+			const pulled = pullSecretstream(
+				b64(v.key),
+				b64(v.header),
+				v.chunks.map(b64),
+				Buffer.alloc(0),
+			);
+			expect(
+				pulled.map(({ tag }) => tag),
+				v.description,
+			).toEqual(pulled.map((_, i) => (i === pulled.length - 1 ? TAG_FINAL : TAG_MESSAGE)));
+			expect(pulled[0]?.text.toString("base64"), v.description).toBe(v.headerMsgpack);
+			const files = Buffer.concat((v.payload.files ?? []).map((file) => b64(file.data)));
+			expect(Buffer.concat(pulled.slice(1).map(({ text }) => text)).equals(files)).toBe(true);
 		}
 	});
 
@@ -501,17 +533,51 @@ describe("test vectors, checked by OpenSSL", () => {
 			ARGON2_TIMEOUT,
 		);
 
-		test("refuses every note a reader must refuse", () => {
+		/** Why a reader refuses a note: the rule it breaks, or undefined for a note it reads. */
+		function refusalOf(v: (typeof format1.invalid.notes)[number]): string | undefined {
+			try {
+				let opened: ReturnType<typeof pullNote>;
+				try {
+					opened = pullNote(v);
+				} catch {
+					return "decryption";
+				}
+				const { envelope, pulled } = opened;
+				const last = pulled.length - 1;
+				if (last < 0) refuse("stream");
+				pulled.forEach(({ tag }, i) => {
+					if (tag !== (i === last ? TAG_FINAL : TAG_MESSAGE)) refuse("stream");
+				});
+				readBody(Buffer.concat(pulled.map(({ text }) => text)), envelope.readUInt8(2));
+				return undefined;
+			} catch (err) {
+				if (err instanceof Refused) return err.message;
+				throw err;
+			}
+		}
+
+		test("refuses every note a reader must refuse, for the rule it names", () => {
 			for (const v of format1.invalid.notes) {
-				expect(() => {
-					const { envelope, pulled } = pullNote(v);
-					const last = pulled.length - 1;
-					if (last < 0) throw new Error("no message");
-					pulled.forEach(({ tag }, i) => {
-						if (tag !== (i === last ? TAG_FINAL : TAG_MESSAGE)) throw new Error("wrong tag");
-					});
-					readBody(Buffer.concat(pulled.map(({ text }) => text)), envelope.readUInt8(2));
-				}, v.description).toThrow();
+				expect(refusalOf(v), v.description).toBe(v.rule);
+			}
+		});
+
+		test("rekeys after a REKEY or FINAL tag, as libsodium does", () => {
+			for (const [description, tags] of [
+				["TAG_FINAL on a message before the last", [TAG_FINAL, TAG_FINAL]],
+				["TAG_REKEY on a message before the last", [TAG_REKEY, TAG_FINAL]],
+			] as const) {
+				const v = format1.invalid.notes.find((note) => note.description === description);
+				if (v === undefined) throw new Error(description);
+				// The second message opens only under the key the first one's tag
+				// rekeyed: the stream is whole, only its tags are wrong.
+				const { envelope, pulled } = pullNote(v);
+				expect(
+					pulled.map(({ tag }) => tag),
+					description,
+				).toEqual(tags);
+				const body = Buffer.concat(pulled.map(({ text }) => text));
+				expect(readBody(body, envelope.readUInt8(2)).text, description).toBe("invalid");
 			}
 		});
 	});

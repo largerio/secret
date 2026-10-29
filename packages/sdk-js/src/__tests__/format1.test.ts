@@ -15,14 +15,16 @@ import {
 } from "@largerio/secret-crypto/client";
 import {
 	encodeEnvelope,
+	type Format1InvalidNoteRule,
 	type NotePayload,
 	parseEnvelope,
+	sizeClass,
 	testVectors,
 } from "@largerio/secret-shared";
 import { ExtData } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { concatUint8Arrays, ensureInit } from "../crypto.js";
+import { ensureInit } from "../crypto.js";
 import { SecretValidationError } from "../errors.js";
 import {
 	assertFormat1Fragment,
@@ -89,8 +91,10 @@ function bodyOf(written: { messages: Uint8Array[]; envelope: string; keyFragment
 	if (parsed === undefined) throw new Error("no envelope");
 	const key = deriveFormat1Keys(keyFromBase64Url(written.keyFragment.slice(2))).encryptionKey;
 	const state = initStreamDecrypt(parsed.streamHeader, key);
-	return concatUint8Arrays(
-		written.messages.map((message) => decryptChunk(state, message, envelope).decrypted),
+	return new Uint8Array(
+		Buffer.concat(
+			written.messages.map((message) => decryptChunk(state, message, envelope).decrypted),
+		),
 	);
 }
 
@@ -248,10 +252,9 @@ describe("a format 1 body", () => {
 				{ name: "empty", type: "application/octet-stream", size: 0 },
 			],
 		});
-		expect(body.parts[0]).toEqual(new Uint8Array([0, 0, 0, head.length]));
-		expect(body.parts[1]).toEqual(head);
+		expect(body.head).toEqual(new Uint8Array([0, 0, 0, head.length, ...head]));
 		// The files' own bytes, not copies: the body is laid out, not built.
-		expect(body.parts[2]).toBe(withFiles.files?.[0]?.data);
+		expect(body.files[0]).toBe(withFiles.files?.[0]?.data);
 		expect(body.length).toBe(4096);
 	});
 
@@ -262,7 +265,7 @@ describe("a format 1 body", () => {
 			files: [{ name: "b", type: "application/octet-stream", size: 999_000 }],
 		});
 		// Past 2^19 bytes, size classes step by 2^14.
-		expect(4 + head.length + data.length).toBe(999_000 + 4 + head.length);
+		expect(body.length).toBe(sizeClass(4 + head.length + data.length));
 		expect(body.length).toBe(61 * 2 ** 14);
 	});
 });
@@ -322,6 +325,41 @@ describe("format 1 notes", () => {
 		const data = new Uint8Array(5000).fill(7);
 		await write({ files: [file("a", data)] }, { messageSize: 1000 });
 		expect(data.every((byte) => byte === 7)).toBe(true);
+	});
+
+	test("wipe every message's plaintext, and the head, once encrypted", async () => {
+		const push = sodium.crypto_secretstream_xchacha20poly1305_push;
+		const plaintexts: Uint8Array[] = [];
+		const spy = vi.spyOn(sodium, "crypto_secretstream_xchacha20poly1305_push").mockImplementation(((
+			state,
+			message,
+			ad,
+			tag,
+		) => {
+			plaintexts.push(message as Uint8Array);
+			return push(state, message, ad, tag);
+		}) as typeof push);
+		try {
+			const body = format1BodyOf({
+				text: "secret",
+				files: [file("a", new Uint8Array(5000).fill(7))],
+			});
+			await encryptNoteFormat1(body, 1000, { ...settings, fileCount: 1 });
+			expect(plaintexts).toHaveLength(Math.ceil(body.length / 1000));
+			expect(plaintexts.every((plaintext) => plaintext.every((byte) => byte === 0))).toBe(true);
+			expect(body.head.every((byte) => byte === 0)).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test.each([1, 3, 5, 4095, 4097])("round-trip in messages of %i bytes", async (messageSize) => {
+		const payload: NotePayload = { text: "t", files: [file("e", new Uint8Array(0))] };
+		const written = await write(payload, { messageSize });
+		expect(written.messages).toHaveLength(Math.ceil(4096 / messageSize));
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual(
+			payload,
+		);
 	});
 
 	test(
@@ -416,12 +454,26 @@ describe("format 1 notes", () => {
 		}
 	});
 
-	test("refuse every note the vectors say a reader must refuse", async () => {
+	// How this reader words each rule it enforces.
+	const REFUSALS: Record<Format1InvalidNoteRule, RegExp> = {
+		// libsodium refuses a message shorter than its tag before it tries it.
+		decryption: /^(Decryption failed|cipher is too short)$/,
+		stream: /^(Encrypted stream is truncated or extended|No message to open)$/,
+		body: /^Malformed body$/,
+		// The MessagePack decoder refuses a head cut short, or with bytes after it.
+		head: /^(Malformed payload|Insufficient data|Extra \d+ of \d+ byte\(s\) .*)$/,
+		file: /^Malformed payload$/,
+		"file-count": /^The payload does not hold the files its envelope declares$/,
+		"file-sizes": /^Decrypted file data does not match the declared size$/,
+		padding: /^Malformed padding$/,
+	};
+
+	test("refuse every note the vectors say a reader must refuse, for the rule they name", async () => {
 		for (const v of format1.invalid.notes) {
 			await expect(
 				open(v.messages.map(fromBase64), v.envelope, v.keyFragment),
 				v.description,
-			).rejects.toThrow();
+			).rejects.toThrow(REFUSALS[v.rule]);
 		}
 	});
 });

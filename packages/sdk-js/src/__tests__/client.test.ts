@@ -1345,7 +1345,7 @@ describe("SecretClient in format 1", () => {
 	// from the headers' on purpose: the result must take the envelope's.
 	const read = { envelope: { fileCount: 2 }, proofs };
 	const response = { chunks: [new Uint8Array([8])], ...meta };
-	const body = { parts: [], length: 4096 };
+	const body = { head: new Uint8Array(0), files: [], length: 4096 };
 	const sealed = {
 		envelope: "f1Envelope",
 		verifiers: { linkVerifier: "lv", passwordVerifier: "pv" },
@@ -1463,7 +1463,7 @@ describe("SecretClient in format 1", () => {
 	test("createNote sends a note with files whose padded body passes the chunk size in a session", async () => {
 		const http = await getHttpMocks();
 		const format1 = await getFormat1Mocks();
-		format1.format1BodyOf.mockReturnValue({ parts: [], length: 4097 });
+		format1.format1BodyOf.mockReturnValue({ head: new Uint8Array(0), files: [], length: 4097 });
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		const files = [{ name: "a", type: "t", data: new Uint8Array([1]) }];
@@ -1474,10 +1474,28 @@ describe("SecretClient in format 1", () => {
 		expect(http.postFormData).not.toHaveBeenCalled();
 	});
 
+	test("createNote sends a note with files whose padded body fills the chunk size in one request", async () => {
+		const http = await getHttpMocks();
+		const format1 = await getFormat1Mocks();
+		format1.format1BodyOf.mockReturnValue({ head: new Uint8Array(0), files: [], length: 4096 });
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		const files = [{ name: "a", type: "t", data: new Uint8Array([1]) }];
+		await client.createNote({ files, format: 1, chunkSize: 4096 });
+
+		expect(format1.encryptNoteFormat1.mock.calls[0]?.[1]).toBe(4096);
+		expect(http.postFormData).toHaveBeenCalledOnce();
+		expect(http.initChunkedUpload).not.toHaveBeenCalled();
+	});
+
 	test("createNote sends a note without files in one request, however long its body", async () => {
 		const http = await getHttpMocks();
 		const format1 = await getFormat1Mocks();
-		format1.format1BodyOf.mockReturnValue({ parts: [], length: 311_296 });
+		format1.format1BodyOf.mockReturnValue({
+			head: new Uint8Array(0),
+			files: [],
+			length: 311_296,
+		});
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await client.createNote({ text: "long", format: 1, chunkSize: 4096 });

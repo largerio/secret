@@ -665,8 +665,9 @@ and the start of a file, or bytes of two files.
 ### Upload
 
 A note goes up as one message, in one request, or message by message, in an
-upload session. A writer SHOULD take the instance's `chunkSize` as `C`, so
-that its messages look like every other writer's there. The reference SDK
+upload session. A writer that sends a note in a session SHOULD take the
+instance's `chunkSize` as `C`, so that its messages look like every other
+writer's there. The reference SDK
 sends a note without files as one message, and a note with files as one
 message when its body fits in `C`, in a session otherwise.
 
@@ -802,15 +803,21 @@ Once it has read the note, it MUST refuse:
 A key present with the value `nil` is not absent: `text: nil` is refused. A
 `files` that is empty is a note without files. A reader ignores keys it does
 not know. It need not check the length of each
-message: the server does, and the tags and the body's length are enough.
+message: the server does, and the tags and the body's length are enough. It
+MUST NOT show any part of the payload before it has opened the last message
+and checked the body: only then does it know the note is whole.
 
 A writer writes each key of a map once, as a `str`, strings in valid UTF-8
 (a lone surrogate written as U+FFFD), and `size` as an `int`, each value in
 the shortest form MessagePack has for it, as common libraries do: the
-vectors' heads match byte for byte only then. The reference reader keeps the last of a repeated key,
-reads an integer key as a string, decodes invalid UTF-8 without refusing it,
-and takes a float with an integer value for an integer; another reader may
-refuse them.
+vectors' heads match byte for byte only then. A reader MUST refuse a map
+that repeats a key, or keep the last of its values, as the reference reader
+does. An integer is a MessagePack `int`; a reader may also take a float with
+an integer value for one, as the reference reader does. The reference reader
+also reads an integer key as a string and decodes invalid UTF-8 without
+refusing it, which another reader may refuse, and it refuses a `__proto__`
+key and a key that is neither a string nor a number, which no writer
+writes.
 
 ## Test vectors
 
@@ -833,7 +840,7 @@ and, under `format1`:
 | `envelopes` | Envelopes, from their fields to their bytes. |
 | `sizeClasses` | Lengths and their size class: the floor, and either side of powers of two. |
 | `notes` | Notes, from the payload to the head, the body and the messages. |
-| `invalid` | What a reader MUST refuse: fragments, envelopes, and notes whose messages break a rule of the stream or of the body, each with the key that opens it. |
+| `invalid` | What a reader MUST refuse: fragments, envelopes, and notes whose messages break a rule of the stream or of the body, each with the key that opens it and the rule it breaks. |
 
 The file's `version` field counts revisions of the file, not formats. In the
 format 0 `secretstream` vectors, `headerMsgpack` is the head's plaintext and
@@ -843,7 +850,13 @@ Argon2id when `argon2` is present. Bytes are in base64 throughout, file
 `data` included. The `chunkSize` of the format 0 `secretstream` vectors only
 says where the file bytes are cut: their heads are longer than it, which an
 instance with that chunk size would refuse. The `messageSize` of a
-`format1.notes` vector is its `C`. A writer draws its stream header at
+`format1.notes` vector is its `C`; one of them cuts its body every 1,001
+bytes, where libsodium's MAC padding (the text's length modulo 16, not what
+RFC 8439 pads) shows, and another fills its size class, without padding. A
+`format1.invalid.notes` vector breaks the one rule its `rule` names, in the
+order of "Reading strictly": `decryption` (its messages do not open),
+`stream` (their tags), `body` (the head's length), `head`, `file`,
+`file-count`, `file-sizes` or `padding` (the size class and the zeros). A writer draws its stream header at
 random, but the format 1 vectors fix it: libsodium's
 `crypto_secretstream_xchacha20poly1305_init_pull` makes, from a header, the
 state of a writer that drew it, which pushes as well as it pulls.
