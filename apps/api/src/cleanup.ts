@@ -5,10 +5,10 @@ import type { AppDatabase, Transaction } from "./db/index.js";
 import { notes, uploads } from "./db/schema.js";
 import { log } from "./logger.js";
 import type { AppMetrics } from "./metrics.js";
+import { inStorage } from "./notes/rows.js";
 import {
 	drainPendingDeletions,
 	enqueueDeletion,
-	hasStoredPayload,
 	type PendingDeletion,
 	runDeletion,
 } from "./pendingDeletions.js";
@@ -115,7 +115,7 @@ export async function runCleanup(
 			tx.delete(notes).where(inArray(notes.id, ids)).run();
 			return {
 				count: rows.length,
-				deletions: rows.filter(hasStoredPayload).map((row) => enqueueDeletion(tx, row.id)),
+				deletions: rows.filter(inStorage).map((row) => enqueueDeletion(tx, row.id)),
 			};
 		});
 

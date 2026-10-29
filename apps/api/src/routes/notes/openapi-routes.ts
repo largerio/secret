@@ -23,9 +23,17 @@ const noteIdParam = noteIdSchema.openapi({
 const uploadIdParam = z
 	.string()
 	.length(UPLOAD_ID_LENGTH)
+	.regex(/^[A-Za-z0-9_-]+$/)
 	.openapi({ param: { name: "uploadId", in: "path" } });
 
 const binaryBody = z.string().openapi({ format: "binary" });
+
+// Every route below validates its parameters, headers and JSON or multipart
+// body with these schemas (app.openapi): what the documentation says is what
+// the API accepts. Two things are checked past them: a chunk's bytes, by the
+// service, and the multipart `metadata` JSON, by its handler. A JSON or
+// multipart body is `required`, or a request without a Content-Type would skip
+// its validation and reach the handler empty.
 
 export const createNoteRoute = createRoute({
 	method: "post",
@@ -33,7 +41,7 @@ export const createNoteRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Create an encrypted note (JSON)",
 	request: {
-		body: { content: { "application/json": { schema: createNoteSchema } } },
+		body: { content: { "application/json": { schema: createNoteSchema } }, required: true },
 	},
 	responses: {
 		201: {
@@ -43,9 +51,6 @@ export const createNoteRoute = createRoute({
 	},
 });
 
-// Documentation-only definition: the handler validates the multipart body
-// manually (see standard.ts), so this route is registered on the OpenAPI
-// registry without driving request validation.
 export const uploadNoteRoute = createRoute({
 	method: "post",
 	path: "/upload",
@@ -59,10 +64,15 @@ export const uploadNoteRoute = createRoute({
 				"multipart/form-data": {
 					schema: z.object({
 						metadata: z.string().openapi({ description: "JSON-encoded note metadata" }),
-						data: binaryBody.openapi({ description: "Client-encrypted payload bytes" }),
+						data: z.instanceof(File).openapi({
+							type: "string",
+							format: "binary",
+							description: "Client-encrypted payload bytes",
+						}),
 					}),
 				},
 			},
+			required: true,
 		},
 	},
 	responses: {
@@ -109,7 +119,6 @@ export const readNoteRoute = createRoute({
 	},
 });
 
-// Documentation-only definition for the binary read endpoint (see standard.ts).
 export const rawNoteRoute = createRoute({
 	method: "get",
 	path: "/{id}/raw",
@@ -145,10 +154,6 @@ export const deleteNoteRoute = createRoute({
 	},
 });
 
-// Documentation-only definitions for the chunked upload/stream endpoints
-// (see chunked.ts): the handlers validate manually, so these routes are
-// registered on the OpenAPI registry without driving request validation.
-
 export const uploadInitRoute = createRoute({
 	method: "post",
 	path: "/upload/init",
@@ -157,7 +162,7 @@ export const uploadInitRoute = createRoute({
 	description:
 		"Creates an upload session for large notes. Chunks are then sent individually and the session is finalized via the complete endpoint. Sessions expire after one hour.",
 	request: {
-		body: { content: { "application/json": { schema: chunkedUploadInitSchema } } },
+		body: { content: { "application/json": { schema: chunkedUploadInitSchema } }, required: true },
 	},
 	responses: {
 		201: {
@@ -173,7 +178,7 @@ export const uploadChunkRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Upload one encrypted chunk",
 	description:
-		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the hex-encoded SHA-256 of the body. Re-uploading the same index is idempotent.",
+		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the lower-case hex SHA-256 of the body. Re-uploading the same index is idempotent.",
 	request: {
 		params: z.object({
 			uploadId: uploadIdParam,
@@ -183,7 +188,10 @@ export const uploadChunkRoute = createRoute({
 				.openapi({ param: { name: "index", in: "path" }, example: "0" }),
 		}),
 		headers: z.object({
-			"x-chunk-hash": z.string().openapi({ description: "Hex-encoded SHA-256 of the chunk body" }),
+			"x-chunk-hash": z
+				.string()
+				.regex(/^[0-9a-f]{64}$/)
+				.openapi({ description: "Lower-case hex SHA-256 of the chunk body" }),
 		}),
 		body: { content: { "application/octet-stream": { schema: binaryBody } } },
 	},

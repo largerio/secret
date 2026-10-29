@@ -7,7 +7,6 @@ import {
 	cancelDeletion,
 	drainPendingDeletions,
 	enqueueDeletion,
-	hasStoredPayload,
 	runDeletion,
 } from "../pendingDeletions.js";
 import { LocalStorage } from "../storage/local.js";
@@ -65,15 +64,6 @@ function expectAbout(actual: Date | undefined, expected: number): void {
 	expect(actual?.getTime()).toBeGreaterThanOrEqual(expected - 1000);
 	expect(actual?.getTime()).toBeLessThanOrEqual(expected + 1000);
 }
-
-describe("hasStoredPayload", () => {
-	it("is true for a file note or a chunked note, false for an inline one", () => {
-		expect(hasStoredPayload({ filePath: "/data/files/x", chunkCount: null })).toBe(true);
-		expect(hasStoredPayload({ filePath: null, chunkCount: 3 })).toBe(true);
-		expect(hasStoredPayload({ filePath: null, chunkCount: null })).toBe(false);
-		expect(hasStoredPayload({ filePath: null, chunkCount: 0 })).toBe(false);
-	});
-});
 
 describe("enqueueDeletion", () => {
 	it("records the purge in the caller's transaction, held off by the retry delay", () => {

@@ -30,21 +30,14 @@ import {
 	createDocsSecurityHeaders,
 	createSecurityHeaders,
 } from "./middleware/security.js";
+import { createNotesService } from "./notes/service.js";
 import { createCapRoutes } from "./routes/cap.js";
+import { noteErrorToHttp } from "./routes/notes/errorStatus.js";
 import { createNotesRoutes } from "./routes/notes/index.js";
 import type { StorageBackend } from "./storage/index.js";
 
 export interface AppEnv {
 	Variables: {
-		db: AppDatabase;
-		serverKey: Buffer;
-		storage: StorageBackend;
-		chunkSize: number;
-		maxChunkedFileSize: number;
-		maxExpirySeconds: number;
-		maxFilesPerNote: number;
-		storageQuotaBytes: number;
-		metrics: AppMetrics;
 		requestId: string;
 	};
 }
@@ -80,7 +73,7 @@ const METRICS_PATH = "/api/metrics";
 
 /**
  * Assemble the Hono application: middleware, body limits, rate limiting, auth,
- * context injection, and all routes. Pure with respect to I/O — it neither
+ * the notes service, and all routes. Pure with respect to I/O — it neither
  * starts an HTTP server nor schedules the cleanup job, so it can be exercised
  * with `app.request()` in tests.
  */
@@ -93,7 +86,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	const app = new Hono<AppEnv>();
 
-	app.onError(createErrorHandler({ debug: config.debug, logger }));
+	app.onError(
+		createErrorHandler({ debug: config.debug, logger, toHttpException: noteErrorToHttp }),
+	);
 
 	app.notFound((c) => c.json({ error: "Not found" }, 404));
 
@@ -180,19 +175,6 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	const writeAuth = createWriteAuth(config.apiKeys);
 	app.use("/api/v1/notes/*", writeAuth);
 
-	app.use("*", async (c, next) => {
-		c.set("db", db);
-		c.set("serverKey", serverKey);
-		c.set("storage", storage);
-		c.set("chunkSize", config.chunkSize);
-		c.set("maxChunkedFileSize", config.maxChunkedFileSize);
-		c.set("maxExpirySeconds", config.maxExpirySeconds);
-		c.set("maxFilesPerNote", config.maxFilesPerNote);
-		c.set("storageQuotaBytes", config.storageQuotaBytes);
-		c.set("metrics", metrics);
-		await next();
-	});
-
 	// --- Unversioned routes ---
 
 	app.use("/api/health/*", async (c, next) => {
@@ -259,7 +241,10 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	const v1 = new OpenAPIHono<AppEnv>();
 
-	v1.route("/notes", createNotesRoutes());
+	v1.route(
+		"/notes",
+		createNotesRoutes(createNotesService({ db, serverKey, storage, metrics, limits: config })),
+	);
 
 	v1.get("/config", (c) => {
 		return c.json({

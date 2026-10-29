@@ -5,13 +5,12 @@ import { mkdirSync, rmSync } from "node:fs";
 import "@hono/zod-openapi";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { HTTPException } from "hono/http-exception";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
-import { assertStorageQuota, getStorageUsedBytes } from "../quota.js";
+import { exceedsQuota, getStorageUsedBytes } from "../quota.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage } from "./storageDoubles.js";
@@ -188,27 +187,20 @@ describe("getStorageUsedBytes", () => {
 	});
 });
 
-describe("assertStorageQuota", () => {
+describe("exceedsQuota", () => {
 	it("is disabled when the quota is 0", () => {
 		insertNoteRow("note-aaaaaaaa", 10_000);
-		expect(() => assertStorageQuota(db, 0, 1_000_000)).not.toThrow();
+		expect(exceedsQuota(db, 0, 1_000_000)).toBe(false);
 	});
 
 	it("allows a write that lands exactly on the quota", () => {
 		insertNoteRow("note-aaaaaaaa", 60);
-		expect(() => assertStorageQuota(db, 100, 40)).not.toThrow();
+		expect(exceedsQuota(db, 100, 40)).toBe(false);
 	});
 
-	it("throws 507 when the write would exceed the quota", () => {
+	it("reports a write that would exceed the quota", () => {
 		insertNoteRow("note-aaaaaaaa", 60);
-		try {
-			assertStorageQuota(db, 100, 41);
-			expect.unreachable("assertStorageQuota should have thrown");
-		} catch (err) {
-			expect(err).toBeInstanceOf(HTTPException);
-			expect((err as HTTPException).status).toBe(507);
-			expect((err as HTTPException).message).toBe("Storage quota exceeded");
-		}
+		expect(exceedsQuota(db, 100, 41)).toBe(true);
 	});
 });
 

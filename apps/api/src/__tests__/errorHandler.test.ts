@@ -54,6 +54,33 @@ describe("createErrorHandler", () => {
 		expect(consoleSpy).not.toHaveBeenCalled();
 	});
 
+	it("answers an error its toHttpException option turns into an HTTPException like one", async () => {
+		class Refusal extends Error {}
+		const app = new Hono();
+		app.onError(
+			createErrorHandler({
+				debug: false,
+				toHttpException: (err) =>
+					err instanceof Refusal ? new HTTPException(409, { message: err.message }) : undefined,
+			}),
+		);
+		app.get("/refused", () => {
+			throw new Refusal("already done");
+		});
+		app.get("/broken", () => {
+			throw new Error("not translated");
+		});
+
+		const refused = await app.request("/refused");
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toEqual({ error: "already done" });
+		expect(consoleSpy).not.toHaveBeenCalled();
+
+		const broken = await app.request("/broken");
+		expect(broken.status).toBe(500);
+		expect(lastLogEntry()["msg"]).toBe("unhandled error");
+	});
+
 	it("logs an HTTPException cause under debug while keeping the client message", async () => {
 		const app = new Hono();
 		app.onError(createErrorHandler({ debug: true }));
@@ -64,13 +91,45 @@ describe("createErrorHandler", () => {
 
 		const res = await app.request("/x");
 		expect(res.status).toBe(500);
-		expect(await res.json()).toEqual({ error: "Failed to decrypt note" });
+		expect(await res.json()).toEqual({
+			error: "Failed to decrypt note",
+			errorId: expect.any(String),
+		});
 
 		const entry = lastLogEntry();
 		expect(entry["msg"]).toBe("http exception");
 		expect(entry["status"]).toBe(500);
 		expect(entry["message"]).toBe("Failed to decrypt note");
 		expect(entry["cause"]).toMatchObject({ name: "Error", message: "real decryption failure" });
+	});
+
+	it("logs a refusal's cause under debug, without an errorId", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: true }));
+		app.get("/x", () => {
+			throw new HTTPException(404, { message: "Note not found", cause: new Error("gone") });
+		});
+
+		const res = await app.request("/x");
+		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(lastLogEntry()).toMatchObject({ msg: "http exception", status: 404 });
+	});
+
+	it("logs a server-side HTTPException by default, with an errorId and without its cause", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: false }));
+		app.get("/x", () => {
+			throw new HTTPException(500, { message: "Failed to decrypt note", cause: new Error("tag") });
+		});
+
+		const res = await app.request("/x");
+		const body = (await res.json()) as { error: string; errorId: string };
+		expect(res.status).toBe(500);
+		expect(body.error).toBe("Failed to decrypt note");
+
+		const entry = lastLogEntry();
+		expect(entry).toMatchObject({ msg: "http exception", status: 500, errorId: body.errorId });
+		expect(entry).not.toHaveProperty("cause");
 	});
 
 	it("does not log an HTTPException without a cause under debug", async () => {

@@ -11,8 +11,14 @@ image. Each version links to its GitHub release. The SDK has
 
 - [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format every release so far uses: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#249)
 
+### Changed
+
+- Every API route checks its request against the schema the API reference publishes for it, the uploads and binary reads included, which used to check theirs by hand. A malformed request answers `400` with `Invalid request`, and a body of the wrong type `415`. (#252)
+
 ### Fixed
 
+- An authenticated create sent without a body, or without a `Content-Type`, answered `500` and logged an error; it now answers `400` or `415`. (#252)
+- A storage failure while a note was read answered "Failed to decrypt note" and left nothing in the log. It is now logged like any server error, and every `500`, a note that does not decrypt included, carries an `errorId` to find it in the log. (#252)
 - A large note whose last attachment was an empty file, after one with content, was created but could not be opened: its first read failed with "Decryption failed" and still spent a read. (#250)
 - On an instance whose `CHUNK_SIZE` was set below the default, a long text note could fail with "Payload too large": it was uploaded in chunks, all its text in the first one. A note without files is now always uploaded in one piece. (#250)
 

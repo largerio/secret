@@ -7,6 +7,11 @@ import { matchedRoute } from "./requestContext.js";
 export interface ErrorHandlerOptions {
 	readonly debug: boolean;
 	readonly logger?: Logger;
+	/**
+	 * Turns an error a module raises in its own terms (a refusal of the notes
+	 * service, say) into the HTTP error it answers; undefined for any other.
+	 */
+	readonly toHttpException?: (err: Error) => HTTPException | undefined;
 }
 
 export interface ErrorLogPayload {
@@ -30,13 +35,13 @@ export function createErrorHandler(
 	options: ErrorHandlerOptions,
 ): (err: Error, c: Context) => Response {
 	const logger = options.logger ?? log;
-	return (err, c) => {
+	return (thrown, c) => {
 		const requestId = c.get("requestId") as string | undefined;
+		const err = options.toHttpException?.(thrown) ?? thrown;
 
-		if (err instanceof HTTPException) {
-			// HTTPExceptions are deliberate, client-safe responses, so they are not
-			// logged by default. When one carries a `cause` (e.g. the real
-			// decryption error behind a generic 500), surface it under DEBUG only.
+		if (err instanceof HTTPException && err.status !== 500) {
+			// A refusal, an instance out of space (507) included: deliberate and
+			// client-safe, so not logged. Under DEBUG, a cause it carries is.
 			if (options.debug && err.cause !== undefined) {
 				logger.error("http exception", {
 					requestId,
@@ -52,6 +57,23 @@ export function createErrorHandler(
 		// so either identifier leads back to this line — and through requestId to
 		// the request log entry it belongs to.
 		const errorId = randomUUID();
+
+		if (err instanceof HTTPException) {
+			// A failure on the server's side behind a client-safe message (a note
+			// that does not open, say): logged like any other, its cause, which may
+			// say more than a log should, under DEBUG only.
+			logger.error("http exception", {
+				requestId,
+				errorId,
+				status: err.status,
+				method: c.req.method,
+				route: matchedRoute(c),
+				message: err.message,
+				...(options.debug && err.cause !== undefined ? { cause: err.cause } : {}),
+			});
+			return c.json({ error: err.message, errorId }, err.status);
+		}
+
 		logger.error("unhandled error", {
 			requestId,
 			errorId,

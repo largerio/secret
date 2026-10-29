@@ -23,14 +23,6 @@ export interface PendingDeletion {
 	readonly noteId: string;
 }
 
-/** Whether a note row points at a payload in storage (a file or chunks). */
-export function hasStoredPayload(note: {
-	filePath: string | null;
-	chunkCount: number | null;
-}): boolean {
-	return note.filePath !== null || (note.chunkCount ?? 0) > 0;
-}
-
 /**
  * Record that a note's stored payload must go, in the transaction that lets go
  * of it: the note row or the upload session deleted. Committed together, a

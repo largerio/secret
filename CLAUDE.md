@@ -26,7 +26,12 @@ pnpm typecheck        # TypeScript strict check (all packages)
 Monorepo with pnpm workspaces:
 
 - **`apps/api`** — Hono HTTP server (Node.js 26, TypeScript)
-  - Routes: `src/routes/notes/` (split into `standard.ts`, `chunked.ts`, `openapi-routes.ts`, `helpers.ts`) — OpenAPI routes via `@hono/zod-openapi`
+  - Notes: `src/notes/` holds the rules, with no HTTP in them. It imports the infrastructure (db, storage, quota, pending deletions), which never imports it; the routes and the cleanup job do:
+    - `service.ts`: `createNotesService` (create, check, read, stream, delete, and the upload sessions of `uploads.ts`) — what spends a read, what burns a note, when its storage is purged
+    - `rows.ts`: note rows — the one place a row is built (`newNoteRow`), where a note is stored (`placementOf`, `singleShotPlacement`: text stays in SQLite), the one definition of a chunked note (`isChunked`), `lookUpNote`, `spendRead`, `removeNote` (row deleted, purge queued in the same transaction)
+    - `serverLayer.ts`: the server's AES-256-GCM layer, built once with the key, in its two layouts (IV in the row for single-shot notes, IV in front of each chunk)
+    - `stream.ts` (a chunked note's chunks with read-ahead and backpressure), `limits.ts` (the operator's limits and the quota), `errors.ts` (`NoteError`, its codes and their one message each), `types.ts`
+  - Routes: `src/routes/notes/` (`writes.ts`, `reads.ts`) are thin: every route goes through `app.openapi`, so its schema in `openapi-routes.ts` validates the request and documents it; the handler calls the service and shapes the answer (`responses.ts`, including the stream's length-prefix framing). `errorStatus.ts` maps every `NoteError` code to a status: the one place a refusal becomes HTTP
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
   - OpenAPI spec: `GET /api/v1/openapi.json`, Scalar docs: `GET /api/v1/docs`
   - Database: SQLite via Node's built-in `node:sqlite` (`DatabaseSync`) + Drizzle ORM (`drizzle-orm/node-sqlite`) (`src/db/`)
@@ -34,7 +39,7 @@ Monorepo with pnpm workspaces:
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
-  - Error handling: Business logic errors use `HTTPException`, validation via `defaultHook`
+  - Error handling: the notes service refuses with `NoteError`, which the app's error handler answers through `routes/notes/errorStatus.ts` (its `toHttpException` option); request validation goes through the route schemas and `defaultHook`. A 500 is logged with an `errorId`, returned to the client; a refusal (4xx, or 507 for a full instance) is not logged
   - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`). Storage purges go through the `pending_deletions` outbox (`src/pendingDeletions.ts`): enqueued in the transaction that deletes the row, run after commit, retried by the job. A daily sweep (`src/reconcile.ts`) purges stored objects no row points to, only on storage no other database has claimed
   - Health and metrics: `/api/health/live` (process up), `/api/health/ready` (database + storage, `503` once shutdown starts), `/api/health` (readiness plus version and revision, from `src/buildInfo.ts`). `/api/metrics` (Prometheus text, `src/metrics.ts` + `src/prometheus.ts`, zero-dependency) exists only when `METRICS_TOKEN` is set; labels hold route patterns and bounded values, never note ids
@@ -143,7 +148,7 @@ Run `pnpm test` before committing. New features must include tests.
 ### Patterns
 
 - API tests use Hono's `app.request()` — no HTTP server needed. They run on the real `createApp` (middleware, limits, auth, error handler), configured through `parseConfig` as an operator would (`__tests__/testApp.ts`); `sdk.test.ts` serves it over HTTP on a free port and points the real SDK at it
-- App assembly is split into testable factories: `parseConfig` (`apps/api/src/config.ts`), `createApp` (`apps/api/src/app.ts`), and `startInstance` (`apps/api/src/instance.ts`: the app, its jobs and the one metrics registry they share); `index.ts` is thin bootstrap glue
+- App assembly is split into testable factories: `parseConfig` (`apps/api/src/config.ts`), `createApp` (`apps/api/src/app.ts`), `createNotesService` (`apps/api/src/notes/service.ts`, testable without HTTP), and `startInstance` (`apps/api/src/instance.ts`: the app, its jobs and the one metrics registry they share); `index.ts` is thin bootstrap glue
 - Database tests use real SQLite (file-based, cleaned up in `beforeEach`)
 - S3 tests mock `@aws-sdk/client-s3` with class-based mocks
 - Crypto tests require `await initSodium()` in `beforeAll`. The test vectors in `packages/shared/src/test-vectors/vectors.json` are frozen: `generate-test-vectors.test.ts` recomputes them with libsodium and fails on any difference (`UPDATE_TEST_VECTORS=1` rewrites the file after a deliberate format change). Their `secretstream` section (chunked notes) is written once, its header being random. `test-vectors.test.ts` checks the crypto package against them (reading and writing), the SDK's `crypto.test.ts` checks its notes, chunked ones included, and `vectors-openssl.test.ts` checks them with a second implementation, OpenSSL through `node:crypto` (HChaCha20 + ChaCha20-Poly1305, Argon2id), which shares no code with libsodium
