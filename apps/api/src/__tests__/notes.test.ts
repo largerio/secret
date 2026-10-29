@@ -1122,11 +1122,11 @@ describe("storage purge resilience", () => {
 	function createNote(storage: StorageBackend, fileCount: number) {
 		const notes = createTestNotesService({ db, serverKey: TEST_SERVER_KEY, storage });
 		return notes.create(Buffer.from("ciphertext"), {
-			clientNonce: "nonce",
 			hasPassword: false,
 			expiresIn: 3600,
 			maxReads: 1,
 			fileCount,
+			opening: { format: 0, clientNonce: "nonce" },
 		});
 	}
 

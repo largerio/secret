@@ -608,7 +608,7 @@ describe("getNoteRaw", () => {
 		"X-Expires-At": "2099-01-01T00:00:00Z",
 	};
 
-	test("returns encryptedBytes, nonceBytes, and parsed headers on success", async () => {
+	test("returns encryptedBytes, the nonce, and parsed headers on success", async () => {
 		const bodyBytes = new Uint8Array([10, 20, 30, 40]);
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(rawResponse(bodyBytes, defaultHeaders)),
@@ -618,7 +618,7 @@ describe("getNoteRaw", () => {
 		const result = await getNoteRaw(config, "noteId123456");
 
 		expect(result.encryptedBytes).toEqual(bodyBytes);
-		expect(result.nonceBytes).toEqual(nonce);
+		expect(result.opening).toEqual({ format: 0, nonceBytes: nonce });
 		expect(result.hasPassword).toBe(false);
 		expect(result.fileCount).toBe(2);
 		expect(result.createdAt).toBe("2024-01-01T00:00:00Z");
@@ -774,6 +774,46 @@ describe("getNoteRaw", () => {
 		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
 		expect(err.message).toBe("Invalid base64 encoding in response");
 		expect(err.status).toBe(502);
+	});
+	test("returns a format 1 note's envelope in place of a nonce", async () => {
+		const envelope = new Uint8Array([1, 0, 0, 0]);
+		const { "X-Client-Nonce": _nonce, ...format1Headers } = defaultHeaders;
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				rawResponse(new Uint8Array([9]), {
+					...format1Headers,
+					"X-Envelope": btoa("\x01\x00\x00\x00"),
+				}),
+			),
+		);
+
+		const result = await getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			"https://api.example.com/notes/noteId123456/raw?format=1",
+		);
+		expect(result.opening).toEqual({ format: 1, envelope });
+		expect(result.encryptedBytes).toEqual(new Uint8Array([9]));
+	});
+
+	test("reports a format 1 read whose X-Envelope is missing", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(new Uint8Array([9]), defaultHeaders)),
+		);
+
+		await expect(getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1)).rejects.toThrow(
+			"Missing required header: X-Envelope",
+		);
+	});
+
+	test("throws SecretApiError when X-Envelope is not base64", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(rawResponse(new Uint8Array([9]), { ...defaultHeaders, "X-Envelope": "!!!" })),
+		);
+
+		await expect(getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1)).rejects.toThrow(
+			"Invalid base64 encoding in response",
+		);
 	});
 });
 
@@ -1032,7 +1072,7 @@ describe("getNoteStream", () => {
 
 		const result = await getNoteStream(config, "noteId123456");
 
-		expect(result.streamHeader).toBe("c3RyZWFtLWhlYWRlcg==");
+		expect(result.opening).toEqual({ format: 0, streamHeader: "c3RyZWFtLWhlYWRlcg==" });
 		expect(result.chunkCount).toBe(2);
 		expect(result.hasPassword).toBe(false);
 		expect(result.fileCount).toBe(1);
@@ -1225,6 +1265,26 @@ describe("getNoteStream", () => {
 		const err = await catchApiError(getNoteStream(config, "noteId123456"));
 		expect(err.status).toBe(502);
 		expect(err.message).toContain("exceeds maximum");
+	});
+	test("returns a format 1 note's envelope in place of its stream header", async () => {
+		const { "X-Stream-Header": _header, ...format1Headers } = streamHeaders;
+		const body = buildLengthPrefixedBody([new Uint8Array([1]), new Uint8Array([2])]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				new Response(body, {
+					status: 200,
+					headers: { ...format1Headers, "X-Envelope": btoa("\x01\x01") },
+				}),
+			),
+		);
+
+		const result = await getNoteStream(createConfig(fetchMock), "noteId123456", undefined, 1);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			"https://api.example.com/notes/noteId123456/stream?format=1",
+		);
+		expect(result.opening).toEqual({ format: 1, envelope: new Uint8Array([1, 1]) });
+		expect(result.chunks).toHaveLength(2);
 	});
 });
 

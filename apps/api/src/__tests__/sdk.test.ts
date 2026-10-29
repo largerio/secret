@@ -316,3 +316,155 @@ describe("the SDK against the application", () => {
 		expect(payload.text).toBe("by URL");
 	});
 });
+
+describe("format 1, through the SDK and the application", () => {
+	it("round-trips a text note, read from /raw with its envelope", async () => {
+		const client = await connect();
+		const { id, keyFragment } = await client.createNote({
+			text: "hello, format 1",
+			format: 1,
+			maxReads: 2,
+		});
+		expect(keyFragment).toMatch(/^1\.[A-Za-z0-9_-]{43}$/);
+
+		expect(await client.checkNote(id)).toMatchObject({
+			exists: true,
+			hasPassword: false,
+			chunked: false,
+			fileCount: 0,
+			maxReads: 2,
+		});
+		const { payload } = await client.readNote(id, keyFragment);
+		expect(payload).toEqual({ text: "hello, format 1" });
+
+		// No legacy JSON read to fall back to: the stream refuses, /raw serves.
+		expect(calls).toEqual([
+			"POST /api/v1/notes",
+			"GET /api/v1/notes/:id/exists",
+			"GET /api/v1/notes/:id/stream",
+			"GET /api/v1/notes/:id/raw",
+		]);
+	});
+
+	it("round-trips files through the multipart upload", async () => {
+		const client = await connect();
+		const data = bytes(20 * 1024);
+		const { id, keyFragment } = await client.createNote({
+			text: "two attachments",
+			files: [
+				{ name: "a.bin", type: "application/octet-stream", data },
+				{ name: "empty.txt", type: "text/plain", data: new Uint8Array() },
+			],
+			chunkSize: CHUNK_SIZE,
+			format: 1,
+		});
+		expect(await client.checkNote(id)).toMatchObject({ chunked: false, fileCount: 2 });
+
+		const { payload } = await client.readNote(id, keyFragment, { chunked: false });
+		expect(payload.files?.map((file) => file.data)).toEqual([data, new Uint8Array()]);
+		expect(calls[0]).toBe("POST /api/v1/notes/upload");
+	});
+
+	it("round-trips a chunked note", async () => {
+		const client = await connect();
+		const data = bytes(3 * CHUNK_SIZE + 5);
+		const { id, keyFragment } = await client.createNote({
+			files: [{ name: "big.bin", type: "application/octet-stream", data }],
+			chunkSize: CHUNK_SIZE,
+			format: 1,
+		});
+		expect(calls[0]).toBe("POST /api/v1/notes/upload/init");
+		expect(await client.checkNote(id)).toMatchObject({ chunked: true, fileCount: 1 });
+
+		const { payload } = await client.readNote(id, keyFragment);
+		expect(payload.files?.[0]?.data).toEqual(data);
+	});
+
+	it(
+		"needs the password the envelope declares",
+		async () => {
+			const client = await connect();
+			const { id, keyFragment } = await client.createNote({
+				text: "behind a password",
+				password: "Pässwörd".normalize("NFC"),
+				format: 1,
+				maxReads: 3,
+			});
+			expect(await client.checkNote(id)).toMatchObject({ hasPassword: true });
+
+			await expect(
+				client.readNote(id, keyFragment, { password: "wrong", chunked: false }),
+			).rejects.toBeInstanceOf(SecretDecryptionError);
+
+			// Typed in another Unicode form, the same password opens it.
+			const { payload } = await client.readNote(id, keyFragment, {
+				password: "Pässwörd".normalize("NFD"),
+				chunked: false,
+			});
+			expect(payload.text).toBe("behind a password");
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	it("is refused a note behind the link of the other format, and spends no read", async () => {
+		const client = await connect();
+		const data = bytes(2 * CHUNK_SIZE);
+		const files = [{ name: "big.bin", type: "application/octet-stream", data }];
+		const notes = [
+			await client.createNote({ text: "format 0", maxReads: 1 }),
+			await client.createNote({ files, chunkSize: CHUNK_SIZE, maxReads: 1 }),
+			await client.createNote({ text: "format 1", format: 1, maxReads: 1 }),
+			await client.createNote({ files, chunkSize: CHUNK_SIZE, format: 1, maxReads: 1 }),
+		];
+
+		for (const note of notes) {
+			const otherLink = note.keyFragment.startsWith("1.")
+				? note.keyFragment.slice(2)
+				: `1.${note.keyFragment}`;
+			await expect(client.readNote(note.id, otherLink)).rejects.toMatchObject({ status: 400 });
+			expect(await client.checkNote(note.id)).toMatchObject({ exists: true, readCount: 0 });
+		}
+	});
+
+	// The SDK up to 1.2 reads /stream, then /raw, then the JSON read, asking for
+	// no format: none of them may spend a read on a format 1 note.
+	it("spends no read of a format 1 note on a client that knows only format 0", async () => {
+		const client = await connect();
+		const { id } = await client.createNote({ text: "format 1", format: 1, maxReads: 1 });
+		const { id: chunkedId } = await client.createNote({
+			files: [{ name: "a.bin", type: "application/octet-stream", data: bytes(2 * CHUNK_SIZE) }],
+			chunkSize: CHUNK_SIZE,
+			format: 1,
+			maxReads: 1,
+		});
+
+		for (const note of [id, chunkedId]) {
+			for (const path of ["stream", "raw", ""]) {
+				const res = await fetch(`${baseUrl}/api/v1/notes/${note}${path ? `/${path}` : ""}`);
+				expect(res.status, path).toBe(400);
+			}
+			expect(await client.checkNote(note)).toMatchObject({ exists: true, readCount: 0 });
+		}
+	});
+
+	it("refuses a malformed format 1 link before reading anything", async () => {
+		const client = await connect();
+		const { id } = await client.createNote({ text: "kept", format: 1 });
+		calls = [];
+
+		await expect(client.readNote(id, "1.cut-short")).rejects.toThrow("Invalid key fragment");
+		expect(calls).toEqual([]);
+		expect(await client.checkNote(id)).toMatchObject({ exists: true, readCount: 0 });
+	});
+
+	it("reads a note from the share URL it builds", async () => {
+		const client = await connect();
+		const { id, keyFragment } = await client.createNote({ text: "by URL", format: 1 });
+
+		const url = client.buildShareUrl(id, keyFragment);
+		expect(url).toBe(`${baseUrl}/note/${id}#${keyFragment}`);
+		const parsed = SecretClient.parseShareUrl(url);
+		const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
+		expect(payload.text).toBe("by URL");
+	});
+});

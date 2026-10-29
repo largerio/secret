@@ -9,6 +9,11 @@ export type NoteErrorCode =
 	| "note_is_chunked"
 	/** A stream was asked of a single-shot note. */
 	| "note_is_single_shot"
+	/**
+	 * A read asked for another format than the note's: a client that knows only
+	 * format 0 never spends a read on a format 1 note, nor the reverse.
+	 */
+	| "note_format_mismatch"
 	/** A note without files larger than the database is meant to hold. */
 	| "note_too_large"
 	/** The stored note does not open: corrupt bytes, or a corrupt row. */
@@ -38,6 +43,7 @@ const MESSAGES: Readonly<Record<NoteErrorCode, string>> = {
 	note_not_found: "Note not found",
 	note_is_chunked: "Note is chunked: read it as a stream",
 	note_is_single_shot: "Note is not a chunked note",
+	note_format_mismatch: "Note is in another format than the one asked for",
 	note_too_large: "Payload too large",
 	note_corrupted: "Failed to decrypt note",
 	expiry_above_limit: "Expiry above the instance's limit",

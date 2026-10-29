@@ -1,4 +1,4 @@
-import { type NotePayload, testVectors } from "@largerio/secret-shared";
+import { type NotePayload, parseEnvelope, testVectors } from "@largerio/secret-shared";
 import { describe, expect, test } from "vitest";
 import {
 	decodeRawBytes,
@@ -8,12 +8,14 @@ import {
 	initStreamDecrypt,
 } from "../decrypt.js";
 import { encodePayload } from "../encrypt.js";
+import { deriveFormat1Key, hkdfExtract, stretchPassword } from "../format1.js";
 import {
 	deriveKeyFromPassword,
 	fromBase64,
 	initSodium,
 	keyFromBase64Url,
 	keyToBase64Url,
+	toBase64,
 } from "../keys.js";
 
 describe("test vectors", () => {
@@ -136,5 +138,74 @@ describe("test vectors", () => {
 			expect(keyToBase64Url(raw)).toBe(v.base64url);
 			expect(keyFromBase64Url(v.base64url)).toEqual(raw);
 		}
+	});
+
+	describe("format 1", () => {
+		const { format1 } = testVectors.vectors;
+
+		const argon2Of = (argon2: { salt: string; iterations: number; memoryKiB: number }) => ({
+			...argon2,
+			salt: fromBase64(argon2.salt),
+		});
+
+		test("keys derive as the vectors record", async () => {
+			await initSodium();
+
+			for (const v of format1.keys) {
+				const linkKey = fromBase64(v.linkKey);
+				expect(`1.${keyToBase64Url(linkKey)}`, v.description).toBe(v.keyFragment);
+
+				const password =
+					v.password !== undefined && v.argon2
+						? { password: v.password, argon2: argon2Of(v.argon2) }
+						: undefined;
+				let ikm = linkKey;
+				if (password) {
+					const stretched = stretchPassword(password, linkKey);
+					expect(toBase64(stretched), v.description).toBe(v.stretchedPassword);
+					ikm = new Uint8Array([...linkKey, ...stretched]);
+				}
+				expect(toBase64(hkdfExtract(ikm)), v.description).toBe(v.prk);
+				expect(toBase64(deriveFormat1Key(linkKey, password)), v.description).toBe(v.encryptionKey);
+			}
+		}, 30_000);
+
+		test("single-shot notes open under their envelope", async () => {
+			await initSodium();
+
+			for (const v of format1.pipeline) {
+				const envelopeBytes = fromBase64(v.envelope);
+				const envelope = parseEnvelope(envelopeBytes);
+				if (envelope?.kind !== "single-shot") throw new Error(v.description);
+
+				const key = fromBase64(v.encryptionKey);
+				const plaintext = decryptRaw(fromBase64(v.ciphertext), envelope.nonce, key, envelopeBytes);
+				expect(toBase64(plaintext), v.description).toBe(v.payloadMsgpack);
+				expect(() => decryptRaw(fromBase64(v.ciphertext), envelope.nonce, key)).toThrow();
+			}
+		});
+
+		test("chunked notes open chunk by chunk under their envelope, FINAL on the last", async () => {
+			await initSodium();
+
+			for (const v of format1.secretstream) {
+				const envelopeBytes = fromBase64(v.envelope);
+				const envelope = parseEnvelope(envelopeBytes);
+				if (envelope?.kind !== "chunked") throw new Error(v.description);
+
+				const state = initStreamDecrypt(envelope.streamHeader, fromBase64(v.encryptionKey));
+				const chunks = v.chunks.map((chunk) =>
+					decryptChunk(state, fromBase64(chunk), envelopeBytes),
+				);
+				expect(
+					chunks.map((chunk) => chunk.isFinal),
+					v.description,
+				).toEqual(v.chunks.map((_, i) => i === v.chunks.length - 1));
+				expect(chunks[0]?.decrypted).toEqual(fromBase64(v.headerMsgpack));
+				const data = Buffer.concat(chunks.slice(1).map((chunk) => chunk.decrypted));
+				const files = Buffer.concat((v.payload.files ?? []).map((file) => fromBase64(file.data)));
+				expect(new Uint8Array(data)).toEqual(new Uint8Array(files));
+			}
+		});
 	});
 });

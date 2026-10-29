@@ -9,6 +9,8 @@ export const DEFAULT_EXPIRY_SECONDS = 86_400;
 export const MAX_EXPIRY_SECONDS = 2_592_000;
 export const MIN_EXPIRY_SECONDS = 300;
 export const NOTE_ID_LENGTH = 12;
+// Reads before a note is deleted; 0 means until it expires.
+export const MAX_READS = 1000;
 export const CLEANUP_INTERVAL_MS = 300_000;
 
 // Validation limits

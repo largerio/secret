@@ -3,7 +3,8 @@
 This document specifies how a Secret client encrypts a note, what it sends to
 an instance, and how it reads one back: enough to write a compatible client,
 in any language, without reading the SDK. It describes **format 0**, the
-format every release so far writes and reads.
+format every release so far writes and reads, then [format 1](#format-1),
+its successor, still a draft.
 
 The reference implementation is [`packages/crypto`](packages/crypto/src) and
 [`packages/sdk-js`](packages/sdk-js/src). The [test vectors](#test-vectors)
@@ -11,9 +12,10 @@ pin every step down to the byte. The HTTP API is also described by the
 instance itself, at `/api/v1/openapi.json`.
 
 Format 0 carries no format number: neither the ciphertext nor the link says
-which format it is. [Toward format 1](#toward-format-1) explains what that
-blocks and how the next format will stay compatible with this one. Format
-numbers are unrelated to the version of the app or the SDK.
+which format it is. [Its limits](#limits-of-format-0) say what that blocks,
+and [format 1](#format-1) how the next format lifts them while staying
+compatible with this one. Format numbers are unrelated to the version of the
+app or the SDK.
 
 ## Conventions
 
@@ -271,7 +273,8 @@ server checks the length of neither the stream header nor the salt.
    ```
 
    The body is the message's ciphertext. `X-Chunk-Hash` is required: a
-   missing or upper-case hash answers `400`. The answer is `200` with
+   missing or upper-case hash, or one that does not match the body, answers
+   `400`. The answer is `200` with
    `{"received": true}`. Sending a message again replaces it.
 
 3. Close the session:
@@ -318,7 +321,8 @@ and otherwise:
 
 It spends no read. `chunked` tells which endpoint serves the note: `/stream`,
 or `/raw` and the JSON endpoint. Asking the wrong one answers `400` and spends
-no read. `readCount` stays 0 for a note with unlimited reads. Every note
+no read, and so does a read of a [format 1](#reading-in-the-right-format)
+note. `readCount` stays 0 for a note with unlimited reads. Every note
 endpoint answers `400` to an id that is not 12 characters of the alphabet
 above.
 
@@ -380,7 +384,7 @@ developer: tell errors apart by their status.
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Invalid request, or the wrong read endpoint |
+| 400 | Invalid request, or the wrong read endpoint or format |
 | 401 | Write authentication missing or refused |
 | 403 | Wrong delete token |
 | 404 | The note, or the upload session, does not exist |
@@ -438,19 +442,215 @@ blob moved to another note fails to decrypt.
 - **Two kinds of note, three read endpoints**, and two layouts of the server
   layer.
 
-## Toward format 1
+## Format 1
 
-Format 1 is planned to address these limits: a format byte, a numbered
-fragment (`#1.<key>`), keys derived with HKDF, Argon2id parameters stored with
-the note, NFC normalization, metadata in the additional data, padding, a
-single streamed kind of note, and a read token that proves the reader holds
-the key before the server spends a read.
+**Draft.** Instances accept and serve format 1, and the reference SDK reads it,
+but writes it only when asked to (`format: 1`). Its bytes may still change
+before it is marked final, with a proof of reading and padding: do not write
+it outside tests yet. Instances keep reading and accepting format 0
+throughout the app's 1.x releases, so links already shared and clients that
+only speak format 0 keep working.
 
-It will be specified here with its implementation and its test vectors.
-Instances will keep reading and accepting format 0 throughout the app's 1.x
-releases, so links already shared and clients that only speak format 0 keep
-working. A format 0 fragment is exactly 43 base64url characters, an alphabet
-without `.`, so the two formats cannot be mistaken for one another.
+What changes from format 0:
+
+- the link and the stored note name their format;
+- the encryption key is derived with HKDF, so that other keys can be derived
+  from the same secret;
+- the Argon2id parameters are stored with the note, the password is
+  normalized to NFC, and the link's key enters the derivation;
+- the settings a writer declares travel in one **envelope**, which the
+  ciphertext authenticates;
+- a read names the format it expects, and the server serves no other;
+- a reader checks the payload strictly.
+
+The payload, the two kinds of note, the way a chunked note is cut, and every
+endpoint not named below are those of format 0.
+
+### Keys
+
+The **link key** `K` is 32 random bytes, as format 0's base key.
+
+With a password, the writer draws a 16-byte salt, picks the Argon2id
+parameters, and stretches the password, followed by the link key:
+
+```
+P = Argon2id(password = UTF-8(NFC(password)) || K, salt, t, m, p = 1, version 0x13, 32 bytes)
+```
+
+`NFC` is Unicode Normalization Form C, and `UTF-8` encodes as WHATWG does: a
+lone surrogate becomes U+FFFD. An empty password is no password. With `K` in
+its input, Argon2id cannot be run on a dictionary before the link is known,
+even by whoever holds the salt.
+
+By default a writer uses t = 3 iterations and m = 262,144 KiB (256 MiB,
+libsodium's moderate setting), and records them in the envelope. A reader runs
+the parameters the envelope gives, but MUST refuse t outside 1 to 6, or m
+outside 65,536 to 524,288 KiB (64 to 512 MiB), before running Argon2id. It
+runs them before anything can tell the envelope was altered, so these bounds
+are what a server, as much as a writer, can make a reader spend.
+
+Then, with HKDF-SHA256 (RFC 5869):
+
+```
+IKM = K                      without a password
+IKM = K || P                 with one
+PRK = HKDF-Extract(salt = none, IKM)
+encryption key = HKDF-Expand(PRK, info = "secret/1 enc", 32)
+```
+
+`salt = none` is HKDF's default, 32 zero bytes. `info` is ASCII. Other `info`
+strings are reserved for keys format 1 will derive from the same PRK.
+
+### The link
+
+```
+<origin>/note/<id>#1.<key>
+```
+
+`key` is `K` encoded as in format 0: 43 base64url characters. A format 0 key
+never holds a `.`, so a reader tells the formats apart by the `1.` prefix,
+and SHOULD refuse a malformed format 1 fragment before reading the note. A
+fragment that starts with another number and a dot names a format the reader
+does not know: it MUST refuse it before reading the note. A format number is
+written in decimal without a leading zero: `01.` is not format 1.
+
+### The envelope
+
+The envelope holds the settings a writer declares, and what a reader needs to
+derive the key and open the ciphertext. The server reads the note's settings
+from it, stores it, and serves it back byte for byte. It is the additional
+data of every AEAD operation on the note, so a reader detects any change to
+it, once it has derived the key.
+
+The envelope is public. Today the server serves it only with the ciphertext,
+but a reader will need it before reading once reads require a proof of the
+key, so it is designed for anyone who knows the note's id to obtain. It holds
+nothing derived from the password or from `K`, and never will: from such a
+value, whoever has the link could test passwords without reading the note.
+
+| Offset | Bytes | Field |
+|--------|-------|-------|
+| 0 | 1 | Format: 1 |
+| 1 | 1 | Kind: 0 single-shot, 1 chunked |
+| 2 | 1 | Key derivation: 0 none, 1 Argon2id with a password |
+| 3 | 1 | `fileCount` |
+| 4 | 2 | `maxReads`, unsigned big-endian |
+| 6 | 4 | `expiresIn` in seconds, unsigned big-endian |
+| 10 | 24 | The XChaCha20 nonce (single-shot), or the secretstream header (chunked) |
+| 34 | 16 | The salt (key derivation 1 only) |
+| 50 | 4 | Argon2id `t`, unsigned big-endian (key derivation 1 only) |
+| 54 | 4 | Argon2id `m` in KiB, unsigned big-endian (key derivation 1 only) |
+
+An envelope is 34 bytes without a password, 58 with one. A reader MUST refuse
+an envelope whose first byte is not 1, whose kind or key derivation is
+unknown, whose length is not the one its key derivation calls for, or whose
+Argon2id parameters fall outside the bounds above. It uses the envelope as it
+received it, never re-encoded.
+
+The settings mean what they mean in format 0, and the envelope tells the
+server nothing format 0's fields do not, the Argon2id parameters aside. The
+server refuses (`400`) an envelope a reader would refuse, one of the wrong
+kind for the endpoint, or one whose settings exceed the protocol's limits
+(`fileCount` 0 to 10, at least 1 for a multipart upload, `maxReads` 0 to 1000,
+`expiresIn` 300 to 2,592,000), and applies the instance's limits as to a
+format 0 note. Envelopes travel in base64. A request that carries an
+`envelope` key, whatever its value (`null` included), is a format 1 request:
+format 0's fields beside it are ignored.
+
+### Single-shot notes in format 1
+
+1. Encode the payload as MessagePack, as in format 0.
+2. Draw a 24-byte nonce and build the envelope with it (kind 0).
+3. Encrypt with XChaCha20-Poly1305 IETF under the encryption key and the
+   nonce, with the envelope as additional data.
+
+The note is sent with the envelope in place of format 0's fields:
+
+```
+POST /api/v1/notes
+Content-Type: application/json
+
+{"envelope": "<base64 envelope>", "encryptedData": "<base64 ciphertext>"}
+```
+
+or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
+set to `{"envelope": "<base64 envelope>"}`. The answer is format 0's.
+
+```
+GET /api/v1/notes/{id}/raw?format=1
+```
+
+serves the ciphertext as for format 0, with an `X-Envelope` header (base64) in
+place of `X-Client-Nonce` and `X-Salt`. The JSON endpoint, `GET
+/api/v1/notes/{id}`, serves format 0 only.
+
+### Chunked notes in format 1
+
+The writer opens a secretstream under the encryption key and builds the
+envelope with its header (kind 1). The messages, their tags and the way the
+files are cut are format 0's, but every message is pushed with the envelope
+as additional data.
+
+The upload session opens with the envelope and the number of messages:
+
+```
+POST /api/v1/notes/upload/init
+Content-Type: application/json
+
+{"envelope": "<base64 envelope>", "chunkCount": 3}
+```
+
+The messages and `/complete` are sent as in format 0.
+
+```
+GET /api/v1/notes/{id}/stream?format=1
+```
+
+serves the stream as for format 0, with `X-Envelope` in place of
+`X-Stream-Header` and `X-Salt`.
+
+### Reading in the right format
+
+A read names the format it expects: `?format=1` on `/raw` and `/stream` for a
+format 1 note, nothing (or `?format=0`) for format 0, which the JSON endpoint
+always expects. The server serves a note only in its own format, and refuses
+any other read (`400`) without spending a read. A client that knows only
+format 0 thus never spends a read on a format 1 note, and the link a reader
+holds decides the format it reads: a note behind the link of the other format
+is refused, not opened.
+
+### Reading strictly
+
+`GET /api/v1/notes/{id}/exists` answers as for format 0: `hasPassword` comes
+from the envelope. A format 1 reader MUST refuse:
+
+- a response without an envelope, or with the envelope of the other kind than
+  the endpoint serves;
+- a password note read without a password; a password given for a note
+  without one is ignored;
+- a payload, or the head of a chunked note, that is not one MessagePack map
+  (an extension type, a timestamp included, is not a map) with nothing after
+  it, whose `text` is not a string, whose `contentMode` is
+  not one of the three values, or whose `files` is not an array of at most 10
+  entries;
+- a file whose `name` or `type` is not a string, or whose `size` is not a
+  non-negative integer; in a single-shot note, a file whose `data` is not
+  `bin` or whose length is not `size`;
+- a payload with another number of files than the envelope's `fileCount`;
+- in a chunked note, a message before the last whose tag is not `TAG_MESSAGE`,
+  a last one whose tag is not `TAG_FINAL`, and file bytes that fall short of
+  the declared sizes or exceed them.
+
+A key present with the value `nil` is not absent: `text: nil` is refused. A
+reader ignores keys it does not know. It need not check where the file bytes
+were cut, nor the length of each message: the tags and the declared sizes are
+enough.
+
+A writer writes each key of a map once, as a `str`, strings in valid UTF-8
+(a lone surrogate written as U+FFFD), and `size` as an `int`. The reference reader keeps the last of a repeated key,
+reads an integer key as a string, decodes invalid UTF-8 without refusing it,
+and takes a float with an integer value for an integer; another reader may
+refuse them.
 
 ## Test vectors
 
@@ -465,11 +665,25 @@ holds, for format 0:
 | `secretstream` | Chunked notes: head, header and every message. The header is random, so these were written once. |
 | `encoding` | Base64url keys. |
 
+and, under `format1`:
+
+| Section | What it pins down |
+|---------|-------------------|
+| `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK and the encryption key. |
+| `envelopes` | Envelopes, from their fields to their bytes. |
+| `pipeline` | Single-shot notes, from the payload to the ciphertext under its envelope. |
+| `secretstream` | Chunked notes. Their envelopes hold a random stream header, so these were written once. |
+
 The file's `version` field counts revisions of the file, not formats. In the
 `secretstream` vectors, `headerMsgpack` is the head's plaintext and `header`
-the secretstream header.
+the secretstream header, which format 1 vectors carry inside their envelope,
+at offset 10. In `format1.envelopes`, `nonce` holds the nonce or the stream
+header, and the key derivation is Argon2id when `argon2` is present. Bytes are
+in base64 throughout, file `data` included. The `chunkSize` of the
+`secretstream` vectors only says where the file bytes are cut: their heads are
+longer than it, which an instance with that chunk size would refuse.
 
 The vectors are frozen. The repository checks them against libsodium and
 against a second implementation that shares no code with it, OpenSSL through
-`node:crypto` (`vectors-openssl.test.ts`). A new client should pass all of
-them.
+`node:crypto` (`vectors-openssl.test.ts`), secretstream aside. A new client
+should pass all of them.

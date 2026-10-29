@@ -9,6 +9,7 @@
  *     pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
  */
 
+import { createHmac, hkdfSync } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { NotePayload } from "@largerio/secret-shared";
@@ -158,7 +159,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 	// tagged FINAL. The stream header is random (init_push draws it), so these
 	// are written once: a normal run checks every other field against the file
 	// and leaves the header and the chunks as committed.
-	const secretstreamVector = (description: string, payload: NotePayload, chunkSize: number) => {
+	const streamPlaintexts = (payload: NotePayload, chunkSize: number) => {
 		const files = payload.files ?? [];
 		const headerBytes = encode({
 			...(payload.text !== undefined ? { text: payload.text } : {}),
@@ -173,6 +174,21 @@ test("the committed test vectors match what the crypto produces", async () => {
 				pieces.push(file.data.subarray(offset, offset + chunkSize));
 			}
 		}
+		return { headerBytes, pieces };
+	};
+
+	const payloadJson = (payload: NotePayload) => {
+		const files = payload.files ?? [];
+		return {
+			...payload,
+			...(files.length > 0
+				? { files: files.map((file) => ({ ...file, data: toB64(file.data) })) }
+				: {}),
+		};
+	};
+
+	const secretstreamVector = (description: string, payload: NotePayload, chunkSize: number) => {
+		const { headerBytes, pieces } = streamPlaintexts(payload, chunkSize);
 		const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(KEY_32);
 		const chunks = pieces.map((piece, i) =>
 			sodium.crypto_secretstream_xchacha20poly1305_push(
@@ -189,12 +205,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 			key: toB64(KEY_32),
 			keyFragment: toB64Url(KEY_32),
 			chunkSize,
-			payload: {
-				...payload,
-				...(files.length > 0
-					? { files: files.map((file) => ({ ...file, data: toB64(file.data) })) }
-					: {}),
-			},
+			payload: payloadJson(payload),
 			headerMsgpack: toB64(headerBytes),
 			header: toB64(header),
 			chunks: chunks.map(toB64),
@@ -221,10 +232,246 @@ test("the committed test vectors match what the crypto produces", async () => {
 		4,
 	);
 
+	// --- Format 1 vectors ---
+
+	// Computed apart from the crypto package: HKDF and HMAC from node:crypto,
+	// the envelope laid out by hand.
+	type Argon2 = {
+		readonly salt: Uint8Array;
+		readonly iterations: number;
+		readonly memoryKiB: number;
+	};
+	type Settings = {
+		readonly fileCount: number;
+		readonly maxReads: number;
+		readonly expiresIn: number;
+	};
+
+	// libsodium's moderate setting, what a writer uses, and the lightest a
+	// reader accepts, to keep the vectors quick to check.
+	const DEFAULT_ARGON2 = { iterations: 3, memoryKiB: 262_144 };
+	const LIGHT_ARGON2 = { iterations: 1, memoryKiB: 65_536 };
+
+	const argon2Json = (argon2: Argon2) => ({ ...argon2, salt: toB64(argon2.salt) });
+
+	const format1Keys = (linkKey: Uint8Array, password?: string, argon2?: Argon2) => {
+		const stretched =
+			password !== undefined && argon2
+				? sodium.crypto_pwhash(
+						32,
+						Buffer.concat([Buffer.from(password.normalize("NFC"), "utf8"), linkKey]),
+						argon2.salt,
+						argon2.iterations,
+						argon2.memoryKiB * 1024,
+						sodium.crypto_pwhash_ALG_ARGON2ID13,
+					)
+				: undefined;
+		const ikm = stretched ? Buffer.concat([linkKey, stretched]) : Buffer.from(linkKey);
+		const prk = createHmac("sha256", Buffer.alloc(32)).update(ikm).digest();
+		const encryptionKey = new Uint8Array(
+			hkdfSync("sha256", ikm, Buffer.alloc(0), "secret/1 enc", 32),
+		);
+		return { stretched, prk, encryptionKey, keyFragment: `1.${toB64Url(linkKey)}` };
+	};
+
+	const keyVector = (
+		description: string,
+		linkKey: Uint8Array,
+		password?: string,
+		argon2?: Argon2,
+	) => {
+		const keys = format1Keys(linkKey, password, argon2);
+		return {
+			description,
+			linkKey: toB64(linkKey),
+			keyFragment: keys.keyFragment,
+			...(password !== undefined && argon2 && keys.stretched
+				? { password, argon2: argon2Json(argon2), stretchedPassword: toB64(keys.stretched) }
+				: {}),
+			prk: toB64(keys.prk),
+			encryptionKey: toB64(keys.encryptionKey),
+		};
+	};
+
+	const envelopeBytes = (
+		kind: "single-shot" | "chunked",
+		settings: Settings,
+		nonce: Uint8Array,
+		argon2?: Argon2,
+	): Uint8Array => {
+		const head = Buffer.alloc(10);
+		head[0] = 1;
+		head[1] = kind === "single-shot" ? 0 : 1;
+		head[2] = argon2 ? 1 : 0;
+		head[3] = settings.fileCount;
+		head.writeUInt16BE(settings.maxReads, 4);
+		head.writeUInt32BE(settings.expiresIn, 6);
+		const parts = [head, Buffer.from(nonce)];
+		if (argon2) {
+			const params = Buffer.alloc(8);
+			params.writeUInt32BE(argon2.iterations, 0);
+			params.writeUInt32BE(argon2.memoryKiB, 4);
+			parts.push(Buffer.from(argon2.salt), params);
+		}
+		return new Uint8Array(Buffer.concat(parts));
+	};
+
+	const envelopeVector = (
+		description: string,
+		kind: "single-shot" | "chunked",
+		settings: Settings,
+		nonce: Uint8Array,
+		argon2?: Argon2,
+	) => ({
+		description,
+		kind,
+		...settings,
+		nonce: toB64(nonce),
+		...(argon2 ? { argon2: argon2Json(argon2) } : {}),
+		envelope: toB64(envelopeBytes(kind, settings, nonce, argon2)),
+	});
+
+	const format1PipelineVector = (
+		description: string,
+		linkKey: Uint8Array,
+		settings: Settings,
+		payload: NotePayload,
+		password?: string,
+		argon2?: Argon2,
+	) => {
+		const keys = format1Keys(linkKey, password, argon2);
+		const envelope = envelopeBytes("single-shot", settings, NONCE_24, argon2);
+		const msgpack = encode(payload);
+		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+			msgpack,
+			envelope,
+			null,
+			NONCE_24,
+			keys.encryptionKey,
+		);
+		return {
+			description,
+			keyFragment: keys.keyFragment,
+			...(password !== undefined ? { password } : {}),
+			encryptionKey: toB64(keys.encryptionKey),
+			envelope: toB64(envelope),
+			payload: payloadJson(payload),
+			payloadMsgpack: toB64(msgpack),
+			ciphertext: toB64(ciphertext),
+		};
+	};
+
+	const format1SecretstreamVector = (
+		description: string,
+		linkKey: Uint8Array,
+		settings: Settings,
+		payload: NotePayload,
+		chunkSize: number,
+		password?: string,
+		argon2?: Argon2,
+	) => {
+		const keys = format1Keys(linkKey, password, argon2);
+		const { headerBytes, pieces } = streamPlaintexts(payload, chunkSize);
+		const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(
+			keys.encryptionKey,
+		);
+		const envelope = envelopeBytes("chunked", settings, header, argon2);
+		const chunks = pieces.map((piece, i) =>
+			sodium.crypto_secretstream_xchacha20poly1305_push(
+				state,
+				piece,
+				envelope,
+				i === pieces.length - 1
+					? sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
+					: sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
+			),
+		);
+		return {
+			description,
+			keyFragment: keys.keyFragment,
+			...(password !== undefined ? { password } : {}),
+			encryptionKey: toB64(keys.encryptionKey),
+			envelope: toB64(envelope),
+			chunkSize,
+			payload: payloadJson(payload),
+			headerMsgpack: toB64(headerBytes),
+			chunks: chunks.map(toB64),
+		};
+	};
+
+	const STREAM_HEADER_24 = new Uint8Array(24).map((_, i) => 0xe0 + i);
+	// "Pässwörd-2!🔒" decomposed: the derivation normalizes it to NFC first.
+	const nfdPassword = "Pässwörd-2!🔒".normalize("NFD");
+	const defaultArgon2 = { salt: SALT_16, ...DEFAULT_ARGON2 };
+	const lightArgon2 = { salt: SALT_16_B, ...LIGHT_ARGON2 };
+	const oneDay = { fileCount: 0, maxReads: 1, expiresIn: 86_400 };
+
+	const format1 = {
+		keys: [
+			keyVector("no password: the link's key alone", KEY_32),
+			keyVector(
+				"password, with the parameters a writer uses",
+				BASE_KEY_32,
+				"test-password-123",
+				defaultArgon2,
+			),
+			keyVector("password typed in NFD, light parameters", BASE_KEY_32_B, nfdPassword, lightArgon2),
+		],
+		envelopes: [
+			envelopeVector("single-shot note, no password", "single-shot", oneDay, NONCE_24),
+			envelopeVector(
+				"chunked note with a password",
+				"chunked",
+				{ fileCount: 3, maxReads: 0, expiresIn: 2_592_000 },
+				STREAM_HEADER_24,
+				defaultArgon2,
+			),
+		],
+		pipeline: [
+			format1PipelineVector("text-only note, no password", KEY_32, oneDay, {
+				text: "Hello, world!",
+				contentMode: "text",
+			}),
+			format1PipelineVector(
+				"two files, password typed in NFD",
+				BASE_KEY_32_B,
+				{ fileCount: 2, maxReads: 3, expiresIn: 3600 },
+				multiFilePayload,
+				nfdPassword,
+				lightArgon2,
+			),
+		],
+		secretstream: [
+			format1SecretstreamVector(
+				"two files over five chunks, no password",
+				KEY_32,
+				{ fileCount: 2, maxReads: 1, expiresIn: 86_400 },
+				{
+					text: "chunked",
+					contentMode: "text",
+					files: [
+						{ name: "a.bin", type: "application/octet-stream", size: 10, data: streamFileA },
+						{ name: "b.txt", type: "text/plain", size: 4, data: streamFileB },
+					],
+				},
+				4,
+			),
+			format1SecretstreamVector(
+				"text only, password: the head is the final chunk",
+				BASE_KEY_32_B,
+				{ fileCount: 0, maxReads: 0, expiresIn: 300 },
+				{ text: "only text", contentMode: "markdown" },
+				4,
+				nfdPassword,
+				lightArgon2,
+			),
+		],
+	};
+
 	// --- Build vectors object ---
 
 	const vectors = {
-		version: 2,
+		version: 3,
 		generatedWith: `libsodium-wrappers-sumo ${sodium.SODIUM_VERSION_STRING}`,
 		vectors: {
 			xchacha20poly1305: [
@@ -407,6 +654,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 					base64url: toB64Url(new Uint8Array(16).fill(0xff)),
 				},
 			],
+			format1,
 		},
 	};
 
@@ -423,8 +671,14 @@ test("the committed test vectors match what the crypto produces", async () => {
 
 	// generatedWith only records the libsodium that wrote the file: another
 	// release producing the same bytes is no change. The secretstream headers
-	// and chunks are random, so they are taken as committed.
+	// and chunks are random, so they are taken as committed; so is the header
+	// inside a format 1 envelope, whose other bytes must match.
 	const committed = JSON.parse(readFileSync(outPath, "utf8")) as typeof vectors;
+	const withCommittedHeader = (envelope: string, committedEnvelope: string | undefined) => {
+		const bytes = Buffer.from(envelope, "base64");
+		Buffer.from(committedEnvelope ?? "", "base64").copy(bytes, 10, 10, 34);
+		return bytes.toString("base64");
+	};
 	expect({
 		...vectors,
 		generatedWith: committed.generatedWith,
@@ -435,6 +689,17 @@ test("the committed test vectors match what the crypto produces", async () => {
 				header: committed.vectors.secretstream[i]?.header,
 				chunks: committed.vectors.secretstream[i]?.chunks,
 			})),
+			format1: {
+				...vectors.vectors.format1,
+				secretstream: vectors.vectors.format1.secretstream.map((v, i) => {
+					const written = committed.vectors.format1.secretstream[i];
+					return {
+						...v,
+						envelope: withCommittedHeader(v.envelope, written?.envelope),
+						chunks: written?.chunks,
+					};
+				}),
+			},
 		},
 	}).toEqual(committed);
 
@@ -443,4 +708,8 @@ test("the committed test vectors match what the crypto produces", async () => {
 	expect(vectors.vectors.pipeline).toHaveLength(5);
 	expect(vectors.vectors.encoding).toHaveLength(7);
 	expect(vectors.vectors.secretstream).toHaveLength(2);
-}, 30_000);
+	expect(vectors.vectors.format1.keys).toHaveLength(3);
+	expect(vectors.vectors.format1.envelopes).toHaveLength(2);
+	expect(vectors.vectors.format1.pipeline).toHaveLength(2);
+	expect(vectors.vectors.format1.secretstream).toHaveLength(2);
+}, 60_000);

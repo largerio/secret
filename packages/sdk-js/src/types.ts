@@ -78,13 +78,23 @@ export interface CreateNoteOptions {
 	readonly chunked?: boolean;
 	/** Chunk size in bytes for chunked upload. Default: 4MB (DEFAULT_CHUNK_SIZE). */
 	readonly chunkSize?: number;
+	/**
+	 * The encryption format to write (PROTOCOL.md): 0 or 1. Default: 0. Reads
+	 * take either, from the link.
+	 *
+	 * @experimental Format 1 is a draft until the protocol calls it final: its
+	 * bytes may still change, so do not write it outside tests yet.
+	 */
+	readonly format?: 0 | 1;
 }
 
 export interface CreateNoteResult {
 	readonly id: string;
 	readonly expiresAt: string;
 	readonly deleteToken: string;
-	/** Base64url-encoded encryption key for the URL fragment. */
+	/**
+	 * The URL fragment: the key in base64url, after `1.` for a format 1 note.
+	 */
 	readonly keyFragment: string;
 }
 

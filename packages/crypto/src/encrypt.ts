@@ -12,12 +12,20 @@ export function encodeRaw(data: unknown): Uint8Array {
 	return encode(data);
 }
 
-export function encryptPayload(payload: NotePayload, key: Uint8Array): EncryptedNote {
+/**
+ * `additionalData` is authenticated, not encrypted: format 1 passes its
+ * envelope, format 0 nothing.
+ */
+export function encryptPayload(
+	payload: NotePayload,
+	key: Uint8Array,
+	nonce: Uint8Array = generateNonce(),
+	additionalData: Uint8Array | null = null,
+): EncryptedNote {
 	const encoded = encode(payload);
-	const nonce = generateNonce();
 	const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
 		encoded,
-		null,
+		additionalData,
 		null,
 		nonce,
 		key,
@@ -53,11 +61,12 @@ export function encryptChunk(
 	state: import("libsodium-wrappers-sumo").StateAddress,
 	chunk: Uint8Array,
 	isFinal: boolean,
+	additionalData: Uint8Array | null = null,
 ): Uint8Array {
 	const tag = isFinal
 		? sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
 		: sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
-	return sodium.crypto_secretstream_xchacha20poly1305_push(state, chunk, null, tag);
+	return sodium.crypto_secretstream_xchacha20poly1305_push(state, chunk, additionalData, tag);
 }
 
 // Hardcoded values matching libsodium — verified at init time in keys.ts

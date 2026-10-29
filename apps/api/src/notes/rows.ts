@@ -1,11 +1,17 @@
-import { NOTE_ID_LENGTH } from "@largerio/secret-shared";
+import { NOTE_ID_LENGTH, parseEnvelope } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { AppDatabase, Transaction } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { enqueueDeletion, type PendingDeletion } from "../pendingDeletions.js";
 import { NoteError } from "./errors.js";
-import type { NoteMeta, NoteSettings } from "./types.js";
+import type {
+	ChunkedOpening,
+	Format1Opening,
+	NoteMeta,
+	NoteOpening,
+	NoteSettings,
+} from "./types.js";
 
 export type NoteRow = typeof notes.$inferSelect;
 
@@ -26,12 +32,7 @@ export type PlacementKind = "database" | "file" | "chunks";
 export type Placement =
 	| { readonly kind: "database"; readonly sealed: Buffer; readonly iv: Buffer }
 	| { readonly kind: "file"; readonly path: string; readonly iv: Buffer; readonly size: number }
-	| {
-			readonly kind: "chunks";
-			readonly chunkCount: number;
-			readonly streamHeader: string;
-			readonly size: number;
-	  };
+	| { readonly kind: "chunks"; readonly chunkCount: number; readonly size: number };
 
 /**
  * Whether a note is a chunked note, its ciphertext a series of chunks in the
@@ -42,6 +43,61 @@ export function isChunked<T extends { readonly chunkCount: number | null }>(
 	note: T,
 ): note is T & { readonly chunkCount: number } {
 	return (note.chunkCount ?? 0) > 0;
+}
+
+/**
+ * Whether a note is a format 1 note, its settings and what opening it takes in
+ * the envelope its writer sent. The one definition: a row without one is
+ * format 0.
+ */
+export function isFormat1<T extends { readonly envelope: Buffer | null }>(
+	note: T,
+): note is T & { readonly envelope: Buffer } {
+	return note.envelope !== null;
+}
+
+/**
+ * A format 1 row's envelope, checked as its writer's was: one that does not
+ * parse, or is not of the row's kind, is a corrupt row, never served.
+ */
+function envelopeOpening(
+	note: NoteRow & { readonly envelope: Buffer },
+): Format1Opening | undefined {
+	const kind = isChunked(note) ? "chunked" : "single-shot";
+	return parseEnvelope(note.envelope)?.kind === kind
+		? { format: 1, envelope: note.envelope }
+		: undefined;
+}
+
+/** How a reader opens the single-shot note a row holds, or undefined for a corrupt row. */
+export function openingOf(note: NoteRow): NoteOpening | undefined {
+	if (isFormat1(note)) {
+		return envelopeOpening(note);
+	}
+	return {
+		format: 0,
+		clientNonce: note.clientNonce,
+		...(note.salt !== null ? { salt: note.salt } : {}),
+	};
+}
+
+/**
+ * How a reader opens the chunked note a row holds, or undefined for a corrupt
+ * row: a format 0 one without its stream header, or a broken envelope.
+ */
+export function chunkedOpeningOf(note: NoteRow): ChunkedOpening | undefined {
+	if (isFormat1(note)) {
+		return envelopeOpening(note);
+	}
+	if (!note.streamHeader) {
+		return undefined;
+	}
+	return {
+		format: 0,
+		clientNonce: note.clientNonce,
+		...(note.salt !== null ? { salt: note.salt } : {}),
+		streamHeader: note.streamHeader,
+	};
 }
 
 export function placementOf(note: {
@@ -81,9 +137,8 @@ export function newNoteRow(
 ): typeof notes.$inferInsert {
 	const common = {
 		id,
-		clientNonce: settings.clientNonce,
+		...openingColumns(settings.opening),
 		hasPassword: settings.hasPassword,
-		salt: settings.salt ?? null,
 		deleteToken,
 		fileCount: settings.fileCount,
 		expiresAt: new Date(now.getTime() + settings.expiresIn * 1000),
@@ -114,20 +169,36 @@ export function newNoteRow(
 				serverNonce: "",
 				filePath: null,
 				chunkCount: placement.chunkCount,
-				streamHeader: placement.streamHeader,
 				sizeBytes: placement.size,
 			};
 	}
 }
 
-export function metaOf(note: NoteRow): NoteMeta {
+/** The columns that tell how to open a note: its envelope, or format 0's own. */
+function openingColumns(opening: NoteOpening) {
+	if (opening.format === 1) {
+		// The envelope holds it all. client_nonce is NOT NULL: it stays empty.
+		return { envelope: opening.envelope, clientNonce: "", salt: null, streamHeader: null };
+	}
 	return {
-		clientNonce: note.clientNonce,
+		envelope: null,
+		clientNonce: opening.clientNonce,
+		salt: opening.salt ?? null,
+		streamHeader: opening.streamHeader ?? null,
+	};
+}
+
+/** What comes with a note's ciphertext, opened as `opening` says. */
+export function metaOf<Opening extends NoteOpening>(
+	note: NoteRow,
+	opening: Opening,
+): NoteMeta<Opening> {
+	return {
 		hasPassword: note.hasPassword,
-		salt: note.salt,
 		fileCount: note.fileCount,
 		createdAt: note.createdAt,
 		expiresAt: note.expiresAt,
+		opening,
 	};
 }
 

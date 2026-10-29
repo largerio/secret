@@ -1,6 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import { createNoteMultipartSchema } from "@largerio/secret-shared";
+import { createNoteMultipartRequestSchema } from "@largerio/secret-shared";
 import { HTTPException } from "hono/http-exception";
+import { chunkedSettingsOf, settingsOf } from "../../notes/formats.js";
 import type { NotesService } from "../../notes/service.js";
 import { parseJson } from "../../parseJson.js";
 import {
@@ -16,24 +17,25 @@ import { createdBody } from "./responses.js";
 /** What writes a note: creation in one request or by chunks, and deletion. */
 export function registerWriteRoutes(app: OpenAPIHono, notes: NotesService): void {
 	app.openapi(createNoteRoute, async (c) => {
-		const { encryptedData, ...settings } = c.req.valid("json");
-		const created = await notes.create(Buffer.from(encryptedData, "base64"), settings);
+		const { encryptedData, ...request } = c.req.valid("json");
+		const created = await notes.create(Buffer.from(encryptedData, "base64"), settingsOf(request));
 		return c.json(createdBody(created), 201);
 	});
 
 	app.openapi(uploadNoteRoute, async (c) => {
 		const { metadata, data } = c.req.valid("form");
 		// The settings travel as a JSON string inside the multipart body.
-		const settings = parseJson(createNoteMultipartSchema, metadata);
-		if (settings === undefined) {
+		const request = parseJson(createNoteMultipartRequestSchema, metadata);
+		if (request === undefined) {
 			throw new HTTPException(400, { message: "Invalid request" });
 		}
-		const created = await notes.create(Buffer.from(await data.arrayBuffer()), settings);
+		const created = await notes.create(Buffer.from(await data.arrayBuffer()), settingsOf(request));
 		return c.json(createdBody(created), 201);
 	});
 
 	app.openapi(uploadInitRoute, (c) => {
-		const session = notes.openUpload(c.req.valid("json"));
+		const { chunkCount, ...request } = c.req.valid("json");
+		const session = notes.openUpload({ ...chunkedSettingsOf(request), chunkCount });
 		return c.json({ uploadId: session.uploadId, expiresAt: session.expiresAt.toISOString() }, 201);
 	});
 

@@ -10,6 +10,7 @@ image. Each version links to its GitHub release. The SDK has
 ### Added
 
 - [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format every release so far uses: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#249)
+- [Format 1](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-1), a draft of the next encryption format: links that name their format (`#1.<key>`), a key derived with HKDF, the Argon2id parameters stored with the note, passwords normalized to NFC, and the note's settings in an envelope that the ciphertext authenticates. The API accepts and serves format 1 notes next to format 0 ones, and the web app opens them. A read names the format it expects, so a client that knows only format 0 is refused a format 1 note without spending a read. Nothing writes format 1 yet: its bytes may still change before it is final. (#253)
 
 ### Changed
 
@@ -22,6 +23,10 @@ image. Each version links to its GitHub release. The SDK has
 - A storage failure while a note was read answered "Failed to decrypt note" and left nothing in the log. It is now logged like any server error, and every `500`, a note that does not decrypt included, carries an `errorId` to find it in the log. (#252)
 - A large note whose last attachment was an empty file, after one with content, was created but could not be opened: its first read failed with "Decryption failed" and still spent a read. (#250)
 - On an instance whose `CHUNK_SIZE` was set below the default, a long text note could fail with "Payload too large": it was uploaded in chunks, all its text in the first one. A note without files is now always uploaded in one piece. (#250)
+
+### Upgrade notes
+
+- Migration 5 adds a column to `notes`, for format 1 notes. Back up the data volume first: once migrated, the database no longer starts on 1.5.0 or older.
 
 ## [1.5.0] - 2026-10-28
 

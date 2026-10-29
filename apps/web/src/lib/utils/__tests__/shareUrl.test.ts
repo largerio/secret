@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { isKeyFragment, splitShareUrl } from "../shareUrl.js";
 
-const KEY = "k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU_-Ab12Cd3";
+// Canonical: its last character carries no stray bit.
+const KEY = "k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU_-Ab12Cd4";
 
 describe("splitShareUrl", () => {
 	it("separates the scheme, the address and the key", () => {
@@ -28,5 +29,21 @@ describe("isKeyFragment", () => {
 		expect(isKeyFragment(`${KEY}=`)).toBe(false);
 		expect(isKeyFragment(KEY.replace("_", "/"))).toBe(false);
 		expect(isKeyFragment("")).toBe(false);
+	});
+
+	it("accepts a format 1 key, which names its format", () => {
+		expect(isKeyFragment(`1.${KEY}`)).toBe(true);
+	});
+
+	it("refuses a key whose last character carries stray bits", () => {
+		expect(isKeyFragment(`${KEY.slice(0, 42)}B`)).toBe(false);
+		expect(isKeyFragment(`1.${KEY.slice(0, 42)}B`)).toBe(false);
+		expect(isKeyFragment(`${KEY.slice(0, 42)}A`)).toBe(true);
+	});
+
+	it("refuses another format number, or a format 1 key cut short", () => {
+		expect(isKeyFragment(`2.${KEY}`)).toBe(false);
+		expect(isKeyFragment(`1.${KEY.slice(0, 30)}`)).toBe(false);
+		expect(isKeyFragment(`1${KEY}`)).toBe(false);
 	});
 });

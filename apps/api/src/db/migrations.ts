@@ -182,12 +182,23 @@ const pendingDeletionsByNote: Migration = {
 	},
 };
 
+// A format 1 note keeps the envelope its writer sent, and serves it back as it
+// came. Format 0 notes, the rows already there among them, leave it NULL.
+const format1Envelope: Migration = {
+	version: 5,
+	name: "format-1-envelope",
+	apply(sqlite) {
+		sqlite.exec(`ALTER TABLE notes ADD COLUMN envelope BLOB`);
+	},
+};
+
 /** Ordered, append-only. Versions are contiguous and start at 1. */
 export const MIGRATIONS: readonly Migration[] = [
 	baseline,
 	storageAccounting,
 	dropUnusedColumns,
 	pendingDeletionsByNote,
+	format1Envelope,
 ];
 
 export function getSchemaVersion(sqlite: DatabaseSync): number {

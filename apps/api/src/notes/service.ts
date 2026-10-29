@@ -12,8 +12,10 @@ import {
 } from "../pendingDeletions.js";
 import { type StorageBackend, StorageNotFoundError } from "../storage/index.js";
 import { NoteError } from "./errors.js";
+import { isOfFormat } from "./formats.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
 import {
+	chunkedOpeningOf,
 	isChunked,
 	lookUpNote,
 	metaOf,
@@ -21,6 +23,7 @@ import {
 	newDeleteToken,
 	newNoteId,
 	newNoteRow,
+	openingOf,
 	type PlacementKind,
 	placementOf,
 	removeNote,
@@ -29,7 +32,14 @@ import {
 } from "./rows.js";
 import { createServerLayer } from "./serverLayer.js";
 import { chunkStream } from "./stream.js";
-import type { CreatedNote, NoteInfo, NoteRead, NoteSettings, NoteStream } from "./types.js";
+import type {
+	CreatedNote,
+	NoteFormat,
+	NoteInfo,
+	NoteRead,
+	NoteSettings,
+	NoteStream,
+} from "./types.js";
 import { createUploads, type Uploads } from "./uploads.js";
 
 // How long a file save may run before the cleanup job treats its object as
@@ -64,10 +74,13 @@ export interface NotesService extends Uploads {
 	create(ciphertext: Buffer, settings: NoteSettings): Promise<CreatedNote>;
 	/** The note's state, or undefined for a note that is gone. Spends no read. */
 	check(id: string): NoteInfo | undefined;
-	/** Spends a read on a single-shot note. */
-	read(id: string): Promise<NoteRead>;
-	/** Spends a read on a chunked note, once its first chunk is loaded. */
-	stream(id: string): Promise<NoteStream>;
+	/**
+	 * Spends a read on a single-shot note in `format`, the one the reader asked
+	 * for. A note in another is refused before its read is spent.
+	 */
+	read<F extends NoteFormat>(id: string, format: F): Promise<NoteRead<F>>;
+	/** Spends a read on a chunked note in `format`, once its first chunk is loaded. */
+	stream(id: string, format: NoteFormat): Promise<NoteStream>;
 	delete(id: string, deleteToken: string): Promise<void>;
 }
 
@@ -219,10 +232,17 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			};
 		},
 
-		async read(id) {
+		async read<F extends NoteFormat>(id: string, format: F): Promise<NoteRead<F>> {
 			const note = readableNote(id);
 			if (isChunked(note)) {
 				throw new NoteError("note_is_chunked");
+			}
+			const opening = openingOf(note);
+			if (opening === undefined) {
+				throw new NoteError("note_corrupted");
+			}
+			if (!isOfFormat(opening, format)) {
+				throw new NoteError("note_format_mismatch");
 			}
 
 			const { filePath } = note;
@@ -245,19 +265,23 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			purgeLater(purge);
 			metrics.noteRead(METRIC_TYPE[placementOf(note)], burned);
 
-			return { meta: metaOf(note), ciphertext };
+			return { meta: metaOf(note, opening), ciphertext };
 		},
 
-		async stream(id) {
+		async stream(id, format) {
 			const note = readableNote(id);
 			if (!isChunked(note)) {
 				throw new NoteError("note_is_single_shot");
 			}
 			// Everything the answer needs is checked before the read is spent: a
-			// chunked row without its stream header (a corrupt row) cannot be read.
-			const { streamHeader, chunkCount } = note;
-			if (!streamHeader) {
+			// corrupt row cannot be read, nor a note in another format than asked.
+			const { chunkCount } = note;
+			const opening = chunkedOpeningOf(note);
+			if (opening === undefined) {
 				throw new NoteError("note_corrupted");
+			}
+			if (opening.format !== format) {
+				throw new NoteError("note_format_mismatch");
 			}
 
 			// The first chunk is loaded and opened before the read counts, so a
@@ -275,8 +299,7 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			metrics.noteRead("chunked", burned);
 
 			return {
-				meta: metaOf(note),
-				streamHeader,
+				meta: metaOf(note, opening),
 				chunkCount,
 				chunks: chunkStream({
 					count: chunkCount,
