@@ -26,6 +26,9 @@ export const DEFAULT_CHUNK_SIZE = 4_194_304; // 4MB per chunk
 export const DEFAULT_MAX_CHUNKED_SIZE = 524_288_000; // 500MB max per note
 export const UPLOAD_SESSION_TTL = 3_600; // 1 hour to complete upload
 export const UPLOAD_ID_LENGTH = 32;
+// The longest message a read serves, in bytes: each is framed with its length,
+// 4 bytes unsigned. The largest chunk size is 17 bytes less, a message's tag.
+export const MAX_MESSAGE_LENGTH = 4_294_967_295;
 
 // Proof-of-Work challenge defaults. "Cap" refers to the Cap.js library
 // (@cap.js/server) that issues and verifies these PoW challenges to gate

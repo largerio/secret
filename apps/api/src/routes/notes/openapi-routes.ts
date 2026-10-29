@@ -7,6 +7,7 @@ import {
 	createNoteRequestSchema,
 	createNoteResponseSchema,
 	deleteNoteResponseSchema,
+	MAX_MESSAGE_LENGTH,
 	MAX_PASSWORD_ATTEMPTS,
 	noteExistsResponseSchema,
 	noteIdSchema,
@@ -47,8 +48,7 @@ const binaryBody = z.string().openapi({ format: "binary" });
 const WRITE_FORMATS =
 	"Format 1 sends `envelope`, the note's envelope in base64, which holds its settings, with `linkVerifier` and, for a password note, `passwordVerifier`; format 0 sends its settings as fields.";
 
-const ONE_MESSAGE =
-	"A format 1 note sent in one request is one message: its ciphertext, less its 17-byte tag, must be a size class (PROTOCOL.md, The body), or it is refused with 400 before anything is stored.";
+const ONE_MESSAGE = `A format 1 note sent in one request is one message: its ciphertext, less its 17-byte tag, must be a size class (PROTOCOL.md, The body), or it is refused with 400, and it must be at most ${String(MAX_MESSAGE_LENGTH)} bytes, the most a read's 4-byte length frames, or it is refused with 413: both before anything is stored.`;
 
 const FORMAT_0_ONLY =
 	"Format 0 notes only: a format 1 note is refused with 400 before any read is spent, and is read from POST /{id}/reads.";
@@ -115,7 +115,7 @@ export const existsRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Check if a note exists",
 	description:
-		"Spends no read. For a format 1 note, the answer also carries its envelope, which its reader derives its proofs from, and for a password note the wrong passwords it still takes.",
+		"Spends no read. `chunked` tells a format 0 note's reader which endpoint serves it, /stream or the others; it is false for every format 1 note, which POST /{id}/reads serves however it went up. For a format 1 note, the answer also carries its envelope, which its reader derives its proofs from, and for a password note the wrong passwords it still takes.",
 	request: {
 		params: z.object({ id: noteIdParam }),
 	},
@@ -212,7 +212,7 @@ export const uploadChunkRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Upload one encrypted chunk",
 	description:
-		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the lower-case hex SHA-256 of the body. Re-uploading the same index is idempotent.",
+		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the lower-case hex SHA-256 of the body. Sending a chunk again replaces it, once its first send has answered: while a chunk is being written, another send of the same index answers 409.",
 	request: {
 		params: z.object({
 			uploadId: uploadIdParam,
@@ -243,7 +243,7 @@ export const uploadCompleteRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Finalize a chunked upload",
 	description:
-		"Verifies that every chunk arrived and turns the session into a readable note. A format 1 note's messages must be those of a padded body (PROTOCOL.md, Messages): every message before the last as long as the first, the last no longer, and their lengths, less 17 bytes each, adding up to a size class. Otherwise it answers 400 and creates no note: the session is left as one still missing chunks is, until it expires and its chunks are purged.",
+		"Verifies that every chunk arrived and turns the session into a readable note. It answers 409 while a chunk is still being written: complete once every chunk upload has answered. A format 1 note's messages must be those of a padded body (PROTOCOL.md, Messages): every message before the last as long as the first, the last no longer and not empty (more than its 17-byte tag), and their lengths, less 17 bytes each, adding up to a size class. Otherwise it answers 400 and creates no note. The session stays open, as one still missing chunks does, until it is completed, its messages sent again at the right lengths, or it expires and its chunks are purged.",
 	request: {
 		params: z.object({ uploadId: uploadIdParam }),
 	},

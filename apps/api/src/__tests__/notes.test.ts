@@ -16,9 +16,10 @@ import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
 import { notes as notesTable, pendingDeletions } from "../db/schema.js";
+import { SEALED_CHUNK_OVERHEAD } from "../notes/serverLayer.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
-import { overrideStorage, stubStorage } from "./storageDoubles.js";
+import { holdFirstChunkWrite, overrideStorage, stubStorage } from "./storageDoubles.js";
 import { createTestApp, createTestNotesService } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
@@ -1608,6 +1609,50 @@ describe("Chunked upload flow", () => {
 		await stream.arrayBuffer();
 	});
 
+	// A chunk's bytes reach the storage before its size is recorded. A
+	// completion in between would count the old size for the new bytes, and a
+	// second send of the chunk could leave its row and its bytes apart.
+	it("answers 409 to a completion, and to the same chunk, while a chunk is being written", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 2 });
+		const held = holdFirstChunkWrite(new LocalStorage(TEST_FILES_PATH));
+		const racingApp = createApp(db, held.storage);
+		const put = (index: number, chunk: Uint8Array) =>
+			racingApp.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/${String(index)}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+				body: chunk as BodyInit,
+			});
+		const complete = () =>
+			racingApp.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, { method: "POST" });
+		const first = chunkData("first chunk");
+		const other = chunkData("other");
+
+		const writing = put(0, first);
+		await held.written;
+
+		const again = await put(0, chunkData("the first chunk, sent again"));
+		expect(again.status).toBe(409);
+		expect((await again.json()).error).toBe("A chunk is still being written");
+		// Another chunk goes through meanwhile, but no completion does.
+		expect((await put(1, other)).status).toBe(200);
+		const early = await complete();
+		expect(early.status).toBe(409);
+		expect((await early.json()).error).toBe("A chunk is still being written");
+
+		held.release();
+		expect((await writing).status).toBe(200);
+		const done = await complete();
+		expect(done.status).toBe(201);
+		const { id } = (await done.json()) as { id: string };
+
+		// The note counts the bytes the storage holds, and serves them.
+		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
+		expect(row?.sizeBytes).toBe(first.length + other.length + 2 * SEALED_CHUNK_OVERHEAD);
+		const stream = await app.request(`/api/v1/notes/${id}/stream`);
+		const body = Buffer.from(await stream.arrayBuffer());
+		expect(body.subarray(4, 4 + first.length)).toEqual(Buffer.from(first));
+	});
+
 	it("queues the purge of a late chunk for a retry when it fails", async () => {
 		const { json: initJson } = await initUpload({ chunkCount: 2 });
 		const chunk = chunkData("late");
@@ -1930,7 +1975,7 @@ describe("Chunked upload flow", () => {
 		expect((await res.json()).error).toBe("Invalid request");
 	});
 
-	it("deduplicates concurrent uploads of the same chunk", async () => {
+	it("takes one of two sends of the same chunk at once, and records each chunk once", async () => {
 		const { json: initJson } = await initUpload({ chunkCount: 3 });
 		const chunk = chunkData("concurrent-chunk");
 		const headers = {
@@ -1959,7 +2004,10 @@ describe("Chunked upload flow", () => {
 				body: chunk as BodyInit,
 			}),
 		]);
-		expect(results.every((r) => r.status === 200)).toBe(true);
+		const statuses = results.map((r) => r.status);
+		// The second send of chunk 0 arrives while the first is written: refused.
+		expect(statuses.slice(0, 2).sort()).toEqual([200, 409]);
+		expect(statuses.slice(2)).toEqual([200, 200]);
 
 		const { uploadChunks: table } = await import("../db/schema.js");
 		const rows = db.select().from(table).where(eq(table.uploadId, initJson.uploadId)).all();

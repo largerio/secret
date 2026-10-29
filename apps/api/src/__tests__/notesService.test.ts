@@ -4,12 +4,17 @@ import { mkdirSync, rmSync } from "node:fs";
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
 import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto";
-import { BODY_FLOOR, encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
+import {
+	BODY_FLOOR,
+	encodeEnvelope,
+	MAX_MESSAGE_LENGTH,
+	MAX_PASSWORD_ATTEMPTS,
+} from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppDatabase, createDatabase } from "../db/index.js";
-import { notes as notesTable, pendingDeletions } from "../db/schema.js";
+import { notes as notesTable, pendingDeletions, uploadChunks } from "../db/schema.js";
 import { NoteError, type NoteErrorCode } from "../notes/errors.js";
 import { assertPadded } from "../notes/padding.js";
 import {
@@ -25,6 +30,7 @@ import type { ChunkedOpening, NoteSettings } from "../notes/types.js";
 import { noteErrorToHttp } from "../routes/notes/errorStatus.js";
 import { StorageNotFoundError } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
+import { holdFirstChunkWrite } from "./storageDoubles.js";
 import { createTestNotesService } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/notes-service-test.db";
@@ -155,6 +161,11 @@ async function chunksOf(chunks: ReadableStream<Uint8Array>): Promise<Buffer[]> {
 	return received;
 }
 
+/** How many chunks a note's row holds: null for a note sent whole. */
+function chunkCountOf(id: string): number | null | undefined {
+	return db.select().from(notesTable).where(eq(notesTable.id, id)).get()?.chunkCount;
+}
+
 /** A chunked note of the given chunks, uploaded through a session. */
 async function uploadChunked(chunks: Buffer[], fileCount = 1) {
 	const session = notes.openUpload({
@@ -271,6 +282,48 @@ describe("the notes service", () => {
 		expect(readBody).not.toHaveBeenCalled();
 	});
 
+	it("refuses a second write of a chunk being written, before reading it", async () => {
+		const held = holdFirstChunkWrite(storage);
+		const racing = createTestNotesService({
+			db,
+			serverKey: randomBytes(32),
+			storage: held.storage,
+		});
+		const session = racing.openUpload({ ...CHUNKED_SETTINGS, fileCount: 1, chunkCount: 1 });
+		const chunk = Buffer.from("chunk");
+		const writing = racing.receiveChunk({
+			uploadId: session.uploadId,
+			index: 0,
+			hash: sha256(chunk),
+			readBody: asBody(chunk),
+		});
+		await held.written;
+		const readBody = vi.fn(asBody(chunk));
+
+		expect(
+			await refusal(() =>
+				racing.receiveChunk({ uploadId: session.uploadId, index: 0, hash: "", readBody }),
+			),
+		).toBe("chunk_in_flight");
+		expect(readBody).not.toHaveBeenCalled();
+		expect(await refusal(() => racing.completeUpload(session.uploadId))).toBe("chunk_in_flight");
+		held.release();
+		await writing;
+		expect(chunkCountOf(racing.completeUpload(session.uploadId).id)).toBe(1);
+	});
+
+	it("frees a chunk once its write is refused", async () => {
+		const session = notes.openUpload({ ...CHUNKED_SETTINGS, fileCount: 1, chunkCount: 1 });
+		const chunk = Buffer.from("chunk");
+		const send = (hash: string) =>
+			notes.receiveChunk({ uploadId: session.uploadId, index: 0, hash, readBody: asBody(chunk) });
+
+		expect(await refusal(() => send("0".repeat(64)))).toBe("chunk_hash_mismatch");
+		await send(sha256(chunk));
+		const { id } = notes.completeUpload(session.uploadId);
+		expect(await chunksOf((await notes.stream(id)).chunks)).toEqual([chunk]);
+	});
+
 	it("refuses a chunked row it cannot serve before spending its read", async () => {
 		const { id } = await uploadChunked([Buffer.from("head")], 0);
 		// A corrupt row: chunked, without the stream header a reader needs.
@@ -357,6 +410,23 @@ describe("format 1 message lengths", () => {
 		expect(await Array.fromAsync(storage.list())).toHaveLength(3);
 	});
 
+	// A read frames the message with a 4-byte length. One that long is too
+	// large to build here: a buffer that says it is.
+	it("refuses a note sent whole whose message a read could not frame, before storing it", async () => {
+		const claiming = (byteLength: number): Buffer =>
+			Object.defineProperty(Buffer.from(MESSAGE), "byteLength", { value: byteLength });
+
+		expect(
+			await refusal(() => notes.create(claiming(MAX_MESSAGE_LENGTH + 1), format1Settings(1))),
+		).toBe("note_too_large");
+		// At the bound, its length is checked as any other's: no size class.
+		expect(
+			await refusal(() => notes.create(claiming(MAX_MESSAGE_LENGTH), format1Settings(1))),
+		).toBe("note_not_padded");
+		expect(db.select().from(notesTable).all()).toEqual([]);
+		expect(await Array.fromAsync(storage.list())).toEqual([]);
+	});
+
 	it("leaves format 0 alone, whatever its length", async () => {
 		const { id } = await notes.create(Buffer.from("x"), { ...SETTINGS, fileCount: 0 });
 
@@ -374,7 +444,7 @@ describe("format 1 message lengths", () => {
 		for (const cut of cuts) {
 			const { id } = await uploadFormat1(format1Settings(1), cut.map(message));
 
-			expect(notes.check(id), cut.join()).toMatchObject({ chunked: true });
+			expect(chunkCountOf(id), cut.join()).toBe(cut.length);
 		}
 	});
 
@@ -418,15 +488,34 @@ describe("format 1 message lengths", () => {
 		// Sent again, under the same index, at the right length, it completes.
 		await send(1, message(2048));
 		const { id } = notes.completeUpload(session.uploadId);
-		expect(notes.check(id)).toMatchObject({ chunked: true });
+		expect(chunkCountOf(id)).toBe(2);
 	});
 
-	it("reads the messages' lengths from their sealed sizes", () => {
+	// The rows record each message as the server sealed it, longer by its
+	// layer, and the rules apply to the message: taken as stored, a message
+	// that much short of the floor would hold it exactly, and one that holds
+	// it would not.
+	it("reads the messages' lengths from their sealed sizes", async () => {
 		const layer = createServerLayer(randomBytes(32));
-
 		expect(layer.sealChunk("aBcDeFgHiJkL", MESSAGE)).toHaveLength(
 			MESSAGE.length + SEALED_CHUNK_OVERHEAD,
 		);
+		const settings = format1Settings(1);
+		const session = notes.openUpload({ ...settings, chunkCount: 1 });
+		const short = message(BODY_FLOOR - SEALED_CHUNK_OVERHEAD);
+		await notes.receiveChunk({
+			uploadId: session.uploadId,
+			index: 0,
+			hash: sha256(short),
+			readBody: asBody(short),
+		});
+
+		expect(db.select().from(uploadChunks).all()).toMatchObject([
+			{ sizeBytes: BODY_FLOOR + SECRETSTREAM_ABYTES },
+		]);
+		expect(await refusal(() => notes.completeUpload(session.uploadId))).toBe("note_not_padded");
+		const { id } = await uploadFormat1(settings, [message(BODY_FLOOR)]);
+		expect(chunkCountOf(id)).toBe(1);
 	});
 
 	it("refuses an empty last message, and a note of no message", () => {

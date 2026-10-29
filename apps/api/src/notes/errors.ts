@@ -33,7 +33,10 @@ export type NoteErrorCode =
 	 * its session's completion.
 	 */
 	| "note_not_padded"
-	/** A note without files larger than the database is meant to hold. */
+	/**
+	 * A note without files larger than the database is meant to hold, or a
+	 * format 1 note sent whole whose message is longer than a read can frame.
+	 */
 	| "note_too_large"
 	/** The stored note does not open: corrupt bytes, or a corrupt row. */
 	| "note_corrupted"
@@ -52,6 +55,11 @@ export type NoteErrorCode =
 	| "upload_already_completed"
 	/** The session row no longer parses: a database problem, not the client's. */
 	| "upload_corrupted"
+	/**
+	 * A chunk of the session is still being written: the session is not
+	 * completed, nor the chunk sent again, until that write has answered.
+	 */
+	| "chunk_in_flight"
 	| "chunk_out_of_range"
 	| "chunk_empty"
 	| "chunk_too_large"
@@ -78,6 +86,7 @@ const MESSAGES: Readonly<Record<NoteErrorCode, string>> = {
 	upload_incomplete: "Upload incomplete",
 	upload_already_completed: "Upload already completed",
 	upload_corrupted: "Corrupted upload session",
+	chunk_in_flight: "A chunk is still being written",
 	chunk_out_of_range: "Chunk index out of range",
 	chunk_empty: "Empty chunk body",
 	chunk_too_large: "Chunk too large",

@@ -1,5 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
-import { MAX_INLINE_ENCRYPTED_SIZE, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
+import {
+	MAX_INLINE_ENCRYPTED_SIZE,
+	MAX_MESSAGE_LENGTH,
+	MAX_PASSWORD_ATTEMPTS,
+} from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../db/index.js";
 import { notes } from "../db/schema.js";
@@ -314,8 +318,13 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 
 	return {
 		async create(ciphertext, settings) {
-			// A format 1 note sent whole is one message, its ciphertext.
+			// A format 1 note sent whole is one message, its ciphertext. Its read
+			// frames it with a 4-byte length: a longer one would be stored, and
+			// spend its read, but never be served.
 			if (settings.opening.format === 1) {
+				if (ciphertext.byteLength > MAX_MESSAGE_LENGTH) {
+					throw new NoteError("note_too_large");
+				}
 				assertPadded([ciphertext.byteLength]);
 			}
 			assertWithinLimits(limits, settings);
@@ -396,6 +405,7 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			}
 
 			const maxReads = note.maxReads ?? 0;
+			const format1 = isFormat1(note);
 			const info = {
 				hasPassword: note.hasPassword,
 				fileCount: note.fileCount,
@@ -405,9 +415,12 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 				// counting forever, and reporting that would hand anyone holding the
 				// link a live view counter, so it stays at 0.
 				readCount: maxReads > 0 ? note.readCount : 0,
-				chunked: isChunked(note),
+				// Which format 0 read serves the note. A format 1 note has one read,
+				// and whether it went up in a session hints at its size: false,
+				// whichever way it did, for the clients that need the field.
+				chunked: !format1 && isChunked(note),
 			};
-			if (!isFormat1(note)) {
+			if (!format1) {
 				return info;
 			}
 			const passwordAttemptsLeft = MAX_PASSWORD_ATTEMPTS - note.failedAttempts;
@@ -465,7 +478,12 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			// Sent whole, it is one message, served framed as a session's are: a
 			// reader reads a note the same way, however it went up.
 			const { meta, ciphertext } = await serveSingleShot(note, reading.opening);
-			return { meta, chunkCount: 1, chunks: oneChunkStream(ciphertext) };
+			return {
+				meta,
+				chunkCount: 1,
+				chunks: oneChunkStream(ciphertext),
+				byteLength: ciphertext.byteLength,
+			};
 		},
 
 		async delete(id, deleteToken) {

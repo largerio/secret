@@ -31,11 +31,14 @@ export function rawResponse({ meta, ciphertext }: NoteRead<Format0Opening>): Res
  * A note's messages, length-prefixed, its metadata in headers: the answer of
  * `GET /notes/{id}/stream`, and of every format 1 read.
  */
-export function streamResponse({ meta, chunkCount, chunks }: NoteStream): Response {
-	return new Response(lengthPrefixed(chunks) as BodyInit, {
-		status: 200,
-		headers: streamHeaders(meta, chunkCount),
-	});
+export function streamResponse({ meta, chunkCount, chunks, byteLength }: NoteStream): Response {
+	const headers = streamHeaders(meta, chunkCount);
+	// Known for a note sent whole, so a reader can show its progress: the
+	// messages, each with the 4 bytes of its length.
+	if (byteLength !== undefined) {
+		headers["Content-Length"] = String(byteLength + 4 * chunkCount);
+	}
+	return new Response(lengthPrefixed(chunks) as BodyInit, { status: 200, headers });
 }
 
 /** Strip CRLF and null bytes to prevent HTTP header injection */

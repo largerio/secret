@@ -126,6 +126,11 @@ export interface NoteStream<Opening extends ChunkedOpening = ChunkedOpening> {
 	readonly chunkCount: number;
 	/** The client's chunks, in order, the server's layer removed. */
 	readonly chunks: ReadableStream<Uint8Array>;
+	/**
+	 * Their length in all, when it is known before they are read: a note sent
+	 * whole, in memory already. A chunked note's would take reading every chunk.
+	 */
+	readonly byteLength?: number | undefined;
 }
 
 /** What a format 1 reader sends to be served (PROTOCOL.md): the proofs of its link and password. */

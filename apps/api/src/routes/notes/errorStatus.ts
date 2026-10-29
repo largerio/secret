@@ -24,6 +24,7 @@ const NOTE_ERROR_STATUS: Readonly<Record<NoteErrorCode, ContentfulStatusCode>> =
 	upload_incomplete: 400,
 	upload_already_completed: 409,
 	upload_corrupted: 500,
+	chunk_in_flight: 409,
 	chunk_out_of_range: 400,
 	chunk_empty: 400,
 	chunk_too_large: 413,

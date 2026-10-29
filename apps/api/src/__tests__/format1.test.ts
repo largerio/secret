@@ -37,7 +37,7 @@ import { notes as notesTable, pendingDeletions, uploads as uploadsTable } from "
 import { drainPendingDeletions } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
-import { overrideStorage } from "./storageDoubles.js";
+import { holdFirstChunkWrite, overrideStorage } from "./storageDoubles.js";
 import { createTestApp } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/format1-test.db";
@@ -205,19 +205,22 @@ async function createNote(envelope: Buffer, ciphertext: Buffer = CIPHERTEXT) {
 	return (await res.json()) as { id: string; expiresAt: string; deleteToken: string };
 }
 
+function putChunk(uploadId: string, index: number, chunk: Buffer, target: Hono<AppEnv> = app) {
+	return target.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(index)}`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256(chunk) },
+		body: new Uint8Array(chunk) as BodyInit,
+	});
+}
+
 async function sendChunks(uploadId: string, chunks: readonly Buffer[]): Promise<void> {
 	for (const [index, chunk] of chunks.entries()) {
-		const res = await app.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(index)}`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256(chunk) },
-			body: new Uint8Array(chunk) as BodyInit,
-		});
-		expect(res.status).toBe(200);
+		expect((await putChunk(uploadId, index, chunk)).status).toBe(200);
 	}
 }
 
-function complete(uploadId: string) {
-	return app.request(`/api/v1/notes/upload/${uploadId}/complete`, { method: "POST" });
+function complete(uploadId: string, target: Hono<AppEnv> = app) {
+	return target.request(`/api/v1/notes/upload/${uploadId}/complete`, { method: "POST" });
 }
 
 // A format 1 note sent in a session: two messages, cut evenly, holding the
@@ -509,6 +512,8 @@ describe("/exists, for format 1", () => {
 			envelope: b64(withPassword),
 			passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS,
 		});
+		// Sent in a session, it still answers chunked: false: anyone with the id
+		// would learn from it how the note went up, which hints at its size.
 		expect(await existsOf(chunkedId)).toEqual({
 			exists: true,
 			hasPassword: false,
@@ -516,9 +521,26 @@ describe("/exists, for format 1", () => {
 			expiresAt: expect.any(String),
 			maxReads: 1,
 			readCount: 0,
-			chunked: true,
+			chunked: false,
 			envelope: b64(chunked),
 		});
+	});
+
+	it("still tells a format 0 note's reader which endpoint serves it", async () => {
+		const init = await postInit({
+			streamHeader: "header",
+			clientNonce: "nonce",
+			hasPassword: false,
+			expiresIn: 3600,
+			maxReads: 1,
+			fileCount: 1,
+			chunkCount: 1,
+		});
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		await sendChunks(uploadId, [Buffer.from("chunk")]);
+		const { id } = (await (await complete(uploadId)).json()) as { id: string };
+
+		expect(await existsOf(id)).toMatchObject({ exists: true, chunked: true });
 	});
 
 	it("serves neither to a format 0 note", async () => {
@@ -599,6 +621,27 @@ describe("format 1 reads, with proofs", () => {
 		}
 		expect(await messagesOf(res)).toEqual(CHUNKS);
 		expect((await postReads(id)).status).toBe(404);
+	});
+
+	// Known for a note sent whole, so that a reader can show its progress. A
+	// session's would take reading every message before the answer starts.
+	it("tells the length of a note sent whole, not of one sent in a session", async () => {
+		const { id } = await createNote(envelopeOf({ fileCount: 1 }));
+		const { id: chunkedId } = await createChunkedNote(envelopeOf({ fileCount: 1 }));
+
+		// Compression would drop it: the answer is never compressed.
+		const whole = await app.request(`/api/v1/notes/${id}/reads`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "Accept-Encoding": "gzip" },
+			body: JSON.stringify(PROOFS),
+		});
+		const inSession = await postReads(chunkedId);
+
+		expect(whole.headers.get("Content-Length")).toBe(String(4 + CIPHERTEXT.length));
+		expect(whole.headers.get("Content-Encoding")).toBeNull();
+		expect(Buffer.from(await whole.arrayBuffer())).toHaveLength(4 + CIPHERTEXT.length);
+		expect(inSession.headers.get("Content-Length")).toBeNull();
+		expect(await messagesOf(inSession)).toEqual(CHUNKS);
 	});
 
 	it("needs no write authentication", async () => {
@@ -1547,7 +1590,7 @@ describe("format 1 message lengths", () => {
 		["a single message", [BODY_FLOOR]],
 		["messages cut evenly", [1024, 1024, 1024, 1024]],
 		["a last message shorter than the others", [4096, 256]],
-		["a last message as long as the others", [3000, 3000, 2192]],
+		["messages cut at no power of two, the last holding the rest", [3000, 3000, 2192]],
 	])("completes a session of %s, its body a size class", async (_, bodies) => {
 		const messages = bodies.map(messageOf);
 
@@ -1575,6 +1618,43 @@ describe("format 1 message lengths", () => {
 		expect(db.select().from(uploadsTable).all()).toMatchObject([{ id: uploadId }]);
 		expect(await storedObjects()).toHaveLength(1);
 		expect((await complete(uploadId)).status).toBe(400);
+	});
+
+	// A message sent again reaches the storage before its length is recorded:
+	// a completion in between would check the old lengths and keep the new
+	// message, which no rule would have seen.
+	it("checks a message sent again only once it is written, and refuses to complete before", async () => {
+		const envelope = envelopeOf({ fileCount: 1 });
+		const init = await postInit({
+			envelope: b64(envelope),
+			...verifiersFor(envelope),
+			chunkCount: 2,
+		});
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		const first = messageOf(2048);
+		await sendChunks(uploadId, [first, messageOf(2048)]);
+		const held = holdFirstChunkWrite(new LocalStorage(TEST_FILES_PATH));
+		const racing = createApp({}, held.storage);
+
+		// The last message sent again, one byte short: stored, its length not
+		// yet recorded.
+		const writing = putChunk(uploadId, 1, messageOf(2047), racing);
+		await held.written;
+
+		const early = await complete(uploadId, racing);
+		expect(early.status).toBe(409);
+		expect(await early.json()).toEqual({ error: "A chunk is still being written" });
+		held.release();
+		expect((await writing).status).toBe(200);
+		expect(await (await complete(uploadId, racing)).json()).toEqual(NOT_PADDED);
+
+		// Once its writes have answered, the session completes.
+		const last = messageOf(2048);
+		expect((await putChunk(uploadId, 1, last, racing)).status).toBe(200);
+		const done = await complete(uploadId, racing);
+		expect(done.status).toBe(201);
+		const { id } = (await done.json()) as { id: string };
+		expect(await messagesOf(await postReads(id))).toEqual([first, last]);
 	});
 
 	it("leaves a refused session's chunks to the cleanup job, once it expires", async () => {
