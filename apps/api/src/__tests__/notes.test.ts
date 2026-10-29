@@ -5,16 +5,17 @@ import type { DatabaseSync } from "node:sqlite";
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
 import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../app.js";
 import type { AppDatabase } from "../db/index.js";
 import { createDatabase } from "../db/index.js";
-import { pendingDeletions } from "../db/schema.js";
+import { notes as notesTable, pendingDeletions } from "../db/schema.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
 import { overrideStorage, stubStorage } from "./storageDoubles.js";
-import { createTestApp } from "./testApp.js";
+import { createTestApp, createTestNotesService } from "./testApp.js";
 
 vi.mock("../routes/cap.js", () => ({
 	cap: {
@@ -284,8 +285,6 @@ describe("POST /api/v1/notes", () => {
 		const { id } = (await res.json()) as { id: string };
 
 		// The ciphertext lives in the storage; the row only points to it.
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		expect(row?.fileCount).toBe(2);
 		expect(row?.encryptedData.length).toBe(0);
@@ -332,6 +331,26 @@ describe("POST /api/v1/notes", () => {
 		expect(res.status).toBe(201);
 	});
 
+	// Without `required`, a request with no Content-Type skipped validation and
+	// reached the handler empty: a 500.
+	it("refuses a create without a body or without a Content-Type", async () => {
+		const empty = await app.request("/api/v1/notes", { method: "POST", headers: authHeaders() });
+		expect(empty.status).toBe(400);
+
+		const untyped = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify(validBody()),
+		});
+		expect(untyped.status).toBe(415);
+
+		const init = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders(),
+		});
+		expect(init.status).toBe(400);
+	});
+
 	it("rejects invalid JSON body", async () => {
 		const res = await app.request("/api/v1/notes", {
 			method: "POST",
@@ -343,15 +362,13 @@ describe("POST /api/v1/notes", () => {
 });
 
 describe("POST /api/v1/notes/upload (multipart)", () => {
-	it("rejects non-multipart body", async () => {
+	it("refuses a body that is not multipart as an unsupported media type", async () => {
 		const res = await app.request("/api/v1/notes/upload", {
 			method: "POST",
 			headers: authHeaders({ "Content-Type": "application/json" }),
 			body: JSON.stringify({ invalid: true }),
 		});
-		expect(res.status).toBe(400);
-		const json = await res.json();
-		expect(json.error).toBe("Invalid multipart body");
+		expect(res.status).toBe(415);
 	});
 
 	it("creates a note via multipart upload", async () => {
@@ -513,9 +530,7 @@ describe("GET /api/v1/notes/:id/exists", () => {
 	it("keeps readCount at 0 for a legacy note whose maxReads is null", async () => {
 		const { id } = await createTestNote({ maxReads: 3 });
 		await app.request(`/api/v1/notes/${id}`);
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes).set({ maxReads: null }).where(eq(notes.id, id)).run();
+		db.update(notesTable).set({ maxReads: null }).where(eq(notesTable.id, id)).run();
 
 		const json = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
 		expect(json.maxReads).toBe(0);
@@ -524,9 +539,7 @@ describe("GET /api/v1/notes/:id/exists", () => {
 
 	it("returns maxReads 0 when database value is null", async () => {
 		const { id } = await createTestNote();
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes).set({ maxReads: null }).where(eq(notes.id, id)).run();
+		db.update(notesTable).set({ maxReads: null }).where(eq(notesTable.id, id)).run();
 
 		const res = await app.request(`/api/v1/notes/${id}/exists`);
 		expect(res.status).toBe(200);
@@ -536,9 +549,7 @@ describe("GET /api/v1/notes/:id/exists", () => {
 
 	it("reads note with null maxReads without error", async () => {
 		const { id } = await createTestNote();
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes).set({ maxReads: null }).where(eq(notes.id, id)).run();
+		db.update(notesTable).set({ maxReads: null }).where(eq(notesTable.id, id)).run();
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(200);
@@ -555,11 +566,9 @@ describe("GET /api/v1/notes/:id/exists", () => {
 		const { id } = await createTestNote({ expiresIn: 300 });
 
 		// Manually expire the note by updating the DB
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}/exists`);
@@ -574,11 +583,9 @@ describe("GET /api/v1/notes/:id/exists", () => {
 		const before = await (await app.request(`/api/v1/notes/${id}/exists`)).json();
 		expect(before.readCount).toBe(1);
 
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}/exists`);
@@ -741,11 +748,9 @@ describe("GET /api/v1/notes/:id", () => {
 	it("returns 404 for expired note and cleans up", async () => {
 		const { id } = await createTestNote({ expiresIn: 300 });
 
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}`);
@@ -760,11 +765,9 @@ describe("GET /api/v1/notes/:id", () => {
 		const filePath = `${TEST_FILES_PATH}/${id}`;
 		expect(existsSync(filePath)).toBe(true);
 
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}`);
@@ -775,11 +778,9 @@ describe("GET /api/v1/notes/:id", () => {
 
 	it("counts an expired note a read deletes with the ones the cleanup job deletes", async () => {
 		const { id } = await createTestNote({ expiresIn: 300 });
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const metered = createApp(db, undefined, { METRICS_TOKEN });
@@ -804,11 +805,9 @@ describe("GET /api/v1/notes/:id", () => {
 		const { id } = await createTestNote();
 
 		// Corrupt the encrypted data directly in the database
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		db.update(notes)
+		db.update(notesTable)
 			.set({ encryptedData: Buffer.from("corrupted-data") })
-			.where(eq(notes.id, id))
+			.where(eq(notesTable.id, id))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${id}`);
@@ -825,12 +824,10 @@ describe("GET /api/v1/notes/:id", () => {
 		const { id: idA } = await createTestNote();
 		const { id: idB } = await createTestNote();
 
-		const { notes } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
-		const noteB = db.select().from(notes).where(eq(notes.id, idB)).get();
-		db.update(notes)
+		const noteB = db.select().from(notesTable).where(eq(notesTable.id, idB)).get();
+		db.update(notesTable)
 			.set({ encryptedData: noteB?.encryptedData, serverNonce: noteB?.serverNonce })
-			.where(eq(notes.id, idA))
+			.where(eq(notesTable.id, idA))
 			.run();
 
 		const res = await app.request(`/api/v1/notes/${idA}`);
@@ -840,8 +837,6 @@ describe("GET /api/v1/notes/:id", () => {
 
 	it("returns 404 when the stored file has been removed from disk", async () => {
 		const { id } = await createTestNote({ fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		const note = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		const filePath = note?.filePath ?? "";
 		expect(filePath).toBeTruthy();
@@ -868,8 +863,14 @@ describe("GET /api/v1/notes/:id", () => {
 		});
 		const flakyApp = createApp(db, flakyStorage);
 
+		// The outage is an error of the server's, logged with an id; it used to be
+		// reported as a note that failed to decrypt, and not logged.
 		const failed = await flakyApp.request(`/api/v1/notes/${id}`);
 		expect(failed.status).toBe(500);
+		expect(await failed.json()).toEqual({
+			error: "Internal server error",
+			errorId: expect.any(String),
+		});
 
 		storageDown = false;
 		const served = await flakyApp.request(`/api/v1/notes/${id}`);
@@ -882,9 +883,6 @@ describe("GET /api/v1/notes/:id", () => {
 
 	it("keeps a burn-after-read file note whose blob fails to decrypt", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
-
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 
 		// Corrupt the file on disk by writing garbage to the stored path
 		const note = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
@@ -908,8 +906,6 @@ describe("GET /api/v1/notes/:id", () => {
 
 	it("queues the purge of an expired note for a retry when it fails", async () => {
 		const { id } = await createTestNote({ expiresIn: 300, fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
@@ -934,8 +930,6 @@ describe("GET /api/v1/notes/:id", () => {
 	// note and answering 500. The shape check must run before the read is burned.
 	it("rejects a chunked note on the JSON endpoint without consuming a read", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
 			.set({ chunkCount: 1, streamHeader: "hdr" })
 			.where(eq(notesTable.id, id))
@@ -943,7 +937,7 @@ describe("GET /api/v1/notes/:id", () => {
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Note is chunked; read it from /:id/stream");
+		expect((await res.json()).error).toBe("Note is chunked: read it as a stream");
 
 		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		expect(row).toBeDefined();
@@ -952,8 +946,6 @@ describe("GET /api/v1/notes/:id", () => {
 
 	it("rejects a chunked note on the raw endpoint without consuming a read", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 0 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
 			.set({ chunkCount: 1, streamHeader: "hdr" })
 			.where(eq(notesTable.id, id))
@@ -1126,23 +1118,19 @@ describe("DELETE /api/v1/notes/:id", () => {
 });
 
 describe("storage purge resilience", () => {
-	function insertParams(fileCount: number) {
-		return {
-			clientBlob: Buffer.from("payload"),
+	/** Creates a note through the notes service alone, over the given storage. */
+	function createNote(storage: StorageBackend, fileCount: number) {
+		const notes = createTestNotesService({ db, serverKey: TEST_SERVER_KEY, storage });
+		return notes.create(Buffer.from("ciphertext"), {
 			clientNonce: "nonce",
 			hasPassword: false,
 			expiresIn: 3600,
 			maxReads: 1,
 			fileCount,
-			salt: null,
-			quotaBytes: 0,
-		};
+		});
 	}
 
 	it("purges the stored blob when the insert fails", async () => {
-		// Imported lazily: a static import would evaluate the shared Zod schemas
-		// before @hono/zod-openapi extends Zod with .openapi().
-		const { insertNote } = await import("../routes/notes/helpers.js");
 		const storage = new LocalStorage(TEST_FILES_PATH);
 		const saved: string[] = [];
 		const trackingStorage = overrideStorage(storage, {
@@ -1158,24 +1146,19 @@ describe("storage purge resilience", () => {
 			cause: expect.objectContaining({ message: "database or disk is full" }),
 		});
 
-		await expect(insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(1))).rejects.toThrow(
-			diskFull,
-		);
+		await expect(createNote(trackingStorage, 1)).rejects.toThrow(diskFull);
 
 		expect(saved).toHaveLength(1);
 		expect(existsSync(`${TEST_FILES_PATH}/${saved[0]}`)).toBe(false);
 		expect(pendingNoteIds()).toEqual([]);
 
 		// A text-only note stores no blob: nothing to write, nothing to queue.
-		await expect(insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(0))).rejects.toThrow(
-			diskFull,
-		);
+		await expect(createNote(trackingStorage, 0)).rejects.toThrow(diskFull);
 		expect(saved).toHaveLength(1);
 		expect(pendingNoteIds()).toEqual([]);
 	});
 
 	it("purges what a failed save left behind", async () => {
-		const { insertNote } = await import("../routes/notes/helpers.js");
 		const storage = new LocalStorage(TEST_FILES_PATH);
 		const saved: string[] = [];
 		const halfWriting = overrideStorage(storage, {
@@ -1186,16 +1169,13 @@ describe("storage purge resilience", () => {
 			},
 		});
 
-		await expect(insertNote(db, TEST_SERVER_KEY, halfWriting, insertParams(1))).rejects.toThrow(
-			"no space left on device",
-		);
+		await expect(createNote(halfWriting, 1)).rejects.toThrow("no space left on device");
 
 		expect(existsSync(`${TEST_FILES_PATH}/${saved[0]}`)).toBe(false);
 		expect(pendingNoteIds()).toEqual([]);
 	});
 
 	it("queues the purge before writing, so a crash mid-save leaves no orphan", async () => {
-		const { insertNote } = await import("../routes/notes/helpers.js");
 		let saving: string | undefined;
 		// A save that never settles stands for a process killed during the write.
 		const hangingStorage = stubStorage({
@@ -1205,7 +1185,7 @@ describe("storage purge resilience", () => {
 			}),
 		});
 
-		void insertNote(db, TEST_SERVER_KEY, hangingStorage, insertParams(1));
+		void createNote(hangingStorage, 1);
 		await vi.waitFor(() => expect(saving).toBeDefined());
 
 		const [pending] = db.select().from(pendingDeletions).all();
@@ -1303,14 +1283,10 @@ describe("storage purge resilience", () => {
 
 			expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(500);
 
-			const { notes: notesTable } = await import("../db/schema.js");
-			const { eq } = await import("drizzle-orm");
 			expect(db.select().from(notesTable).where(eq(notesTable.id, id)).get()?.readCount).toBe(0);
 		});
 
 		it("drops the save's queued purge in the insert's own transaction", async () => {
-			const { insertNote } = await import("../routes/notes/helpers.js");
-			const { notes: notesTable } = await import("../db/schema.js");
 			const storage = new LocalStorage(TEST_FILES_PATH);
 			const saved: string[] = [];
 			const trackingStorage = overrideStorage(storage, {
@@ -1323,9 +1299,7 @@ describe("storage purge resilience", () => {
 				BEGIN SELECT RAISE(ABORT, 'outbox locked'); END`);
 			vi.spyOn(console, "error").mockImplementation(() => {});
 
-			await expect(
-				insertNote(db, TEST_SERVER_KEY, trackingStorage, insertParams(1)),
-			).rejects.toThrow();
+			await expect(createNote(trackingStorage, 1)).rejects.toThrow();
 
 			// No note may exist while its blob is queued for a purge.
 			expect(db.select().from(notesTable).all()).toHaveLength(0);
@@ -1425,7 +1399,7 @@ describe("Chunked upload flow", () => {
 			body: chunk as BodyInit,
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Missing X-Chunk-Hash header");
+		expect((await res.json()).error).toBe("Invalid request");
 	});
 
 	it("rejects chunk with hash mismatch", async () => {
@@ -1434,11 +1408,29 @@ describe("Chunked upload flow", () => {
 
 		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
 			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": "badhash" },
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": sha256hex(chunkData("other")),
+			},
 			body: chunk as BodyInit,
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error).toBe("Chunk hash mismatch");
+	});
+
+	it.each([
+		["not hex", "badhash"],
+		["upper case", "A".repeat(64)],
+	])("rejects a chunk hash that is %s", async (_, hash) => {
+		const { json: initJson } = await initUpload();
+
+		const res = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": hash },
+			body: chunkData("test") as BodyInit,
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("Invalid request");
 	});
 
 	it("handles chunk upload when session is deleted mid-upload", async () => {
@@ -1657,8 +1649,7 @@ describe("Chunked upload flow", () => {
 		});
 
 		// Look up the upload session's noteId and pre-insert a note with that ID
-		const { uploads: uploadsTable, notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
+		const { uploads: uploadsTable } = await import("../db/schema.js");
 		const { serverEncrypt } = await import("@largerio/secret-crypto");
 		const session = db
 			.select()
@@ -1711,7 +1702,7 @@ describe("Chunked upload flow", () => {
 			body: "not-json{{",
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Invalid JSON body");
+		expect((await res.json()).error).toBe("Malformed JSON in request body");
 	});
 
 	it("rejects invalid schema on init", async () => {
@@ -1734,7 +1725,7 @@ describe("Chunked upload flow", () => {
 			body: chunk as BodyInit,
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Invalid chunk index");
+		expect((await res.json()).error).toBe("Invalid request");
 	});
 
 	it("rejects chunk with non-integer index", async () => {
@@ -1754,7 +1745,7 @@ describe("Chunked upload flow", () => {
 				},
 			);
 			expect(res.status).toBe(400);
-			expect((await res.json()).error).toBe("Invalid chunk index");
+			expect((await res.json()).error).toBe("Invalid request");
 		}
 	});
 
@@ -1794,7 +1785,7 @@ describe("Chunked upload flow", () => {
 				headers: authHeaders(),
 			});
 			expect(res.status).toBe(400);
-			expect((await res.json()).error).toBe("Invalid upload ID");
+			expect((await res.json()).error).toBe("Invalid request");
 		}
 	});
 
@@ -1839,7 +1830,7 @@ describe("Chunked upload flow", () => {
 			body: chunk as BodyInit,
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Invalid upload ID");
+		expect((await res.json()).error).toBe("Invalid request");
 	});
 
 	it("rejects POST complete with invalid uploadId format", async () => {
@@ -1848,7 +1839,7 @@ describe("Chunked upload flow", () => {
 			headers: authHeaders(),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error).toBe("Invalid upload ID");
+		expect((await res.json()).error).toBe("Invalid request");
 	});
 
 	it("deduplicates concurrent uploads of the same chunk", async () => {
@@ -1883,7 +1874,6 @@ describe("Chunked upload flow", () => {
 		expect(results.every((r) => r.status === 200)).toBe(true);
 
 		const { uploadChunks: table } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		const rows = db.select().from(table).where(eq(table.uploadId, initJson.uploadId)).all();
 		expect(rows).toHaveLength(3);
 		expect(rows.map((r) => r.chunkIndex).sort()).toEqual([0, 1, 2]);
@@ -1899,7 +1889,6 @@ describe("Chunked upload flow", () => {
 		});
 
 		const { uploads: uploadsTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(uploadsTable)
 			.set({ metadata: "not-valid-json" })
 			.where(eq(uploadsTable.id, initJson.uploadId))
@@ -1923,7 +1912,6 @@ describe("Chunked upload flow", () => {
 		});
 
 		const { uploads: uploadsTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		// Valid JSON but missing every required metadata field.
 		db.update(uploadsTable)
 			.set({ metadata: JSON.stringify({ unexpected: "shape" }) })
@@ -2048,8 +2036,6 @@ describe("GET /api/v1/notes/:id/stream", () => {
 	it("returns 404 for expired chunked note on stream", async () => {
 		const { id } = await createChunkedNote();
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
@@ -2063,8 +2049,6 @@ describe("GET /api/v1/notes/:id/stream", () => {
 
 	it("queues the purge of an expired chunked note for a retry when it fails", async () => {
 		const { id } = await createChunkedNote();
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
@@ -2095,7 +2079,7 @@ describe("GET /api/v1/notes/:id/stream", () => {
 		const res = await app.request("/api/v1/notes/bad!id/stream");
 		expect(res.status).toBe(400);
 		const json = await res.json();
-		expect(json.error).toBe("Invalid note ID");
+		expect(json.error).toBe("Invalid request");
 	});
 
 	it("burns chunked note after stream read with maxReads=1", async () => {
@@ -2112,8 +2096,6 @@ describe("GET /api/v1/notes/:id/stream", () => {
 
 	it("streams chunked note with null maxReads (unlimited reads)", async () => {
 		const { id } = await createChunkedNote();
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: null }).where(eq(notesTable.id, id)).run();
 
 		const res = await app.request(`/api/v1/notes/${id}/stream`);
@@ -2239,8 +2221,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		// Create note using real storage first
 		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		// Now create an app with a storage that returns too-small chunk data
@@ -2252,7 +2232,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		// Chunk 0 is decrypted before the read counts, so this fails up front.
 		const res = await corruptApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(500);
-		expect(await res.json()).toEqual({ error: "Failed to decrypt note" });
+		expect(await res.json()).toMatchObject({ error: "Failed to decrypt note" });
 
 		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		expect(row?.readCount).toBe(0);
@@ -2263,8 +2243,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const purge = vi.fn().mockRejectedValue(new Error("chunk cleanup failure"));
 		const failApp = createApp(db, overrideStorage(realStorage, { purge }));
 		const { id } = await createChunkedNoteViaApp(failApp, 2);
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -2300,8 +2278,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const res = await errorApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(500);
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		const row = db.select().from(notesTable).where(eq(notesTable.id, id)).get();
 		expect(row?.readCount).toBe(0);
 	});
@@ -2325,8 +2301,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage));
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const { StorageNotFoundError } = await import("../storage/errors.js");
@@ -2406,8 +2380,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 4);
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		const purge = vi.fn().mockResolvedValue(undefined);
@@ -2430,8 +2402,6 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 		const realStorage = new LocalStorage(TEST_FILES_PATH);
 		const { id } = await createChunkedNoteViaApp(createApp(db, realStorage), 2);
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		db.update(notesTable).set({ maxReads: 1 }).where(eq(notesTable.id, id)).run();
 
 		// Chunk 1 read stays pending until released, keeping a pull() in flight
@@ -2651,8 +2621,6 @@ describe("burn-after-read under concurrent reads", () => {
 
 		expect([a.status, b.status].sort()).toEqual([200, 404]);
 
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 		expect(db.select().from(notesTable).where(eq(notesTable.id, id)).get()).toBeUndefined();
 	});
 
@@ -2680,8 +2648,6 @@ describe("burn-after-read under concurrent reads", () => {
 
 	it("answers 404 to a reader whose payload was still loading when another burned it", async () => {
 		const { id } = await createTestNote({ maxReads: 1, fileCount: 1 });
-		const { notes: notesTable } = await import("../db/schema.js");
-		const { eq } = await import("drizzle-orm");
 
 		// The payload is read before the read counts, so the other reader's burn
 		// can land in between: this reader has the blob but must not serve it.

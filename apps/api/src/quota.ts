@@ -1,5 +1,4 @@
 import { sql } from "drizzle-orm";
-import { HTTPException } from "hono/http-exception";
 import type { AppDatabase } from "./db/index.js";
 
 /**
@@ -17,23 +16,12 @@ export function getStorageUsedBytes(db: AppDatabase): number {
 }
 
 /**
- * Refuse a write that would push storage usage past the operator's quota.
- * A quota of 0 (or an unset context value) disables the check entirely.
- *
- * 507 Insufficient Storage tells the client the *server* is full — unlike 413,
- * which says the request itself is too large. Writes recover on their own as
- * notes expire or are deleted.
+ * Whether a write of `incomingBytes` would push storage usage past the
+ * operator's quota. A quota of 0 disables the check entirely.
  */
-export function assertStorageQuota(
-	db: AppDatabase,
-	quotaBytes: number,
-	incomingBytes: number,
-): void {
+export function exceedsQuota(db: AppDatabase, quotaBytes: number, incomingBytes: number): boolean {
 	if (!(quotaBytes > 0)) {
-		return;
+		return false;
 	}
-	if (getStorageUsedBytes(db) + incomingBytes <= quotaBytes) {
-		return;
-	}
-	throw new HTTPException(507, { message: "Storage quota exceeded" });
+	return getStorageUsedBytes(db) + incomingBytes > quotaBytes;
 }

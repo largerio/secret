@@ -56,7 +56,8 @@ export const noteIdSchema = z
 	.length(NOTE_ID_LENGTH, `Note ID must be ${String(NOTE_ID_LENGTH)} characters`);
 
 /**
- * Runtime guard for note IDs in non-OpenAPI routes (raw/stream endpoints).
+ * Runtime guard for note IDs met outside the routes' schemas: the storage
+ * backends check with it the keys they list.
  * Single source of truth for the ID format — keep in sync with noteIdSchema.
  */
 export function isValidNoteId(id: string): boolean {

@@ -386,6 +386,7 @@ developer: tell errors apart by their status.
 | 404 | The note, or the upload session, does not exist |
 | 409 | A message sent while its upload session was being completed |
 | 413 | Too large |
+| 415 | A body that is not JSON, or not multipart for `/notes/upload` |
 | 429 | Rate limited |
 | 500 | Server error, such as a note the server cannot decrypt |
 | 507 | The instance's storage quota is full |

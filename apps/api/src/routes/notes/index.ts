@@ -1,10 +1,15 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { registerChunkedRoutes } from "./chunked.js";
-import type { NotesEnv } from "./helpers.js";
-import { registerStandardRoutes } from "./standard.js";
+import type { NotesService } from "../../notes/service.js";
+import { registerReadRoutes } from "./reads.js";
+import { registerWriteRoutes } from "./writes.js";
 
-export function createNotesRoutes() {
-	const app = new OpenAPIHono<NotesEnv>({
+/**
+ * The notes API over the service: each route validates its request against
+ * its OpenAPI schema, calls the service and shapes the answer. A refusal of
+ * the service reaches the app's error handler, which maps it (errorStatus.ts).
+ */
+export function createNotesRoutes(notes: NotesService) {
+	const app = new OpenAPIHono({
 		defaultHook: (result, c) => {
 			if (!result.success) {
 				return c.json({ error: "Invalid request" }, 400);
@@ -12,12 +17,8 @@ export function createNotesRoutes() {
 		},
 	});
 
-	// Registration order matters: standard routes first, then chunked routes,
-	// preserving the original top-to-bottom order so middleware (validateUploadId)
-	// stays registered before the handlers it guards and static `/upload/*` paths
-	// keep priority over the `/:id` param routes.
-	registerStandardRoutes(app);
-	registerChunkedRoutes(app);
+	registerWriteRoutes(app, notes);
+	registerReadRoutes(app, notes);
 
 	return app;
 }
