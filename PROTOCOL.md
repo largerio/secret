@@ -321,7 +321,7 @@ and otherwise:
 
 It spends no read. `chunked` tells which endpoint serves the note: `/stream`,
 or `/raw` and the JSON endpoint. Asking the wrong one answers `400` and spends
-no read, and so does a read of a [format 1](#reading-in-the-right-format)
+no read, and so does a read of a [format 1](#proof-of-reading)
 note. `readCount` stays 0 for a note with unlimited reads. Every note
 endpoint answers `400` to an id that is not 12 characters of the alphabet
 above.
@@ -351,7 +351,8 @@ also needs [write authentication](#authentication). The answer is
 
 ## Authentication
 
-Reads are open. Creating and deleting a note need one of:
+Reads need no authentication: a format 1 read [proves](#proof-of-reading)
+that it holds the link instead. Creating and deleting a note need one of:
 
 - `Authorization: Bearer <API key>`, with a key the operator configured;
 - `X-Cap-Token: <token>`, a single-use proof-of-work token from the
@@ -384,9 +385,9 @@ developer: tell errors apart by their status.
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Invalid request, or the wrong read endpoint or format |
+| 400 | Invalid request, the wrong read endpoint or format, or a password note's read without its password proof |
 | 401 | Write authentication missing or refused |
-| 403 | Wrong delete token |
+| 403 | Wrong delete token, or a wrong read proof |
 | 404 | The note, or the upload session, does not exist |
 | 409 | A message sent while its upload session was being completed |
 | 413 | Too large |
@@ -402,6 +403,10 @@ file names, MIME types or file bytes. It does learn:
 
 - the metadata it is given: `hasPassword`, `fileCount`, `maxReads`, the
   expiry, the salt, and when the note was created and read;
+- for a format 1 note, its verifiers, the proofs a reader sends, and how many
+  wrong passwords were tried. These are HKDF outputs, apart from the key: they
+  tell nothing of the key or the password, but whoever holds a note's proofs
+  can have its ciphertext served;
 - sizes. A single-shot ciphertext is the MessagePack payload plus 16 bytes,
   which gives the length of the text and of the files together. A chunked
   note shows the size of its head, and, since a piece never holds two files,
@@ -421,6 +426,12 @@ blob moved to another note fails to decrypt.
   (`notes.encrypted_data`) for a note without files, or in the storage for a
   note with files.
 - A chunked note stores every message as its own object: IV, ciphertext, tag.
+
+A format 1 note's verifiers are not stored as they came, but as
+HMAC-SHA256 over the note id followed by the verifier, under a key derived
+from `SERVER_ENCRYPTION_KEY` (HKDF-SHA256, no salt, `info` `"secret/server
+verifier"`). A copy of the database without the key thus gives nothing to test
+passwords against, even to whoever holds the link.
 
 ## Limits of format 0
 
@@ -446,8 +457,7 @@ blob moved to another note fails to decrypt.
 
 **Draft.** Instances accept and serve format 1, and the reference SDK reads it,
 but writes it only when asked to (`format: 1`). Its bytes may still change
-before it is marked final, with a proof of reading and padding: do not write
-it outside tests yet. Instances keep reading and accepting format 0
+before it is marked final, with padding: do not write it outside tests yet. Instances keep reading and accepting format 0
 throughout the app's 1.x releases, so links already shared and clients that
 only speak format 0 keep working.
 
@@ -460,7 +470,10 @@ What changes from format 0:
   normalized to NFC, and the link's key enters the derivation;
 - the settings a writer declares travel in one **envelope**, which the
   ciphertext authenticates;
-- a read names the format it expects, and the server serves no other;
+- a read [proves](#proof-of-reading) that it holds the link, and the password
+  of a password note, before the server serves anything: a wrong password
+  spends no read, and whoever knows only the note's id can neither read nor
+  burn it;
 - a reader checks the payload strictly.
 
 The payload, the two kinds of note, the way a chunked note is cut, and every
@@ -498,8 +511,18 @@ PRK = HKDF-Extract(salt = none, IKM)
 encryption key = HKDF-Expand(PRK, info = "secret/1 enc", 32)
 ```
 
-`salt = none` is HKDF's default, 32 zero bytes. `info` is ASCII. Other `info`
-strings are reserved for keys format 1 will derive from the same PRK.
+`salt = none` is HKDF's default, 32 zero bytes. `info` is ASCII. The same
+secrets give the [proofs](#proof-of-reading) a reader sends:
+
+```
+link proof     = HKDF-Expand(HKDF-Extract(salt = none, K), info = "secret/1 link", 32)
+password proof = HKDF-Expand(PRK, info = "secret/1 read", 32)      with a password only
+link verifier     = SHA-256(link proof)
+password verifier = SHA-256(password proof)
+```
+
+Without a password, the link proof's PRK is the PRK above. Other `info` strings
+are reserved for keys format 1 will derive from the same PRK.
 
 ### The link
 
@@ -522,11 +545,12 @@ from it, stores it, and serves it back byte for byte. It is the additional
 data of every AEAD operation on the note, so a reader detects any change to
 it, once it has derived the key.
 
-The envelope is public. Today the server serves it only with the ciphertext,
-but a reader will need it before reading once reads require a proof of the
-key, so it is designed for anyone who knows the note's id to obtain. It holds
-nothing derived from the password or from `K`, and never will: from such a
-value, whoever has the link could test passwords without reading the note.
+The envelope is public: the server serves it to anyone who knows the note's
+id, since a reader needs its salt and Argon2id parameters to derive the
+proofs it reads with. It holds nothing derived from the password or from `K`,
+and never will: from such a value, whoever has the link could test passwords
+without reading the note. That is why the verifiers travel beside it, and are
+never served.
 
 | Offset | Bytes | Field |
 |--------|-------|-------|
@@ -564,25 +588,27 @@ format 0's fields beside it are ignored.
 3. Encrypt with XChaCha20-Poly1305 IETF under the encryption key and the
    nonce, with the envelope as additional data.
 
-The note is sent with the envelope in place of format 0's fields:
+The note is sent with the envelope and the [verifiers](#keys-1) in place of
+format 0's fields:
 
 ```
 POST /api/v1/notes
 Content-Type: application/json
 
-{"envelope": "<base64 envelope>", "encryptedData": "<base64 ciphertext>"}
+{
+  "envelope": "<base64 envelope>",
+  "linkVerifier": "<base64>",
+  "passwordVerifier": "<base64>",
+  "encryptedData": "<base64 ciphertext>"
+}
 ```
 
 or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
-set to `{"envelope": "<base64 envelope>"}`. The answer is format 0's.
-
-```
-GET /api/v1/notes/{id}/raw?format=1
-```
-
-serves the ciphertext as for format 0, with an `X-Envelope` header (base64) in
-place of `X-Client-Nonce` and `X-Salt`. The JSON endpoint, `GET
-/api/v1/notes/{id}`, serves format 0 only.
+set to the same object without `encryptedData`. `passwordVerifier` is sent
+for a password note only: the server refuses (`400`) a format 1 write without
+a link verifier, without a password verifier for a password note, or with one
+for a note without a password. A verifier is 32 bytes. The answer is format
+0's.
 
 ### Chunked notes in format 1
 
@@ -591,41 +617,73 @@ envelope with its header (kind 1). The messages, their tags and the way the
 files are cut are format 0's, but every message is pushed with the envelope
 as additional data.
 
-The upload session opens with the envelope and the number of messages:
+The upload session opens with the envelope, the verifiers and the number of
+messages:
 
 ```
 POST /api/v1/notes/upload/init
 Content-Type: application/json
 
-{"envelope": "<base64 envelope>", "chunkCount": 3}
+{"envelope": "<base64 envelope>", "linkVerifier": "<base64>", "chunkCount": 3}
 ```
 
-The messages and `/complete` are sent as in format 0.
+(with `passwordVerifier` too for a password note). The messages and
+`/complete` are sent as in format 0.
+
+### Proof of reading
+
+A format 1 note is read in two steps, and the server serves nothing before the
+reader has proved what it holds:
+
+1. `GET /api/v1/notes/{id}/exists` answers as for format 0, with two more
+   fields: `envelope`, the note's envelope in base64, and for a password note
+   `passwordAttemptsLeft`. It spends no read.
+2. The reader checks the envelope, derives the keys and the proofs from it,
+   and sends the proofs:
 
 ```
-GET /api/v1/notes/{id}/stream?format=1
+POST /api/v1/notes/{id}/reads
+Content-Type: application/json
+
+{"linkProof": "<base64>", "passwordProof": "<base64>"}
 ```
 
-serves the stream as for format 0, with `X-Envelope` in place of
-`X-Stream-Header` and `X-Salt`.
+`passwordProof` is sent for a password note only; the server ignores it on a
+note without a password. The server checks, before it spends anything:
 
-### Reading in the right format
+- that the note is a format 1 note: a format 0 note answers `400`;
+- the link proof, against the note's link verifier: a wrong one answers `403`
+  and counts nothing, since whoever does not hold `K` cannot guess it;
+- for a password note, that a password proof was sent (`400` otherwise), and
+  that it matches the password verifier. A wrong one answers `403` and counts
+  one failed attempt.
 
-A read names the format it expects: `?format=1` on `/raw` and `/stream` for a
-format 1 note, nothing (or `?format=0`) for format 0, which the JSON endpoint
-always expects. The server serves a note only in its own format, and refuses
-any other read (`400`) without spending a read. A client that knows only
-format 0 thus never spends a read on a format 1 note, and the link a reader
-holds decides the format it reads: a note behind the link of the other format
-is refused, not opened.
+Failed attempts are counted on the note over its whole life: a read that
+succeeds does not reset them. The **fifth** deletes the note, as a burn
+would, and answers `403` like the others. `passwordAttemptsLeft` says how many
+remain, so a reader can tell the two apart.
+
+Once the proofs check out, the server serves the note as format 0's reads do,
+and spends a read the same way, once it has loaded the ciphertext:
+
+- a single-shot note: the ciphertext, with the headers of `/raw` but for
+  `X-Client-Nonce` and `X-Salt`;
+- a chunked note: the length-prefixed messages of `/stream`, with its headers
+  but for `X-Stream-Header` and `X-Salt`.
+
+The reader knows which from the envelope's kind, and opens the note with the
+envelope it derived the proofs from. `/raw`, `/stream` and the JSON endpoint
+serve format 0 only: they answer `400` to a format 1 note without spending a
+read, so a client that knows only format 0 never spends one on it. The link a
+reader holds decides the format it reads: a note behind the link of the other
+format is refused, not opened.
 
 ### Reading strictly
 
-`GET /api/v1/notes/{id}/exists` answers as for format 0: `hasPassword` comes
-from the envelope. A format 1 reader MUST refuse:
+In `/exists`, `hasPassword` comes from the envelope. A format 1 reader MUST
+refuse, before it sends any proof:
 
-- a response without an envelope, or with the envelope of the other kind than
-  the endpoint serves;
+- an answer without an envelope, or with one a reader would refuse;
 - a password note read without a password; a password given for a note
   without one is ignored;
 - a payload, or the head of a chunked note, that is not one MessagePack map
@@ -669,7 +727,7 @@ and, under `format1`:
 
 | Section | What it pins down |
 |---------|-------------------|
-| `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK and the encryption key. |
+| `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK, the encryption key, the proofs and their verifiers. |
 | `envelopes` | Envelopes, from their fields to their bytes. |
 | `pipeline` | Single-shot notes, from the payload to the ciphertext under its envelope. |
 | `secretstream` | Chunked notes. Their envelopes hold a random stream header, so these were written once. |

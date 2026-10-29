@@ -1,9 +1,16 @@
-import { argon2Sync, hkdfSync } from "node:crypto";
+import { argon2Sync, createHash, hkdfSync } from "node:crypto";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it } from "vitest";
 import { decryptChunk, decryptRaw, initStreamDecrypt } from "../decrypt.js";
 import { encryptChunk, encryptPayload, initStreamEncrypt } from "../encrypt.js";
-import { deriveFormat1Key, hkdfExpand, hkdfExtract, stretchPassword } from "../format1.js";
+import {
+	deriveFormat1Keys,
+	hkdfExpand,
+	hkdfExtract,
+	stretchPassword,
+	verifierOf,
+	zeroFormat1Keys,
+} from "../format1.js";
 import { generateKey, generateSalt, initSodium } from "../keys.js";
 
 beforeAll(async () => {
@@ -80,32 +87,76 @@ describe("stretchPassword", () => {
 	});
 });
 
-describe("deriveFormat1Key", () => {
+describe("deriveFormat1Keys", () => {
+	const hkdf = (ikm: Uint8Array, info: string) =>
+		Buffer.from(hkdfSync("sha256", ikm, new Uint8Array(0), info, 32)).toString("hex");
+
 	it("is HKDF over the link's key alone without a password", () => {
 		const linkKey = generateKey();
-		const expected = hkdfSync("sha256", linkKey, new Uint8Array(0), "secret/1 enc", 32);
-		expect(hex(deriveFormat1Key(linkKey))).toBe(Buffer.from(expected).toString("hex"));
+		const keys = deriveFormat1Keys(linkKey);
+		expect(hex(keys.encryptionKey)).toBe(hkdf(linkKey, "secret/1 enc"));
+		expect(hex(keys.linkProof)).toBe(hkdf(linkKey, "secret/1 link"));
+		expect(keys.passwordProof).toBeUndefined();
 	});
 
 	it("is HKDF over the link's key and the stretched password with one", () => {
 		const linkKey = generateKey();
 		const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
 		const ikm = Buffer.concat([linkKey, stretchPassword(password, linkKey)]);
-		const expected = hkdfSync("sha256", ikm, new Uint8Array(0), "secret/1 enc", 32);
-		expect(hex(deriveFormat1Key(linkKey, password))).toBe(Buffer.from(expected).toString("hex"));
+		const keys = deriveFormat1Keys(linkKey, password);
+		expect(hex(keys.encryptionKey)).toBe(hkdf(ikm, "secret/1 enc"));
+		expect(keys.passwordProof && hex(keys.passwordProof)).toBe(hkdf(ikm, "secret/1 read"));
+	});
+
+	// Whoever has the link but not the password can prove the link, never the password.
+	it("proves the link with the link's key alone, password or not", () => {
+		const linkKey = generateKey();
+		const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
+		expect(deriveFormat1Keys(linkKey, password).linkProof).toEqual(
+			deriveFormat1Keys(linkKey).linkProof,
+		);
+	});
+
+	it("gives three keys apart from each other and from the link's key", () => {
+		const linkKey = generateKey();
+		const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
+		const keys = deriveFormat1Keys(linkKey, password);
+		const all = [linkKey, keys.encryptionKey, keys.linkProof, keys.passwordProof].map((k) =>
+			k ? hex(k) : "",
+		);
+		expect(new Set(all).size).toBe(4);
 	});
 
 	it("leaves the link's key as it was", () => {
 		const linkKey = generateKey();
 		const copy = linkKey.slice();
-		deriveFormat1Key(linkKey, { password: "x", argon2: { salt: generateSalt(), ...LIGHT } });
-		deriveFormat1Key(linkKey);
+		deriveFormat1Keys(linkKey, { password: "x", argon2: { salt: generateSalt(), ...LIGHT } });
+		deriveFormat1Keys(linkKey);
 		expect(linkKey).toEqual(copy);
 	});
+});
 
-	it("never hands back the link's key itself", () => {
-		const linkKey = generateKey();
-		expect(deriveFormat1Key(linkKey)).not.toEqual(linkKey);
+describe("zeroFormat1Keys", () => {
+	it("wipes every key and proof", () => {
+		const password = { password: "x", argon2: { salt: generateSalt(), ...LIGHT } };
+		const keys = deriveFormat1Keys(generateKey(), password);
+		zeroFormat1Keys(keys);
+		for (const key of [keys.encryptionKey, keys.linkProof, keys.passwordProof]) {
+			expect(key).toEqual(new Uint8Array(32));
+		}
+	});
+
+	it("wipes a note's without a password proof", () => {
+		const keys = deriveFormat1Keys(generateKey());
+		zeroFormat1Keys(keys);
+		expect(keys.linkProof).toEqual(new Uint8Array(32));
+	});
+});
+
+describe("verifierOf", () => {
+	it("is the SHA-256 of the proof", () => {
+		const proof = generateKey();
+		expect(hex(verifierOf(proof))).toBe(createHash("sha256").update(proof).digest("hex"));
 	});
 });
 

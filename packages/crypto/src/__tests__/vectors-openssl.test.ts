@@ -1,4 +1,4 @@
-import { argon2Sync, createDecipheriv, hkdfSync } from "node:crypto";
+import { argon2Sync, createDecipheriv, createHash, hkdfSync } from "node:crypto";
 import { testVectors } from "@largerio/secret-shared";
 import { decode } from "@msgpack/msgpack";
 import { describe, expect, test } from "vitest";
@@ -169,34 +169,57 @@ describe("test vectors, checked by OpenSSL", () => {
 	describe("format 1", () => {
 		const { format1 } = vectors;
 
-		/** The key schedule of PROTOCOL.md, in OpenSSL: Argon2id over NFC and the key, then HKDF. */
+		const hkdf = (ikm: Buffer, info: string) =>
+			Buffer.from(hkdfSync("sha256", ikm, Buffer.alloc(0), info, 32));
+		const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("base64");
+
+		/** HKDF's input of PROTOCOL.md, in OpenSSL: the key, then Argon2id over NFC and the key. */
+		function format1Ikm(
+			linkKey: Buffer,
+			password?: string,
+			argon2?: { salt: string; iterations: number; memoryKiB: number },
+		): Buffer {
+			if (password === undefined || !argon2) {
+				return linkKey;
+			}
+			const stretched = argon2Sync("argon2id", {
+				message: Buffer.concat([Buffer.from(password.normalize("NFC"), "utf8"), linkKey]),
+				nonce: b64(argon2.salt),
+				parallelism: 1,
+				tagLength: 32,
+				memory: argon2.memoryKiB,
+				passes: argon2.iterations,
+			});
+			return Buffer.concat([linkKey, stretched]);
+		}
+
 		function format1Key(
 			linkKey: Buffer,
 			password?: string,
 			argon2?: { salt: string; iterations: number; memoryKiB: number },
 		): Buffer {
-			let ikm = linkKey;
-			if (password !== undefined && argon2) {
-				const stretched = argon2Sync("argon2id", {
-					message: Buffer.concat([Buffer.from(password.normalize("NFC"), "utf8"), linkKey]),
-					nonce: b64(argon2.salt),
-					parallelism: 1,
-					tagLength: 32,
-					memory: argon2.memoryKiB,
-					passes: argon2.iterations,
-				});
-				ikm = Buffer.concat([linkKey, stretched]);
-			}
-			return Buffer.from(hkdfSync("sha256", ikm, Buffer.alloc(0), "secret/1 enc", 32));
+			return hkdf(format1Ikm(linkKey, password, argon2), "secret/1 enc");
 		}
 
 		test(
-			"derives every key",
+			"derives every key, proof and verifier",
 			() => {
 				for (const v of format1.keys) {
-					const key = format1Key(b64(v.linkKey), v.password, v.argon2);
-					expect(key.toString("base64"), v.description).toBe(v.encryptionKey);
-					expect(v.keyFragment).toBe(`1.${b64(v.linkKey).toString("base64url")}`);
+					const linkKey = b64(v.linkKey);
+					const ikm = format1Ikm(linkKey, v.password, v.argon2);
+					expect(hkdf(ikm, "secret/1 enc").toString("base64"), v.description).toBe(v.encryptionKey);
+					expect(v.keyFragment).toBe(`1.${linkKey.toString("base64url")}`);
+
+					const linkProof = hkdf(linkKey, "secret/1 link");
+					expect(linkProof.toString("base64"), v.description).toBe(v.linkProof);
+					expect(sha256(linkProof), v.description).toBe(v.linkVerifier);
+					if (v.password === undefined) {
+						expect(v.passwordProof, v.description).toBeUndefined();
+						continue;
+					}
+					const passwordProof = hkdf(ikm, "secret/1 read");
+					expect(passwordProof.toString("base64"), v.description).toBe(v.passwordProof);
+					expect(sha256(passwordProof), v.description).toBe(v.passwordVerifier);
 				}
 			},
 			ARGON2_TIMEOUT,

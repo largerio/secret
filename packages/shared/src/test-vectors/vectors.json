@@ -1,5 +1,5 @@
 {
-	"version": 3,
+	"version": 4,
 	"generatedWith": "libsodium-wrappers-sumo 1.0.22",
 	"vectors": {
 		"xchacha20poly1305": [
@@ -247,7 +247,9 @@
 					"linkKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 					"keyFragment": "1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
 					"prk": "Rr0yBgXFprYWOrcLxjRbkqX5COef5Yl5wj67R9Gl4wc=",
-					"encryptionKey": "nSTGa9G436ID63MpzquTQQIGIe99dXi5IYI5RHh3dCc="
+					"encryptionKey": "nSTGa9G436ID63MpzquTQQIGIe99dXi5IYI5RHh3dCc=",
+					"linkProof": "gB7J1iL+MLp0yQwHArwlOfolvDqDslUYdiwDIpA2OwI=",
+					"linkVerifier": "+8jD2eI39459lwQZYrE2eZOWbbnyz9jf2g/pIvkHaf4="
 				},
 				{
 					"description": "password, with the parameters a writer uses",
@@ -261,7 +263,11 @@
 					},
 					"stretchedPassword": "ifUzejxaSPIxCtl8EEAK2dlUiv68+GMRr8vcTLcqQfo=",
 					"prk": "shhdTI/DtcU0PJwivO0haJiEQ5kETY2aD9bYbSL5KAY=",
-					"encryptionKey": "uqiC847/jIJ0Kf/whxAAJMCtohMWdo/WTxoXfag27NQ="
+					"encryptionKey": "uqiC847/jIJ0Kf/whxAAJMCtohMWdo/WTxoXfag27NQ=",
+					"linkProof": "0+IwoL4H5xB0+fWSanJ9scluduggLyJ1PTLlLdjEIa0=",
+					"linkVerifier": "3vmYNoNQt36HXleUYHIC6tJqvlBDMk84wXnDfdBCK28=",
+					"passwordProof": "6nq5UYVEchuyP901yjEwyQGgRFeS8do0y6qqdgZGmps=",
+					"passwordVerifier": "KlYdN7FKyByz6aiAhhi9ojJu5YWl0zTdtmnh+um3xgU="
 				},
 				{
 					"description": "password typed in NFD, light parameters",
@@ -275,7 +281,11 @@
 					},
 					"stretchedPassword": "rRNTKmGSdJVMQWpAVYUgMQBnZhYxb11pBidXkQSnE40=",
 					"prk": "sB25hPxvHlzgIoi1VYIgsygi1xYX+xHF82MGShKxuBI=",
-					"encryptionKey": "0bkSV06gJiXuN5b5zfOl+oXlQ+JHZCGdLKEijD1OwPo="
+					"encryptionKey": "0bkSV06gJiXuN5b5zfOl+oXlQ+JHZCGdLKEijD1OwPo=",
+					"linkProof": "bI3JiEeCNH+Hos6A3QgZYKBURz/+JEpLunrAIC9/bxs=",
+					"linkVerifier": "TLjh0idJPwZ2mOPvHxKikr89j06tsJ1O9JCdYv897TM=",
+					"passwordProof": "t/sbDT4iwxLawZKZFFM8JuRlyq+4FftmnBjDrDvIM9c=",
+					"passwordVerifier": "XOnKyL2FpP4bv7MzsI1YYOsKhQoY1csGVxGDwc97Lto="
 				}
 			],
 			"envelopes": [

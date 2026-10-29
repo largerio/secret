@@ -16,6 +16,7 @@ import {
 	ENVELOPE_LENGTH,
 	type Envelope,
 	encodeEnvelope,
+	parseEnvelope,
 } from "../envelope.js";
 import {
 	chunkedUploadInitFormat1Schema,
@@ -26,6 +27,7 @@ import {
 	createNoteSchema,
 	isValidNoteId,
 	noteIdSchema,
+	noteReadRequestSchema,
 	uploadSessionFormat1MetadataSchema,
 	uploadSessionMetadataSchema,
 } from "../validation.js";
@@ -460,9 +462,30 @@ function withU32(bytes: Uint8Array, offset: number, value: number): Uint8Array {
 const ITERATIONS = 50;
 const MEMORY = 54;
 
+const LINK_VERIFIER = new Uint8Array(32).fill(7);
+const PASSWORD_VERIFIER = new Uint8Array(32).fill(8);
+
+/** The verifiers a writer sends with this envelope: a password one if it has a password. */
+function verifiersOf(envelope: string): Record<string, string> {
+	const parsed = parseEnvelope(new Uint8Array(Buffer.from(envelope, "base64")));
+	return {
+		linkVerifier: b64(LINK_VERIFIER),
+		...(parsed?.argon2 ? { passwordVerifier: b64(PASSWORD_VERIFIER) } : {}),
+	};
+}
+
+/** What a 32-byte field refuses: other lengths, and what is not base64. */
+const NOT_32_BYTES: ReadonlyArray<readonly [string, string]> = [
+	["31 bytes", b64(new Uint8Array(31))],
+	["33 bytes", b64(new Uint8Array(33))],
+	["32 bytes without padding", b64(new Uint8Array(32)).slice(0, -1)],
+	["not base64", `${"!".repeat(43)}=`],
+	["empty", ""],
+];
+
 describe("createNoteFormat1Schema", () => {
 	const parse = (envelope: string, encryptedData = "ciphertext") =>
-		createNoteFormat1Schema.safeParse({ envelope, encryptedData });
+		createNoteFormat1Schema.safeParse({ envelope, encryptedData, ...verifiersOf(envelope) });
 
 	it("hands back the envelope's bytes and what they say", () => {
 		const bytes = singleShot({ fileCount: 0, maxReads: 0, expiresIn: 600 });
@@ -548,30 +571,108 @@ describe("createNoteFormat1Schema", () => {
 	});
 
 	it("refuses an envelope without its ciphertext", () => {
-		expect(parse(b64(singleShot()), "").success).toBe(false);
-		expect(createNoteFormat1Schema.safeParse({ envelope: b64(singleShot()) }).success).toBe(false);
+		const envelope = b64(singleShot());
+		expect(parse(envelope, "").success).toBe(false);
+		expect(createNoteFormat1Schema.safeParse({ envelope, ...verifiersOf(envelope) }).success).toBe(
+			false,
+		);
+	});
+
+	it("hands back the verifiers' bytes", () => {
+		const result = parse(b64(singleShot({ argon2: ARGON2 })));
+
+		expect(result.data?.linkVerifier).toEqual(LINK_VERIFIER);
+		expect(result.data?.passwordVerifier).toEqual(PASSWORD_VERIFIER);
+	});
+
+	it("refuses a note without a link verifier", () => {
+		const result = createNoteFormat1Schema.safeParse({
+			envelope: b64(singleShot()),
+			encryptedData: "ciphertext",
+		});
+
+		expect(result.success).toBe(false);
+	});
+
+	it("refuses a password note without a password verifier", () => {
+		const result = createNoteFormat1Schema.safeParse({
+			envelope: b64(singleShot({ argon2: ARGON2 })),
+			linkVerifier: b64(LINK_VERIFIER),
+			encryptedData: "ciphertext",
+		});
+
+		expect(result.error?.issues[0]?.path).toEqual(["passwordVerifier"]);
+	});
+
+	it("refuses a password verifier for a note without a password", () => {
+		const result = createNoteFormat1Schema.safeParse({
+			envelope: b64(singleShot()),
+			linkVerifier: b64(LINK_VERIFIER),
+			passwordVerifier: b64(PASSWORD_VERIFIER),
+			encryptedData: "ciphertext",
+		});
+
+		expect(result.error?.issues[0]?.message).toBe(
+			"A password verifier comes with a password note, and only with one",
+		);
+	});
+
+	it.each(NOT_32_BYTES)("refuses a verifier of %s", (_, verifier) => {
+		const envelope = b64(singleShot({ argon2: ARGON2 }));
+		const verifiers = verifiersOf(envelope);
+		for (const request of [
+			{ ...verifiers, linkVerifier: verifier },
+			{ ...verifiers, passwordVerifier: verifier },
+		]) {
+			const result = createNoteFormat1Schema.safeParse({
+				envelope,
+				encryptedData: "ciphertext",
+				...request,
+			});
+			expect(result.success).toBe(false);
+		}
 	});
 });
 
 describe("createNoteMultipartFormat1Schema", () => {
 	it("accepts the envelope of a note with files", () => {
-		const result = createNoteMultipartFormat1Schema.safeParse({ envelope: b64(singleShot()) });
+		const envelope = b64(singleShot());
+		const result = createNoteMultipartFormat1Schema.safeParse({
+			envelope,
+			...verifiersOf(envelope),
+		});
 
 		expect(result.data?.envelope.envelope.fileCount).toBe(1);
+		expect(result.data?.linkVerifier).toEqual(LINK_VERIFIER);
 	});
 
 	it("refuses the envelope of a note without files, or of a chunked note", () => {
 		for (const bytes of [singleShot({ fileCount: 0 }), chunked()]) {
-			const result = createNoteMultipartFormat1Schema.safeParse({ envelope: b64(bytes) });
+			const envelope = b64(bytes);
+			const result = createNoteMultipartFormat1Schema.safeParse({
+				envelope,
+				...verifiersOf(envelope),
+			});
 			expect(result.success).toBe(false);
+		}
+	});
+
+	it("refuses verifiers that do not match the envelope", () => {
+		for (const request of [
+			{ envelope: b64(singleShot()) },
+			{ envelope: b64(singleShot({ argon2: ARGON2 })), linkVerifier: b64(LINK_VERIFIER) },
+		]) {
+			expect(createNoteMultipartFormat1Schema.safeParse(request).success).toBe(false);
 		}
 	});
 });
 
 describe("chunkedUploadInitFormat1Schema", () => {
 	it("accepts a chunked note's envelope, which holds its stream header", () => {
+		const envelope = b64(chunked({ fileCount: 0 }));
 		const result = chunkedUploadInitFormat1Schema.safeParse({
-			envelope: b64(chunked({ fileCount: 0 })),
+			envelope,
+			...verifiersOf(envelope),
 			chunkCount: 3,
 		});
 
@@ -584,8 +685,10 @@ describe("chunkedUploadInitFormat1Schema", () => {
 	});
 
 	it("refuses a single-shot note's envelope", () => {
+		const envelope = b64(singleShot());
 		const result = chunkedUploadInitFormat1Schema.safeParse({
-			envelope: b64(singleShot()),
+			envelope,
+			...verifiersOf(envelope),
 			chunkCount: 3,
 		});
 
@@ -594,13 +697,25 @@ describe("chunkedUploadInitFormat1Schema", () => {
 
 	it("refuses a chunk count out of range, or none", () => {
 		const envelope = b64(chunked());
+		const verifiers = verifiersOf(envelope);
 		for (const request of [
-			{ envelope, chunkCount: 0 },
-			{ envelope, chunkCount: 10_001 },
-			{ envelope },
+			{ envelope, ...verifiers, chunkCount: 0 },
+			{ envelope, ...verifiers, chunkCount: 10_001 },
+			{ envelope, ...verifiers },
 		]) {
 			expect(chunkedUploadInitFormat1Schema.safeParse(request).success).toBe(false);
 		}
+	});
+
+	it("refuses verifiers that do not match the envelope", () => {
+		const envelope = b64(chunked({ argon2: ARGON2 }));
+		const result = chunkedUploadInitFormat1Schema.safeParse({
+			envelope,
+			linkVerifier: b64(LINK_VERIFIER),
+			chunkCount: 3,
+		});
+
+		expect(result.error?.issues[0]?.path).toEqual(["passwordVerifier"]);
 	});
 });
 
@@ -608,14 +723,64 @@ describe("uploadSessionFormat1MetadataSchema", () => {
 	it("accepts the session of a chunked note", () => {
 		const bytes = chunked({ argon2: ARGON2 });
 
-		const result = uploadSessionFormat1MetadataSchema.safeParse({ envelope: b64(bytes) });
+		const result = uploadSessionFormat1MetadataSchema.safeParse({
+			envelope: b64(bytes),
+			...verifiersOf(b64(bytes)),
+		});
 
 		expect(result.data?.envelope.bytes).toEqual(bytes);
+		expect(result.data?.linkVerifier).toEqual(LINK_VERIFIER);
+		expect(result.data?.passwordVerifier).toEqual(PASSWORD_VERIFIER);
 	});
 
-	it("refuses a session whose envelope no longer holds", () => {
-		for (const metadata of [{ envelope: b64(singleShot()) }, { envelope: "" }, {}, null]) {
+	it("refuses a session whose envelope or verifiers no longer hold", () => {
+		const envelope = b64(chunked());
+		const linkVerifier = b64(LINK_VERIFIER);
+		for (const metadata of [
+			{ envelope: b64(singleShot()), linkVerifier },
+			{ envelope: "", linkVerifier },
+			{ envelope },
+			{ envelope, linkVerifier: "" },
+			{ envelope, linkVerifier, passwordVerifier: b64(PASSWORD_VERIFIER) },
+			{},
+			null,
+		]) {
 			expect(uploadSessionFormat1MetadataSchema.safeParse(metadata).success).toBe(false);
+		}
+	});
+});
+
+describe("noteReadRequestSchema", () => {
+	const LINK_PROOF = new Uint8Array(32).fill(3);
+	const PASSWORD_PROOF = new Uint8Array(32).fill(4);
+
+	it("hands back the proofs' bytes", () => {
+		const result = noteReadRequestSchema.safeParse({
+			linkProof: b64(LINK_PROOF),
+			passwordProof: b64(PASSWORD_PROOF),
+		});
+
+		expect(result.data).toEqual({ linkProof: LINK_PROOF, passwordProof: PASSWORD_PROOF });
+	});
+
+	it("takes a link proof alone, for a note without a password", () => {
+		const result = noteReadRequestSchema.safeParse({ linkProof: b64(LINK_PROOF) });
+
+		expect(result.data).toEqual({ linkProof: LINK_PROOF });
+	});
+
+	it("refuses a read without a link proof", () => {
+		expect(noteReadRequestSchema.safeParse({ passwordProof: b64(PASSWORD_PROOF) }).success).toBe(
+			false,
+		);
+	});
+
+	it.each(NOT_32_BYTES)("refuses a proof of %s", (_, proof) => {
+		for (const request of [
+			{ linkProof: proof },
+			{ linkProof: b64(LINK_PROOF), passwordProof: proof },
+		]) {
+			expect(noteReadRequestSchema.safeParse(request).success).toBe(false);
 		}
 	});
 });

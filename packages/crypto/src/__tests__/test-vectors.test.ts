@@ -8,7 +8,7 @@ import {
 	initStreamDecrypt,
 } from "../decrypt.js";
 import { encodePayload } from "../encrypt.js";
-import { deriveFormat1Key, hkdfExtract, stretchPassword } from "../format1.js";
+import { deriveFormat1Keys, hkdfExtract, stretchPassword, verifierOf } from "../format1.js";
 import {
 	deriveKeyFromPassword,
 	fromBase64,
@@ -166,7 +166,16 @@ describe("test vectors", () => {
 					ikm = new Uint8Array([...linkKey, ...stretched]);
 				}
 				expect(toBase64(hkdfExtract(ikm)), v.description).toBe(v.prk);
-				expect(toBase64(deriveFormat1Key(linkKey, password)), v.description).toBe(v.encryptionKey);
+				const keys = deriveFormat1Keys(linkKey, password);
+				expect(toBase64(keys.encryptionKey), v.description).toBe(v.encryptionKey);
+				expect(toBase64(keys.linkProof), v.description).toBe(v.linkProof);
+				expect(toBase64(verifierOf(keys.linkProof)), v.description).toBe(v.linkVerifier);
+				expect(keys.passwordProof && toBase64(keys.passwordProof), v.description).toBe(
+					v.passwordProof,
+				);
+				expect(keys.passwordProof && toBase64(verifierOf(keys.passwordProof)), v.description).toBe(
+					v.passwordVerifier,
+				);
 			}
 		}, 30_000);
 

@@ -9,7 +9,7 @@
  *     pnpm vitest run packages/crypto/src/__tests__/generate-test-vectors.test.ts
  */
 
-import { createHmac, hkdfSync } from "node:crypto";
+import { createHash, createHmac, hkdfSync } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { NotePayload } from "@largerio/secret-shared";
@@ -268,11 +268,19 @@ test("the committed test vectors match what the crypto produces", async () => {
 				: undefined;
 		const ikm = stretched ? Buffer.concat([linkKey, stretched]) : Buffer.from(linkKey);
 		const prk = createHmac("sha256", Buffer.alloc(32)).update(ikm).digest();
-		const encryptionKey = new Uint8Array(
-			hkdfSync("sha256", ikm, Buffer.alloc(0), "secret/1 enc", 32),
-		);
-		return { stretched, prk, encryptionKey, keyFragment: `1.${toB64Url(linkKey)}` };
+		const hkdf = (input: Uint8Array, info: string) =>
+			new Uint8Array(hkdfSync("sha256", input, Buffer.alloc(0), info, 32));
+		return {
+			stretched,
+			prk,
+			encryptionKey: hkdf(ikm, "secret/1 enc"),
+			linkProof: hkdf(linkKey, "secret/1 link"),
+			passwordProof: stretched ? hkdf(ikm, "secret/1 read") : undefined,
+			keyFragment: `1.${toB64Url(linkKey)}`,
+		};
 	};
+
+	const verifier = (proof: Uint8Array) => createHash("sha256").update(proof).digest("base64");
 
 	const keyVector = (
 		description: string,
@@ -290,6 +298,14 @@ test("the committed test vectors match what the crypto produces", async () => {
 				: {}),
 			prk: toB64(keys.prk),
 			encryptionKey: toB64(keys.encryptionKey),
+			linkProof: toB64(keys.linkProof),
+			linkVerifier: verifier(keys.linkProof),
+			...(keys.passwordProof
+				? {
+						passwordProof: toB64(keys.passwordProof),
+						passwordVerifier: verifier(keys.passwordProof),
+					}
+				: {}),
 		};
 	};
 
@@ -471,7 +487,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 	// --- Build vectors object ---
 
 	const vectors = {
-		version: 3,
+		version: 4,
 		generatedWith: `libsodium-wrappers-sumo ${sodium.SODIUM_VERSION_STRING}`,
 		vectors: {
 			xchacha20poly1305: [
