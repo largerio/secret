@@ -826,7 +826,7 @@ an integer value for one, as the reference reader does. The reference reader
 also reads an integer key as a string and decodes invalid UTF-8 without
 refusing it, which another reader may refuse, and it refuses a `__proto__`
 key and a key that is neither a string nor a number, which no writer
-writes.
+writes: another reader may refuse them too.
 
 ## Test vectors
 
