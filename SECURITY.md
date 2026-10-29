@@ -29,6 +29,8 @@ Secret uses a double-encryption model:
 
 The decryption key is stored in the URL fragment (`#key`), which browsers never send to the server. The server never has access to plaintext content.
 
+[PROTOCOL.md](PROTOCOL.md) specifies the format: the keys, both note formats, what the server learns, and the limits of the current format.
+
 ## What the Server Can See
 
 Zero-knowledge covers the content, not the metadata. This is what the operator,

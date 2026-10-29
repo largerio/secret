@@ -193,6 +193,9 @@ Browser                                   Server
 
 The encryption key lives in the URL fragment (`#key`), which browsers never send to the server.
 
+[PROTOCOL.md](PROTOCOL.md) specifies the format and the API flows, with test vectors, for anyone writing a
+client in another language.
+
 ## Configuration
 
 All settings via environment variables. See [.env.example](.env.example) for the full list.
