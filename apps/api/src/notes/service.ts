@@ -75,12 +75,12 @@ export interface NotesService extends Uploads {
 	/** The note's state, or undefined for a note that is gone. Spends no read. */
 	check(id: string): NoteInfo | undefined;
 	/**
-	 * Spends a read on a single-shot note of one of `formats`, the formats the
-	 * caller can answer. A note of another is refused before its read is spent.
+	 * Spends a read on a single-shot note in `format`, the one the reader asked
+	 * for. A note in another is refused before its read is spent.
 	 */
-	read<F extends NoteFormat>(id: string, formats: readonly F[]): Promise<NoteRead<F>>;
-	/** Spends a read on a chunked note, once its first chunk is loaded. */
-	stream(id: string): Promise<NoteStream>;
+	read<F extends NoteFormat>(id: string, format: F): Promise<NoteRead<F>>;
+	/** Spends a read on a chunked note in `format`, once its first chunk is loaded. */
+	stream(id: string, format: NoteFormat): Promise<NoteStream>;
 	delete(id: string, deleteToken: string): Promise<void>;
 }
 
@@ -232,14 +232,17 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			};
 		},
 
-		async read<F extends NoteFormat>(id: string, formats: readonly F[]): Promise<NoteRead<F>> {
+		async read<F extends NoteFormat>(id: string, format: F): Promise<NoteRead<F>> {
 			const note = readableNote(id);
 			if (isChunked(note)) {
 				throw new NoteError("note_is_chunked");
 			}
 			const opening = openingOf(note);
-			if (!isOfFormat(opening, formats)) {
-				throw new NoteError("note_format_unsupported");
+			if (opening === undefined) {
+				throw new NoteError("note_corrupted");
+			}
+			if (!isOfFormat(opening, format)) {
+				throw new NoteError("note_format_mismatch");
 			}
 
 			const { filePath } = note;
@@ -265,17 +268,20 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			return { meta: metaOf(note, opening), ciphertext };
 		},
 
-		async stream(id) {
+		async stream(id, format) {
 			const note = readableNote(id);
 			if (!isChunked(note)) {
 				throw new NoteError("note_is_single_shot");
 			}
 			// Everything the answer needs is checked before the read is spent: a
-			// format 0 row without its stream header (a corrupt row) cannot be read.
+			// corrupt row cannot be read, nor a note in another format than asked.
 			const { chunkCount } = note;
 			const opening = chunkedOpeningOf(note);
 			if (opening === undefined) {
 				throw new NoteError("note_corrupted");
+			}
+			if (opening.format !== format) {
+				throw new NoteError("note_format_mismatch");
 			}
 
 			// The first chunk is loaded and opened before the read counts, so a

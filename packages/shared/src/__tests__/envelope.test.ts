@@ -55,8 +55,9 @@ describe("encodeEnvelope", () => {
 		["expiresIn", { expiresIn: Number.NaN }],
 	])("refuses a %s that does not fit", (field, change) => {
 		expect(() => encodeEnvelope({ ...singleShot, ...change })).toThrow(
-			new RangeError(`${field} does not fit in the envelope`),
+			new RegExp(`^${field} must be an integer from 0 to \\d+$`),
 		);
+		expect(() => encodeEnvelope({ ...singleShot, ...change })).toThrow(RangeError);
 	});
 
 	it("refuses a nonce or a stream header of the wrong length", () => {
@@ -78,7 +79,7 @@ describe("encodeEnvelope", () => {
 		["memoryKiB", ARGON2_MIN_ITERATIONS, ARGON2_MAX_MEMORY_KIB + 1],
 	])("refuses Argon2id %s a reader would not run", (field, iterations, memoryKiB) => {
 		expect(() => encodeEnvelope({ ...chunked, argon2: { salt, iterations, memoryKiB } })).toThrow(
-			`${field} does not fit in the envelope`,
+			`${field} must be an integer from`,
 		);
 	});
 });

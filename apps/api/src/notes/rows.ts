@@ -1,11 +1,17 @@
-import { NOTE_ID_LENGTH } from "@largerio/secret-shared";
+import { NOTE_ID_LENGTH, parseEnvelope } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { AppDatabase, Transaction } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { enqueueDeletion, type PendingDeletion } from "../pendingDeletions.js";
 import { NoteError } from "./errors.js";
-import type { ChunkedOpening, NoteMeta, NoteOpening, NoteSettings } from "./types.js";
+import type {
+	ChunkedOpening,
+	Format1Opening,
+	NoteMeta,
+	NoteOpening,
+	NoteSettings,
+} from "./types.js";
 
 export type NoteRow = typeof notes.$inferSelect;
 
@@ -50,10 +56,23 @@ export function isFormat1<T extends { readonly envelope: Buffer | null }>(
 	return note.envelope !== null;
 }
 
-/** How a reader opens the note a row holds. */
-export function openingOf(note: NoteRow): NoteOpening {
+/**
+ * A format 1 row's envelope, checked as its writer's was: one that does not
+ * parse, or is not of the row's kind, is a corrupt row, never served.
+ */
+function envelopeOpening(
+	note: NoteRow & { readonly envelope: Buffer },
+): Format1Opening | undefined {
+	const kind = isChunked(note) ? "chunked" : "single-shot";
+	return parseEnvelope(note.envelope)?.kind === kind
+		? { format: 1, envelope: note.envelope }
+		: undefined;
+}
+
+/** How a reader opens the single-shot note a row holds, or undefined for a corrupt row. */
+export function openingOf(note: NoteRow): NoteOpening | undefined {
 	if (isFormat1(note)) {
-		return { format: 1, envelope: note.envelope };
+		return envelopeOpening(note);
 	}
 	return {
 		format: 0,
@@ -63,15 +82,22 @@ export function openingOf(note: NoteRow): NoteOpening {
 }
 
 /**
- * How a reader opens the chunked note a row holds, or undefined for a format 0
- * row without its stream header: a corrupt row, which cannot be read.
+ * How a reader opens the chunked note a row holds, or undefined for a corrupt
+ * row: a format 0 one without its stream header, or a broken envelope.
  */
 export function chunkedOpeningOf(note: NoteRow): ChunkedOpening | undefined {
-	const opening = openingOf(note);
-	if (opening.format === 1) {
-		return opening;
+	if (isFormat1(note)) {
+		return envelopeOpening(note);
 	}
-	return note.streamHeader ? { ...opening, streamHeader: note.streamHeader } : undefined;
+	if (!note.streamHeader) {
+		return undefined;
+	}
+	return {
+		format: 0,
+		clientNonce: note.clientNonce,
+		...(note.salt !== null ? { salt: note.salt } : {}),
+		streamHeader: note.streamHeader,
+	};
 }
 
 export function placementOf(note: {

@@ -406,17 +406,45 @@ describe("format 1, through the SDK and the application", () => {
 		ARGON2_TIMEOUT,
 	);
 
-	it("cannot open a note with the link of the other format", async () => {
+	it("is refused a note behind the link of the other format, and spends no read", async () => {
 		const client = await connect();
-		const format0 = await client.createNote({ text: "format 0", maxReads: 0 });
-		const format1 = await client.createNote({ text: "format 1", format: 1, maxReads: 0 });
+		const data = bytes(2 * CHUNK_SIZE);
+		const files = [{ name: "big.bin", type: "application/octet-stream", data }];
+		const notes = [
+			await client.createNote({ text: "format 0", maxReads: 1 }),
+			await client.createNote({ files, chunkSize: CHUNK_SIZE, maxReads: 1 }),
+			await client.createNote({ text: "format 1", format: 1, maxReads: 1 }),
+			await client.createNote({ files, chunkSize: CHUNK_SIZE, format: 1, maxReads: 1 }),
+		];
 
-		await expect(
-			client.readNote(format0.id, `1.${format0.keyFragment}`, { chunked: false }),
-		).rejects.toBeInstanceOf(SecretDecryptionError);
-		await expect(
-			client.readNote(format1.id, format1.keyFragment.slice(2), { chunked: false }),
-		).rejects.toBeInstanceOf(SecretDecryptionError);
+		for (const note of notes) {
+			const otherLink = note.keyFragment.startsWith("1.")
+				? note.keyFragment.slice(2)
+				: `1.${note.keyFragment}`;
+			await expect(client.readNote(note.id, otherLink)).rejects.toMatchObject({ status: 400 });
+			expect(await client.checkNote(note.id)).toMatchObject({ exists: true, readCount: 0 });
+		}
+	});
+
+	// The SDK up to 1.2 reads /stream, then /raw, then the JSON read, asking for
+	// no format: none of them may spend a read on a format 1 note.
+	it("spends no read of a format 1 note on a client that knows only format 0", async () => {
+		const client = await connect();
+		const { id } = await client.createNote({ text: "format 1", format: 1, maxReads: 1 });
+		const { id: chunkedId } = await client.createNote({
+			files: [{ name: "a.bin", type: "application/octet-stream", data: bytes(2 * CHUNK_SIZE) }],
+			chunkSize: CHUNK_SIZE,
+			format: 1,
+			maxReads: 1,
+		});
+
+		for (const note of [id, chunkedId]) {
+			for (const path of ["stream", "raw", ""]) {
+				const res = await fetch(`${baseUrl}/api/v1/notes/${note}${path ? `/${path}` : ""}`);
+				expect(res.status, path).toBe(400);
+			}
+			expect(await client.checkNote(note)).toMatchObject({ exists: true, readCount: 0 });
+		}
 	});
 
 	it("refuses a malformed format 1 link before reading anything", async () => {

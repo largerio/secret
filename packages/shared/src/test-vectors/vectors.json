@@ -259,9 +259,9 @@
 						"iterations": 3,
 						"memoryKiB": 262144
 					},
-					"stretchedPassword": "4IVIfNB6+YPTBWEyRiCncNUoyx4FA/QQsiTYfUcDDPY=",
-					"prk": "EeFPevwLKyUZ+92djVi7WjrPLUwv19CdsiSSaU1X3Xk=",
-					"encryptionKey": "mXh4OGLJG4mqmOkl7caHc7HKQjuOfiXYhlPTYfF9MRc="
+					"stretchedPassword": "ifUzejxaSPIxCtl8EEAK2dlUiv68+GMRr8vcTLcqQfo=",
+					"prk": "shhdTI/DtcU0PJwivO0haJiEQ5kETY2aD9bYbSL5KAY=",
+					"encryptionKey": "uqiC847/jIJ0Kf/whxAAJMCtohMWdo/WTxoXfag27NQ="
 				},
 				{
 					"description": "password typed in NFD, light parameters",
@@ -273,9 +273,9 @@
 						"iterations": 1,
 						"memoryKiB": 65536
 					},
-					"stretchedPassword": "jBn/ibkpjoaG6gTLSsQibV2+9YkWtexOjrSLnF4ekYQ=",
-					"prk": "JUxQ1gls3+4QLk4R+aoNSmdbxj9aoZI9HrforTRDvDE=",
-					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA="
+					"stretchedPassword": "rRNTKmGSdJVMQWpAVYUgMQBnZhYxb11pBidXkQSnE40=",
+					"prk": "sB25hPxvHlzgIoi1VYIgsygi1xYX+xHF82MGShKxuBI=",
+					"encryptionKey": "0bkSV06gJiXuN5b5zfOl+oXlQ+JHZCGdLKEijD1OwPo="
 				}
 			],
 			"envelopes": [
@@ -320,7 +320,7 @@
 					"description": "two files, password typed in NFD",
 					"keyFragment": "1.QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
 					"password": "Pässwörd-2!🔒",
-					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA=",
+					"encryptionKey": "0bkSV06gJiXuN5b5zfOl+oXlQ+JHZCGdLKEijD1OwPo=",
 					"envelope": "AQABAgADAAAOEKChoqOkpaanqKmqq6ytrq+wsbKztLW2t9DR0tPU1dbX2Nna29zd3t8AAAABAAEAAA==",
 					"payload": {
 						"text": "two files",
@@ -341,7 +341,7 @@
 						]
 					},
 					"payloadMsgpack": "g6R0ZXh0qXR3byBmaWxlc6tjb250ZW50TW9kZaR0ZXh0pWZpbGVzkoSkbmFtZaVhLnR4dKR0eXBlqnRleHQvcGxhaW6kc2l6ZQ6kZGF0YcQOZmlsZSBBIGNvbnRlbnSEpG5hbWWlYi5iaW6kdHlwZbhhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW2kc2l6ZQakZGF0YcQGAAEC/f7/",
-					"ciphertext": "jh7D1uvvbGO5IBpZiQ9LugWalYgumulMbf0q+H08v7YVpCEECNc8Z9iv8A7fwcEHd8Qc6R5pgsnhzGQsRglYb+U3ALEYX99d53YURmvaQC613qNJVe1CndpZO1V0b36F5q6GAC+C86whKztpS/9yA/sDfE3ugZpgvcnb/sYOenygf3VzJvREtMF9/vrm0FDqhYUM37urNRluevA59MPVmPI9G6wNoZItSaUpRA=="
+					"ciphertext": "EyeujUAMc9S1AsQ0lQ2TBULogVk+tOEFHGAytixZAEv8/rxiVuYJv5yoNqr32/M4EaEXyEjINRAdScUJHPMEU+omU1BPDyoOCJ09b/9xFB2t1jybfu4TpiqQRV4E5nkBPQcDhMoVuc7NYEl+bNYFZ0HhPaEluO1OR8wJz/fm4KTeR8xMmk4V2IZxq+090dSb/Wq//WqFMHdVsFeHJNLpgS6FdxztiJtQ2gEfiw=="
 				}
 			],
 			"secretstream": [
@@ -382,15 +382,15 @@
 					"description": "text only, password: the head is the final chunk",
 					"keyFragment": "1.QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
 					"password": "Pässwörd-2!🔒",
-					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA=",
-					"envelope": "AQEBAAAAAAABLIDbu3FpvmHLpferDmd95hGgX5J9jdoh5tDR0tPU1dbX2Nna29zd3t8AAAABAAEAAA==",
+					"encryptionKey": "0bkSV06gJiXuN5b5zfOl+oXlQ+JHZCGdLKEijD1OwPo=",
+					"envelope": "AQEBAAAAAAABLDI06+1z8vba++mqncC6uGn7bcQyYIsm5tDR0tPU1dbX2Nna29zd3t8AAAABAAEAAA==",
 					"chunkSize": 4,
 					"payload": {
 						"text": "only text",
 						"contentMode": "markdown"
 					},
 					"headerMsgpack": "gqR0ZXh0qW9ubHkgdGV4dKtjb250ZW50TW9kZahtYXJrZG93bg==",
-					"chunks": ["QCUhv4JoFyIhCuGcLCAw2y7Hyt2O7Bo+O2qXpsjAbrSowfV8yf0EoNjEF9a6xLy+gcvLvdww"]
+					"chunks": ["4Gc1DB2ggNcoK1jHflmkJXdlLBugpd5eMWvmg7a5vLL4PMOuWzjAjgMscrSTdh2DkdPQ54Qw"]
 				}
 			]
 		}

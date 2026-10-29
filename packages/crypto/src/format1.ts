@@ -29,13 +29,24 @@ export interface PasswordInput {
 	readonly argon2: Argon2Params;
 }
 
-/** Argon2id over the password, normalized to NFC so that every input method agrees. */
-export function stretchPassword({ password, argon2 }: PasswordInput): Uint8Array {
+/**
+ * Argon2id over the password, normalized to NFC so that every input method
+ * agrees, followed by the link's key: without the link, the salt alone gives
+ * nothing to precompute a dictionary with. TextEncoder turns a lone surrogate
+ * into U+FFFD, as WHATWG UTF-8 does.
+ */
+export function stretchPassword(
+	{ password, argon2 }: PasswordInput,
+	linkKey: Uint8Array,
+): Uint8Array {
 	const passwordBytes = new TextEncoder().encode(password.normalize("NFC"));
+	const input = new Uint8Array(passwordBytes.length + linkKey.length);
+	input.set(passwordBytes);
+	input.set(linkKey, passwordBytes.length);
 	try {
 		return sodium.crypto_pwhash(
 			KEY_LENGTH,
-			passwordBytes,
+			input,
 			argon2.salt,
 			argon2.iterations,
 			argon2.memoryKiB * 1024,
@@ -43,6 +54,7 @@ export function stretchPassword({ password, argon2 }: PasswordInput): Uint8Array
 		);
 	} finally {
 		sodium.memzero(passwordBytes);
+		sodium.memzero(input);
 	}
 }
 
@@ -53,7 +65,7 @@ export function stretchPassword({ password, argon2 }: PasswordInput): Uint8Array
 export function deriveFormat1Key(linkKey: Uint8Array, password?: PasswordInput): Uint8Array {
 	let ikm = linkKey;
 	if (password) {
-		const stretched = stretchPassword(password);
+		const stretched = stretchPassword(password, linkKey);
 		ikm = new Uint8Array(linkKey.length + stretched.length);
 		ikm.set(linkKey);
 		ikm.set(stretched, linkKey.length);

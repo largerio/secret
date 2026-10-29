@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { notes as notesTable } from "../db/schema.js";
 import { NoteError, type NoteErrorCode } from "../notes/errors.js";
-import { NOTE_FORMATS } from "../notes/formats.js";
 import { inStorage, placementOf } from "../notes/rows.js";
 import type { NotesService } from "../notes/service.js";
 import { chunkStream } from "../notes/stream.js";
@@ -46,6 +45,20 @@ function format1Settings(kind: "single-shot" | "chunked", fileCount: number) {
 		),
 	);
 	return { ...declared, hasPassword: false, opening: { format: 1, envelope } } as const;
+}
+
+/** A chunked format 1 note of one chunk, through its upload session. */
+async function uploadChunkedFormat1() {
+	const settings = format1Settings("chunked", 1);
+	const session = notes.openUpload({ ...settings, chunkCount: 1 });
+	const chunk = Buffer.from("head");
+	await notes.receiveChunk({
+		uploadId: session.uploadId,
+		index: 0,
+		hash: sha256(chunk),
+		readBody: asBody(chunk),
+	});
+	return { ...notes.completeUpload(session.uploadId), settings };
 }
 
 let sqlite: ReturnType<typeof createDatabase>["sqlite"];
@@ -123,12 +136,12 @@ describe("the notes service", () => {
 
 		expect(notes.check(id)).toMatchObject({ maxReads: 1, readCount: 0, chunked: false });
 
-		const { ciphertext, meta } = await notes.read(id, [0]);
+		const { ciphertext, meta } = await notes.read(id, 0);
 		expect(ciphertext.toString()).toBe("ciphertext");
 		expect(meta.opening.clientNonce).toBe("nonce");
 
 		expect(notes.check(id)).toBeUndefined();
-		expect(await refusal(() => notes.read(id, NOTE_FORMATS))).toBe("note_not_found");
+		expect(await refusal(() => notes.read(id, 0))).toBe("note_not_found");
 	});
 
 	it("applies the operator's limits", async () => {
@@ -178,9 +191,9 @@ describe("the notes service", () => {
 		const { id } = notes.completeUpload(session.uploadId);
 
 		expect(notes.check(id)).toMatchObject({ chunked: true });
-		expect(await refusal(() => notes.read(id, NOTE_FORMATS))).toBe("note_is_chunked");
+		expect(await refusal(() => notes.read(id, 0))).toBe("note_is_chunked");
 
-		const stream = await notes.stream(id);
+		const stream = await notes.stream(id, 0);
 		expect(stream).toMatchObject({ meta: { opening: { streamHeader: "header" } }, chunkCount: 2 });
 		const received: Buffer[] = [];
 		for await (const chunk of stream.chunks) {
@@ -219,36 +232,50 @@ describe("the notes service", () => {
 		// A corrupt row: chunked, without the stream header a reader needs.
 		db.update(notesTable).set({ streamHeader: null }).where(eq(notesTable.id, id)).run();
 
-		expect(await refusal(() => notes.stream(id))).toBe("note_corrupted");
+		expect(await refusal(() => notes.stream(id, 0))).toBe("note_corrupted");
 		expect(notes.check(id)).toMatchObject({ readCount: 0 });
 	});
 
-	it("refuses a note of a format its caller cannot answer before spending its read", async () => {
+	it("refuses a format 1 row whose envelope does not fit it, before spending its read", async () => {
+		const single = await notes.create(Buffer.from("x"), format1Settings("single-shot", 0));
+		const { id: chunked } = await uploadChunkedFormat1();
+		const setEnvelope = (id: string, envelope: Buffer) =>
+			db.update(notesTable).set({ envelope }).where(eq(notesTable.id, id)).run();
+
+		setEnvelope(single.id, Buffer.from("garbage"));
+		expect(await refusal(() => notes.read(single.id, 1))).toBe("note_corrupted");
+		setEnvelope(single.id, format1Settings("chunked", 0).opening.envelope);
+		expect(await refusal(() => notes.read(single.id, 1))).toBe("note_corrupted");
+		setEnvelope(chunked, format1Settings("single-shot", 0).opening.envelope);
+		expect(await refusal(() => notes.stream(chunked, 1))).toBe("note_corrupted");
+
+		expect(notes.check(single.id)).toMatchObject({ readCount: 0 });
+		expect(notes.check(chunked)).toMatchObject({ readCount: 0 });
+	});
+
+	it("refuses a note in another format than asked, before spending its read", async () => {
 		const settings = format1Settings("single-shot", 0);
 		const { id } = await notes.create(Buffer.from("ciphertext"), settings);
+		const format0 = await notes.create(Buffer.from("old"), { ...SETTINGS, fileCount: 0 });
+		const { id: chunked } = await uploadChunkedFormat1();
 
-		expect(await refusal(() => notes.read(id, [0]))).toBe("note_format_unsupported");
-		expect(notes.check(id)).toMatchObject({ readCount: 0 });
+		expect(await refusal(() => notes.read(id, 0))).toBe("note_format_mismatch");
+		expect(await refusal(() => notes.read(format0.id, 1))).toBe("note_format_mismatch");
+		expect(await refusal(() => notes.stream(chunked, 0))).toBe("note_format_mismatch");
+		for (const note of [id, format0.id, chunked]) {
+			expect(notes.check(note)).toMatchObject({ readCount: 0 });
+		}
 
-		const { meta, ciphertext } = await notes.read(id, [1]);
+		const { meta, ciphertext } = await notes.read(id, 1);
 		expect(meta.opening.envelope).toEqual(settings.opening.envelope);
 		expect(ciphertext.toString()).toBe("ciphertext");
 		expect(notes.check(id)).toBeUndefined();
 	});
 
 	it("serves a chunked format 1 note with its envelope, which holds its stream header", async () => {
-		const settings = format1Settings("chunked", 1);
-		const session = notes.openUpload({ ...settings, chunkCount: 1 });
-		const chunk = Buffer.from("head");
-		await notes.receiveChunk({
-			uploadId: session.uploadId,
-			index: 0,
-			hash: sha256(chunk),
-			readBody: asBody(chunk),
-		});
-		const { id } = notes.completeUpload(session.uploadId);
+		const { id, settings } = await uploadChunkedFormat1();
 
-		const stream = await notes.stream(id);
+		const stream = await notes.stream(id, 1);
 		expect(stream.meta.opening).toEqual(settings.opening);
 		await stream.chunks.cancel();
 	});

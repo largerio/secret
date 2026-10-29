@@ -161,7 +161,7 @@ describe("test vectors", () => {
 						: undefined;
 				let ikm = linkKey;
 				if (password) {
-					const stretched = stretchPassword(password);
+					const stretched = stretchPassword(password, linkKey);
 					expect(toBase64(stretched), v.description).toBe(v.stretchedPassword);
 					ikm = new Uint8Array([...linkKey, ...stretched]);
 				}

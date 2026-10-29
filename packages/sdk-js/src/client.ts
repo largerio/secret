@@ -22,7 +22,8 @@ import {
 	encryptNoteChunkedFormat1,
 	encryptNoteFormat1,
 	type Format1Settings,
-	isFormat1Fragment,
+	formatOfFragment,
+	type NoteFormat,
 } from "./format1.js";
 import type { HttpClientConfig, RawNoteResponse, StreamNoteResponse } from "./http.js";
 import * as http from "./http.js";
@@ -103,8 +104,8 @@ async function sealNote(
 }
 
 /**
- * A single-shot note's payload, opened in the format its link names. A note of
- * the other format cannot open with that link: a decryption failure, like any.
+ * A single-shot note's payload, opened in the format its link names: the read
+ * asked for that format, and the server serves no other.
  */
 async function openRawNote(
 	response: RawNoteResponse,
@@ -112,12 +113,8 @@ async function openRawNote(
 	password: string | undefined,
 ): Promise<NotePayload> {
 	const { opening } = response;
-	if (isFormat1Fragment(keyFragment)) {
-		const envelope = opening.format === 1 ? opening.envelope : undefined;
-		return decryptNoteFormat1(response.encryptedBytes, envelope, keyFragment, password);
-	}
-	if (opening.format !== 0) {
-		throw new Error("A format 1 note behind a format 0 link");
+	if (opening.format === 1) {
+		return decryptNoteFormat1(response.encryptedBytes, opening.envelope, keyFragment, password);
 	}
 	return decryptNoteBytes(
 		response.encryptedBytes,
@@ -135,12 +132,8 @@ async function openStreamedNote(
 	password: string | undefined,
 ): Promise<NotePayload> {
 	const { opening } = response;
-	if (isFormat1Fragment(keyFragment)) {
-		const envelope = opening.format === 1 ? opening.envelope : undefined;
-		return decryptNoteChunkedFormat1(response.chunks, envelope, keyFragment, password);
-	}
-	if (opening.format !== 0) {
-		throw new Error("A format 1 note behind a format 0 link");
+	if (opening.format === 1) {
+		return decryptNoteChunkedFormat1(response.chunks, opening.envelope, keyFragment, password);
 	}
 	return decryptNoteChunked(
 		response.chunks,
@@ -231,6 +224,11 @@ export class SecretClient {
 			throw new SecretValidationError(
 				`A note can include at most ${String(MAX_FILES_PER_NOTE)} files`,
 			);
+		}
+		// Checked, not assumed: from JavaScript, "1" or 2 would write format 0
+		// without a word.
+		if (options.format !== undefined && options.format !== 0 && options.format !== 1) {
+			throw new SecretValidationError("Unsupported note format");
 		}
 
 		const payload: NotePayload = {
@@ -443,7 +441,10 @@ export class SecretClient {
 	 * so a wrong password still spends the only read. Check `hasPassword` with
 	 * {@link checkNote} first and collect the password before calling this.
 	 *
-	 * @param keyFragment The key from the share URL fragment.
+	 * @param keyFragment The key from the share URL fragment. It names the
+	 * note's format: `1.` then the key for format 1, the bare key for format 0.
+	 * @throws {SecretValidationError} for a malformed format 1 link, or a link of
+	 * a format this SDK does not know: refused before anything is read.
 	 * @throws {SecretDecryptionError} for a wrong password, a wrong key, or
 	 * tampered ciphertext — deliberately indistinguishable, to avoid an oracle.
 	 * @throws {SecretApiError} with status 404 when the note is gone (expired,
@@ -455,21 +456,23 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		// A format 1 link names its format, so a malformed one spends no read.
-		const format1 = isFormat1Fragment(keyFragment);
-		if (format1) {
+		// The link names its format, so a malformed format 1 link spends no read,
+		// and the server serves a note only in the format the read asks for.
+		const format = formatOfFragment(keyFragment);
+		if (format === 1) {
 			assertFormat1Fragment(keyFragment);
 		}
 		options?.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 
 		if (options?.chunked === true) {
-			return this.readNoteStream(id, keyFragment, options);
+			return this.readNoteStream(id, keyFragment, format, options);
 		}
 
 		// Format 1 has no legacy endpoint to fall back to.
-		const readSingleShot = format1
-			? () => this.readNoteRaw(id, keyFragment, options)
-			: () => this.readNoteStandard(id, keyFragment, options);
+		const readSingleShot =
+			format === 1
+				? () => this.readNoteRaw(id, keyFragment, 1, options)
+				: () => this.readNoteStandard(id, keyFragment, options);
 
 		if (options?.chunked === false) {
 			return readSingleShot();
@@ -477,7 +480,7 @@ export class SecretClient {
 
 		// No hint — try stream first, fall back to raw then legacy
 		try {
-			return await this.readNoteStream(id, keyFragment, options);
+			return await this.readNoteStream(id, keyFragment, format, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
@@ -496,7 +499,7 @@ export class SecretClient {
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
 		try {
-			return await this.readNoteRaw(id, keyFragment, options);
+			return await this.readNoteRaw(id, keyFragment, 0, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
@@ -511,16 +514,22 @@ export class SecretClient {
 	private async readNoteRaw(
 		id: string,
 		keyFragment: string,
+		format: NoteFormat,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNoteRaw(this.httpConfig, id, (p) => {
-			options?.onDownloadProgress?.(p);
-			options?.onProgress?.({
-				phase: "downloading",
-				phaseProgress: p,
-				overallProgress: p * PROGRESS.downloadSpan,
-			});
-		});
+		const response = await http.getNoteRaw(
+			this.httpConfig,
+			id,
+			(p) => {
+				options?.onDownloadProgress?.(p);
+				options?.onProgress?.({
+					phase: "downloading",
+					phaseProgress: p,
+					overallProgress: p * PROGRESS.downloadSpan,
+				});
+			},
+			format,
+		);
 
 		options?.onProgress?.({
 			phase: "decrypting",
@@ -575,16 +584,22 @@ export class SecretClient {
 	private async readNoteStream(
 		id: string,
 		keyFragment: string,
+		format: NoteFormat,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNoteStream(this.httpConfig, id, (p) => {
-			options?.onDownloadProgress?.(p);
-			options?.onProgress?.({
-				phase: "downloading",
-				phaseProgress: p,
-				overallProgress: p * PROGRESS.downloadSpan,
-			});
-		});
+		const response = await http.getNoteStream(
+			this.httpConfig,
+			id,
+			(p) => {
+				options?.onDownloadProgress?.(p);
+				options?.onProgress?.({
+					phase: "downloading",
+					phaseProgress: p,
+					overallProgress: p * PROGRESS.downloadSpan,
+				});
+			},
+			format,
+		);
 
 		options?.onProgress?.({
 			phase: "decrypting",

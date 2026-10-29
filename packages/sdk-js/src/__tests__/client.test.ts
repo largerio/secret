@@ -45,7 +45,7 @@ vi.mock("../crypto.js", () => ({
 }));
 
 vi.mock("../format1.js", () => ({
-	isFormat1Fragment: vi.fn((keyFragment: string) => keyFragment.startsWith("1.")),
+	formatOfFragment: vi.fn((keyFragment: string) => (keyFragment.startsWith("1.") ? 1 : 0)),
 	assertFormat1Fragment: vi.fn(),
 	encryptNoteFormat1: vi.fn(),
 	encryptNoteChunkedFormat1: vi.fn(),
@@ -56,6 +56,7 @@ vi.mock("../format1.js", () => ({
 async function getFormat1Mocks() {
 	return (await import("../format1.js")) as typeof import("../format1.js") & {
 		assertFormat1Fragment: ReturnType<typeof vi.fn>;
+		formatOfFragment: ReturnType<typeof vi.fn>;
 		encryptNoteFormat1: ReturnType<typeof vi.fn>;
 		encryptNoteChunkedFormat1: ReturnType<typeof vi.fn>;
 		decryptNoteFormat1: ReturnType<typeof vi.fn>;
@@ -1492,36 +1493,49 @@ describe("SecretClient in format 1", () => {
 		expect(result.payload).toEqual({ text: "format 1 stream" });
 	});
 
-	test("readNote hands a format 0 note behind a format 1 link no envelope", async () => {
-		const http = await getHttpMocks();
-		const format1 = await getFormat1Mocks();
-		http.getNoteRaw.mockResolvedValue({
-			...rawFormat1,
-			opening: { format: 0, nonceBytes: envelope },
-		});
-		http.getNoteStream.mockResolvedValue({
-			...streamFormat1,
-			opening: { format: 0, streamHeader: "h" },
-		});
-		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-
-		await client.readNote("noteId123456", "1.key", { chunked: false });
-		expect(format1.decryptNoteFormat1.mock.calls[0]?.[1]).toBeUndefined();
-		await client.readNote("noteId123456", "1.key", { chunked: true });
-		expect(format1.decryptNoteChunkedFormat1.mock.calls[0]?.[1]).toBeUndefined();
-	});
-
-	test("readNote cannot open a format 1 note behind a format 0 link", async () => {
+	test("readNote asks the server for the format its link names", async () => {
 		const http = await getHttpMocks();
 		http.getNoteRaw.mockResolvedValue(rawFormat1);
 		http.getNoteStream.mockResolvedValue(streamFormat1);
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
-		await expect(client.readNote("noteId123456", "key", { chunked: false })).rejects.toThrow(
-			UNIFORM_DECRYPTION_MESSAGE,
+		await client.readNote("noteId123456", "1.key", { chunked: false });
+		await client.readNote("noteId123456", "1.key", { chunked: true });
+		expect(http.getNoteRaw.mock.lastCall?.[3]).toBe(1);
+		expect(http.getNoteStream.mock.lastCall?.[3]).toBe(1);
+
+		http.getNoteRaw.mockResolvedValue({
+			...rawFormat1,
+			opening: { format: 0, nonceBytes: envelope },
+		});
+		await client.readNote("noteId123456", "key", { chunked: false });
+		expect(http.getNoteRaw.mock.lastCall?.[3]).toBe(0);
+	});
+
+	test("readNote refuses a link of a format it does not know before any request", async () => {
+		const http = await getHttpMocks();
+		const format1 = await getFormat1Mocks();
+		format1.formatOfFragment.mockImplementationOnce(() => {
+			throw new SecretValidationError("Unsupported note format");
+		});
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await expect(client.readNote("noteId123456", "2.key")).rejects.toThrow(
+			"Unsupported note format",
 		);
-		await expect(client.readNote("noteId123456", "key", { chunked: true })).rejects.toThrow(
-			UNIFORM_DECRYPTION_MESSAGE,
-		);
+		expect(http.getNoteStream).not.toHaveBeenCalled();
+		expect(http.getNoteRaw).not.toHaveBeenCalled();
+	});
+
+	test("createNote refuses a format it does not write", async () => {
+		const http = await getHttpMocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		for (const format of ["1", 2]) {
+			await expect(
+				client.createNote({ text: "t", format: format as unknown as 1 }),
+			).rejects.toThrow(new SecretValidationError("Unsupported note format"));
+		}
+		expect(http.postJson).not.toHaveBeenCalled();
 	});
 });

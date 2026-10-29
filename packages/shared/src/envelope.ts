@@ -21,13 +21,14 @@ export const SALT_LENGTH = 16;
 export const ENVELOPE_LENGTH = 34;
 export const ENVELOPE_LENGTH_WITH_PASSWORD = 58;
 
-// The Argon2id parameters a reader agrees to run: a note outside them is
-// refused before the derivation, so that a writer cannot make a reader spend
-// unbounded memory or time.
+// The Argon2id parameters a reader agrees to run. A reader runs them before
+// anything can tell the envelope was altered, so a server, as much as a
+// writer, can make it run the highest: they stay within what a phone's browser
+// runs, at most four times the default's cost.
 export const ARGON2_MIN_ITERATIONS = 1;
-export const ARGON2_MAX_ITERATIONS = 10;
+export const ARGON2_MAX_ITERATIONS = 6;
 export const ARGON2_MIN_MEMORY_KIB = 65_536;
-export const ARGON2_MAX_MEMORY_KIB = 1_048_576;
+export const ARGON2_MAX_MEMORY_KIB = 524_288;
 
 /** What a writer derives a password note's key with: libsodium's moderate setting. */
 export const ARGON2_DEFAULT_ITERATIONS = 3;
@@ -40,7 +41,7 @@ export interface Argon2Params {
 	readonly memoryKiB: number;
 }
 
-interface EnvelopeSettings {
+export interface EnvelopeSettings {
 	readonly fileCount: number;
 	readonly maxReads: number;
 	/** Seconds, from the note's creation. */
@@ -59,7 +60,7 @@ export type EnvelopeKind = Envelope["kind"];
 
 function assertRange(name: string, value: number, max: number, min = 0): void {
 	if (!Number.isInteger(value) || value < min || value > max) {
-		throw new RangeError(`${name} does not fit in the envelope`);
+		throw new RangeError(`${name} must be an integer from ${String(min)} to ${String(max)}`);
 	}
 }
 
@@ -70,23 +71,29 @@ function assertLength(name: string, bytes: Uint8Array, length: number): void {
 }
 
 /**
- * The envelope's bytes. Throws a RangeError on a field that does not fit, and
- * on Argon2id parameters a reader would refuse to run.
+ * Throws a RangeError on a setting an envelope cannot hold, and on Argon2id
+ * parameters a reader would refuse to run: what a writer checks before it
+ * spends anything on a note.
  */
-export function encodeEnvelope(envelope: Envelope): Uint8Array {
-	assertRange("fileCount", envelope.fileCount, 0xff);
-	assertRange("maxReads", envelope.maxReads, 0xffff);
-	assertRange("expiresIn", envelope.expiresIn, 0xffffffff);
-	const start = envelope.kind === "single-shot" ? envelope.nonce : envelope.streamHeader;
-	assertLength("The nonce or stream header", start, NONCE_LENGTH);
-
-	const { argon2 } = envelope;
+export function assertEnvelopeSettings(settings: EnvelopeSettings): void {
+	assertRange("fileCount", settings.fileCount, 0xff);
+	assertRange("maxReads", settings.maxReads, 0xffff);
+	assertRange("expiresIn", settings.expiresIn, 0xffffffff);
+	const { argon2 } = settings;
 	if (argon2) {
 		assertLength("The salt", argon2.salt, SALT_LENGTH);
 		assertRange("iterations", argon2.iterations, ARGON2_MAX_ITERATIONS, ARGON2_MIN_ITERATIONS);
 		assertRange("memoryKiB", argon2.memoryKiB, ARGON2_MAX_MEMORY_KIB, ARGON2_MIN_MEMORY_KIB);
 	}
+}
 
+/** The envelope's bytes. Throws a RangeError as assertEnvelopeSettings does. */
+export function encodeEnvelope(envelope: Envelope): Uint8Array {
+	assertEnvelopeSettings(envelope);
+	const start = envelope.kind === "single-shot" ? envelope.nonce : envelope.streamHeader;
+	assertLength("The nonce or stream header", start, NONCE_LENGTH);
+
+	const { argon2 } = envelope;
 	const bytes = new Uint8Array(argon2 ? ENVELOPE_LENGTH_WITH_PASSWORD : ENVELOPE_LENGTH);
 	const view = new DataView(bytes.buffer);
 	bytes[0] = FORMAT_1;

@@ -1,5 +1,6 @@
 import type { CreateNoteResponse, ReadNoteResponse } from "@largerio/secret-shared";
 import { SecretApiError, SecretNetworkError } from "./errors.js";
+import type { NoteFormat } from "./format1.js";
 import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
 
@@ -244,6 +245,15 @@ export async function getJson<T>(
 	return res.json() as Promise<T>;
 }
 
+/**
+ * What a read asks of the server: format 1 must be asked for by name, so that
+ * a client that knows only format 0 is refused a format 1 note before it
+ * spends a read on it.
+ */
+function readQuery(format: NoteFormat): string {
+	return format === 1 ? "?format=1" : "";
+}
+
 /** Format 0 sends the nonce, format 1 its envelope, which X-Envelope carries. */
 export type RawNoteOpening =
 	| { readonly format: 0; readonly nonceBytes: Uint8Array }
@@ -263,10 +273,11 @@ export async function getNoteRaw(
 	config: HttpClientConfig,
 	id: string,
 	onProgress?: (progress: number) => void,
+	format: NoteFormat = 0,
 ): Promise<RawNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/raw`,
+		`${config.baseUrl}/notes/${id}/raw${readQuery(format)}`,
 		{ headers: authHeaders(config.apiKey) },
 		CONSUMING_READ,
 	);
@@ -277,10 +288,10 @@ export async function getNoteRaw(
 	}
 
 	const headers = res.headers;
-	const envelope = headers.get("X-Envelope");
-	const opening: RawNoteOpening = envelope
-		? { format: 1, envelope: safeAtob(envelope) }
-		: { format: 0, nonceBytes: safeAtob(getRequiredHeader(headers, "X-Client-Nonce")) };
+	const opening: RawNoteOpening =
+		format === 1
+			? { format: 1, envelope: safeAtob(getRequiredHeader(headers, "X-Envelope")) }
+			: { format: 0, nonceBytes: safeAtob(getRequiredHeader(headers, "X-Client-Nonce")) };
 	const hasPassword = headers.get("X-Has-Password") === "true";
 	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
 	const createdAt = getRequiredHeader(headers, "X-Created-At");
@@ -480,10 +491,11 @@ export async function getNoteStream(
 	config: HttpClientConfig,
 	id: string,
 	onProgress?: (progress: number) => void,
+	format: NoteFormat = 0,
 ): Promise<StreamNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/stream`,
+		`${config.baseUrl}/notes/${id}/stream${readQuery(format)}`,
 		{ headers: authHeaders(config.apiKey) },
 		CONSUMING_READ,
 	);
@@ -494,10 +506,10 @@ export async function getNoteStream(
 	}
 
 	const headers = res.headers;
-	const envelope = headers.get("X-Envelope");
-	const opening: StreamNoteOpening = envelope
-		? { format: 1, envelope: safeAtob(envelope) }
-		: { format: 0, streamHeader: getRequiredHeader(headers, "X-Stream-Header") };
+	const opening: StreamNoteOpening =
+		format === 1
+			? { format: 1, envelope: safeAtob(getRequiredHeader(headers, "X-Envelope")) }
+			: { format: 0, streamHeader: getRequiredHeader(headers, "X-Stream-Header") };
 	const chunkCount = parsePositiveInt(headers.get("X-Chunk-Count"), 0);
 	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
 		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);

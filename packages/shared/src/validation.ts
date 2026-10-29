@@ -10,6 +10,7 @@ import {
 	UPLOAD_ID_LENGTH,
 } from "./constants.js";
 import {
+	ENVELOPE_LENGTH,
 	ENVELOPE_LENGTH_WITH_PASSWORD,
 	type Envelope,
 	type EnvelopeKind,
@@ -71,6 +72,7 @@ export interface AcceptedEnvelope {
 function envelopeSchema(kind: EnvelopeKind, minFiles = 0) {
 	return z
 		.base64()
+		.min(4 * Math.ceil(ENVELOPE_LENGTH / 3))
 		.max(4 * Math.ceil(ENVELOPE_LENGTH_WITH_PASSWORD / 3))
 		.transform((value, ctx): AcceptedEnvelope => {
 			const bytes = new Uint8Array(Buffer.from(value, "base64"));
@@ -216,3 +218,42 @@ export const chunkedUploadCompleteResponseSchema = z.object({
 	expiresAt: z.string(),
 	deleteToken: z.string(),
 });
+
+// --- Either format ---
+
+// A request that carries an envelope is format 1's, whatever else it holds: an
+// envelope refused must not let the same request through as format 0, which
+// ignores the key. So the format 0 variants refuse it.
+const NO_ENVELOPE = {
+	// Documented as a string no value matches: the generator has no word for
+	// a key that must be absent.
+	envelope: z.never().optional().meta({
+		type: "string",
+		not: {},
+		description: "Absent: a request with an envelope is a format 1 request.",
+	}),
+};
+
+/** `POST /notes`: format 1's envelope, or format 0's fields. */
+export const createNoteRequestSchema = z.union([
+	createNoteFormat1Schema,
+	createNoteSchema.safeExtend(NO_ENVELOPE),
+]);
+
+/** The `metadata` of `POST /notes/upload`: format 1's envelope, or format 0's fields. */
+export const createNoteMultipartRequestSchema = z.union([
+	createNoteMultipartFormat1Schema,
+	createNoteMultipartSchema.safeExtend(NO_ENVELOPE),
+]);
+
+/** `POST /notes/upload/init`: format 1's envelope, or format 0's fields. */
+export const chunkedUploadInitRequestSchema = z.union([
+	chunkedUploadInitFormat1Schema,
+	chunkedUploadInitSchema.safeExtend(NO_ENVELOPE),
+]);
+
+/** An upload session row, as either format leaves it. */
+export const uploadSessionAnyMetadataSchema = z.union([
+	uploadSessionFormat1MetadataSchema,
+	uploadSessionMetadataSchema,
+]);

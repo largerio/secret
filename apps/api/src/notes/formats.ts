@@ -9,9 +9,6 @@ import type {
 	OpeningOf,
 } from "./types.js";
 
-/** Every format a note can be in, for a read that answers them all. */
-export const NOTE_FORMATS: readonly NoteFormat[] = [0, 1];
-
 /** What a format 1 write declares: its envelope, which says it all. */
 export interface Format1Request {
 	readonly envelope: AcceptedEnvelope;
@@ -53,13 +50,12 @@ export function chunkedSettingsOf(
 	});
 }
 
-/** Whether a note opened this way is of one of the given formats. */
+/** Whether a note opened this way is of the format a read asks for. */
 export function isOfFormat<F extends NoteFormat>(
 	opening: NoteOpening,
-	formats: readonly F[],
+	format: F,
 ): opening is OpeningOf<F> {
-	const accepted: readonly NoteFormat[] = formats;
-	return accepted.includes(opening.format);
+	return opening.format === format;
 }
 
 /** A format 1 note's settings: the envelope's, which is kept as it came. */

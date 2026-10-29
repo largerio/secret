@@ -169,7 +169,7 @@ describe("test vectors, checked by OpenSSL", () => {
 	describe("format 1", () => {
 		const { format1 } = vectors;
 
-		/** The key schedule of PROTOCOL.md, in OpenSSL: Argon2id over NFC, then HKDF. */
+		/** The key schedule of PROTOCOL.md, in OpenSSL: Argon2id over NFC and the key, then HKDF. */
 		function format1Key(
 			linkKey: Buffer,
 			password?: string,
@@ -178,7 +178,7 @@ describe("test vectors, checked by OpenSSL", () => {
 			let ikm = linkKey;
 			if (password !== undefined && argon2) {
 				const stretched = argon2Sync("argon2id", {
-					message: Buffer.from(password.normalize("NFC"), "utf8"),
+					message: Buffer.concat([Buffer.from(password.normalize("NFC"), "utf8"), linkKey]),
 					nonce: b64(argon2.salt),
 					parallelism: 1,
 					tagLength: 32,

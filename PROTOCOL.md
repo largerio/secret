@@ -321,7 +321,8 @@ and otherwise:
 
 It spends no read. `chunked` tells which endpoint serves the note: `/stream`,
 or `/raw` and the JSON endpoint. Asking the wrong one answers `400` and spends
-no read. `readCount` stays 0 for a note with unlimited reads. Every note
+no read, and so does a read of a [format 1](#reading-in-the-right-format)
+note. `readCount` stays 0 for a note with unlimited reads. Every note
 endpoint answers `400` to an id that is not 12 characters of the alphabet
 above.
 
@@ -383,7 +384,7 @@ developer: tell errors apart by their status.
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Invalid request, or the wrong read endpoint |
+| 400 | Invalid request, or the wrong read endpoint or format |
 | 401 | Write authentication missing or refused |
 | 403 | Wrong delete token |
 | 404 | The note, or the upload session, does not exist |
@@ -455,10 +456,11 @@ What changes from format 0:
 - the link and the stored note name their format;
 - the encryption key is derived with HKDF, so that other keys can be derived
   from the same secret;
-- the Argon2id parameters are stored with the note, and the password is
-  normalized to NFC;
+- the Argon2id parameters are stored with the note, the password is
+  normalized to NFC, and the link's key enters the derivation;
 - the settings a writer declares travel in one **envelope**, which the
   ciphertext authenticates;
+- a read names the format it expects, and the server serves no other;
 - a reader checks the payload strictly.
 
 The payload, the two kinds of note, the way a chunked note is cut, and every
@@ -469,17 +471,23 @@ endpoint not named below are those of format 0.
 The **link key** `K` is 32 random bytes, as format 0's base key.
 
 With a password, the writer draws a 16-byte salt, picks the Argon2id
-parameters, and stretches the password:
+parameters, and stretches the password, followed by the link key:
 
 ```
-P = Argon2id(password = UTF-8(NFC(password)), salt, t, m, p = 1, version 0x13, 32 bytes)
+P = Argon2id(password = UTF-8(NFC(password)) || K, salt, t, m, p = 1, version 0x13, 32 bytes)
 ```
 
-`NFC` is Unicode Normalization Form C. An empty password is no password. By
-default a writer uses t = 3 iterations and m = 262,144 KiB (256 MiB,
+`NFC` is Unicode Normalization Form C, and `UTF-8` encodes as WHATWG does: a
+lone surrogate becomes U+FFFD. An empty password is no password. With `K` in
+its input, Argon2id cannot be run on a dictionary before the link is known,
+even by whoever holds the salt.
+
+By default a writer uses t = 3 iterations and m = 262,144 KiB (256 MiB,
 libsodium's moderate setting), and records them in the envelope. A reader runs
-the parameters the envelope gives, but MUST refuse t outside 1 to 10, or m
-outside 65,536 to 1,048,576 KiB (64 MiB to 1 GiB), before running Argon2id.
+the parameters the envelope gives, but MUST refuse t outside 1 to 6, or m
+outside 65,536 to 524,288 KiB (64 to 512 MiB), before running Argon2id. It
+runs them before anything can tell the envelope was altered, so these bounds
+are what a server, as much as a writer, can make a reader spend.
 
 Then, with HKDF-SHA256 (RFC 5869):
 
@@ -501,14 +509,22 @@ strings are reserved for keys format 1 will derive from the same PRK.
 
 `key` is `K` encoded as in format 0: 43 base64url characters. A format 0 key
 never holds a `.`, so a reader tells the formats apart by the `1.` prefix,
-and SHOULD refuse a malformed format 1 fragment before reading the note.
+and SHOULD refuse a malformed format 1 fragment before reading the note. A
+fragment that starts with another number and a dot names a format the reader
+does not know: it MUST refuse it before reading the note.
 
 ### The envelope
 
-The envelope holds everything a writer declares besides the ciphertext. The
-server reads the note's settings from it, stores it, and serves it back
-byte for byte. It is the additional data of every AEAD operation on the note,
-so a reader detects any change to it.
+The envelope holds the settings a writer declares, and what a reader needs to
+derive the key and open the ciphertext. The server reads the note's settings
+from it, stores it, and serves it back byte for byte. It is the additional
+data of every AEAD operation on the note, so a reader detects any change to
+it, once it has derived the key.
+
+The envelope is public: anyone who knows the note's id may obtain it before
+reading the note. It holds nothing derived from the password or from `K`, and
+never will: from such a value, whoever has the link could test passwords
+without reading the note.
 
 | Offset | Bytes | Field |
 |--------|-------|-------|
@@ -557,10 +573,13 @@ Content-Type: application/json
 or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
 set to `{"envelope": "<base64 envelope>"}`. The answer is format 0's.
 
-`GET /api/v1/notes/{id}/raw` serves the ciphertext as for format 0, with an
-`X-Envelope` header (base64) in place of `X-Client-Nonce` and `X-Salt`. The
-JSON endpoint, `GET /api/v1/notes/{id}`, refuses a format 1 note (`400`)
-without spending a read.
+```
+GET /api/v1/notes/{id}/raw?format=1
+```
+
+serves the ciphertext as for format 0, with an `X-Envelope` header (base64) in
+place of `X-Client-Nonce` and `X-Salt`. The JSON endpoint, `GET
+/api/v1/notes/{id}`, serves format 0 only.
 
 ### Chunked notes in format 1
 
@@ -578,21 +597,37 @@ Content-Type: application/json
 {"envelope": "<base64 envelope>", "chunkCount": 3}
 ```
 
-The messages and `/complete` are sent as in format 0. `GET
-/api/v1/notes/{id}/stream` serves the stream as for format 0, with
-`X-Envelope` in place of `X-Stream-Header` and `X-Salt`.
+The messages and `/complete` are sent as in format 0.
+
+```
+GET /api/v1/notes/{id}/stream?format=1
+```
+
+serves the stream as for format 0, with `X-Envelope` in place of
+`X-Stream-Header` and `X-Salt`.
+
+### Reading in the right format
+
+A read names the format it expects: `?format=1` on `/raw` and `/stream` for a
+format 1 note, nothing (or `?format=0`) for format 0, which the JSON endpoint
+always expects. The server serves a note only in its own format, and refuses
+any other read (`400`) without spending a read. A client that knows only
+format 0 thus never spends a read on a format 1 note, and the link a reader
+holds decides the format it reads: a note behind the link of the other format
+is refused, not opened.
 
 ### Reading strictly
 
 `GET /api/v1/notes/{id}/exists` answers as for format 0: `hasPassword` comes
 from the envelope. A format 1 reader MUST refuse:
 
-- a response without an envelope, which is a format 0 note behind a format 1
-  link, or with the envelope of the other kind than the endpoint serves;
+- a response without an envelope, or with the envelope of the other kind than
+  the endpoint serves;
 - a password note read without a password; a password given for a note
   without one is ignored;
 - a payload, or the head of a chunked note, that is not one MessagePack map
-  with nothing after it, whose `text` is not a string, whose `contentMode` is
+  (an extension type, a timestamp included, is not a map) with nothing after
+  it, whose `text` is not a string, whose `contentMode` is
   not one of the three values, or whose `files` is not an array of at most 10
   entries;
 - a file whose `name` or `type` is not a string, or whose `size` is not a
@@ -608,8 +643,8 @@ reader ignores keys it does not know. It need not check where the file bytes
 were cut, nor the length of each message: the tags and the declared sizes are
 enough.
 
-A writer writes each key of a map once, as a `str`, strings in valid UTF-8,
-and `size` as an `int`. The reference reader keeps the last of a repeated key,
+A writer writes each key of a map once, as a `str`, strings in valid UTF-8
+(a lone surrogate written as U+FFFD), and `size` as an `int`. The reference reader keeps the last of a repeated key,
 reads an integer key as a string, decodes invalid UTF-8 without refusing it,
 and takes a float with an integer value for an integer; another reader may
 refuse them.

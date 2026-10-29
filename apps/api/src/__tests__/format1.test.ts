@@ -282,7 +282,7 @@ describe("format 1 reads", () => {
 		const envelope = envelopeOf("single-shot", { maxReads: 2 });
 		const { id } = await createNote(envelope);
 
-		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		const res = await app.request(`/api/v1/notes/${id}/raw?format=1`);
 
 		expect(res.status).toBe(200);
 		expect(Buffer.from(res.headers.get("X-Envelope") ?? "", "base64")).toEqual(envelope);
@@ -301,7 +301,7 @@ describe("format 1 reads", () => {
 		const envelope = envelopeOf("single-shot", { fileCount: 1, password: true });
 		const { id } = await createNote(envelope);
 
-		const res = await app.request(`/api/v1/notes/${id}/raw`);
+		const res = await app.request(`/api/v1/notes/${id}/raw?format=1`);
 
 		expect(res.headers.get("X-Envelope")).toBe(b64(envelope));
 		expect(res.headers.get("X-Has-Password")).toBe("true");
@@ -314,7 +314,7 @@ describe("format 1 reads", () => {
 		const envelope = envelopeOf("chunked", { fileCount: 1, password: true });
 		const { id } = await createChunkedNote(envelope);
 
-		const res = await app.request(`/api/v1/notes/${id}/stream`);
+		const res = await app.request(`/api/v1/notes/${id}/stream?format=1`);
 
 		expect(res.status).toBe(200);
 		expect(Buffer.from(res.headers.get("X-Envelope") ?? "", "base64")).toEqual(envelope);
@@ -326,7 +326,7 @@ describe("format 1 reads", () => {
 		expect(res.headers.get("X-File-Count")).toBe("1");
 		expect(unframe(new Uint8Array(await res.arrayBuffer()))).toEqual(CHUNKS);
 		// Burned by its one read.
-		expect((await app.request(`/api/v1/notes/${id}/stream`)).status).toBe(404);
+		expect((await app.request(`/api/v1/notes/${id}/stream?format=1`)).status).toBe(404);
 	});
 
 	it("refuses a format 1 note on the JSON read without spending a read", async () => {
@@ -336,12 +336,12 @@ describe("format 1 reads", () => {
 
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({
-			error: "Note format not supported here: read it as raw bytes",
+			error: "Note is in another format than the one asked for",
 		});
 		expect(rowOf(id)?.readCount).toBe(0);
 
 		// Still there, and still burned by its one read.
-		expect((await app.request(`/api/v1/notes/${id}/raw`)).status).toBe(200);
+		expect((await app.request(`/api/v1/notes/${id}/raw?format=1`)).status).toBe(200);
 		expect(rowOf(id)).toBeUndefined();
 	});
 
@@ -351,6 +351,53 @@ describe("format 1 reads", () => {
 		expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(400);
 		expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(400);
 
+		expect(rowOf(id)?.readCount).toBe(0);
+	});
+
+	// What a client that knows only format 0 does (the SDK up to 1.2): it asks
+	// for no format, and must be refused before any read is spent.
+	it("refuses a format 1 note to a binary read that does not ask for format 1", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 1 }));
+		const { id: chunkedId } = await createChunkedNote(envelopeOf("chunked", { fileCount: 1 }));
+
+		for (const path of [
+			`/api/v1/notes/${id}/stream`,
+			`/api/v1/notes/${id}/raw`,
+			`/api/v1/notes/${id}/raw?format=0`,
+			`/api/v1/notes/${chunkedId}/stream`,
+			`/api/v1/notes/${chunkedId}/raw`,
+		]) {
+			expect((await app.request(path)).status, path).toBe(400);
+		}
+		expect(rowOf(id)?.readCount).toBe(0);
+		expect(rowOf(chunkedId)?.readCount).toBe(0);
+		const mismatch = await app.request(`/api/v1/notes/${chunkedId}/stream`);
+		expect((await mismatch.json()).error).toBe("Note is in another format than the one asked for");
+	});
+
+	it("refuses a format 0 note to a read that asks for format 1", async () => {
+		const res = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+			body: JSON.stringify({
+				encryptedData: CIPHERTEXT.toString("base64"),
+				clientNonce: "nonce",
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 1,
+				fileCount: 0,
+			}),
+		});
+		const { id } = (await res.json()) as { id: string };
+
+		expect((await app.request(`/api/v1/notes/${id}/raw?format=1`)).status).toBe(400);
+		expect(rowOf(id)?.readCount).toBe(0);
+		expect((await app.request(`/api/v1/notes/${id}/raw`)).status).toBe(200);
+	});
+
+	it("refuses a format other than 0 and 1", async () => {
+		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 1 }));
+		expect((await app.request(`/api/v1/notes/${id}/raw?format=2`)).status).toBe(400);
 		expect(rowOf(id)?.readCount).toBe(0);
 	});
 
@@ -529,6 +576,39 @@ describe("format 1 refusals", () => {
 		expect((await postNote({ envelope: b64(single) })).status).toBe(400);
 	});
 
+	// Format 0's schema ignores an `envelope` key: an envelope refused must not
+	// let the same request through as a format 0 note, behind a format 1 link.
+	it("refuses an envelope it refuses, whatever format 0 fields come with it", async () => {
+		const format0 = { clientNonce: "nonce", hasPassword: false, expiresIn: 3600, maxReads: 1 };
+		const tooManyReads = { 4: 0xff, 5: 0xff }; // maxReads 65535
+		const chunked = envelopeOf("chunked");
+
+		for (const envelope of ["!!!", b64(chunked), b64(tampered(single, tooManyReads))]) {
+			const ciphertext = CIPHERTEXT.toString("base64");
+			const json = await postNote({
+				...format0,
+				envelope,
+				encryptedData: ciphertext,
+				fileCount: 0,
+			});
+			expect(json.status).toBe(400);
+			const multipart = await postMultipart({ ...format0, envelope, fileCount: 1 });
+			expect(multipart.status).toBe(400);
+		}
+		for (const envelope of ["!!!", b64(single), b64(tampered(chunked, tooManyReads))]) {
+			const init = await postInit({
+				...format0,
+				envelope,
+				streamHeader: "header",
+				fileCount: 0,
+				chunkCount: 1,
+			});
+			expect(init.status).toBe(400);
+		}
+		expect(db.select().from(notesTable).all()).toHaveLength(0);
+		expect(db.select().from(uploadsTable).all()).toHaveLength(0);
+	});
+
 	it("refuses a multipart envelope of no file, of a chunked note, or malformed", async () => {
 		for (const envelope of [
 			envelopeOf("single-shot", { fileCount: 0 }),
@@ -656,6 +736,9 @@ describe("the OpenAPI document, for format 1", () => {
 		readonly contentEncoding?: string;
 		readonly format?: string;
 		readonly description?: string;
+		readonly minLength?: number;
+		readonly maxLength?: number;
+		readonly not?: unknown;
 	}
 
 	async function requestSchema(path: string): Promise<Schema> {
@@ -676,8 +759,15 @@ describe("the OpenAPI document, for format 1", () => {
 
 		const [format1, format0] = schema.anyOf ?? [];
 		expect(format1?.required).toEqual(["envelope", field]);
-		expect(format1?.properties?.["envelope"]).toMatchObject({ type: "string" });
+		// 34 bytes, or 58 with a password, in base64.
+		expect(format1?.properties?.["envelope"]).toMatchObject({
+			type: "string",
+			minLength: 48,
+			maxLength: 80,
+		});
 		expect(format1?.properties?.["envelope"]?.description).toContain("envelope");
 		expect(format0?.required).toContain("clientNonce");
+		// Format 0 documents the envelope as a key no value matches.
+		expect(format0?.properties?.["envelope"]).toMatchObject({ not: {} });
 	});
 });

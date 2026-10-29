@@ -259,7 +259,7 @@ test("the committed test vectors match what the crypto produces", async () => {
 			password !== undefined && argon2
 				? sodium.crypto_pwhash(
 						32,
-						new TextEncoder().encode(password.normalize("NFC")),
+						Buffer.concat([Buffer.from(password.normalize("NFC"), "utf8"), linkKey]),
 						argon2.salt,
 						argon2.iterations,
 						argon2.memoryKiB * 1024,

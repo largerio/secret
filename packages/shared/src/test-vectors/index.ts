@@ -75,7 +75,7 @@ export interface Format1KeyVector {
 	/** As typed: possibly not in NFC, which the derivation normalizes to. */
 	readonly password?: string;
 	readonly argon2?: Format1Argon2Vector;
-	/** Argon2id over the UTF-8 of the password in NFC. */
+	/** Argon2id over the UTF-8 of the password in NFC, followed by the link's key. */
 	readonly stretchedPassword?: string;
 	/** HKDF-Extract, without salt, over the link's key and the stretched password. */
 	readonly prk: string;

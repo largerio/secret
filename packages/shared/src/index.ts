@@ -20,7 +20,7 @@ export {
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 } from "./constants.js";
-export type { Argon2Params, Envelope, EnvelopeKind } from "./envelope.js";
+export type { Argon2Params, Envelope, EnvelopeKind, EnvelopeSettings } from "./envelope.js";
 export {
 	ARGON2_DEFAULT_ITERATIONS,
 	ARGON2_DEFAULT_MEMORY_KIB,
@@ -28,6 +28,7 @@ export {
 	ARGON2_MAX_MEMORY_KIB,
 	ARGON2_MIN_ITERATIONS,
 	ARGON2_MIN_MEMORY_KIB,
+	assertEnvelopeSettings,
 	ENVELOPE_LENGTH,
 	ENVELOPE_LENGTH_WITH_PASSWORD,
 	encodeEnvelope,
@@ -71,12 +72,15 @@ export type { AcceptedEnvelope, UploadSessionMetadata } from "./validation.js";
 export {
 	chunkedUploadCompleteResponseSchema,
 	chunkedUploadInitFormat1Schema,
+	chunkedUploadInitRequestSchema,
 	chunkedUploadInitResponseSchema,
 	chunkedUploadInitSchema,
 	chunkUploadResponseSchema,
 	createNoteFormat1Schema,
 	createNoteMultipartFormat1Schema,
+	createNoteMultipartRequestSchema,
 	createNoteMultipartSchema,
+	createNoteRequestSchema,
 	createNoteResponseSchema,
 	createNoteSchema,
 	deleteNoteResponseSchema,
@@ -85,6 +89,7 @@ export {
 	noteIdSchema,
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
+	uploadSessionAnyMetadataSchema,
 	uploadSessionFormat1MetadataSchema,
 	uploadSessionMetadataSchema,
 } from "./validation.js";

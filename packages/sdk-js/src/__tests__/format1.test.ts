@@ -19,8 +19,9 @@ import {
 	parseEnvelope,
 	testVectors,
 } from "@largerio/secret-shared";
+import { ExtData } from "@msgpack/msgpack";
 import sodium from "libsodium-wrappers-sumo";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { ensureInit } from "../crypto.js";
 import { SecretValidationError } from "../errors.js";
 import {
@@ -29,7 +30,7 @@ import {
 	decryptNoteFormat1,
 	encryptNoteChunkedFormat1,
 	encryptNoteFormat1,
-	isFormat1Fragment,
+	formatOfFragment,
 } from "../format1.js";
 
 beforeAll(async () => {
@@ -108,12 +109,20 @@ describe("format 1 fragments", () => {
 	test("start with 1. then the key", async () => {
 		const { keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
 		expect(keyFragment).toMatch(/^1\.[A-Za-z0-9_-]{43}$/);
-		expect(isFormat1Fragment(keyFragment)).toBe(true);
+		expect(formatOfFragment(keyFragment)).toBe(1);
 		expect(() => assertFormat1Fragment(keyFragment)).not.toThrow();
 	});
 
 	test("are told apart from format 0 keys, which never hold a dot", () => {
-		expect(isFormat1Fragment(keyToBase64Url(generateKey()))).toBe(false);
+		expect(formatOfFragment(keyToBase64Url(generateKey()))).toBe(0);
+		expect(formatOfFragment("12345")).toBe(0);
+	});
+
+	test.each(["0.", "2.", "10."])("refuse a link of another format, %s", (prefix) => {
+		const keyFragment = `${prefix}${keyToBase64Url(generateKey())}`;
+		expect(() => formatOfFragment(keyFragment)).toThrow(
+			new SecretValidationError("Unsupported note format"),
+		);
 	});
 
 	test.each([
@@ -197,17 +206,45 @@ describe("single-shot format 1 notes", () => {
 	test("do not open without an envelope, or with a chunked one", async () => {
 		const written = await encryptNoteFormat1({ text: "hi" }, settings);
 		const chunked = encodeEnvelope({ kind: "chunked", streamHeader: generateNonce(), ...settings });
-		for (const envelope of [undefined, chunked, new Uint8Array([1, 2, 3])]) {
+		for (const envelope of [chunked, new Uint8Array([1, 2, 3])]) {
 			await expect(
 				decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment),
 			).rejects.toThrow("Not a format 1 note of this kind");
 		}
 	});
 
-	test("refuse settings the envelope cannot carry, before encrypting", async () => {
-		await expect(
-			encryptNoteFormat1({ text: "hi" }, { ...settings, maxReads: 70_000 }),
-		).rejects.toThrow(new SecretValidationError("maxReads does not fit in the envelope"));
+	test("refuse settings the envelope cannot carry, before stretching the password", async () => {
+		const pwhash = vi.spyOn(sodium, "crypto_pwhash");
+		try {
+			await expect(
+				encryptNoteFormat1({ text: "hi" }, { ...settings, maxReads: 70_000 }, "pw"),
+			).rejects.toThrow(new SecretValidationError("maxReads must be an integer from 0 to 65535"));
+			await expect(
+				encryptNoteChunkedFormat1({ text: "hi" }, 4, { ...settings, expiresIn: -1 }, "pw"),
+			).rejects.toThrow(
+				new SecretValidationError("expiresIn must be an integer from 0 to 4294967295"),
+			);
+			expect(pwhash).not.toHaveBeenCalled();
+		} finally {
+			pwhash.mockRestore();
+		}
+	});
+
+	test("write strings as valid UTF-8, a lone surrogate as U+FFFD", async () => {
+		const payload: NotePayload = {
+			text: "cut\uD83D",
+			files: [{ name: "\uDE00name", type: "t", size: 0, data: new Uint8Array() }],
+		};
+		const written = await encryptNoteFormat1(payload, { ...settings, fileCount: 1 });
+		const read = await decryptNoteFormat1(
+			written.encryptedBytes,
+			fromBase64(written.envelope),
+			written.keyFragment,
+		);
+		expect(read).toEqual({
+			text: "cut\uFFFD",
+			files: [{ name: "\uFFFDname", type: "t", size: 0, data: new Uint8Array() }],
+		});
 	});
 
 	test(
@@ -257,7 +294,12 @@ describe("the payload of a single-shot format 1 note", () => {
 		["a string", "text"],
 		["bytes", new Uint8Array([1])],
 		["nil", null],
+		["a timestamp extension", new Date(0)],
+		["another extension", new ExtData(5, new Uint8Array([1]))],
 		["a text that is not a string", { text: 3 }],
+		["a nil text", { text: null }],
+		["a nil content mode", { contentMode: null }],
+		["nil files", { files: null }],
 		["an unknown content mode", { contentMode: "html" }],
 		["files that are not an array", { files: "a" }],
 		["more than 10 files", { files: Array.from({ length: 11 }, () => goodFile) }],
@@ -268,6 +310,7 @@ describe("the payload of a single-shot format 1 note", () => {
 		["a fractional size", { files: [{ ...goodFile, size: 1.5 }] }],
 		["data that is not bytes", { files: [{ ...goodFile, data: "ab" }] }],
 		["data shorter than its size", { files: [{ ...goodFile, size: 3 }] }],
+		["data longer than its size", { files: [{ ...goodFile, size: 1 }] }],
 		["a file that is not a map", { files: [[1]] }],
 	])("is refused when it is %s", async (_, plaintext) => {
 		const files = (plaintext as { files?: unknown } | null)?.files;
@@ -275,6 +318,13 @@ describe("the payload of a single-shot format 1 note", () => {
 		await expect(
 			decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment),
 		).rejects.toThrow("Malformed payload");
+	});
+
+	test("may hold 10 files, the most a note holds", async () => {
+		const files = Array.from({ length: 10 }, () => goodFile);
+		const forged = forgeSingleShot({ files }, 10);
+		const read = await decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment);
+		expect(read.files).toHaveLength(10);
 	});
 
 	test("must hold as many files as its envelope declares", async () => {
@@ -339,6 +389,9 @@ describe("chunked format 1 notes", () => {
 
 	test.each([
 		["not a map", [1]],
+		["an extension", new Date(0)],
+		["a nil text", { text: null }],
+		["nil files", { files: null }],
 		[
 			"more than 10 files",
 			{ files: Array.from({ length: 11 }, () => ({ name: "a", type: "t", size: 0 })) },

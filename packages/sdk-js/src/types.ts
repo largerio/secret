@@ -79,9 +79,11 @@ export interface CreateNoteOptions {
 	/** Chunk size in bytes for chunked upload. Default: 4MB (DEFAULT_CHUNK_SIZE). */
 	readonly chunkSize?: number;
 	/**
-	 * The encryption format to write (PROTOCOL.md). Default: 0. Format 1 is a
-	 * draft until the protocol calls it final: its bytes may still change, so do
-	 * not write it outside tests yet. Reads take either, from the link.
+	 * The encryption format to write (PROTOCOL.md): 0 or 1. Default: 0. Reads
+	 * take either, from the link.
+	 *
+	 * @experimental Format 1 is a draft until the protocol calls it final: its
+	 * bytes may still change, so do not write it outside tests yet.
 	 */
 	readonly format?: 0 | 1;
 }

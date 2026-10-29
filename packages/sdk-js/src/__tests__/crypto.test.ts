@@ -13,6 +13,7 @@ import {
 } from "@largerio/secret-crypto/client";
 import type { NotePayload } from "@largerio/secret-shared";
 import { testVectors } from "@largerio/secret-shared";
+import sodium from "libsodium-wrappers-sumo";
 import { describe, expect, test } from "vitest";
 import {
 	decryptNote,
@@ -396,6 +397,27 @@ describe("SDK crypto", () => {
 		await expect(
 			decryptNoteChunked(extended.chunks, extended.header, extended.key),
 		).rejects.toThrow("truncated or extended");
+	});
+
+	// Format 1 refuses both; format 0 has always read them, and still must.
+	test("decryptNoteChunked reads any tag but FINAL as a message, and ignores bytes past the sizes", async () => {
+		await ensureInit();
+
+		const baseKey = generateKey();
+		const { state, header } = initStreamEncrypt(baseKey);
+		const headerBytes = encodeRaw({ files: [{ name: "a.txt", type: "text/plain", size: 1 }] });
+		const chunks = [
+			sodium.crypto_secretstream_xchacha20poly1305_push(
+				state,
+				headerBytes,
+				null,
+				sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH,
+			),
+			encryptChunk(state, new Uint8Array([1, 2]), true),
+		];
+
+		const payload = await decryptNoteChunked(chunks, toBase64(header), keyToBase64Url(baseKey));
+		expect(payload.files?.[0]?.data).toEqual(new Uint8Array([1]));
 	});
 
 	test("decryptNoteChunked rejects a FINAL header that declares file data", async () => {

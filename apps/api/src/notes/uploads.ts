@@ -4,12 +4,10 @@ import {
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 	type UploadSessionMetadata,
-	uploadSessionFormat1MetadataSchema,
-	uploadSessionMetadataSchema,
+	uploadSessionAnyMetadataSchema,
 } from "@largerio/secret-shared";
 import { count, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { z } from "zod";
 import type { AppDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
 import type { AppMetrics } from "../metrics.js";
@@ -38,14 +36,10 @@ export interface Uploads {
 	completeUpload(uploadId: string): CreatedNote;
 }
 
-/** An upload session row's metadata, in either format. */
-const sessionMetadataSchema = z.union([
-	uploadSessionFormat1MetadataSchema,
-	uploadSessionMetadataSchema,
-]);
-
 /** What a session keeps of its note's settings: read back, and checked again, on completion. */
-function sessionMetadata(settings: UploadSettings): z.input<typeof sessionMetadataSchema> {
+function sessionMetadata(
+	settings: UploadSettings,
+): UploadSessionMetadata | { readonly envelope: string } {
 	const { opening } = settings;
 	if (opening.format === 1) {
 		// The envelope says the rest.
@@ -174,7 +168,7 @@ export function createUploads(deps: UploadsDeps): Uploads {
 
 			// Checked again rather than trusted: a corrupted row (bad JSON, missing
 			// fields or a broken envelope) must not produce a malformed note.
-			const metadata = parseJson(sessionMetadataSchema, session.metadata);
+			const metadata = parseJson(uploadSessionAnyMetadataSchema, session.metadata);
 			if (metadata === undefined) {
 				throw new NoteError("upload_corrupted");
 			}

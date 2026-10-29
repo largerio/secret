@@ -7,7 +7,7 @@ const NOTE_ERROR_STATUS: Readonly<Record<NoteErrorCode, ContentfulStatusCode>> =
 	note_not_found: 404,
 	note_is_chunked: 400,
 	note_is_single_shot: 400,
-	note_format_unsupported: 400,
+	note_format_mismatch: 400,
 	note_too_large: 413,
 	note_corrupted: 500,
 	expiry_above_limit: 400,

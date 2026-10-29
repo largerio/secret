@@ -33,11 +33,15 @@ describe("HKDF-SHA256", () => {
 });
 
 describe("stretchPassword", () => {
-	it("runs Argon2id over the UTF-8 of the password, as OpenSSL does", () => {
+	it("runs Argon2id over the UTF-8 of the password then the link's key, as OpenSSL does", () => {
 		const salt = generateSalt();
-		const stretched = stretchPassword({ password: "pässwörd", argon2: { salt, ...LIGHT } });
+		const linkKey = generateKey();
+		const stretched = stretchPassword(
+			{ password: "pässwörd", argon2: { salt, ...LIGHT } },
+			linkKey,
+		);
 		const openssl = argon2Sync("argon2id", {
-			message: Buffer.from("pässwörd".normalize("NFC"), "utf8"),
+			message: Buffer.concat([Buffer.from("pässwörd".normalize("NFC"), "utf8"), linkKey]),
 			nonce: salt,
 			parallelism: 1,
 			tagLength: 32,
@@ -49,11 +53,29 @@ describe("stretchPassword", () => {
 
 	it("derives the same bytes from a password typed in NFC or in NFD", () => {
 		const argon2 = { salt: generateSalt(), ...LIGHT };
+		const linkKey = generateKey();
 		const nfc = "café".normalize("NFC");
 		const nfd = "café".normalize("NFD");
 		expect(nfc).not.toBe(nfd);
-		expect(stretchPassword({ password: nfd, argon2 })).toEqual(
-			stretchPassword({ password: nfc, argon2 }),
+		expect(stretchPassword({ password: nfd, argon2 }, linkKey)).toEqual(
+			stretchPassword({ password: nfc, argon2 }, linkKey),
+		);
+	});
+
+	// The salt is stored with the note: without the key in the input, it would
+	// be enough to stretch a dictionary before the link is ever seen.
+	it("depends on the link's key, not on the password and the salt alone", () => {
+		const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
+		expect(stretchPassword(password, generateKey())).not.toEqual(
+			stretchPassword(password, generateKey()),
+		);
+	});
+
+	it("encodes a lone surrogate as U+FFFD, as WHATWG UTF-8 does", () => {
+		const argon2 = { salt: generateSalt(), ...LIGHT };
+		const linkKey = generateKey();
+		expect(stretchPassword({ password: "pw\uD800", argon2 }, linkKey)).toEqual(
+			stretchPassword({ password: "pw\uFFFD", argon2 }, linkKey),
 		);
 	});
 });
@@ -68,7 +90,7 @@ describe("deriveFormat1Key", () => {
 	it("is HKDF over the link's key and the stretched password with one", () => {
 		const linkKey = generateKey();
 		const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
-		const ikm = Buffer.concat([linkKey, stretchPassword(password)]);
+		const ikm = Buffer.concat([linkKey, stretchPassword(password, linkKey)]);
 		const expected = hkdfSync("sha256", ikm, new Uint8Array(0), "secret/1 enc", 32);
 		expect(hex(deriveFormat1Key(linkKey, password))).toBe(Buffer.from(expected).toString("hex"));
 	});
