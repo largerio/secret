@@ -4,9 +4,11 @@ import {
 	MAX_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
 	MAX_NONCE_LENGTH,
+	MAX_PASSWORD_ATTEMPTS,
 	MAX_READS,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
+	PROOF_LENGTH,
 	UPLOAD_ID_LENGTH,
 } from "./constants.js";
 import {
@@ -96,18 +98,68 @@ function envelopeSchema(kind: EnvelopeKind, minFiles = 0) {
 		);
 }
 
-export const createNoteFormat1Schema = z.object({
-	envelope: envelopeSchema("single-shot"),
-	encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
-});
+/** 32 bytes in base64: a read proof, or what checks one (PROTOCOL.md). */
+function proofBytes(description: string) {
+	return z
+		.string()
+		.regex(/^[A-Za-z0-9+/]{43}=$/, `Expected ${String(PROOF_LENGTH)} bytes in base64`)
+		.transform((value) => new Uint8Array(Buffer.from(value, "base64")))
+		.describe(description);
+}
 
-export const createNoteMultipartFormat1Schema = z.object({
-	envelope: envelopeSchema("single-shot", 1),
-});
+/** What a format 1 write sends beside its envelope, never inside it: the envelope is public. */
+const format1Verifiers = {
+	linkVerifier: proofBytes(
+		"SHA-256 of the link proof its readers will send, in base64. Never served.",
+	),
+	passwordVerifier: proofBytes(
+		"A password note's: SHA-256 of the password proof its readers will send, in base64. Never served.",
+	).optional(),
+};
 
-export const chunkedUploadInitFormat1Schema = z.object({
-	envelope: envelopeSchema("chunked"),
-	chunkCount: z.number().int().min(1).max(10000),
+// The envelope says whether the note has a password: a password verifier comes
+// with one, and only with one.
+const VERIFIERS_MATCH_ENVELOPE = {
+	message: "A password verifier comes with a password note, and only with one",
+	path: ["passwordVerifier"],
+	// Only once the fields parsed: zod would otherwise run it on a refused envelope.
+	when: (payload: { readonly issues: ReadonlyArray<unknown> }) => payload.issues.length === 0,
+};
+const verifiersMatchEnvelope = (data: {
+	readonly envelope: AcceptedEnvelope;
+	readonly passwordVerifier?: Uint8Array | undefined;
+}): boolean =>
+	(data.passwordVerifier !== undefined) === (data.envelope.envelope.argon2 !== undefined);
+
+export const createNoteFormat1Schema = z
+	.object({
+		envelope: envelopeSchema("single-shot"),
+		...format1Verifiers,
+		encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
+	})
+	.refine(verifiersMatchEnvelope, VERIFIERS_MATCH_ENVELOPE);
+
+export const createNoteMultipartFormat1Schema = z
+	.object({
+		envelope: envelopeSchema("single-shot", 1),
+		...format1Verifiers,
+	})
+	.refine(verifiersMatchEnvelope, VERIFIERS_MATCH_ENVELOPE);
+
+export const chunkedUploadInitFormat1Schema = z
+	.object({
+		envelope: envelopeSchema("chunked"),
+		...format1Verifiers,
+		chunkCount: z.number().int().min(1).max(10000),
+	})
+	.refine(verifiersMatchEnvelope, VERIFIERS_MATCH_ENVELOPE);
+
+/** `POST /notes/{id}/reads`: the proofs a format 1 reader derived from its link and password. */
+export const noteReadRequestSchema = z.object({
+	linkProof: proofBytes("HKDF of the link's key, in base64 (PROTOCOL.md): proves the link."),
+	passwordProof: proofBytes(
+		"A password note's: HKDF of the link's key and the stretched password, in base64. Ignored on a note without a password.",
+	).optional(),
 });
 
 const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -146,10 +198,26 @@ export const noteExistsResponseSchema = z.object({
 		.min(0)
 		.describe(
 			"Reads already spent on the note. A read is spent once the ciphertext is served, " +
-				"so a wrong password still counts. Reads left: maxReads - readCount. Always 0 when " +
-				"maxReads is 0 (unlimited): how often an unlimited note was opened is not disclosed.",
+				"so on a format 0 note a wrong password still counts; on a format 1 note it does not. " +
+				"Reads left: maxReads - readCount. Always 0 when maxReads is 0 (unlimited): how often " +
+				"an unlimited note was opened is not disclosed.",
 		),
 	chunked: z.boolean(),
+	envelope: z
+		.base64()
+		.optional()
+		.describe(
+			"A format 1 note's envelope, in base64: what its reader derives the proofs with. Absent for a format 0 note.",
+		),
+	passwordAttemptsLeft: z
+		.number()
+		.int()
+		.min(1)
+		.max(MAX_PASSWORD_ATTEMPTS)
+		.optional()
+		.describe(
+			"A format 1 password note's: wrong passwords it still takes, the last of which deletes it. A wrong password spends no read.",
+		),
 });
 
 export const noteNotFoundResponseSchema = z.object({
@@ -189,10 +257,17 @@ export const uploadSessionMetadataSchema = z.object({
 
 export type UploadSessionMetadata = z.infer<typeof uploadSessionMetadataSchema>;
 
-/** The upload session row of a format 1 note: its envelope says the rest. */
-export const uploadSessionFormat1MetadataSchema = z.object({
-	envelope: envelopeSchema("chunked"),
-});
+/**
+ * The upload session row of a format 1 note: its envelope says the rest, but
+ * for its verifiers, kept as the server sealed them.
+ */
+export const uploadSessionFormat1MetadataSchema = z
+	.object({
+		envelope: envelopeSchema("chunked"),
+		linkVerifier: proofBytes("The link verifier, sealed by the server."),
+		passwordVerifier: proofBytes("The password verifier, sealed by the server.").optional(),
+	})
+	.refine(verifiersMatchEnvelope, VERIFIERS_MATCH_ENVELOPE);
 
 export const chunkedUploadInitSchema = uploadSessionMetadataSchema
 	.extend({

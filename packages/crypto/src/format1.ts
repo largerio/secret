@@ -5,6 +5,8 @@ const KEY_LENGTH = 32;
 // RFC 5869: without a salt, HKDF-Extract keys its HMAC with HashLen zero bytes.
 const NO_SALT = new Uint8Array(KEY_LENGTH);
 const ENCRYPTION_INFO = "secret/1 enc";
+const LINK_PROOF_INFO = "secret/1 link";
+const PASSWORD_PROOF_INFO = "secret/1 read";
 
 /** HKDF-Extract (RFC 5869) with SHA-256 and no salt. */
 export function hkdfExtract(ikm: Uint8Array): Uint8Array {
@@ -59,25 +61,69 @@ export function stretchPassword(
 }
 
 /**
- * The key a format 1 note is encrypted with (PROTOCOL.md): HKDF over the link's
- * key, followed for a password note by its stretched password.
+ * What a format 1 note's link and password give (PROTOCOL.md): the key it is
+ * encrypted with, and the proofs a reader sends before the server serves it.
  */
-export function deriveFormat1Key(linkKey: Uint8Array, password?: PasswordInput): Uint8Array {
-	let ikm = linkKey;
-	if (password) {
-		const stretched = stretchPassword(password, linkKey);
-		ikm = new Uint8Array(linkKey.length + stretched.length);
+export interface Format1Keys {
+	readonly encryptionKey: Uint8Array;
+	/** Proves the link: HKDF over the link's key alone. */
+	readonly linkProof: Uint8Array;
+	/** A password note's: proves the password, from the same secret as the key. */
+	readonly passwordProof?: Uint8Array | undefined;
+}
+
+/**
+ * A format 1 note's keys and proofs, in one pass of Argon2id: HKDF over the
+ * link's key, followed for a password note by its stretched password.
+ */
+export function deriveFormat1Keys(linkKey: Uint8Array, password?: PasswordInput): Format1Keys {
+	// Every intermediate secret is wiped on the way out, a throw included: an
+	// Argon2id run the reader cannot allocate memory for is a real failure.
+	const secrets: Uint8Array[] = [];
+	const kept = <T extends Uint8Array>(secret: T): T => {
+		secrets.push(secret);
+		return secret;
+	};
+	try {
+		// The keys are expanded last, in the return: a throw before leaves none.
+		const linkPrk = kept(hkdfExtract(linkKey));
+		if (!password) {
+			return {
+				encryptionKey: hkdfExpand(linkPrk, ENCRYPTION_INFO),
+				linkProof: hkdfExpand(linkPrk, LINK_PROOF_INFO),
+			};
+		}
+
+		const stretched = kept(stretchPassword(password, linkKey));
+		const ikm = kept(new Uint8Array(linkKey.length + stretched.length));
 		ikm.set(linkKey);
 		ikm.set(stretched, linkKey.length);
-		sodium.memzero(stretched);
-	}
-	const prk = hkdfExtract(ikm);
-	try {
-		return hkdfExpand(prk, ENCRYPTION_INFO);
+		const prk = kept(hkdfExtract(ikm));
+		return {
+			encryptionKey: hkdfExpand(prk, ENCRYPTION_INFO),
+			linkProof: hkdfExpand(linkPrk, LINK_PROOF_INFO),
+			passwordProof: hkdfExpand(prk, PASSWORD_PROOF_INFO),
+		};
 	} finally {
-		sodium.memzero(prk);
-		if (ikm !== linkKey) {
-			sodium.memzero(ikm);
+		for (const secret of secrets) {
+			sodium.memzero(secret);
 		}
 	}
+}
+
+/** Wipes a note's keys and proofs once they are no longer needed. */
+export function zeroFormat1Keys(keys: Format1Keys): void {
+	sodium.memzero(keys.encryptionKey);
+	sodium.memzero(keys.linkProof);
+	if (keys.passwordProof) {
+		sodium.memzero(keys.passwordProof);
+	}
+}
+
+/**
+ * What a writer sends the server for a proof: its SHA-256. The server keeps
+ * it to check the proof a reader sends, and never serves it.
+ */
+export function verifierOf(proof: Uint8Array): Uint8Array {
+	return sodium.crypto_hash_sha256(proof);
 }

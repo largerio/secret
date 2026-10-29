@@ -1,16 +1,20 @@
-import { NOTE_ID_LENGTH, parseEnvelope } from "@largerio/secret-shared";
+import { MAX_PASSWORD_ATTEMPTS, NOTE_ID_LENGTH, parseEnvelope } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { AppDatabase, Transaction } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { enqueueDeletion, type PendingDeletion } from "../pendingDeletions.js";
 import { NoteError } from "./errors.js";
+import { SEALED_VERIFIER_LENGTH } from "./serverLayer.js";
 import type {
-	ChunkedOpening,
+	ChunkedFormat0Opening,
+	Format0Opening,
 	Format1Opening,
 	NoteMeta,
 	NoteOpening,
-	NoteSettings,
+	SealedVerifier,
+	SealedVerifiers,
+	StoredSettings,
 } from "./types.js";
 
 export type NoteRow = typeof notes.$inferSelect;
@@ -46,58 +50,88 @@ export function isChunked<T extends { readonly chunkCount: number | null }>(
 }
 
 /**
- * Whether a note is a format 1 note, its settings and what opening it takes in
- * the envelope its writer sent. The one definition: a row without one is
- * format 0.
+ * Whether a note is a format 1 note, read with its proofs alone. The one
+ * definition: a row with an envelope, or with a verifier. One that kept a
+ * verifier but lost its envelope is a corrupt format 1 row, never a format 0
+ * note: the format 0 reads would serve it, and burn it, to whoever knows its
+ * id. format1ReadingOf refuses it.
  */
-export function isFormat1<T extends { readonly envelope: Buffer | null }>(
-	note: T,
-): note is T & { readonly envelope: Buffer } {
-	return note.envelope !== null;
+export function isFormat1(note: {
+	readonly envelope: Buffer | null;
+	readonly linkVerifier: Buffer | null;
+	readonly passwordVerifier: Buffer | null;
+}): boolean {
+	return note.envelope !== null || note.linkVerifier !== null || note.passwordVerifier !== null;
+}
+
+/** What a format 1 row gives its read: how the reader opens it, and what its proofs must match. */
+export interface Format1Reading {
+	readonly opening: Format1Opening;
+	readonly verifiers: SealedVerifiers;
 }
 
 /**
- * A format 1 row's envelope, checked as its writer's was: one that does not
- * parse, or is not of the row's kind, is a corrupt row, never served.
+ * A format 1 row, checked as its writer's request was: no envelope, one that
+ * does not parse or is not of the row's kind, no link verifier, a password
+ * verifier on a note without a password or missing on one with it, or a
+ * verifier of another length than the server seals, make a corrupt row, never
+ * served. Served without its proofs checked, a note would be read, and burned,
+ * by whoever knows its id.
  */
-function envelopeOpening(
-	note: NoteRow & { readonly envelope: Buffer },
-): Format1Opening | undefined {
+export function format1ReadingOf(note: NoteRow): Format1Reading | undefined {
+	if (note.envelope === null) {
+		return undefined;
+	}
 	const kind = isChunked(note) ? "chunked" : "single-shot";
-	return parseEnvelope(note.envelope)?.kind === kind
-		? { format: 1, envelope: note.envelope }
-		: undefined;
-}
-
-/** How a reader opens the single-shot note a row holds, or undefined for a corrupt row. */
-export function openingOf(note: NoteRow): NoteOpening | undefined {
-	if (isFormat1(note)) {
-		return envelopeOpening(note);
+	const envelope = parseEnvelope(note.envelope);
+	const link = sealedVerifierOf(note.linkVerifier);
+	if (envelope?.kind !== kind || link === undefined) {
+		return undefined;
 	}
-	return {
-		format: 0,
-		clientNonce: note.clientNonce,
-		...(note.salt !== null ? { salt: note.salt } : {}),
-	};
-}
-
-/**
- * How a reader opens the chunked note a row holds, or undefined for a corrupt
- * row: a format 0 one without its stream header, or a broken envelope.
- */
-export function chunkedOpeningOf(note: NoteRow): ChunkedOpening | undefined {
-	if (isFormat1(note)) {
-		return envelopeOpening(note);
+	const hasPassword = envelope.argon2 !== undefined;
+	if (hasPassword !== (note.passwordVerifier !== null)) {
+		return undefined;
 	}
-	if (!note.streamHeader) {
+	const password = sealedVerifierOf(note.passwordVerifier);
+	if (hasPassword && password === undefined) {
 		return undefined;
 	}
 	return {
+		opening: { format: 1, envelope: note.envelope },
+		verifiers: { link, ...(password ? { password } : {}) },
+	};
+}
+
+/**
+ * A verifier column as the sealed verifier newNoteRow wrote, or undefined when
+ * it is NULL or of another length, which only a corrupt row holds: the proofs
+ * are compared with HMAC-SHA256 outputs alone.
+ */
+function sealedVerifierOf(stored: Buffer | null): SealedVerifier | undefined {
+	if (stored === null || stored.length !== SEALED_VERIFIER_LENGTH) {
+		return undefined;
+	}
+	return stored as SealedVerifier;
+}
+
+/** How a reader opens a format 0 single-shot note: the fields its writer sent. */
+export function openingOf(note: NoteRow): Format0Opening {
+	return {
 		format: 0,
 		clientNonce: note.clientNonce,
 		...(note.salt !== null ? { salt: note.salt } : {}),
-		streamHeader: note.streamHeader,
 	};
+}
+
+/**
+ * How a reader opens a format 0 chunked note, or undefined for a corrupt row:
+ * one without its stream header.
+ */
+export function chunkedOpeningOf(note: NoteRow): ChunkedFormat0Opening | undefined {
+	if (!note.streamHeader) {
+		return undefined;
+	}
+	return { ...openingOf(note), streamHeader: note.streamHeader };
 }
 
 export function placementOf(note: {
@@ -127,10 +161,13 @@ export function singleShotPlacement(fileCount: number): "database" | "file" {
 	return fileCount === 0 ? "database" : "file";
 }
 
-/** The row of a new note: the one place a note row is built. */
+/**
+ * The row of a new note: the one place a note row is built. Its verifiers are
+ * the sealed ones: a writer's never reach a row.
+ */
 export function newNoteRow(
 	id: string,
-	settings: NoteSettings,
+	settings: StoredSettings,
 	placement: Placement,
 	deleteToken: string,
 	now: Date,
@@ -138,6 +175,8 @@ export function newNoteRow(
 	const common = {
 		id,
 		...openingColumns(settings.opening),
+		linkVerifier: settings.verifiers?.link ?? null,
+		passwordVerifier: settings.verifiers?.password ?? null,
 		hasPassword: settings.hasPassword,
 		deleteToken,
 		fileCount: settings.fileCount,
@@ -293,4 +332,101 @@ export function spendRead(
 		throw new NoteError("note_not_found");
 	}
 	return result;
+}
+
+// A format 1 password note's attempts are counted the way a smartcard counts
+// its PIN's: one is taken, and committed, before the password proof is
+// compared (takePasswordAttempt), then settled (settlePasswordAttempt): given
+// back to a right password, kept by a wrong one, and the wrong one that
+// reaches MAX_PASSWORD_ATTEMPTS deletes the note, as a burn would. Counted only
+// once found wrong, an attempt the database could not record (a full disk)
+// would cost nothing: guesses would go unlimited, and a right one, which loads
+// the note before its read fails, would stand out by its time.
+
+/** What taking a password attempt found. */
+export type PasswordAttempt =
+	| { readonly status: "taken" }
+	| { readonly status: "missing" }
+	/** A note without an attempt left, deleted on the way, its purge queued. */
+	| { readonly status: "exhausted"; readonly purge: PendingDeletion | undefined };
+
+/**
+ * Takes one attempt on a format 1 password note, before its password proof is
+ * compared. The count is read again inside the transaction, as spendRead's is,
+ * so two attempts at once take two. Each attempt is settled as soon as it is
+ * taken, and the last wrong one deletes the note: a note still there without
+ * an attempt left is one a crash cut short between the two. It takes no more,
+ * and is deleted as its last wrong password would have deleted it.
+ */
+export function takePasswordAttempt(
+	db: AppDatabase,
+	id: string,
+	purgeDelayMs?: number,
+): PasswordAttempt {
+	return db.transaction((tx) => {
+		const note = attemptsOf(tx, id);
+		if (note === undefined) {
+			return { status: "missing" };
+		}
+		if (note.failedAttempts >= MAX_PASSWORD_ATTEMPTS) {
+			return { status: "exhausted", purge: removeNote(tx, note, purgeDelayMs) };
+		}
+		tx.update(notes)
+			.set({ failedAttempts: note.failedAttempts + 1 })
+			.where(eq(notes.id, id))
+			.run();
+		return { status: "taken" };
+	});
+}
+
+/**
+ * Settles the attempt takePasswordAttempt took, once the password proof is
+ * compared: a right one gets it back, a wrong one keeps it, and deletes the
+ * note when it was the last. A note gone meanwhile is refused.
+ *
+ * Returns whether the attempt deleted the note, and the purge it queued, for
+ * the caller to run once the transaction has committed.
+ */
+export function settlePasswordAttempt(
+	db: AppDatabase,
+	id: string,
+	proven: boolean,
+	purgeDelayMs?: number,
+): { readonly deleted: boolean; readonly purge: PendingDeletion | undefined } {
+	const result = db.transaction((tx) => {
+		const note = attemptsOf(tx, id);
+		if (note === undefined) {
+			return undefined;
+		}
+		if (proven) {
+			tx.update(notes)
+				.set({ failedAttempts: note.failedAttempts - 1 })
+				.where(eq(notes.id, id))
+				.run();
+			return { deleted: false, purge: undefined };
+		}
+		if (note.failedAttempts < MAX_PASSWORD_ATTEMPTS) {
+			return { deleted: false, purge: undefined };
+		}
+		return { deleted: true, purge: removeNote(tx, note, purgeDelayMs) };
+	});
+
+	if (result === undefined) {
+		throw new NoteError("note_not_found");
+	}
+	return result;
+}
+
+/** What the password attempts read of a note, inside their transaction. */
+function attemptsOf(tx: Transaction, id: string) {
+	return tx
+		.select({
+			id: notes.id,
+			failedAttempts: notes.failedAttempts,
+			filePath: notes.filePath,
+			chunkCount: notes.chunkCount,
+		})
+		.from(notes)
+		.where(eq(notes.id, id))
+		.get();
 }

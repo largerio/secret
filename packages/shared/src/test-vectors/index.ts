@@ -81,6 +81,14 @@ export interface Format1KeyVector {
 	readonly prk: string;
 	/** HKDF-Expand of the PRK with the info `secret/1 enc`. */
 	readonly encryptionKey: string;
+	/** HKDF over the link's key alone, with the info `secret/1 link`. */
+	readonly linkProof: string;
+	/** SHA-256 of the link proof. */
+	readonly linkVerifier: string;
+	/** A password note's: HKDF-Expand of the PRK with the info `secret/1 read`. */
+	readonly passwordProof?: string;
+	/** SHA-256 of the password proof. */
+	readonly passwordVerifier?: string;
 }
 
 export interface Format1EnvelopeVector {

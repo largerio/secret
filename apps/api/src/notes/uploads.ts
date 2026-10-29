@@ -15,11 +15,17 @@ import { parseJson } from "../parseJson.js";
 import { enqueueDeletion, runDeletion } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { NoteError } from "./errors.js";
-import { chunkedSettingsOf } from "./formats.js";
+import { sessionSettingsOf } from "./formats.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
 import { newDeleteToken, newNoteId, newNoteRow, noteExists } from "./rows.js";
 import type { ServerLayer } from "./serverLayer.js";
-import type { CreatedNote, IncomingChunk, UploadSession, UploadSettings } from "./types.js";
+import type {
+	CreatedNote,
+	IncomingChunk,
+	SealedVerifiers,
+	UploadSession,
+	UploadSettings,
+} from "./types.js";
 
 export interface UploadsDeps {
 	readonly db: AppDatabase;
@@ -36,14 +42,34 @@ export interface Uploads {
 	completeUpload(uploadId: string): CreatedNote;
 }
 
-/** What a session keeps of its note's settings: read back, and checked again, on completion. */
+/**
+ * A format 1 session's metadata (uploadSessionFormat1MetadataSchema): the
+ * envelope, and the verifiers as the server sealed them. One without a link
+ * verifier fails its completion, as a note no proof can open.
+ */
+interface Format1SessionMetadata {
+	readonly envelope: string;
+	readonly linkVerifier?: string;
+	readonly passwordVerifier?: string;
+}
+
+/**
+ * What a session keeps of its note's settings: read back, and checked again, on
+ * completion. Format 1's verifiers are kept sealed with the note's id and its
+ * envelope, as its row will keep them.
+ */
 function sessionMetadata(
 	settings: UploadSettings,
-): UploadSessionMetadata | { readonly envelope: string } {
+	verifiers: SealedVerifiers | undefined,
+): UploadSessionMetadata | Format1SessionMetadata {
 	const { opening } = settings;
 	if (opening.format === 1) {
-		// The envelope says the rest.
-		return { envelope: opening.envelope.toString("base64") };
+		// The envelope says the rest, but for the verifiers, which travel beside it.
+		return {
+			envelope: opening.envelope.toString("base64"),
+			...(verifiers ? { linkVerifier: verifiers.link.toString("base64") } : {}),
+			...(verifiers?.password ? { passwordVerifier: verifiers.password.toString("base64") } : {}),
+		};
 	}
 	const metadata: UploadSessionMetadata = {
 		streamHeader: opening.streamHeader,
@@ -85,15 +111,23 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			assertStorageAvailable(db, limits, 0);
 
 			const uploadId = nanoid(UPLOAD_ID_LENGTH);
+			// The note's id comes first: its verifiers are sealed with it, and with
+			// the envelope, here already as the row will keep it.
+			const noteId = newNoteId();
+			const { opening } = settings;
+			const verifiers =
+				opening.format === 1 && settings.verifiers
+					? serverLayer.sealVerifiers(noteId, opening.envelope, settings.verifiers)
+					: undefined;
 			const now = new Date();
 			const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL * 1000);
 
 			db.insert(uploads)
 				.values({
 					id: uploadId,
-					metadata: JSON.stringify(sessionMetadata(settings)),
+					metadata: JSON.stringify(sessionMetadata(settings, verifiers)),
 					chunkCount: settings.chunkCount,
-					noteId: newNoteId(),
+					noteId,
 					deleteToken: newDeleteToken(),
 					createdAt: now,
 					expiresAt,
@@ -167,12 +201,13 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			}
 
 			// Checked again rather than trusted: a corrupted row (bad JSON, missing
-			// fields or a broken envelope) must not produce a malformed note.
+			// fields, a broken envelope or verifiers that do not match it) must not
+			// produce a malformed note.
 			const metadata = parseJson(uploadSessionAnyMetadataSchema, session.metadata);
 			if (metadata === undefined) {
 				throw new NoteError("upload_corrupted");
 			}
-			const settings = chunkedSettingsOf(metadata);
+			const settings = sessionSettingsOf(metadata);
 
 			const row = db.transaction((tx) => {
 				if (noteExists(tx, session.noteId)) {

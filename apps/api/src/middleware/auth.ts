@@ -2,23 +2,16 @@ import { verifyApiKeyBuffers } from "@largerio/secret-shared/auth";
 import type { MiddlewareHandler } from "hono";
 import { cap } from "../routes/cap.js";
 
+/**
+ * Write authentication (PROTOCOL.md): an API key the operator configured, or a
+ * single-use proof-of-work token. Attached to the routes that need it
+ * (routes/notes/writes.ts), it refuses every request that reaches it without
+ * one: which requests those are is the routes' to say, not a path's.
+ */
 export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandler {
 	const apiKeyBuffers: ReadonlyArray<Buffer> = apiKeys.map((k) => Buffer.from(k));
 
 	return async (c, next) => {
-		const method = c.req.method;
-		if (method !== "POST" && method !== "DELETE") {
-			await next();
-			return;
-		}
-
-		// Chunked upload session routes are authenticated by uploadId (init validates auth)
-		const path = c.req.path;
-		if (path.includes("/upload/") && (path.includes("/chunks/") || path.endsWith("/complete"))) {
-			await next();
-			return;
-		}
-
 		// Use a single generic message for every failure path so a caller cannot
 		// probe which auth method (API key vs PoW token) a route expects.
 		const authHeader = c.req.header("authorization");

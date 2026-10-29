@@ -42,6 +42,7 @@ or anyone holding the server's database and storage, can and cannot learn:
 | Decryption key and password | No — the key stays in the URL fragment, the password never leaves the browser |
 | Size | Yes — ciphertext is not padded, so it gives the size of the content to within a few bytes. Chunked uploads also reveal each file's size, since every file starts on a new chunk |
 | Number of files, password set or not, read limit and reads so far, expiry, creation time | Yes — stored in clear to enforce them |
+| For a [format 1](PROTOCOL.md#format-1) note (a draft): its envelope, and how many wrong passwords were tried | Yes — the envelope holds nothing derived from the key or the password; what checks a reader's proofs is kept under `SERVER_ENCRYPTION_KEY` |
 | When a note is created, read and deleted | Yes |
 | IP addresses | Seen for rate limiting and kept in memory for about a minute; never written to the app's logs. Your reverse proxy may log them |
 | Note IDs | Never written to the app's logs |
@@ -117,7 +118,11 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   it) without authentication, to anyone who knows the note ID — no key needed. Anyone
   with the ID can therefore watch the reads of a multi-read note being spent, without
   spending one; a burn-after-read note already gave that away by disappearing. An
-  unlimited note always reports 0 reads, so the endpoint is not a view counter. It is
+  unlimited note always reports 0 reads, so the endpoint is not a view counter. For a
+  format 1 note it also serves the envelope (the salt and the Argon2id parameters a
+  reader needs, and the expiry chosen, which gives the creation time to the second)
+  and the password attempts left, so anyone with the ID can see wrong passwords
+  being tried. It is
   rate-limited but is not zero-knowledge with respect to existence/metadata. Note IDs are long and
   random, so enumeration is impractical, but the leak is acknowledged.
 - **One instance only.** SQLite, the proof-of-work challenges and the rate-limit

@@ -11,6 +11,10 @@ export const MIN_EXPIRY_SECONDS = 300;
 export const NOTE_ID_LENGTH = 12;
 // Reads before a note is deleted; 0 means until it expires.
 export const MAX_READS = 1000;
+// Wrong passwords a format 1 note takes over its life: the last deletes it.
+export const MAX_PASSWORD_ATTEMPTS = 5;
+// A format 1 read proof, or the SHA-256 a writer sends to verify it, in bytes.
+export const PROOF_LENGTH = 32;
 export const CLEANUP_INTERVAL_MS = 300_000;
 
 // Validation limits

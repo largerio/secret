@@ -104,7 +104,11 @@ export interface ReadNoteOptions {
 	readonly onDownloadProgress?: (progress: number) => void;
 	/** Structured progress callback with phase info. */
 	readonly onProgress?: (info: ProgressInfo) => void;
-	/** Hint from checkNote: true = chunked (stream), false = standard (raw). Skips trial-and-error. */
+	/**
+	 * Hint from checkNote for a format 0 note: true = chunked (stream), false =
+	 * standard (raw). Skips trial-and-error. A format 1 read ignores it: the
+	 * note's envelope says its kind.
+	 */
 	readonly chunked?: boolean;
 }
 
@@ -126,13 +130,23 @@ export interface ExistingNoteInfo {
 	/** Configured read limit (0 means unlimited) — not the remaining count. */
 	readonly maxReads: number;
 	/**
-	 * Reads already spent, wrong passwords included: reads left is
-	 * `maxReads - readCount`. Always 0 when `maxReads` is 0. Absent when the
-	 * instance runs an API older than this field.
+	 * Reads already spent: reads left is `maxReads - readCount`. On a format 0
+	 * note, wrong passwords count too. Always 0 when `maxReads` is 0. Absent
+	 * when the instance runs an API older than this field.
 	 */
 	readonly readCount?: number;
 	/** Whether the note must be read through the streaming endpoint. */
 	readonly chunked: boolean;
+	/**
+	 * A format 1 note's envelope, in base64 (PROTOCOL.md): what a reader derives
+	 * its proofs with. Absent for a format 0 note.
+	 */
+	readonly envelope?: string;
+	/**
+	 * A format 1 password note's: wrong passwords it still takes, the last of
+	 * which deletes it. A wrong password spends no read of a format 1 note.
+	 */
+	readonly passwordAttemptsLeft?: number;
 }
 
 /**

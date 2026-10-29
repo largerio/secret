@@ -38,6 +38,10 @@ export interface NoteExistsResponse {
 	/** Reads already spent; always 0 when `maxReads` is 0 (unlimited). */
 	readonly readCount: number;
 	readonly chunked: boolean;
+	/** A format 1 note's envelope, in base64. */
+	readonly envelope?: string;
+	/** A format 1 password note's: wrong passwords it still takes, the last of which deletes it. */
+	readonly passwordAttemptsLeft?: number;
 }
 
 export interface ReadNoteResponse {

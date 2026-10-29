@@ -23,6 +23,7 @@ import {
 	initChunkedUpload,
 	postFormData,
 	postJson,
+	postNoteRead,
 	uploadChunk,
 } from "../http.js";
 
@@ -480,6 +481,47 @@ describe("checkNote", () => {
 		expect(await checkNote(config, "noteId123456")).toEqual(info);
 	});
 
+	test("returns a format 1 note's envelope and the password attempts it has left", async () => {
+		const info = {
+			exists: true,
+			hasPassword: true,
+			fileCount: 0,
+			expiresAt: "2099-01-01",
+			maxReads: 1,
+			readCount: 0,
+			chunked: false,
+			envelope: "AQAAAA==",
+			passwordAttemptsLeft: 4,
+		};
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(okResponse(info)));
+
+		expect(await checkNote(createConfig(fetchMock), "noteId123456")).toEqual(info);
+	});
+
+	test.each([
+		[{ envelope: 1 }],
+		[{ envelope: null }],
+		[{ passwordAttemptsLeft: -1 }],
+		[{ passwordAttemptsLeft: "4" }],
+	])("rejects a mistyped format 1 field: %o", async (field) => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				okResponse({
+					exists: true,
+					hasPassword: true,
+					fileCount: 0,
+					expiresAt: "2099-01-01",
+					maxReads: 1,
+					chunked: false,
+					...field,
+				}),
+			),
+		);
+
+		const err = await catchApiError(checkNote(createConfig(fetchMock), "noteId123456"));
+		expect(err.message).toBe("Malformed response from /exists");
+	});
+
 	test("accepts a response without readCount, as an older API sends it", async () => {
 		// The SDK is published and may talk to instances that predate the field.
 		const info = {
@@ -618,7 +660,7 @@ describe("getNoteRaw", () => {
 		const result = await getNoteRaw(config, "noteId123456");
 
 		expect(result.encryptedBytes).toEqual(bodyBytes);
-		expect(result.opening).toEqual({ format: 0, nonceBytes: nonce });
+		expect(result.nonceBytes).toEqual(nonce);
 		expect(result.hasPassword).toBe(false);
 		expect(result.fileCount).toBe(2);
 		expect(result.createdAt).toBe("2024-01-01T00:00:00Z");
@@ -774,46 +816,6 @@ describe("getNoteRaw", () => {
 		const err = await catchApiError(getNoteRaw(config, "noteId123456"));
 		expect(err.message).toBe("Invalid base64 encoding in response");
 		expect(err.status).toBe(502);
-	});
-	test("returns a format 1 note's envelope in place of a nonce", async () => {
-		const envelope = new Uint8Array([1, 0, 0, 0]);
-		const { "X-Client-Nonce": _nonce, ...format1Headers } = defaultHeaders;
-		const fetchMock = vi.fn<typeof fetch>(() =>
-			Promise.resolve(
-				rawResponse(new Uint8Array([9]), {
-					...format1Headers,
-					"X-Envelope": btoa("\x01\x00\x00\x00"),
-				}),
-			),
-		);
-
-		const result = await getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1);
-
-		expect(fetchMock.mock.calls[0]?.[0]).toBe(
-			"https://api.example.com/notes/noteId123456/raw?format=1",
-		);
-		expect(result.opening).toEqual({ format: 1, envelope });
-		expect(result.encryptedBytes).toEqual(new Uint8Array([9]));
-	});
-
-	test("reports a format 1 read whose X-Envelope is missing", async () => {
-		const fetchMock = vi.fn<typeof fetch>(() =>
-			Promise.resolve(rawResponse(new Uint8Array([9]), defaultHeaders)),
-		);
-
-		await expect(getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1)).rejects.toThrow(
-			"Missing required header: X-Envelope",
-		);
-	});
-
-	test("throws SecretApiError when X-Envelope is not base64", async () => {
-		const fetchMock = vi.fn<typeof fetch>(() =>
-			Promise.resolve(rawResponse(new Uint8Array([9]), { ...defaultHeaders, "X-Envelope": "!!!" })),
-		);
-
-		await expect(getNoteRaw(createConfig(fetchMock), "noteId123456", undefined, 1)).rejects.toThrow(
-			"Invalid base64 encoding in response",
-		);
 	});
 });
 
@@ -1072,7 +1074,7 @@ describe("getNoteStream", () => {
 
 		const result = await getNoteStream(config, "noteId123456");
 
-		expect(result.opening).toEqual({ format: 0, streamHeader: "c3RyZWFtLWhlYWRlcg==" });
+		expect(result.streamHeader).toBe("c3RyZWFtLWhlYWRlcg==");
 		expect(result.chunkCount).toBe(2);
 		expect(result.hasPassword).toBe(false);
 		expect(result.fileCount).toBe(1);
@@ -1266,25 +1268,100 @@ describe("getNoteStream", () => {
 		expect(err.status).toBe(502);
 		expect(err.message).toContain("exceeds maximum");
 	});
-	test("returns a format 1 note's envelope in place of its stream header", async () => {
-		const { "X-Stream-Header": _header, ...format1Headers } = streamHeaders;
-		const body = buildLengthPrefixedBody([new Uint8Array([1]), new Uint8Array([2])]);
+});
+
+describe("postNoteRead", () => {
+	const proofs = { linkProof: "bGluaw==", passwordProof: "cGFzc3dvcmQ=" };
+	const readHeaders: Record<string, string> = {
+		"X-Has-Password": "true",
+		"X-File-Count": "1",
+		"X-Created-At": "2024-01-01T00:00:00Z",
+		"X-Expires-At": "2099-01-01T00:00:00Z",
+	};
+
+	function framed(chunks: Uint8Array[]): Uint8Array {
+		const body = new Uint8Array(chunks.reduce((n, c) => n + 4 + c.length, 0));
+		const view = new DataView(body.buffer);
+		let offset = 0;
+		for (const chunk of chunks) {
+			view.setUint32(offset, chunk.length);
+			body.set(chunk, offset + 4);
+			offset += 4 + chunk.length;
+		}
+		return body;
+	}
+
+	test("posts the proofs and answers a single-shot note's ciphertext", async () => {
+		const ciphertext = new Uint8Array([7, 8, 9]);
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(ciphertext as BodyInit, { status: 200, headers: readHeaders })),
+		);
+		const onProgress = vi.fn();
+
+		const result = await postNoteRead(
+			createConfig(fetchMock, "read-key"),
+			"noteId123456",
+			proofs,
+			"single-shot",
+			onProgress,
+		);
+
+		expect(result).toEqual({
+			kind: "single-shot",
+			encryptedBytes: ciphertext,
+			hasPassword: true,
+			fileCount: 1,
+			createdAt: "2024-01-01T00:00:00Z",
+			expiresAt: "2099-01-01T00:00:00Z",
+		});
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(url).toBe("https://api.example.com/notes/noteId123456/reads");
+		expect((init as RequestInit).method).toBe("POST");
+		expect(JSON.parse((init as RequestInit).body as string)).toEqual(proofs);
+		const headers = (init as RequestInit).headers as Record<string, string>;
+		expect(headers["Content-Type"]).toBe("application/json");
+		expect(headers["Authorization"]).toBe("Bearer read-key");
+	});
+
+	test("answers a chunked note's messages, one by one", async () => {
+		const chunks = [new Uint8Array([1, 2]), new Uint8Array([3])];
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(
-				new Response(body, {
+				new Response(framed(chunks) as BodyInit, {
 					status: 200,
-					headers: { ...format1Headers, "X-Envelope": btoa("\x01\x01") },
+					headers: { ...readHeaders, "X-Chunk-Count": "2" },
 				}),
 			),
 		);
+		const onProgress = vi.fn();
 
-		const result = await getNoteStream(createConfig(fetchMock), "noteId123456", undefined, 1);
-
-		expect(fetchMock.mock.calls[0]?.[0]).toBe(
-			"https://api.example.com/notes/noteId123456/stream?format=1",
+		const result = await postNoteRead(
+			createConfig(fetchMock),
+			"noteId123456",
+			{ linkProof: proofs.linkProof },
+			"chunked",
+			onProgress,
 		);
-		expect(result.opening).toEqual({ format: 1, envelope: new Uint8Array([1, 1]) });
-		expect(result.chunks).toHaveLength(2);
+
+		expect(result.kind === "chunked" && result.chunks).toEqual(chunks);
+		expect(onProgress).toHaveBeenLastCalledWith(1);
+		const [, init] = fetchMock.mock.calls[0] ?? [];
+		expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+			linkProof: proofs.linkProof,
+		});
+	});
+
+	test("surfaces a refused proof with its status", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(403, { error: "Wrong password" })),
+		);
+
+		const err = await catchApiError(
+			postNoteRead(createConfig(fetchMock), "noteId123456", proofs, "single-shot"),
+		);
+
+		expect(err.status).toBe(403);
+		expect(err.message).toBe("Wrong password");
 	});
 });
 
@@ -1423,6 +1500,11 @@ describe("reads that consume the note", () => {
 		["getNote", (config: HttpClientConfig) => getNote(config, "noteId123456")],
 		["getNoteRaw", (config: HttpClientConfig) => getNoteRaw(config, "noteId123456")],
 		["getNoteStream", (config: HttpClientConfig) => getNoteStream(config, "noteId123456")],
+		[
+			"postNoteRead",
+			(config: HttpClientConfig) =>
+				postNoteRead(config, "noteId123456", { linkProof: "bGluaw==" }, "single-shot"),
+		],
 	])("%s is never retried, even with maxRetries", async (_name, read) => {
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(errorResponse(503, { error: "down" })),

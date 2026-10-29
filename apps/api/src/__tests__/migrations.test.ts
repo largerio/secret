@@ -96,7 +96,15 @@ describe("applyMigrations", () => {
 			expect.arrayContaining(["notes", "meta", "uploads", "upload_chunks", "pending_deletions"]),
 		);
 		expect(columnNames(sqlite, "notes")).toEqual(
-			expect.arrayContaining(["chunk_count", "stream_header", "size_bytes", "envelope"]),
+			expect.arrayContaining([
+				"chunk_count",
+				"stream_header",
+				"size_bytes",
+				"envelope",
+				"link_verifier",
+				"password_verifier",
+				"failed_attempts",
+			]),
 		);
 		expect(columnNames(sqlite, "notes")).not.toContain("burn_after_read");
 		expect(columnNames(sqlite, "uploads")).not.toContain("chunks_received");
@@ -221,6 +229,45 @@ describe("applyMigrations", () => {
 			.prepare(`SELECT type, "notnull" FROM pragma_table_info('notes') WHERE name = ?`)
 			.get("envelope");
 		expect(envelope).toEqual({ type: "BLOB", notnull: 0 });
+		sqlite.close();
+	});
+
+	it("gives the notes of a version 5 database no verifiers, and no failed attempts", () => {
+		const legacy = new DatabaseSync(TEST_DB_PATH);
+		applyMigrations(legacy, MIGRATIONS.slice(0, 5));
+		legacy
+			.prepare(
+				`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, expires_at, created_at, envelope)
+				 VALUES ('v5-format0', x'00', 'iv', 'nonce', 'token', 9999999999999, 1, NULL),
+				        ('v5-format1', x'00', 'iv', '', 'token', 9999999999999, 1, x'01')`,
+			)
+			.run();
+		legacy.close();
+
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
+		// A format 1 row written before has no verifiers: the reads refuse it.
+		expect(
+			sqlite
+				.prepare(
+					`SELECT id, link_verifier, password_verifier, failed_attempts FROM notes ORDER BY id`,
+				)
+				.all(),
+		).toEqual([
+			{ id: "v5-format0", link_verifier: null, password_verifier: null, failed_attempts: 0 },
+			{ id: "v5-format1", link_verifier: null, password_verifier: null, failed_attempts: 0 },
+		]);
+		const columns = sqlite
+			.prepare(
+				`SELECT name, type, "notnull", dflt_value FROM pragma_table_info('notes') WHERE name IN (?, ?, ?) ORDER BY name`,
+			)
+			.all("link_verifier", "password_verifier", "failed_attempts");
+		expect(columns).toEqual([
+			{ name: "failed_attempts", type: "INTEGER", notnull: 1, dflt_value: "0" },
+			{ name: "link_verifier", type: "BLOB", notnull: 0, dflt_value: null },
+			{ name: "password_verifier", type: "BLOB", notnull: 0, dflt_value: null },
+		]);
 		sqlite.close();
 	});
 

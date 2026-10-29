@@ -1,4 +1,10 @@
-import type { ChunkedOpening, CreatedNote, NoteMeta } from "../../notes/types.js";
+import type {
+	ChunkedOpening,
+	CreatedNote,
+	NoteMeta,
+	NoteRead,
+	NoteStream,
+} from "../../notes/types.js";
 
 /** The body of a 201 to a note created, single-shot or chunked. */
 export function createdBody(created: CreatedNote) {
@@ -9,13 +15,35 @@ export function createdBody(created: CreatedNote) {
 	};
 }
 
+/**
+ * A single-shot note's ciphertext as a binary body, its metadata in headers:
+ * the answer of `GET /notes/{id}/raw`, and of a format 1 read of such a note.
+ */
+export function rawResponse({ meta, ciphertext }: NoteRead): Response {
+	return new Response(new Uint8Array(ciphertext) as BodyInit, {
+		status: 200,
+		headers: rawHeaders(meta, ciphertext.length),
+	});
+}
+
+/**
+ * A chunked note's chunks, length-prefixed, its metadata in headers: the
+ * answer of `GET /notes/{id}/stream`, and of a format 1 read of such a note.
+ */
+export function streamResponse({ meta, chunkCount, chunks }: NoteStream): Response {
+	return new Response(lengthPrefixed(chunks) as BodyInit, {
+		status: 200,
+		headers: streamHeaders(meta, chunkCount),
+	});
+}
+
 /** Strip CRLF and null bytes to prevent HTTP header injection */
 function sanitizeHeaderValue(value: string): string {
 	return value.replace(/[\r\n\0]/g, "");
 }
 
-/** The headers of `GET /notes/{id}/raw`, whose body is `length` bytes. */
-export function rawHeaders(meta: NoteMeta, length: number): Record<string, string> {
+/** The headers of a single-shot note's ciphertext, `length` bytes. */
+function rawHeaders(meta: NoteMeta, length: number): Record<string, string> {
 	const headers = buildNoteHeaders(meta);
 	headers["Content-Length"] = String(length);
 	if (meta.opening.format === 0) {
@@ -24,11 +52,8 @@ export function rawHeaders(meta: NoteMeta, length: number): Record<string, strin
 	return headers;
 }
 
-/** The headers of `GET /notes/{id}/stream`. */
-export function streamHeaders(
-	meta: NoteMeta<ChunkedOpening>,
-	chunkCount: number,
-): Record<string, string> {
+/** The headers of a chunked note's stream. */
+function streamHeaders(meta: NoteMeta<ChunkedOpening>, chunkCount: number): Record<string, string> {
 	const headers = buildNoteHeaders(meta);
 	headers["X-Chunk-Count"] = String(chunkCount);
 	if (meta.opening.format === 0) {
@@ -38,10 +63,11 @@ export function streamHeaders(
 }
 
 /**
- * Response headers shared by the encrypted-blob download endpoints (`/raw` and
- * `/stream`): the note's metadata, and what opening it takes, but for format
- * 0's nonce or stream header, which each endpoint adds. User-controlled values
- * are sanitized to prevent HTTP header injection.
+ * Response headers shared by the encrypted-blob downloads: the note's metadata,
+ * and for format 0 the salt, but not the nonce or stream header, which each
+ * endpoint adds. A format 1 reader has everything else in the envelope it was
+ * served before it proved anything (`/exists`). User-controlled values are
+ * sanitized to prevent HTTP header injection.
  */
 function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
 	const headers: Record<string, string> = {
@@ -62,24 +88,19 @@ function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
 		"X-Expires-At": meta.expiresAt.toISOString(),
 	};
 	const { opening } = meta;
-	if (opening.format === 1) {
-		// Everything else a reader needs is in the envelope, served as it came.
-		headers["X-Envelope"] = opening.envelope.toString("base64");
-		return headers;
-	}
-	if (opening.salt) {
+	if (opening.format === 0 && opening.salt) {
 		headers["X-Salt"] = sanitizeHeaderValue(opening.salt);
 	}
 	return headers;
 }
 
 /**
- * The framing of `GET /notes/{id}/stream`: each chunk preceded by its length,
+ * The framing of a chunked note's stream: each chunk preceded by its length,
  * 4 bytes big-endian (PROTOCOL.md). It pulls from the source a chunk at a time,
  * as the client reads; a cancel waits for the source's own, which runs the
  * purge of a burned note.
  */
-export function lengthPrefixed(chunks: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+function lengthPrefixed(chunks: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
 	const reader = chunks.getReader();
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {

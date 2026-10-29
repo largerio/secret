@@ -10,42 +10,41 @@ vi.mock("../routes/cap.js", () => ({
 	},
 }));
 
-describe("createWriteAuth", () => {
-	it("passes through GET requests without auth", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.get("/test", (c) => c.json({ ok: true }));
+/** A route guarded by write auth, as the notes routes attach it. */
+function guarded(apiKeys: string[] = []): Hono {
+	const app = new Hono();
+	app.post("/test", createWriteAuth(apiKeys), (c) => c.json({ ok: true }));
+	return app;
+}
 
-		const res = await app.request("/test");
+describe("createWriteAuth", () => {
+	it("leaves alone a route it is not attached to", async () => {
+		const app = guarded();
+		app.post("/open", (c) => c.json({ ok: true }));
+
+		const res = await app.request("/open", { method: "POST" });
 		expect(res.status).toBe(200);
 	});
 
-	it("rejects POST without Cap token or API key", async () => {
+	it("refuses any request that reaches it unauthenticated, whatever its method", async () => {
 		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.post("/test", (c) => c.json({ ok: true }));
+		const auth = createWriteAuth([]);
+		app.get("/test", auth, (c) => c.json({ ok: true }));
+		app.delete("/test", auth, (c) => c.json({ ok: true }));
 
-		const res = await app.request("/test", { method: "POST" });
+		expect((await app.request("/test")).status).toBe(401);
+		expect((await app.request("/test", { method: "DELETE" })).status).toBe(401);
+	});
+
+	it("rejects POST without Cap token or API key", async () => {
+		const res = await guarded().request("/test", { method: "POST" });
 		expect(res.status).toBe(401);
 		const json = await res.json();
 		expect(json.error).toBe("Unauthorized");
 	});
 
-	it("rejects DELETE without Cap token or API key", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.delete("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", { method: "DELETE" });
-		expect(res.status).toBe(401);
-	});
-
 	it("accepts valid API key", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth(["my-key"]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded(["my-key"]).request("/test", {
 			method: "POST",
 			headers: { Authorization: "Bearer my-key" },
 		});
@@ -53,11 +52,7 @@ describe("createWriteAuth", () => {
 	});
 
 	it("rejects invalid API key", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth(["my-key"]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded(["my-key"]).request("/test", {
 			method: "POST",
 			headers: { Authorization: "Bearer wrong-key" },
 		});
@@ -67,11 +62,7 @@ describe("createWriteAuth", () => {
 	});
 
 	it("accepts valid Cap token", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded().request("/test", {
 			method: "POST",
 			headers: { "X-Cap-Token": "valid-cap-token" },
 		});
@@ -79,11 +70,7 @@ describe("createWriteAuth", () => {
 	});
 
 	it("rejects invalid Cap token", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded().request("/test", {
 			method: "POST",
 			headers: { "X-Cap-Token": "invalid-token" },
 		});
@@ -93,11 +80,7 @@ describe("createWriteAuth", () => {
 	});
 
 	it("accepts an API key with a lowercase bearer scheme", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth(["my-key"]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded(["my-key"]).request("/test", {
 			method: "POST",
 			headers: { Authorization: "bearer my-key" },
 		});
@@ -105,11 +88,7 @@ describe("createWriteAuth", () => {
 	});
 
 	it("prefers API key over Cap token", async () => {
-		const app = new Hono();
-		app.use("*", createWriteAuth(["my-key"]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		const res = await app.request("/test", {
+		const res = await guarded(["my-key"]).request("/test", {
 			method: "POST",
 			headers: { Authorization: "Bearer my-key", "X-Cap-Token": "invalid-token" },
 		});
@@ -127,11 +106,7 @@ describe("Proof-of-Work token replay", () => {
 		const validateToken = vi.mocked(cap.validateToken);
 		validateToken.mockClear();
 
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
-		await app.request("/test", {
+		await guarded().request("/test", {
 			method: "POST",
 			headers: { "X-Cap-Token": "valid-cap-token" },
 		});
@@ -152,10 +127,7 @@ describe("Proof-of-Work token replay", () => {
 			return Promise.resolve({ success });
 		});
 
-		const app = new Hono();
-		app.use("*", createWriteAuth([]));
-		app.post("/test", (c) => c.json({ ok: true }));
-
+		const app = guarded();
 		const headers = { "X-Cap-Token": "valid-cap-token" };
 		const first = await app.request("/test", { method: "POST", headers });
 		const second = await app.request("/test", { method: "POST", headers });

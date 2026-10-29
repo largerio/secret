@@ -22,6 +22,14 @@ export const notes = sqliteTable(
 		// A format 1 note's envelope (PROTOCOL.md), as its writer sent it: its
 		// settings and what opening it takes. NULL for a format 0 note.
 		envelope: blob("envelope", { mode: "buffer" }),
+		// A format 1 note's verifiers, sealed by the server (notes/serverLayer.ts):
+		// what the proofs its readers send are checked against. NULL for a format 0
+		// note, and the password's for a note without one.
+		linkVerifier: blob("link_verifier", { mode: "buffer" }),
+		passwordVerifier: blob("password_verifier", { mode: "buffer" }),
+		// Wrong passwords tried on a format 1 note over its life: the last one it
+		// takes deletes it.
+		failedAttempts: integer("failed_attempts").notNull().default(0),
 	},
 	(t) => [index("idx_notes_expires_at").on(t.expiresAt)],
 );
