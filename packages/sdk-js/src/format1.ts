@@ -1,8 +1,10 @@
 import {
 	decodeRawBytes,
 	decryptRaw,
-	deriveFormat1Key,
+	deriveFormat1Keys,
 	encryptPayload,
+	type Format1Keys,
+	fromBase64,
 	generateKey,
 	generateNonce,
 	generateSalt,
@@ -11,6 +13,8 @@ import {
 	keyToBase64Url,
 	type PasswordInput,
 	toBase64,
+	verifierOf,
+	zeroFormat1Keys,
 	zeroMemory,
 } from "@largerio/secret-crypto/client";
 import {
@@ -142,11 +146,29 @@ function newNoteSecrets(password: string | undefined): {
 	};
 }
 
+/**
+ * What a format 1 writer sends beside the envelope, never inside it: SHA-256
+ * of each proof its readers will send, in base64.
+ */
+export interface Format1Verifiers {
+	readonly linkVerifier: string;
+	readonly passwordVerifier?: string;
+}
+
+/** The verifiers of a new note's proofs. */
+function verifiersOf(keys: Format1Keys): Format1Verifiers {
+	return {
+		linkVerifier: toBase64(verifierOf(keys.linkProof)),
+		...(keys.passwordProof ? { passwordVerifier: toBase64(verifierOf(keys.passwordProof)) } : {}),
+	};
+}
+
 export interface Format1EncryptResult {
 	readonly encryptedBytes: Uint8Array;
 	readonly encryptedData: string;
 	/** In base64. */
 	readonly envelope: string;
+	readonly verifiers: Format1Verifiers;
 	readonly keyFragment: string;
 }
 
@@ -158,7 +180,7 @@ export async function encryptNoteFormat1(
 ): Promise<Format1EncryptResult> {
 	await ensureInit();
 	const { linkKey, passwordInput } = newNoteSecrets(password);
-	let encryptionKey: Uint8Array | undefined;
+	let keys: Format1Keys | undefined;
 	try {
 		const nonce = generateNonce();
 		const envelope = encodeEnvelopeOrRefuse({
@@ -167,10 +189,10 @@ export async function encryptNoteFormat1(
 			...settings,
 			argon2: passwordInput?.argon2,
 		});
-		encryptionKey = deriveFormat1Key(linkKey, passwordInput);
+		keys = deriveFormat1Keys(linkKey, passwordInput);
 		const { ciphertext } = encryptPayload(
 			wellFormedPayload(payload),
-			encryptionKey,
+			keys.encryptionKey,
 			nonce,
 			envelope,
 		);
@@ -178,11 +200,12 @@ export async function encryptNoteFormat1(
 			encryptedBytes: ciphertext,
 			encryptedData: toBase64(ciphertext),
 			envelope: toBase64(envelope),
+			verifiers: verifiersOf(keys),
 			keyFragment: `${FRAGMENT_PREFIX}${keyToBase64Url(linkKey)}`,
 		};
 	} finally {
-		if (encryptionKey) {
-			zeroMemory(encryptionKey);
+		if (keys) {
+			zeroFormat1Keys(keys);
 		}
 		zeroMemory(linkKey);
 	}
@@ -198,6 +221,7 @@ export interface Format1ChunkedEncryptResult {
 	readonly chunks: Uint8Array[];
 	/** In base64. */
 	readonly envelope: string;
+	readonly verifiers: Format1Verifiers;
 	readonly keyFragment: string;
 }
 
@@ -210,101 +234,122 @@ export async function encryptNoteChunkedFormat1(
 ): Promise<Format1ChunkedEncryptResult> {
 	await ensureInit();
 	const { linkKey, passwordInput } = newNoteSecrets(password);
-	let encryptionKey: Uint8Array | undefined;
+	let keys: Format1Keys | undefined;
 	try {
 		// The stream header comes from the key: the settings are checked first,
 		// so that a refusal costs no Argon2id.
 		const argon2 = passwordInput?.argon2;
 		assertWriterSettings({ ...settings, argon2 });
-		encryptionKey = deriveFormat1Key(linkKey, passwordInput);
-		const { state, header } = initStreamEncrypt(encryptionKey);
+		keys = deriveFormat1Keys(linkKey, passwordInput);
+		const { state, header } = initStreamEncrypt(keys.encryptionKey);
 		const envelope = encodeEnvelope({ kind: "chunked", streamHeader: header, ...settings, argon2 });
 		return {
 			chunks: pushChunkedNote(state, wellFormedPayload(payload), chunkSize, envelope),
 			envelope: toBase64(envelope),
+			verifiers: verifiersOf(keys),
 			keyFragment: `${FRAGMENT_PREFIX}${keyToBase64Url(linkKey)}`,
 		};
 	} finally {
-		if (encryptionKey) {
-			zeroMemory(encryptionKey);
+		if (keys) {
+			zeroFormat1Keys(keys);
 		}
 		zeroMemory(linkKey);
 	}
 }
 
+/** The body of `POST /notes/{id}/reads`: the proofs, in base64. */
+export interface ReadProofs {
+	readonly linkProof: string;
+	readonly passwordProof?: string;
+}
+
 /**
- * The key a format 1 note opens with, from its link and its envelope. A note
- * whose envelope calls for a password is not opened without one; a password
- * given for a note without one is ignored, as the authenticated envelope says.
+ * A format 1 note about to be read: its envelope, as `/exists` served it, and
+ * what the link and the password derive from it. The proofs make the server
+ * serve the note; the key opens what it serves. Close it once read.
  */
-function openingKey(keyFragment: string, envelope: Envelope, password: string | undefined) {
+export interface Format1Read {
+	readonly envelope: Envelope;
+	readonly envelopeBytes: Uint8Array;
+	readonly proofs: ReadProofs;
+	readonly keys: Format1Keys;
+}
+
+/**
+ * Derives what reading a format 1 note takes, before anything is read. An
+ * envelope a reader refuses is refused here, and so is a password note without
+ * a password: either would spend a request for nothing. A password given for a
+ * note without one is ignored, as the envelope says.
+ */
+export async function prepareFormat1Read(
+	envelopeBase64: string | undefined,
+	keyFragment: string,
+	password: string | undefined,
+): Promise<Format1Read> {
+	await ensureInit();
+	if (envelopeBase64 === undefined) {
+		throw new Error("Not a format 1 note");
+	}
+	const envelopeBytes = fromBase64(envelopeBase64);
+	const envelope = parseEnvelope(envelopeBytes);
+	if (envelope === undefined) {
+		throw new Error("Not a format 1 envelope");
+	}
 	if (envelope.argon2 && !password) {
 		throw new Error("The note requires a password");
 	}
+
 	const linkKey = linkKeyOf(keyFragment);
+	let keys: Format1Keys;
 	try {
-		return deriveFormat1Key(
+		keys = deriveFormat1Keys(
 			linkKey,
 			envelope.argon2 && password ? { password, argon2: envelope.argon2 } : undefined,
 		);
 	} finally {
 		zeroMemory(linkKey);
 	}
+	return {
+		envelope,
+		envelopeBytes,
+		proofs: {
+			linkProof: toBase64(keys.linkProof),
+			...(keys.passwordProof ? { passwordProof: toBase64(keys.passwordProof) } : {}),
+		},
+		keys,
+	};
 }
 
-/** The envelope the server handed back, of the kind its endpoint serves. */
-function envelopeOf<K extends Envelope["kind"]>(
-	bytes: Uint8Array,
-	kind: K,
-): Extract<Envelope, { kind: K }> {
-	const envelope = parseEnvelope(bytes);
-	if (envelope?.kind !== kind) {
-		throw new Error("Not a format 1 note of this kind");
-	}
-	return envelope as Extract<Envelope, { kind: K }>;
+/** Wipes the key and the proofs of a note once it is read, or could not be. */
+export function closeFormat1Read(read: Format1Read): void {
+	zeroFormat1Keys(read.keys);
 }
 
-/** Decrypts a single-shot format 1 note. Throws on anything but a well-formed payload. */
-export async function decryptNoteFormat1(
-	encryptedBytes: Uint8Array,
-	envelopeBytes: Uint8Array,
-	keyFragment: string,
-	password?: string,
-): Promise<NotePayload> {
-	await ensureInit();
-	const envelope = envelopeOf(envelopeBytes, "single-shot");
-	const key = openingKey(keyFragment, envelope, password);
-	try {
-		const plaintext = decryptRaw(encryptedBytes, envelope.nonce, key, envelopeBytes);
-		const payload = strictPayload(decodeRawBytes(plaintext));
-		assertFileCount(payload, envelope);
-		return payload;
-	} finally {
-		zeroMemory(key);
+/** Opens a single-shot format 1 note. Throws on anything but a well-formed payload. */
+export function openSingleShotFormat1(read: Format1Read, encryptedBytes: Uint8Array): NotePayload {
+	const { envelope, envelopeBytes, keys } = read;
+	if (envelope.kind !== "single-shot") {
+		throw new Error("Not a single-shot note");
 	}
+	const plaintext = decryptRaw(encryptedBytes, envelope.nonce, keys.encryptionKey, envelopeBytes);
+	const payload = strictPayload(decodeRawBytes(plaintext));
+	assertFileCount(payload, envelope);
+	return payload;
 }
 
-/** Decrypts a chunked format 1 note. Throws on anything but a well-formed stream. */
-export async function decryptNoteChunkedFormat1(
-	encryptedChunks: Uint8Array[],
-	envelopeBytes: Uint8Array,
-	keyFragment: string,
-	password?: string,
-): Promise<NotePayload> {
-	await ensureInit();
-	const envelope = envelopeOf(envelopeBytes, "chunked");
-	const key = openingKey(keyFragment, envelope, password);
-	try {
-		const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, key, {
-			additionalData: envelopeBytes,
-			isHead: isStrictHead,
-			strict: true,
-		});
-		assertFileCount(payload, envelope);
-		return payload;
-	} finally {
-		zeroMemory(key);
+/** Opens a chunked format 1 note. Throws on anything but a well-formed stream. */
+export function openChunkedFormat1(read: Format1Read, encryptedChunks: Uint8Array[]): NotePayload {
+	const { envelope, envelopeBytes, keys } = read;
+	if (envelope.kind !== "chunked") {
+		throw new Error("Not a chunked note");
 	}
+	const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, keys.encryptionKey, {
+		additionalData: envelopeBytes,
+		isHead: isStrictHead,
+		strict: true,
+	});
+	assertFileCount(payload, envelope);
+	return payload;
 }
 
 function assertFileCount(payload: NotePayload, envelope: Envelope): void {

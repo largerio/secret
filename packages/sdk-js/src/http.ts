@@ -1,6 +1,6 @@
 import type { CreateNoteResponse, ReadNoteResponse } from "@largerio/secret-shared";
 import { SecretApiError, SecretNetworkError } from "./errors.js";
-import type { NoteFormat } from "./format1.js";
+import type { ReadProofs } from "./format1.js";
 import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
 
@@ -245,23 +245,8 @@ export async function getJson<T>(
 	return res.json() as Promise<T>;
 }
 
-/**
- * What a read asks of the server: format 1 must be asked for by name, so that
- * a client that knows only format 0 is refused a format 1 note before it
- * spends a read on it.
- */
-function readQuery(format: NoteFormat): string {
-	return format === 1 ? "?format=1" : "";
-}
-
-/** Format 0 sends the nonce, format 1 its envelope, which X-Envelope carries. */
-export type RawNoteOpening =
-	| { readonly format: 0; readonly nonceBytes: Uint8Array }
-	| { readonly format: 1; readonly envelope: Uint8Array };
-
-export interface RawNoteResponse {
-	readonly encryptedBytes: Uint8Array;
-	readonly opening: RawNoteOpening;
+/** What the headers of a read say about the note, besides how to open it. */
+interface NoteReadMeta {
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
 	readonly createdAt: string;
@@ -269,38 +254,25 @@ export interface RawNoteResponse {
 	readonly salt?: string;
 }
 
-export async function getNoteRaw(
-	config: HttpClientConfig,
-	id: string,
-	onProgress?: (progress: number) => void,
-	format: NoteFormat = 0,
-): Promise<RawNoteResponse> {
-	const res = await requestWithPolicy(
-		config,
-		`${config.baseUrl}/notes/${id}/raw${readQuery(format)}`,
-		{ headers: authHeaders(config.apiKey) },
-		CONSUMING_READ,
-	);
-
-	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
-	}
-
-	const headers = res.headers;
-	const opening: RawNoteOpening =
-		format === 1
-			? { format: 1, envelope: safeAtob(getRequiredHeader(headers, "X-Envelope")) }
-			: { format: 0, nonceBytes: safeAtob(getRequiredHeader(headers, "X-Client-Nonce")) };
-	const hasPassword = headers.get("X-Has-Password") === "true";
-	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
-	const createdAt = getRequiredHeader(headers, "X-Created-At");
-	const expiresAt = getRequiredHeader(headers, "X-Expires-At");
+function noteReadMeta(headers: Headers): NoteReadMeta {
 	const salt = headers.get("X-Salt") ?? undefined;
+	return {
+		hasPassword: headers.get("X-Has-Password") === "true",
+		fileCount: parsePositiveInt(headers.get("X-File-Count"), 0),
+		createdAt: getRequiredHeader(headers, "X-Created-At"),
+		expiresAt: getRequiredHeader(headers, "X-Expires-At"),
+		...(salt ? { salt } : {}),
+	};
+}
 
+/** A single-shot note's ciphertext: the whole body, its progress reported against Content-Length. */
+async function readCiphertext(
+	res: Response,
+	onProgress?: (progress: number) => void,
+): Promise<Uint8Array> {
 	const data = await readBody(async () => {
 		const body = res.body;
-		const total = parsePositiveInt(headers.get("Content-Length"), 0);
+		const total = parsePositiveInt(res.headers.get("Content-Length"), 0);
 		if (!onProgress || !body || total === 0) return res.arrayBuffer();
 
 		const reader = body.getReader();
@@ -317,16 +289,73 @@ export async function getNoteRaw(
 
 		return new Blob(chunks as BlobPart[]).arrayBuffer();
 	});
+	return new Uint8Array(data);
+}
 
-	return {
-		encryptedBytes: new Uint8Array(data),
-		opening,
-		hasPassword,
-		fileCount,
-		createdAt,
-		expiresAt,
-		...(salt ? { salt } : {}),
-	};
+/** A chunked note's messages: X-Chunk-Count of them, each preceded by its length. */
+async function readChunks(
+	res: Response,
+	onProgress?: (progress: number) => void,
+): Promise<Uint8Array[]> {
+	const chunkCount = parsePositiveInt(res.headers.get("X-Chunk-Count"), 0);
+	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
+		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
+	}
+
+	// Read entire body then parse length-prefixed chunks
+	const bodyData = await readBody(() => res.arrayBuffer());
+	const view = new DataView(bodyData);
+	const chunks: Uint8Array[] = [];
+	let offset = 0;
+
+	for (let i = 0; i < chunkCount; i++) {
+		if (offset + UINT32_SIZE > bodyData.byteLength) break;
+		const len = view.getUint32(offset, false); // explicit big-endian
+		offset += UINT32_SIZE;
+		if (len > MAX_REASONABLE_CHUNK_SIZE || offset + len > bodyData.byteLength) break;
+		chunks.push(new Uint8Array(bodyData, offset, len));
+		offset += len;
+		onProgress?.((i + 1) / chunkCount);
+	}
+
+	if (chunks.length !== chunkCount) {
+		throw new SecretApiError(
+			`Expected ${String(chunkCount)} chunks but received ${String(chunks.length)}`,
+			502,
+		);
+	}
+	return chunks;
+}
+
+async function throwUnlessOk(res: Response): Promise<void> {
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+	}
+}
+
+export interface RawNoteResponse extends NoteReadMeta {
+	readonly encryptedBytes: Uint8Array;
+	readonly nonceBytes: Uint8Array;
+}
+
+/** Reads a single-shot format 0 note: the server serves no other on this endpoint. */
+export async function getNoteRaw(
+	config: HttpClientConfig,
+	id: string,
+	onProgress?: (progress: number) => void,
+): Promise<RawNoteResponse> {
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}/raw`,
+		{ headers: authHeaders(config.apiKey) },
+		CONSUMING_READ,
+	);
+	await throwUnlessOk(res);
+
+	const nonceBytes = safeAtob(getRequiredHeader(res.headers, "X-Client-Nonce"));
+	const meta = noteReadMeta(res.headers);
+	return { ...meta, nonceBytes, encryptedBytes: await readCiphertext(res, onProgress) };
 }
 
 export async function getNote(
@@ -373,7 +402,10 @@ function isNoteInfo(value: unknown): value is NoteInfo {
 		typeof v["maxReads"] === "number" &&
 		// Optional: an instance running an older API does not send it.
 		(v["readCount"] === undefined || isNonNegativeInteger(v["readCount"])) &&
-		typeof v["chunked"] === "boolean"
+		typeof v["chunked"] === "boolean" &&
+		// A format 1 note's only.
+		(v["envelope"] === undefined || typeof v["envelope"] === "string") &&
+		(v["passwordAttemptsLeft"] === undefined || isNonNegativeInteger(v["passwordAttemptsLeft"]))
 	);
 }
 
@@ -471,86 +503,68 @@ export async function completeChunkedUpload(
 
 // --- Chunked download HTTP function ---
 
-/** Format 0 sends the stream header, format 1 its envelope, which holds it. */
-export type StreamNoteOpening =
-	| { readonly format: 0; readonly streamHeader: string }
-	| { readonly format: 1; readonly envelope: Uint8Array };
-
-export interface StreamNoteResponse {
-	readonly opening: StreamNoteOpening;
+export interface StreamNoteResponse extends NoteReadMeta {
+	readonly streamHeader: string;
 	readonly chunkCount: number;
-	readonly hasPassword: boolean;
-	readonly fileCount: number;
-	readonly createdAt: string;
-	readonly expiresAt: string;
-	readonly salt?: string;
 	readonly chunks: Uint8Array[];
 }
 
+/** Reads a chunked format 0 note: the server serves no other on this endpoint. */
 export async function getNoteStream(
 	config: HttpClientConfig,
 	id: string,
 	onProgress?: (progress: number) => void,
-	format: NoteFormat = 0,
 ): Promise<StreamNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/stream${readQuery(format)}`,
+		`${config.baseUrl}/notes/${id}/stream`,
 		{ headers: authHeaders(config.apiKey) },
 		CONSUMING_READ,
 	);
+	await throwUnlessOk(res);
 
-	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+	const streamHeader = getRequiredHeader(res.headers, "X-Stream-Header");
+	const meta = noteReadMeta(res.headers);
+	const chunks = await readChunks(res, onProgress);
+	return { ...meta, streamHeader, chunkCount: chunks.length, chunks };
+}
+
+// --- Format 1 read ---
+
+export type NoteReadResponse = NoteReadMeta &
+	(
+		| { readonly kind: "single-shot"; readonly encryptedBytes: Uint8Array }
+		| { readonly kind: "chunked"; readonly chunks: Uint8Array[] }
+	);
+
+/**
+ * Reads a format 1 note with the proofs its link and password derive: the
+ * server answers a single-shot note's ciphertext, or a chunked note's
+ * messages, as the reader knows from the envelope. A wrong proof answers 403
+ * and spends no read; a wrong password counts one of the note's attempts.
+ */
+export async function postNoteRead(
+	config: HttpClientConfig,
+	id: string,
+	proofs: ReadProofs,
+	kind: NoteReadResponse["kind"],
+	onProgress?: (progress: number) => void,
+): Promise<NoteReadResponse> {
+	const res = await requestWithPolicy(
+		config,
+		`${config.baseUrl}/notes/${id}/reads`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey) },
+			body: JSON.stringify(proofs),
+		},
+		CONSUMING_READ,
+	);
+	await throwUnlessOk(res);
+
+	const meta = noteReadMeta(res.headers);
+	if (kind === "single-shot") {
+		return { ...meta, kind, encryptedBytes: await readCiphertext(res, onProgress) };
 	}
-
-	const headers = res.headers;
-	const opening: StreamNoteOpening =
-		format === 1
-			? { format: 1, envelope: safeAtob(getRequiredHeader(headers, "X-Envelope")) }
-			: { format: 0, streamHeader: getRequiredHeader(headers, "X-Stream-Header") };
-	const chunkCount = parsePositiveInt(headers.get("X-Chunk-Count"), 0);
-	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
-		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
-	}
-	const hasPassword = headers.get("X-Has-Password") === "true";
-	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
-	const createdAt = getRequiredHeader(headers, "X-Created-At");
-	const expiresAt = getRequiredHeader(headers, "X-Expires-At");
-	const salt = headers.get("X-Salt") ?? undefined;
-
-	// Read entire body then parse length-prefixed chunks
-	const bodyData = await readBody(() => res.arrayBuffer());
-	const view = new DataView(bodyData);
-	const chunks: Uint8Array[] = [];
-	let offset = 0;
-
-	for (let i = 0; i < chunkCount; i++) {
-		if (offset + UINT32_SIZE > bodyData.byteLength) break;
-		const len = view.getUint32(offset, false); // explicit big-endian
-		offset += UINT32_SIZE;
-		if (len > MAX_REASONABLE_CHUNK_SIZE || offset + len > bodyData.byteLength) break;
-		chunks.push(new Uint8Array(bodyData, offset, len));
-		offset += len;
-		onProgress?.((i + 1) / chunkCount);
-	}
-
-	if (chunks.length !== chunkCount) {
-		throw new SecretApiError(
-			`Expected ${String(chunkCount)} chunks but received ${String(chunks.length)}`,
-			502,
-		);
-	}
-
-	return {
-		opening,
-		chunkCount,
-		hasPassword,
-		fileCount,
-		createdAt,
-		expiresAt,
-		chunks,
-		...(salt ? { salt } : {}),
-	};
+	return { ...meta, kind, chunks: await readChunks(res, onProgress) };
 }

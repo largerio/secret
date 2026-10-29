@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import {
 	decryptRaw,
-	deriveFormat1Key,
+	deriveFormat1Keys,
 	encodeRaw,
 	encryptChunk,
 	encryptPayload,
@@ -26,11 +27,13 @@ import { ensureInit } from "../crypto.js";
 import { SecretValidationError } from "../errors.js";
 import {
 	assertFormat1Fragment,
-	decryptNoteChunkedFormat1,
-	decryptNoteFormat1,
+	closeFormat1Read,
 	encryptNoteChunkedFormat1,
 	encryptNoteFormat1,
 	formatOfFragment,
+	openChunkedFormat1,
+	openSingleShotFormat1,
+	prepareFormat1Read,
 } from "../format1.js";
 
 beforeAll(async () => {
@@ -49,6 +52,38 @@ const file = (name: string, data: Uint8Array) => ({
 	data,
 });
 
+/** Opens a single-shot note as a reader does: proofs from the envelope, then the ciphertext. */
+async function decryptNoteFormat1(
+	ciphertext: Uint8Array,
+	envelope: Uint8Array,
+	keyFragment: string,
+	password?: string,
+): Promise<NotePayload> {
+	const read = await prepareFormat1Read(toBase64(envelope), keyFragment, password);
+	try {
+		return openSingleShotFormat1(read, ciphertext);
+	} finally {
+		closeFormat1Read(read);
+	}
+}
+
+/** Opens a chunked note as a reader does. */
+async function decryptNoteChunkedFormat1(
+	chunks: Uint8Array[],
+	envelope: Uint8Array,
+	keyFragment: string,
+	password?: string,
+): Promise<NotePayload> {
+	const read = await prepareFormat1Read(toBase64(envelope), keyFragment, password);
+	try {
+		return openChunkedFormat1(read, chunks);
+	} finally {
+		closeFormat1Read(read);
+	}
+}
+
+const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("base64");
+
 const withFiles: NotePayload = {
 	text: "two files",
 	contentMode: "markdown",
@@ -62,7 +97,7 @@ function forgeSingleShot(plaintext: unknown, fileCount = 0) {
 	const envelope = encodeEnvelope({ kind: "single-shot", nonce, ...settings, fileCount });
 	const { ciphertext } = encryptPayload(
 		plaintext as NotePayload,
-		deriveFormat1Key(linkKey),
+		deriveFormat1Keys(linkKey).encryptionKey,
 		nonce,
 		envelope,
 	);
@@ -75,7 +110,7 @@ function forgeSingleShot(plaintext: unknown, fileCount = 0) {
  */
 function forgeChunked(messages: Uint8Array[], fileCount = 0, tags?: number[]) {
 	const linkKey = generateKey();
-	const { state, header } = initStreamEncrypt(deriveFormat1Key(linkKey));
+	const { state, header } = initStreamEncrypt(deriveFormat1Keys(linkKey).encryptionKey);
 	const envelope = encodeEnvelope({
 		kind: "chunked",
 		streamHeader: header,
@@ -183,6 +218,17 @@ describe("single-shot format 1 notes", () => {
 		ARGON2_TIMEOUT,
 	);
 
+	test("round-trip files without any text", async () => {
+		const payload: NotePayload = { files: [file("only.bin", new Uint8Array([5]))] };
+		const written = await encryptNoteFormat1(payload, { ...settings, fileCount: 1 });
+		const read = await decryptNoteFormat1(
+			written.encryptedBytes,
+			fromBase64(written.envelope),
+			written.keyFragment,
+		);
+		expect(read).toEqual(payload);
+	});
+
 	test("ignore a password given for a note without one", async () => {
 		const written = await encryptNoteFormat1({ text: "hi" }, settings);
 		const read = await decryptNoteFormat1(
@@ -203,14 +249,12 @@ describe("single-shot format 1 notes", () => {
 		).rejects.toThrow();
 	});
 
-	test("do not open without an envelope, or with a chunked one", async () => {
+	test("do not open under a chunked envelope", async () => {
 		const written = await encryptNoteFormat1({ text: "hi" }, settings);
 		const chunked = encodeEnvelope({ kind: "chunked", streamHeader: generateNonce(), ...settings });
-		for (const envelope of [chunked, new Uint8Array([1, 2, 3])]) {
-			await expect(
-				decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment),
-			).rejects.toThrow("Not a format 1 note of this kind");
-		}
+		await expect(
+			decryptNoteFormat1(written.encryptedBytes, chunked, written.keyFragment),
+		).rejects.toThrow("Not a single-shot note");
 	});
 
 	test("refuse settings the envelope cannot carry, before stretching the password", async () => {
@@ -277,7 +321,7 @@ describe("single-shot format 1 notes", () => {
 			const plaintext = decryptRaw(
 				written.encryptedBytes,
 				parsed.nonce,
-				deriveFormat1Key(linkKey),
+				deriveFormat1Keys(linkKey).encryptionKey,
 				envelope,
 			);
 			expect(toBase64(plaintext), v.description).toBe(v.payloadMsgpack);
@@ -376,7 +420,7 @@ describe("chunked format 1 notes", () => {
 		const singleShot = encodeEnvelope({ kind: "single-shot", nonce: generateNonce(), ...settings });
 		await expect(
 			decryptNoteChunkedFormat1(written.chunks, singleShot, written.keyFragment),
-		).rejects.toThrow("Not a format 1 note of this kind");
+		).rejects.toThrow("Not a chunked note");
 	});
 
 	test("refuse file bytes beyond the sizes the head declares", async () => {
@@ -444,4 +488,106 @@ describe("chunked format 1 notes", () => {
 		},
 		ARGON2_TIMEOUT,
 	);
+});
+
+describe("the verifiers a format 1 writer sends", () => {
+	test("check the proofs its readers derive, without a password", async () => {
+		const written = await encryptNoteFormat1({ text: "hi" }, settings);
+		expect(written.verifiers.passwordVerifier).toBeUndefined();
+
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		expect(sha256(fromBase64(read.proofs.linkProof))).toBe(written.verifiers.linkVerifier);
+		expect(read.proofs.passwordProof).toBeUndefined();
+	});
+
+	test(
+		"check both proofs of a password note, and tell a wrong password apart",
+		async () => {
+			const written = await encryptNoteChunkedFormat1({ text: "t" }, 4, settings, "pw");
+			const right = await prepareFormat1Read(written.envelope, written.keyFragment, "pw");
+			const wrong = await prepareFormat1Read(written.envelope, written.keyFragment, "pW");
+
+			expect(sha256(fromBase64(right.proofs.linkProof))).toBe(written.verifiers.linkVerifier);
+			expect(sha256(fromBase64(right.proofs.passwordProof ?? ""))).toBe(
+				written.verifiers.passwordVerifier,
+			);
+			// The link proves the link alone: a wrong password still proves it.
+			expect(wrong.proofs.linkProof).toBe(right.proofs.linkProof);
+			expect(wrong.proofs.passwordProof).not.toBe(right.proofs.passwordProof);
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	test("differ from note to note", async () => {
+		const first = await encryptNoteFormat1({ text: "hi" }, settings);
+		const second = await encryptNoteFormat1({ text: "hi" }, settings);
+		expect(first.verifiers.linkVerifier).not.toBe(second.verifiers.linkVerifier);
+	});
+});
+
+describe("preparing a format 1 read", () => {
+	test("refuses a note that sent no envelope, or one a reader refuses", async () => {
+		const { keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
+		await expect(prepareFormat1Read(undefined, keyFragment, undefined)).rejects.toThrow(
+			"Not a format 1 note",
+		);
+		await expect(
+			prepareFormat1Read(toBase64(new Uint8Array([1, 2, 3])), keyFragment, undefined),
+		).rejects.toThrow("Not a format 1 envelope");
+		await expect(prepareFormat1Read("not base64!", keyFragment, undefined)).rejects.toThrow();
+	});
+
+	test("refuses a password note without a password, before stretching anything", async () => {
+		const argon2 = { salt: new Uint8Array(16), iterations: 1, memoryKiB: 65_536 };
+		const envelope = encodeEnvelope({
+			kind: "single-shot",
+			nonce: generateNonce(),
+			...settings,
+			argon2,
+		});
+		const pwhash = vi.spyOn(sodium, "crypto_pwhash");
+		try {
+			await expect(
+				prepareFormat1Read(toBase64(envelope), `1.${keyToBase64Url(generateKey())}`, undefined),
+			).rejects.toThrow("The note requires a password");
+			expect(pwhash).not.toHaveBeenCalled();
+		} finally {
+			pwhash.mockRestore();
+		}
+	});
+
+	test("refuses a malformed link", async () => {
+		const { envelope } = await encryptNoteFormat1({ text: "x" }, settings);
+		await expect(prepareFormat1Read(envelope, "1.abc", undefined)).rejects.toThrow(
+			new SecretValidationError("Invalid key fragment"),
+		);
+	});
+
+	test(
+		"derives the proofs the vectors record",
+		async () => {
+			for (const v of testVectors.vectors.format1.keys) {
+				const argon2 = v.argon2 && { ...v.argon2, salt: fromBase64(v.argon2.salt) };
+				const envelope = encodeEnvelope({
+					kind: "single-shot",
+					nonce: generateNonce(),
+					...settings,
+					argon2,
+				});
+				const read = await prepareFormat1Read(toBase64(envelope), v.keyFragment, v.password);
+				expect(read.proofs.linkProof, v.description).toBe(v.linkProof);
+				expect(read.proofs.passwordProof, v.description).toBe(v.passwordProof);
+				expect(toBase64(read.keys.encryptionKey), v.description).toBe(v.encryptionKey);
+			}
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	test("is wiped once closed", async () => {
+		const { envelope, keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
+		const read = await prepareFormat1Read(envelope, keyFragment, undefined);
+		closeFormat1Read(read);
+		expect(read.keys.encryptionKey).toEqual(new Uint8Array(32));
+		expect(read.keys.linkProof).toEqual(new Uint8Array(32));
+	});
 });
