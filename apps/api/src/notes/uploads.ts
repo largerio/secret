@@ -4,10 +4,12 @@ import {
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 	type UploadSessionMetadata,
+	uploadSessionFormat1MetadataSchema,
 	uploadSessionMetadataSchema,
 } from "@largerio/secret-shared";
 import { count, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import type { AppDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
 import type { AppMetrics } from "../metrics.js";
@@ -15,6 +17,7 @@ import { parseJson } from "../parseJson.js";
 import { enqueueDeletion, runDeletion } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { NoteError } from "./errors.js";
+import { chunkedSettingsOf } from "./formats.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
 import { newDeleteToken, newNoteId, newNoteRow, noteExists } from "./rows.js";
 import type { ServerLayer } from "./serverLayer.js";
@@ -33,6 +36,31 @@ export interface Uploads {
 	openUpload(settings: UploadSettings): UploadSession;
 	receiveChunk(chunk: IncomingChunk): Promise<void>;
 	completeUpload(uploadId: string): CreatedNote;
+}
+
+/** An upload session row's metadata, in either format. */
+const sessionMetadataSchema = z.union([
+	uploadSessionFormat1MetadataSchema,
+	uploadSessionMetadataSchema,
+]);
+
+/** What a session keeps of its note's settings: read back, and checked again, on completion. */
+function sessionMetadata(settings: UploadSettings): z.input<typeof sessionMetadataSchema> {
+	const { opening } = settings;
+	if (opening.format === 1) {
+		// The envelope says the rest.
+		return { envelope: opening.envelope.toString("base64") };
+	}
+	const metadata: UploadSessionMetadata = {
+		streamHeader: opening.streamHeader,
+		clientNonce: opening.clientNonce,
+		hasPassword: settings.hasPassword,
+		expiresIn: settings.expiresIn,
+		maxReads: settings.maxReads,
+		fileCount: settings.fileCount,
+		...(opening.salt ? { salt: opening.salt } : {}),
+	};
+	return metadata;
 }
 
 export function createUploads(deps: UploadsDeps): Uploads {
@@ -62,16 +90,6 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			// rejected anyway. Individual chunks are then checked as they arrive.
 			assertStorageAvailable(db, limits, 0);
 
-			// Read back, and checked again, when the session completes.
-			const metadata: UploadSessionMetadata = {
-				streamHeader: settings.streamHeader,
-				clientNonce: settings.clientNonce,
-				hasPassword: settings.hasPassword,
-				expiresIn: settings.expiresIn,
-				maxReads: settings.maxReads,
-				fileCount: settings.fileCount,
-				...(settings.salt ? { salt: settings.salt } : {}),
-			};
 			const uploadId = nanoid(UPLOAD_ID_LENGTH);
 			const now = new Date();
 			const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL * 1000);
@@ -79,7 +97,7 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			db.insert(uploads)
 				.values({
 					id: uploadId,
-					metadata: JSON.stringify(metadata),
+					metadata: JSON.stringify(sessionMetadata(settings)),
 					chunkCount: settings.chunkCount,
 					noteId: newNoteId(),
 					deleteToken: newDeleteToken(),
@@ -154,12 +172,13 @@ export function createUploads(deps: UploadsDeps): Uploads {
 				throw new NoteError("upload_incomplete");
 			}
 
-			// Checked again rather than trusted: a corrupted row (bad JSON or
-			// missing fields) must not produce a malformed note.
-			const settings = parseJson(uploadSessionMetadataSchema, session.metadata);
-			if (settings === undefined) {
+			// Checked again rather than trusted: a corrupted row (bad JSON, missing
+			// fields or a broken envelope) must not produce a malformed note.
+			const metadata = parseJson(sessionMetadataSchema, session.metadata);
+			if (metadata === undefined) {
 				throw new NoteError("upload_corrupted");
 			}
+			const settings = chunkedSettingsOf(metadata);
 
 			const row = db.transaction((tx) => {
 				if (noteExists(tx, session.noteId)) {
@@ -178,12 +197,7 @@ export function createUploads(deps: UploadsDeps): Uploads {
 				const newRow = newNoteRow(
 					session.noteId,
 					settings,
-					{
-						kind: "chunks",
-						chunkCount: session.chunkCount,
-						streamHeader: settings.streamHeader,
-						size: total,
-					},
+					{ kind: "chunks", chunkCount: session.chunkCount, size: total },
 					session.deleteToken,
 					new Date(),
 				);

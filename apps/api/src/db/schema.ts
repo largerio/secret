@@ -19,6 +19,9 @@ export const notes = sqliteTable(
 		chunkCount: integer("chunk_count"),
 		streamHeader: text("stream_header"),
 		sizeBytes: integer("size_bytes").notNull().default(0),
+		// A format 1 note's envelope (PROTOCOL.md), as its writer sent it: its
+		// settings and what opening it takes. NULL for a format 0 note.
+		envelope: blob("envelope", { mode: "buffer" }),
 	},
 	(t) => [index("idx_notes_expires_at").on(t.expiresAt)],
 );

@@ -96,7 +96,7 @@ describe("applyMigrations", () => {
 			expect.arrayContaining(["notes", "meta", "uploads", "upload_chunks", "pending_deletions"]),
 		);
 		expect(columnNames(sqlite, "notes")).toEqual(
-			expect.arrayContaining(["chunk_count", "stream_header", "size_bytes"]),
+			expect.arrayContaining(["chunk_count", "stream_header", "size_bytes", "envelope"]),
 		);
 		expect(columnNames(sqlite, "notes")).not.toContain("burn_after_read");
 		expect(columnNames(sqlite, "uploads")).not.toContain("chunks_received");
@@ -197,6 +197,30 @@ describe("applyMigrations", () => {
 			{ note_id: "v3-file", attempts: 2 },
 			{ note_id: "v3-chunks", attempts: 0 },
 		]);
+		sqlite.close();
+	});
+
+	it("gives the notes of a version 4 database no envelope: they stay format 0", () => {
+		const legacy = new DatabaseSync(TEST_DB_PATH);
+		applyMigrations(legacy, MIGRATIONS.slice(0, 4));
+		legacy
+			.prepare(
+				`INSERT INTO notes (id, encrypted_data, server_nonce, client_nonce, delete_token, expires_at, created_at)
+				 VALUES ('v4-note', x'00', 'iv', 'nonce', 'token', 9999999999999, 1)`,
+			)
+			.run();
+		legacy.close();
+
+		const { sqlite } = createDatabase(TEST_DB_PATH);
+
+		expect(getSchemaVersion(sqlite)).toBe(LATEST);
+		expect(sqlite.prepare(`SELECT id, client_nonce, envelope FROM notes`).all()).toEqual([
+			{ id: "v4-note", client_nonce: "nonce", envelope: null },
+		]);
+		const envelope = sqlite
+			.prepare(`SELECT type, "notnull" FROM pragma_table_info('notes') WHERE name = ?`)
+			.get("envelope");
+		expect(envelope).toEqual({ type: "BLOB", notnull: 0 });
 		sqlite.close();
 	});
 

@@ -5,7 +5,7 @@ import type { AppDatabase, Transaction } from "../db/index.js";
 import { notes } from "../db/schema.js";
 import { enqueueDeletion, type PendingDeletion } from "../pendingDeletions.js";
 import { NoteError } from "./errors.js";
-import type { NoteMeta, NoteSettings } from "./types.js";
+import type { ChunkedOpening, NoteMeta, NoteOpening, NoteSettings } from "./types.js";
 
 export type NoteRow = typeof notes.$inferSelect;
 
@@ -26,12 +26,7 @@ export type PlacementKind = "database" | "file" | "chunks";
 export type Placement =
 	| { readonly kind: "database"; readonly sealed: Buffer; readonly iv: Buffer }
 	| { readonly kind: "file"; readonly path: string; readonly iv: Buffer; readonly size: number }
-	| {
-			readonly kind: "chunks";
-			readonly chunkCount: number;
-			readonly streamHeader: string;
-			readonly size: number;
-	  };
+	| { readonly kind: "chunks"; readonly chunkCount: number; readonly size: number };
 
 /**
  * Whether a note is a chunked note, its ciphertext a series of chunks in the
@@ -42,6 +37,41 @@ export function isChunked<T extends { readonly chunkCount: number | null }>(
 	note: T,
 ): note is T & { readonly chunkCount: number } {
 	return (note.chunkCount ?? 0) > 0;
+}
+
+/**
+ * Whether a note is a format 1 note, its settings and what opening it takes in
+ * the envelope its writer sent. The one definition: a row without one is
+ * format 0.
+ */
+export function isFormat1<T extends { readonly envelope: Buffer | null }>(
+	note: T,
+): note is T & { readonly envelope: Buffer } {
+	return note.envelope !== null;
+}
+
+/** How a reader opens the note a row holds. */
+export function openingOf(note: NoteRow): NoteOpening {
+	if (isFormat1(note)) {
+		return { format: 1, envelope: note.envelope };
+	}
+	return {
+		format: 0,
+		clientNonce: note.clientNonce,
+		...(note.salt !== null ? { salt: note.salt } : {}),
+	};
+}
+
+/**
+ * How a reader opens the chunked note a row holds, or undefined for a format 0
+ * row without its stream header: a corrupt row, which cannot be read.
+ */
+export function chunkedOpeningOf(note: NoteRow): ChunkedOpening | undefined {
+	const opening = openingOf(note);
+	if (opening.format === 1) {
+		return opening;
+	}
+	return note.streamHeader ? { ...opening, streamHeader: note.streamHeader } : undefined;
 }
 
 export function placementOf(note: {
@@ -81,9 +111,8 @@ export function newNoteRow(
 ): typeof notes.$inferInsert {
 	const common = {
 		id,
-		clientNonce: settings.clientNonce,
+		...openingColumns(settings.opening),
 		hasPassword: settings.hasPassword,
-		salt: settings.salt ?? null,
 		deleteToken,
 		fileCount: settings.fileCount,
 		expiresAt: new Date(now.getTime() + settings.expiresIn * 1000),
@@ -114,20 +143,36 @@ export function newNoteRow(
 				serverNonce: "",
 				filePath: null,
 				chunkCount: placement.chunkCount,
-				streamHeader: placement.streamHeader,
 				sizeBytes: placement.size,
 			};
 	}
 }
 
-export function metaOf(note: NoteRow): NoteMeta {
+/** The columns that tell how to open a note: its envelope, or format 0's own. */
+function openingColumns(opening: NoteOpening) {
+	if (opening.format === 1) {
+		// The envelope holds it all. client_nonce is NOT NULL: it stays empty.
+		return { envelope: opening.envelope, clientNonce: "", salt: null, streamHeader: null };
+	}
 	return {
-		clientNonce: note.clientNonce,
+		envelope: null,
+		clientNonce: opening.clientNonce,
+		salt: opening.salt ?? null,
+		streamHeader: opening.streamHeader ?? null,
+	};
+}
+
+/** What comes with a note's ciphertext, opened as `opening` says. */
+export function metaOf<Opening extends NoteOpening>(
+	note: NoteRow,
+	opening: Opening,
+): NoteMeta<Opening> {
+	return {
 		hasPassword: note.hasPassword,
-		salt: note.salt,
 		fileCount: note.fileCount,
 		createdAt: note.createdAt,
 		expiresAt: note.expiresAt,
+		opening,
 	};
 }
 

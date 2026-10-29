@@ -1,4 +1,4 @@
-import type { CreatedNote, NoteMeta } from "../../notes/types.js";
+import type { ChunkedOpening, CreatedNote, NoteMeta } from "../../notes/types.js";
 
 /** The body of a 201 to a note created, single-shot or chunked. */
 export function createdBody(created: CreatedNote) {
@@ -10,17 +10,40 @@ export function createdBody(created: CreatedNote) {
 }
 
 /** Strip CRLF and null bytes to prevent HTTP header injection */
-export function sanitizeHeaderValue(value: string): string {
+function sanitizeHeaderValue(value: string): string {
 	return value.replace(/[\r\n\0]/g, "");
+}
+
+/** The headers of `GET /notes/{id}/raw`, whose body is `length` bytes. */
+export function rawHeaders(meta: NoteMeta, length: number): Record<string, string> {
+	const headers = buildNoteHeaders(meta);
+	headers["Content-Length"] = String(length);
+	if (meta.opening.format === 0) {
+		headers["X-Client-Nonce"] = sanitizeHeaderValue(meta.opening.clientNonce);
+	}
+	return headers;
+}
+
+/** The headers of `GET /notes/{id}/stream`. */
+export function streamHeaders(
+	meta: NoteMeta<ChunkedOpening>,
+	chunkCount: number,
+): Record<string, string> {
+	const headers = buildNoteHeaders(meta);
+	headers["X-Chunk-Count"] = String(chunkCount);
+	if (meta.opening.format === 0) {
+		headers["X-Stream-Header"] = sanitizeHeaderValue(meta.opening.streamHeader);
+	}
+	return headers;
 }
 
 /**
  * Response headers shared by the encrypted-blob download endpoints (`/raw` and
- * `/stream`). Callers add their own Content-Length and payload-shape headers
- * (e.g. X-Client-Nonce or X-Stream-Header). User-controlled values are
- * sanitized to prevent HTTP header injection.
+ * `/stream`): the note's metadata, and what opening it takes, but for format
+ * 0's nonce or stream header, which each endpoint adds. User-controlled values
+ * are sanitized to prevent HTTP header injection.
  */
-export function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
+function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
 	const headers: Record<string, string> = {
 		"Content-Type": "application/octet-stream",
 		// Force a download and forbid MIME sniffing so the still-encrypted blob
@@ -38,8 +61,14 @@ export function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
 		"X-Created-At": meta.createdAt.toISOString(),
 		"X-Expires-At": meta.expiresAt.toISOString(),
 	};
-	if (meta.salt) {
-		headers["X-Salt"] = sanitizeHeaderValue(meta.salt);
+	const { opening } = meta;
+	if (opening.format === 1) {
+		// Everything else a reader needs is in the envelope, served as it came.
+		headers["X-Envelope"] = opening.envelope.toString("base64");
+		return headers;
+	}
+	if (opening.salt) {
+		headers["X-Salt"] = sanitizeHeaderValue(opening.salt);
 	}
 	return headers;
 }
