@@ -27,10 +27,10 @@ Monorepo with pnpm workspaces:
 
 - **`apps/api`** — Hono HTTP server (Node.js 26, TypeScript)
   - Notes: `src/notes/` holds the rules, with no HTTP in them. It imports the infrastructure (db, storage, quota, pending deletions), which never imports it; the routes and the cleanup job do:
-    - `service.ts`: `createNotesService` (create, check, read, stream, delete, and the upload sessions of `uploads.ts`) — what spends a read, what burns a note, when its storage is purged
-    - `rows.ts`: note rows — the one place a row is built (`newNoteRow`), where a note is stored (`placementOf`, `singleShotPlacement`: text stays in SQLite), the one definition of a chunked note (`isChunked`) and of a format 1 note (`isFormat1`: its row has an envelope), how a reader opens a row (`openingOf`), `lookUpNote`, `spendRead`, `removeNote` (row deleted, purge queued in the same transaction)
-    - `formats.ts`: what a write declares in either format, as the service's `NoteSettings` (`settingsOf`, `chunkedSettingsOf`: format 1's from its envelope, kept byte for byte), and the formats a read can answer (`NOTE_FORMATS`; the legacy JSON read answers format 0 only, refusing format 1 before a read is spent)
-    - `serverLayer.ts`: the server's AES-256-GCM layer, built once with the key, in its two layouts (IV in the row for single-shot notes, IV in front of each chunk)
+    - `service.ts`: `createNotesService` (create, check, read, stream, readWithProofs, delete, and the upload sessions of `uploads.ts`) — what spends a read, what burns a note, when its storage is purged. `read`/`stream` serve format 0 only; `readWithProofs` serves format 1, once the link proof and, for a password note, the password proof check out (`checkProofs`), both kinds sharing the serving path (`serveSingleShot`, `serveChunked`)
+    - `rows.ts`: note rows — the one place a row is built (`newNoteRow`), where a note is stored (`placementOf`, `singleShotPlacement`: text stays in SQLite), the one definition of a chunked note (`isChunked`) and of a format 1 note (`isFormat1`: its row has an envelope), how a reader opens a row (`openingOf`/`chunkedOpeningOf` for format 0, `format1ReadingOf` for format 1: its opening and sealed verifiers, or undefined for a corrupt row), `lookUpNote`, `spendRead`, `countFailedAttempt` (the fifth wrong password deletes the note), `removeNote` (row deleted, purge queued in the same transaction)
+    - `formats.ts`: what a write declares in either format, as the service's `NoteSettings` (`settingsOf`, `chunkedSettingsOf`: format 1's from its envelope, kept byte for byte, with the writer's verifiers; `sessionSettingsOf` for an upload session, its verifiers already sealed)
+    - `serverLayer.ts`: the server's AES-256-GCM layer, built once with the key, in its two layouts (IV in the row for single-shot notes, IV in front of each chunk), and the sealing of format 1 verifiers (HMAC-SHA256 over the note id, under a key derived from the instance key; `proves` checks a reader's proof against one)
     - `stream.ts` (a chunked note's chunks with read-ahead and backpressure), `limits.ts` (the operator's limits and the quota), `errors.ts` (`NoteError`, its codes and their one message each), `types.ts`
   - Routes: `src/routes/notes/` (`writes.ts`, `reads.ts`) are thin: every route goes through `app.openapi`, so its schema in `openapi-routes.ts` validates the request and documents it; the handler calls the service and shapes the answer (`responses.ts`, including the stream's length-prefix framing). `errorStatus.ts` maps every `NoteError` code to a status: the one place a refusal becomes HTTP
   - API versioned under `/api/v1/` (health endpoint stays at `/api/health`)
@@ -39,7 +39,7 @@ Monorepo with pnpm workspaces:
   - Migrations: versioned via `PRAGMA user_version`, applied at boot (`src/db/migrations.ts`); a downgrade (DB newer than the build) refuses to start. Schema changes: edit `schema.ts`, run `pnpm db:generate` (drizzle-kit) in `apps/api`, embed the emitted SQL as a new `MIGRATIONS` entry
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
-  - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes. Reads are open.
+  - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes, attached per route (`middleware` of the write routes in `routes/notes/writes.ts`, before validation). Reads need none: a format 1 read proves the link instead
   - Error handling: the notes service refuses with `NoteError`, which the app's error handler answers through `routes/notes/errorStatus.ts` (its `toHttpException` option); request validation goes through the route schemas and `defaultHook`. A 500 is logged with an `errorId`, returned to the client; a refusal (4xx, or 507 for a full instance) is not logged
   - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`). Storage purges go through the `pending_deletions` outbox (`src/pendingDeletions.ts`): enqueued in the transaction that deletes the row, run after commit, retried by the job. A daily sweep (`src/reconcile.ts`) purges stored objects no row points to, only on storage no other database has claimed
@@ -82,7 +82,7 @@ Monorepo with pnpm workspaces:
 
 ## Key Design Decisions
 
-- **The protocol is specified in `PROTOCOL.md`** (format 0, the current and only one: keys, payload, single-shot and chunked notes, the API flows; format numbers are not app versions). A change to the format, the payload, a read or upload endpoint, or a limit a client must respect goes there in the same PR, with new test vectors when the bytes change.
+- **The protocol is specified in `PROTOCOL.md`** (format 0, the one every release writes, and format 1, its draft successor: keys, payload, single-shot and chunked notes, the API flows, format 1's envelope and proof of reading; format numbers are not app versions). A change to the format, the payload, a read or upload endpoint, or a limit a client must respect goes there in the same PR, with new test vectors when the bytes change.
 - **Double encryption**: Client encrypts with XChaCha20-Poly1305, server re-encrypts with AES-256-GCM. Removing either layer is a security model change.
 - **URL fragment for keys**: The `#key` part of URLs is never sent to the server. This is the foundation of zero-knowledge.
 - **Storage abstraction**: `StorageBackend` interface with `LocalStorage` and `S3Storage` implementations. Routes never import storage directly — they use the interface from Hono context.
@@ -90,7 +90,7 @@ Monorepo with pnpm workspaces:
 - **Multipart upload**: `POST /api/v1/notes/upload` accepts binary data (no base64 overhead) for large files with progress tracking.
 - **API versioning**: All note and config endpoints under `/api/v1/`. OpenAPI 3.1 spec auto-generated from Zod schemas via `@hono/zod-openapi`.
 - **SDK-first frontend**: The web app consumes `@largerio/secret-sdk` (dog-fooding). No direct API calls or crypto operations in the frontend.
-- **Write auth**: POST and DELETE require either a PoW token (`X-Cap-Token` header, via `@cap.js/server`) or an API key (`Authorization: Bearer <key>`). Reads stay open. Cap endpoints at `/api/cap/` (internal, not documented). SDK API keys configured via `API_KEY` env var (or `API_KEY_1`, `API_KEY_2`, etc. for multiple clients).
+- **Write auth**: creating (`POST /notes`, `/notes/upload`, `/notes/upload/init`) and deleting a note require either a PoW token (`X-Cap-Token` header, via `@cap.js/server`) or an API key (`Authorization: Bearer <key>`). Reads stay open (`POST /notes/{id}/reads` carries a format 1 note's proofs, not write auth). Cap endpoints at `/api/cap/` (internal, not documented). SDK API keys configured via `API_KEY` env var (or `API_KEY_1`, `API_KEY_2`, etc. for multiple clients).
 
 ## Code Style
 

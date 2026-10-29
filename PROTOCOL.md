@@ -300,6 +300,9 @@ is every message's ciphertext in order, each preceded by its length as a
 
 ## Reading a note
 
+This section reads a format 0 note; a format 1 note is read
+[with a proof](#proof-of-reading).
+
 ```
 GET /api/v1/notes/{id}/exists
 ```
@@ -665,7 +668,7 @@ anything:
   one failed attempt.
 
 Failed attempts are counted on the note over its whole life: a read that
-succeeds does not reset them. The **fifth** deletes the note, as a burn
+succeeds does not reset them, and wrong passwords sent at once each count. The **fifth** deletes the note, as a burn
 would, and answers `403` like the others. The answer to a refused proof does
 not say which proof failed, nor whether the note is gone: `/exists` does,
 with `passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.

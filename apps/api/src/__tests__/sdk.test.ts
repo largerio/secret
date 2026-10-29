@@ -50,6 +50,7 @@ const PATH_WORDS = new Set([
 	"upload",
 	"init",
 	"chunks",
+	"reads",
 	"complete",
 	"raw",
 	"stream",
@@ -318,7 +319,7 @@ describe("the SDK against the application", () => {
 });
 
 describe("format 1, through the SDK and the application", () => {
-	it("round-trips a text note, read from /raw with its envelope", async () => {
+	it("round-trips a text note, read with its proof once /exists served its envelope", async () => {
 		const client = await connect();
 		const { id, keyFragment } = await client.createNote({
 			text: "hello, format 1",
@@ -337,13 +338,14 @@ describe("format 1, through the SDK and the application", () => {
 		const { payload } = await client.readNote(id, keyFragment);
 		expect(payload).toEqual({ text: "hello, format 1" });
 
-		// No legacy JSON read to fall back to: the stream refuses, /raw serves.
+		// The read takes the envelope from /exists, then proves the link: no GET.
 		expect(calls).toEqual([
 			"POST /api/v1/notes",
 			"GET /api/v1/notes/:id/exists",
-			"GET /api/v1/notes/:id/stream",
-			"GET /api/v1/notes/:id/raw",
+			"GET /api/v1/notes/:id/exists",
+			"POST /api/v1/notes/:id/reads",
 		]);
+		expect(await client.checkNote(id)).toMatchObject({ exists: true, readCount: 1 });
 	});
 
 	it("round-trips files through the multipart upload", async () => {
@@ -390,20 +392,79 @@ describe("format 1, through the SDK and the application", () => {
 				format: 1,
 				maxReads: 3,
 			});
-			expect(await client.checkNote(id)).toMatchObject({ hasPassword: true });
+			expect(await client.checkNote(id)).toMatchObject({
+				hasPassword: true,
+				passwordAttemptsLeft: 5,
+			});
 
-			await expect(
-				client.readNote(id, keyFragment, { password: "wrong", chunked: false }),
-			).rejects.toBeInstanceOf(SecretDecryptionError);
+			await expect(client.readNote(id, keyFragment, { password: "wrong" })).rejects.toBeInstanceOf(
+				SecretDecryptionError,
+			);
+			// A wrong password spends no read: it counts one attempt.
+			expect(await client.checkNote(id)).toMatchObject({ readCount: 0, passwordAttemptsLeft: 4 });
 
 			// Typed in another Unicode form, the same password opens it.
 			const { payload } = await client.readNote(id, keyFragment, {
 				password: "Pässwörd".normalize("NFD"),
-				chunked: false,
 			});
 			expect(payload.text).toBe("behind a password");
+			expect(await client.checkNote(id)).toMatchObject({ readCount: 1, passwordAttemptsLeft: 4 });
 		},
 		ARGON2_TIMEOUT,
+	);
+
+	it(
+		"deletes a password note at its fifth wrong password",
+		async () => {
+			const client = await connect();
+			const { id, keyFragment } = await client.createNote({
+				text: "five tries",
+				password: "right",
+				format: 1,
+				maxReads: 0,
+			});
+
+			for (const left of [4, 3, 2, 1]) {
+				await expect(
+					client.readNote(id, keyFragment, { password: "wrong" }),
+				).rejects.toBeInstanceOf(SecretDecryptionError);
+				expect(await client.checkNote(id)).toMatchObject({ passwordAttemptsLeft: left });
+			}
+			await expect(client.readNote(id, keyFragment, { password: "wrong" })).rejects.toBeInstanceOf(
+				SecretDecryptionError,
+			);
+			expect(await client.checkNote(id)).toEqual({ exists: false });
+			await expect(client.readNote(id, keyFragment, { password: "right" })).rejects.toMatchObject({
+				status: 404,
+			});
+		},
+		ARGON2_TIMEOUT * 2,
+	);
+
+	it(
+		"counts nothing against a reader without the link",
+		async () => {
+			const client = await connect();
+			const { id } = await client.createNote({
+				text: "the link is the key",
+				password: "right",
+				format: 1,
+				maxReads: 1,
+			});
+			const anotherLink = `1.${Buffer.from(randomBytes(32)).toString("base64url")}`;
+
+			for (let i = 0; i < 6; i++) {
+				await expect(
+					client.readNote(id, anotherLink, { password: "right" }),
+				).rejects.toBeInstanceOf(SecretDecryptionError);
+			}
+			expect(await client.checkNote(id)).toMatchObject({
+				exists: true,
+				readCount: 0,
+				passwordAttemptsLeft: 5,
+			});
+		},
+		ARGON2_TIMEOUT * 2,
 	);
 
 	it("is refused a note behind the link of the other format, and spends no read", async () => {
@@ -418,16 +479,20 @@ describe("format 1, through the SDK and the application", () => {
 		];
 
 		for (const note of notes) {
-			const otherLink = note.keyFragment.startsWith("1.")
-				? note.keyFragment.slice(2)
-				: `1.${note.keyFragment}`;
-			await expect(client.readNote(note.id, otherLink)).rejects.toMatchObject({ status: 400 });
+			const format1 = note.keyFragment.startsWith("1.");
+			const otherLink = format1 ? note.keyFragment.slice(2) : `1.${note.keyFragment}`;
+			// Format 0's reads refuse a format 1 note; a format 0 note has no
+			// envelope to derive a proof with, so the read stops at /exists.
+			const read = client.readNote(note.id, otherLink);
+			await (format1
+				? expect(read).rejects.toMatchObject({ status: 400 })
+				: expect(read).rejects.toBeInstanceOf(SecretDecryptionError));
 			expect(await client.checkNote(note.id)).toMatchObject({ exists: true, readCount: 0 });
 		}
 	});
 
-	// The SDK up to 1.2 reads /stream, then /raw, then the JSON read, asking for
-	// no format: none of them may spend a read on a format 1 note.
+	// The SDK up to 1.2 reads /stream, then /raw, then the JSON read: none of
+	// them may spend a read on a format 1 note, whatever format it asks for.
 	it("spends no read of a format 1 note on a client that knows only format 0", async () => {
 		const client = await connect();
 		const { id } = await client.createNote({ text: "format 1", format: 1, maxReads: 1 });
@@ -439,8 +504,8 @@ describe("format 1, through the SDK and the application", () => {
 		});
 
 		for (const note of [id, chunkedId]) {
-			for (const path of ["stream", "raw", ""]) {
-				const res = await fetch(`${baseUrl}/api/v1/notes/${note}${path ? `/${path}` : ""}`);
+			for (const path of ["/stream", "/raw", "", "/stream?format=1", "/raw?format=1"]) {
+				const res = await fetch(`${baseUrl}/api/v1/notes/${note}${path}`);
 				expect(res.status, path).toBe(400);
 			}
 			expect(await client.checkNote(note)).toMatchObject({ exists: true, readCount: 0 });
