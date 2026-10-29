@@ -172,9 +172,6 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		c.header("Cache-Control", "no-store");
 	});
 
-	const writeAuth = createWriteAuth(config.apiKeys);
-	app.use("/api/v1/notes/*", writeAuth);
-
 	// --- Unversioned routes ---
 
 	app.use("/api/health/*", async (c, next) => {
@@ -241,9 +238,13 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	const v1 = new OpenAPIHono<AppEnv>();
 
+	// Write authentication is attached route by route, to the writes that need
+	// it: a format 1 read is a POST too, and needs none.
 	v1.route(
 		"/notes",
-		createNotesRoutes(createNotesService({ db, serverKey, storage, metrics, limits: config })),
+		createNotesRoutes(createNotesService({ db, serverKey, storage, metrics, limits: config }), {
+			writeAuth: createWriteAuth(config.apiKeys),
+		}),
 	);
 
 	v1.get("/config", (c) => {

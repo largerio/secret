@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createNoteMultipartRequestSchema } from "@largerio/secret-shared";
+import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { chunkedSettingsOf, settingsOf } from "../../notes/formats.js";
 import type { NotesService } from "../../notes/service.js";
@@ -14,15 +15,25 @@ import {
 } from "./openapi-routes.js";
 import { createdBody } from "./responses.js";
 
-/** What writes a note: creation in one request or by chunks, and deletion. */
-export function registerWriteRoutes(app: OpenAPIHono, notes: NotesService): void {
-	app.openapi(createNoteRoute, async (c) => {
+/**
+ * What writes a note: creation in one request or by chunks, and deletion.
+ * `writeAuth` guards the routes that create a note or open its upload, and
+ * deletion: it runs before the request is validated, so an unauthenticated one
+ * is refused before its body is read. An upload's chunks and its completion
+ * need none: the upload id stands for the authentication its opening gave.
+ */
+export function registerWriteRoutes(
+	app: OpenAPIHono,
+	notes: NotesService,
+	writeAuth: MiddlewareHandler,
+): void {
+	app.openapi({ ...createNoteRoute, middleware: writeAuth }, async (c) => {
 		const { encryptedData, ...request } = c.req.valid("json");
 		const created = await notes.create(Buffer.from(encryptedData, "base64"), settingsOf(request));
 		return c.json(createdBody(created), 201);
 	});
 
-	app.openapi(uploadNoteRoute, async (c) => {
+	app.openapi({ ...uploadNoteRoute, middleware: writeAuth }, async (c) => {
 		const { metadata, data } = c.req.valid("form");
 		// The settings travel as a JSON string inside the multipart body.
 		const request = parseJson(createNoteMultipartRequestSchema, metadata);
@@ -33,7 +44,7 @@ export function registerWriteRoutes(app: OpenAPIHono, notes: NotesService): void
 		return c.json(createdBody(created), 201);
 	});
 
-	app.openapi(uploadInitRoute, (c) => {
+	app.openapi({ ...uploadInitRoute, middleware: writeAuth }, (c) => {
 		const { chunkCount, ...request } = c.req.valid("json");
 		const session = notes.openUpload({ ...chunkedSettingsOf(request), chunkCount });
 		return c.json({ uploadId: session.uploadId, expiresAt: session.expiresAt.toISOString() }, 201);
@@ -55,7 +66,7 @@ export function registerWriteRoutes(app: OpenAPIHono, notes: NotesService): void
 		return c.json(createdBody(created), 201);
 	});
 
-	app.openapi(deleteNoteRoute, async (c) => {
+	app.openapi({ ...deleteNoteRoute, middleware: writeAuth }, async (c) => {
 		await notes.delete(c.req.valid("param").id, c.req.valid("header")["x-delete-token"]);
 		return c.json({ deleted: true as const });
 	});

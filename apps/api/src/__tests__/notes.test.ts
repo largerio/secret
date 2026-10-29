@@ -152,6 +152,27 @@ afterAll(() => {
 	}
 });
 
+describe("write authentication", () => {
+	// Attached route by route, before the route's validators: a request without
+	// authentication learns nothing of what its body should have been.
+	it("refuses an unauthenticated write before it validates the request", async () => {
+		const { id } = await createTestNote();
+
+		for (const [path, init] of [
+			["/api/v1/notes", { method: "POST", body: "not json" }],
+			["/api/v1/notes/upload", { method: "POST", body: "not multipart" }],
+			["/api/v1/notes/upload/init", { method: "POST", body: "{}" }],
+			[`/api/v1/notes/${id}`, { method: "DELETE" }],
+			["/api/v1/notes/not-an-id", { method: "DELETE" }],
+		] as const) {
+			const res = await app.request(path, init);
+			expect(res.status, `${init.method} ${path}`).toBe(401);
+			expect(await res.json()).toEqual({ error: "Unauthorized" });
+		}
+		expect(db.select().from(notesTable).all()).toHaveLength(1);
+	});
+});
+
 describe("POST /api/v1/notes", () => {
 	it("rejects requests without Cap token or API key", async () => {
 		const res = await app.request("/api/v1/notes", {
@@ -1387,6 +1408,23 @@ describe("Chunked upload flow", () => {
 			body: JSON.stringify(initPayload()),
 		});
 		expect(res.status).toBe(401);
+	});
+
+	it("takes the chunks and the completion without auth: the upload id stands for it", async () => {
+		const { json: initJson } = await initUpload({ chunkCount: 1 });
+		const chunk = chunkData("unauthenticated chunk");
+
+		const put = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256hex(chunk) },
+			body: chunk as BodyInit,
+		});
+		const complete = await app.request(`/api/v1/notes/upload/${initJson.uploadId}/complete`, {
+			method: "POST",
+		});
+
+		expect(put.status).toBe(200);
+		expect(complete.status).toBe(201);
 	});
 
 	it("rejects chunk with missing hash", async () => {
