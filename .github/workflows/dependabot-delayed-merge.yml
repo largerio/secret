@@ -24,7 +24,7 @@ jobs:
       pull-requests: write
     env:
       # `secrets` is not available to a step-level `if`, but it is here.
-      HAS_RELEASE_APP: ${{ secrets.APP_ID != '' }}
+      HAS_RELEASE_APP: ${{ vars.APP_CLIENT_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
     steps:
       # GitHub starts no workflow for a push made with GITHUB_TOKEN: a merge
       # armed with it would reach main with no CI/CD run, so nothing would be
@@ -35,7 +35,7 @@ jobs:
         if: env.HAS_RELEASE_APP == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
