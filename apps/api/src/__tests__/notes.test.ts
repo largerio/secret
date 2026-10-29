@@ -4,7 +4,11 @@ import type { DatabaseSync } from "node:sqlite";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
-import { MAX_INLINE_ENCRYPTED_SIZE } from "@largerio/secret-shared";
+import {
+	MAX_INLINE_ENCRYPTED_SIZE,
+	NOTE_ID_LENGTH,
+	UPLOAD_ID_LENGTH,
+} from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -170,6 +174,52 @@ describe("write authentication", () => {
 			expect(await res.json()).toEqual({ error: "Unauthorized" });
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(1);
+	});
+
+	// Every route of the notes API as the app registered it, documented or not:
+	// a write registered without `middleware: writeAuth` answers something else
+	// than 401, and fails here.
+	it("guards every write but an upload's chunks, its completion and the format 1 read", async () => {
+		const prefix = "/api/v1/notes";
+		const writes = new Set<string>();
+		for (const route of app.routes) {
+			// What `use` registers runs whatever the method: ALL.
+			if (!route.path.startsWith(prefix) || route.method === "GET" || route.method === "ALL") {
+				continue;
+			}
+			writes.add(`${route.method} ${route.path}`);
+		}
+
+		// Every write the OpenAPI document lists is walked, so the walk does not
+		// miss a route by its spelling.
+		const doc = (await (await app.request("/api/v1/openapi.json")).json()) as {
+			paths: Record<string, Record<string, unknown>>;
+		};
+		const documented = Object.entries(doc.paths).flatMap(([path, operations]) =>
+			Object.keys(operations)
+				.filter((method) => method !== "get")
+				.map((method) => `${method.toUpperCase()} /api/v1${path.replaceAll(/\{(\w+)\}/g, ":$1")}`),
+		);
+		expect(documented.length).toBeGreaterThan(0);
+		expect([...writes]).toEqual(expect.arrayContaining(documented));
+
+		const unguarded: string[] = [];
+		for (const write of writes) {
+			const [method = "", path = ""] = write.split(" ");
+			const url = path
+				.replace(":id", "a".repeat(NOTE_ID_LENGTH))
+				.replace(":uploadId", "u".repeat(UPLOAD_ID_LENGTH))
+				.replace(":index", "0");
+			const res = await app.request(url, { method });
+			if (res.status !== 401) {
+				unguarded.push(`${method} ${path.slice(prefix.length)}`);
+			}
+		}
+		expect(unguarded.sort()).toEqual([
+			"POST /:id/reads",
+			"POST /upload/:uploadId/complete",
+			"PUT /upload/:uploadId/chunks/:index",
+		]);
 	});
 });
 
