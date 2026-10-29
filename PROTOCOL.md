@@ -496,7 +496,8 @@ its input, Argon2id cannot be run on a dictionary before the link is known,
 even by whoever holds the salt.
 
 By default a writer uses t = 3 iterations and m = 262,144 KiB (256 MiB,
-libsodium's moderate setting), and records them in the envelope. A reader runs
+libsodium's moderate setting), and records them in the envelope. `m` is in
+KiB: libsodium's `memlimit` is m × 1024 bytes. A reader runs
 the parameters the envelope gives, but MUST refuse t outside 1 to 6, or m
 outside 65,536 to 524,288 KiB (64 to 512 MiB), before running Argon2id. It
 runs them before anything can tell the envelope was altered, so these bounds
@@ -521,8 +522,9 @@ link verifier     = SHA-256(link proof)
 password verifier = SHA-256(password proof)
 ```
 
-Without a password, the link proof's PRK is the PRK above. Other `info` strings
-are reserved for keys format 1 will derive from the same PRK.
+Without a password, the link proof's PRK is the PRK above. Proofs and verifiers
+are 32 bytes. Other `info` strings are reserved for keys format 1 will derive
+from the same PRK.
 
 ### The link
 
@@ -637,7 +639,8 @@ reader has proved what it holds:
 
 1. `GET /api/v1/notes/{id}/exists` answers as for format 0, with two more
    fields: `envelope`, the note's envelope in base64, and for a password note
-   `passwordAttemptsLeft`. It spends no read.
+   `passwordAttemptsLeft`, from 5 down to 1. A format 0 note has neither
+   field. It spends no read.
 2. The reader checks the envelope, derives the keys and the proofs from it,
    and sends the proofs:
 
@@ -649,8 +652,11 @@ Content-Type: application/json
 ```
 
 `passwordProof` is sent for a password note only; the server ignores it on a
-note without a password. The server checks, before it spends anything:
+note without a password. A request whose proofs are not 32 bytes in base64
+answers `400` and counts nothing. The server checks, before it spends
+anything:
 
+- that the note exists: a note that does not answers `404`, as every read;
 - that the note is a format 1 note: a format 0 note answers `400`;
 - the link proof, against the note's link verifier: a wrong one answers `403`
   and counts nothing, since whoever does not hold `K` cannot guess it;
@@ -660,18 +666,20 @@ note without a password. The server checks, before it spends anything:
 
 Failed attempts are counted on the note over its whole life: a read that
 succeeds does not reset them. The **fifth** deletes the note, as a burn
-would, and answers `403` like the others. `passwordAttemptsLeft` says how many
-remain, so a reader can tell the two apart.
+would, and answers `403` like the others. The answer to a refused proof does
+not say which proof failed, nor whether the note is gone: `/exists` does,
+with `passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.
 
 Once the proofs check out, the server serves the note as format 0's reads do,
-and spends a read the same way, once it has loaded the ciphertext:
+and spends a read the same way, once it has loaded the ciphertext. It answers
+`200`, `Content-Type: application/octet-stream`, with:
 
-- a single-shot note: the ciphertext, with the headers of `/raw` but for
+- for a single-shot note, the ciphertext, and the headers of `/raw` but for
   `X-Client-Nonce` and `X-Salt`;
-- a chunked note: the length-prefixed messages of `/stream`, with its headers
-  but for `X-Stream-Header` and `X-Salt`.
+- for a chunked note, the length-prefixed messages of `/stream`, and its
+  headers but for `X-Stream-Header` and `X-Salt`.
 
-The reader knows which from the envelope's kind, and opens the note with the
+Nothing in the answer says which: the reader knows it from the envelope's kind, and opens the note with the
 envelope it derived the proofs from. `/raw`, `/stream` and the JSON endpoint
 serve format 0 only: they answer `400` to a format 1 note without spending a
 read, so a client that knows only format 0 never spends one on it. The link a
@@ -680,19 +688,26 @@ format is refused, not opened.
 
 ### Reading strictly
 
-In `/exists`, `hasPassword` comes from the envelope. A format 1 reader MUST
-refuse, before it sends any proof:
+In `/exists`, the settings of a format 1 note come from its envelope:
+`hasPassword`, `fileCount`, `maxReads`, and `expiresAt` from its `expiresIn`.
+`chunked` is true for a note of the chunked kind. A reader goes by the
+envelope, which the ciphertext authenticates, not by these fields.
 
-- an answer without an envelope, or with one a reader would refuse;
+A format 1 reader MUST refuse, before it sends a proof:
+
+- an `/exists` answer without an envelope, or with one a reader would refuse;
 - a password note read without a password; a password given for a note
-  without one is ignored;
+  without one is ignored.
+
+Once it has read the note, it MUST refuse:
+
 - a payload, or the head of a chunked note, that is not one MessagePack map
   (an extension type, a timestamp included, is not a map) with nothing after
   it, whose `text` is not a string, whose `contentMode` is
   not one of the three values, or whose `files` is not an array of at most 10
   entries;
 - a file whose `name` or `type` is not a string, or whose `size` is not a
-  non-negative integer; in a single-shot note, a file whose `data` is not
+  non-negative integer, a missing key included; in a single-shot note, a file whose `data` is not
   `bin` or whose length is not `size`;
 - a payload with another number of files than the envelope's `fileCount`;
 - in a chunked note, a message before the last whose tag is not `TAG_MESSAGE`,
