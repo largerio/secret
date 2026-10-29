@@ -563,10 +563,11 @@ derive from them.
 
 `key` is `K` encoded as in format 0: 43 base64url characters. A format 0 key
 never holds a `.`, so a reader tells the formats apart by the `1.` prefix,
-and SHOULD refuse a malformed format 1 fragment before reading the note. A
+and MUST refuse a malformed format 1 fragment before reading the note. A
 fragment that starts with another number and a dot names a format the reader
 does not know: it MUST refuse it before reading the note. A format number is
-written in decimal without a leading zero: `01.` is not format 1.
+written in decimal without a leading zero: `01.` names no format, and is
+refused as well.
 
 ### The envelope
 
@@ -598,8 +599,9 @@ never served.
 An envelope is 33 bytes without a password, 57 with one. A reader MUST refuse
 an envelope whose first byte is not 1, whose key derivation is unknown, whose
 length is not the one its key derivation calls for, or whose Argon2id
-parameters fall outside the bounds above. It uses the envelope as it
-received it, never re-encoded.
+parameters fall outside the bounds above. It need not check the settings
+against the protocol's limits below, which the server does, but may. It uses
+the envelope as it received it, never re-encoded.
 
 The settings mean what they mean in format 0, and the envelope tells the
 server nothing format 0's fields do not, the Argon2id parameters aside. The
@@ -642,8 +644,9 @@ Files and Communication with PURBs*, PETS 2019) with a floor: every body up
 to 4,096 bytes, a password as much as a private key, has the same length, and
 a longer one is at most 6.25% longer than its content, 3.125% from 65,536
 bytes on. `E` is the bit length of `L` less one: compute in integers, as a
-floating-point `log2` may round up just below a power of two. A body of
-4,097 bytes is 4,352 long, one of 1,000,000 is 1,015,808.
+floating-point `log2` may round up just below a power of two. Content of
+4,097 bytes takes a body of 4,352, content of 1,000,000 bytes one of
+1,015,808. A length is a size class when it is its own size class.
 
 ### Messages
 
@@ -782,26 +785,29 @@ A format 1 reader MUST refuse, before it sends a proof:
 
 Once it has read the note, it MUST refuse:
 
-- a message before the last whose tag is not `TAG_MESSAGE`, and a last one
-  whose tag is not `TAG_FINAL`;
+- a note of no message, a message before the last whose tag is not
+  `TAG_MESSAGE`, and a last one whose tag is not `TAG_FINAL`;
 - a body shorter than 4 bytes, or than 4 bytes and the head's length;
 - a head that is not one MessagePack map (an extension type, a timestamp
   included, is not a map) filling its length exactly, whose `text` is not a
   string, whose `contentMode` is not one of the three values, or whose
   `files` is not an array of at most 10 entries;
-- a file whose `name` or `type` is not a string, or whose `size` is not a
-  non-negative integer, a missing key included;
+- a file that is not a map, or whose `name` or `type` is not a string, or
+  whose `size` is not a non-negative integer, a missing key included;
 - a head with another number of files than the envelope's `fileCount`;
 - file sizes whose sum exceeds the bytes after the head;
 - a body whose length is not the size class of `L`, or whose padding holds a
   byte other than zero.
 
 A key present with the value `nil` is not absent: `text: nil` is refused. A
-reader ignores keys it does not know. It need not check the length of each
+`files` that is empty is a note without files. A reader ignores keys it does
+not know. It need not check the length of each
 message: the server does, and the tags and the body's length are enough.
 
 A writer writes each key of a map once, as a `str`, strings in valid UTF-8
-(a lone surrogate written as U+FFFD), and `size` as an `int`. The reference reader keeps the last of a repeated key,
+(a lone surrogate written as U+FFFD), and `size` as an `int`, each value in
+the shortest form MessagePack has for it, as common libraries do: the
+vectors' heads match byte for byte only then. The reference reader keeps the last of a repeated key,
 reads an integer key as a string, decodes invalid UTF-8 without refusing it,
 and takes a float with an integer value for an integer; another reader may
 refuse them.
@@ -825,7 +831,7 @@ and, under `format1`:
 |---------|-------------------|
 | `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK, the encryption key, the proofs and their verifiers. |
 | `envelopes` | Envelopes, from their fields to their bytes. |
-| `sizeClasses` | Lengths and their size class: the floor, and either side of the lengths where `z` changes. |
+| `sizeClasses` | Lengths and their size class: the floor, and either side of powers of two. |
 | `notes` | Notes, from the payload to the head, the body and the messages. |
 | `invalid` | What a reader MUST refuse: fragments, envelopes, and notes whose messages break a rule of the stream or of the body, each with the key that opens it. |
 
