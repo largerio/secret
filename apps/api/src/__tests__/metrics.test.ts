@@ -536,6 +536,23 @@ describe("GET /api/metrics", () => {
 				'secret_http_requests_total{method="PUT",route="/api/v1/notes/upload/:uploadId/chunks/:index",status="2xx"}',
 			),
 		).toBe(1);
+		// Each write under its own route: a pattern registered for one method
+		// (a read's) must not name another's request.
+		for (const [method, route] of [
+			["POST", "/api/v1/notes"],
+			["POST", "/api/v1/notes/upload"],
+			["POST", "/api/v1/notes/upload/init"],
+			["POST", "/api/v1/notes/upload/:uploadId/complete"],
+			["DELETE", "/api/v1/notes/:id"],
+		]) {
+			expect(
+				sample(
+					text,
+					`secret_http_requests_total{method="${method}",route="${route}",status="2xx"}`,
+				),
+				`${method} ${route}`,
+			).toBeGreaterThan(0);
+		}
 		for (const secret of secrets) {
 			expect(text).not.toContain(secret);
 		}

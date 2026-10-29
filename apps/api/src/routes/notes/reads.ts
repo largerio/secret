@@ -7,9 +7,12 @@ import { buildNoteHeaders, lengthPrefixed, sanitizeHeaderValue } from "./respons
 export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void {
 	// Hono answers a HEAD with the GET route and drops the body: on the reads
 	// that spend, it would spend one, and burn a single-read note, without
-	// delivering anything. Registered before the routes, so they never run.
+	// delivering anything. Registered before the routes, so they never run;
+	// for GET alone, which HEAD goes through, so that no other request counts
+	// it as its route (`/:id` matches `POST /upload`, and logs and metrics
+	// name a request by the last route that matches it).
 	for (const path of ["/:id", "/:id/raw", "/:id/stream"]) {
-		app.use(path, async (c, next) => {
+		app.get(path, async (c, next) => {
 			if (c.req.method === "HEAD") {
 				c.header("Allow", "GET");
 				return c.json({ error: "Method not allowed" }, 405);
