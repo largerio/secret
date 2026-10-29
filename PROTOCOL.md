@@ -654,9 +654,9 @@ Content-Type: application/json
 {"linkProof": "<base64>", "passwordProof": "<base64>"}
 ```
 
-`passwordProof` is sent for a password note only; the server ignores it on a
-note without a password. A request whose proofs are not 32 bytes in base64
-answers `400` and counts nothing. The server checks, before it spends
+`passwordProof` is sent for a password note only; the server ignores a
+well-formed one on a note without a password. A request whose proofs are not
+32 bytes in base64 answers `400` and counts nothing. The server checks, before it spends
 anything:
 
 - that the note exists: a note that does not answers `404`, as every read;
@@ -669,9 +669,10 @@ anything:
 
 Failed attempts are counted on the note over its whole life: a read that
 succeeds does not reset them, and wrong passwords sent at once each count. The **fifth** deletes the note, as a burn
-would, and answers `403` like the others. The answer to a refused proof does
-not say which proof failed, nor whether the note is gone: `/exists` does,
-with `passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.
+would, and answers `403` like the others. Both refusals answer `403`, a wrong
+link and a wrong password alike, and their message is meant for a developer;
+the answer does not say whether the note is gone: `/exists` does, with
+`passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.
 
 Once the proofs check out, the server serves the note as format 0's reads do,
 and spends a read the same way, once it has loaded the ciphertext. It answers
