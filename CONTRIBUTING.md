@@ -202,10 +202,11 @@ or deployed.
 
 Maintainers configuring a fork need an App installed on the repository with
 two repository permissions — Contents (read/write) and Pull requests
-(read/write) — exposed as the `APP_ID` and `APP_PRIVATE_KEY` secrets. Each
-workflow scopes its token down to what it needs. Without the App both
-workflows fall back to `GITHUB_TOKEN`: releases still ship, but the version PR
-gets no CI run and Dependabot merges never reach the CI/CD pipeline.
+(read/write) — its Client ID in the `APP_CLIENT_ID` variable and its private
+key in the `APP_PRIVATE_KEY` secret. Each workflow scopes its token down to
+what it needs. Without the App both workflows fall back to `GITHUB_TOKEN`:
+releases still ship, but the version PR gets no CI run and Dependabot merges
+never reach the CI/CD pipeline.
 
 ### Dependencies
 
