@@ -388,7 +388,7 @@ developer: tell errors apart by their status.
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Invalid request, the wrong read endpoint or format, or a password note's read without its password proof |
+| 400 | Invalid request, the wrong read endpoint or format, a password note's read without its password proof, or a format 1 note whose message lengths do not fit a [padded body](#upload-2) |
 | 401 | Write authentication missing or refused |
 | 403 | Wrong delete token, or a wrong read proof |
 | 404 | The note, or the upload session, does not exist |
@@ -707,8 +707,10 @@ bytes of the body.
 The server checks the lengths it sees against the body's rules: it refuses
 (`400`) a note whose body, the messages' length less 17 bytes each, is not a
 size class and, in a session, one whose messages before the last differ in
-length, or whose last message is longer than the first. A session is checked
-at `/complete`. The instance's limits apply to the padded body.
+length, or whose last message is longer than the first or holds no byte of
+the body. A session is checked at `/complete`: refused, it stays open, as one
+with a message missing, until it is completed or expires. The instance's
+limits apply to the padded body.
 
 ### Proof of reading
 
