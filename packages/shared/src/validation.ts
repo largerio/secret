@@ -4,10 +4,17 @@ import {
 	MAX_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
 	MAX_NONCE_LENGTH,
+	MAX_READS,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
 	UPLOAD_ID_LENGTH,
 } from "./constants.js";
+import {
+	ENVELOPE_LENGTH_WITH_PASSWORD,
+	type Envelope,
+	type EnvelopeKind,
+	parseEnvelope,
+} from "./envelope.js";
 
 // Fields common to both the JSON and multipart create-note requests. The two
 // differ only in how the encrypted payload is carried (inline vs multipart
@@ -20,7 +27,7 @@ const baseNoteFields = {
 		.int()
 		.min(MIN_EXPIRY_SECONDS, `Minimum expiry is ${MIN_EXPIRY_SECONDS} seconds`)
 		.max(MAX_EXPIRY_SECONDS, `Maximum expiry is ${MAX_EXPIRY_SECONDS} seconds`),
-	maxReads: z.number().int().min(0).max(1000).default(1),
+	maxReads: z.number().int().min(0).max(MAX_READS).default(1),
 	salt: z.string().min(1).max(100).optional(),
 } as const;
 
@@ -47,6 +54,59 @@ export const createNoteMultipartSchema = z
 		fileCount: z.number().int().min(1).max(MAX_FILES_PER_NOTE),
 	})
 	.refine(saltMatchesPassword, SALT_REQUIRED_REFINEMENT);
+
+// --- Format 1 ---
+
+/** A format 1 envelope accepted by a write: its bytes, as they will be stored and served. */
+export interface AcceptedEnvelope {
+	readonly bytes: Uint8Array;
+	readonly envelope: Envelope;
+}
+
+/**
+ * A format 1 envelope in base64: well formed, of the kind the endpoint
+ * creates, and with settings within the protocol's limits, which format 0
+ * requests state as fields.
+ */
+function envelopeSchema(kind: EnvelopeKind, minFiles = 0) {
+	return z
+		.base64()
+		.max(4 * Math.ceil(ENVELOPE_LENGTH_WITH_PASSWORD / 3))
+		.transform((value, ctx): AcceptedEnvelope => {
+			const bytes = new Uint8Array(Buffer.from(value, "base64"));
+			const envelope = parseEnvelope(bytes);
+			if (
+				envelope === undefined ||
+				envelope.kind !== kind ||
+				envelope.fileCount < minFiles ||
+				envelope.fileCount > MAX_FILES_PER_NOTE ||
+				envelope.maxReads > MAX_READS ||
+				envelope.expiresIn < MIN_EXPIRY_SECONDS ||
+				envelope.expiresIn > MAX_EXPIRY_SECONDS
+			) {
+				ctx.addIssue({ code: "custom", message: `Invalid ${kind} envelope` });
+				return z.NEVER;
+			}
+			return { bytes, envelope };
+		})
+		.describe(
+			"The note's format 1 envelope, in base64 (PROTOCOL.md): its settings and what opening it takes.",
+		);
+}
+
+export const createNoteFormat1Schema = z.object({
+	envelope: envelopeSchema("single-shot"),
+	encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
+});
+
+export const createNoteMultipartFormat1Schema = z.object({
+	envelope: envelopeSchema("single-shot", 1),
+});
+
+export const chunkedUploadInitFormat1Schema = z.object({
+	envelope: envelopeSchema("chunked"),
+	chunkCount: z.number().int().min(1).max(10000),
+});
 
 const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -120,16 +180,21 @@ export const uploadSessionMetadataSchema = z.object({
 	clientNonce: z.string().min(1).max(MAX_NONCE_LENGTH),
 	hasPassword: z.boolean(),
 	expiresIn: z.number().int().min(MIN_EXPIRY_SECONDS).max(MAX_EXPIRY_SECONDS),
-	maxReads: z.number().int().min(0).max(1000),
+	maxReads: z.number().int().min(0).max(MAX_READS),
 	fileCount: z.number().int().min(0).max(MAX_FILES_PER_NOTE),
 	salt: z.string().min(1).max(100).optional(),
 });
 
 export type UploadSessionMetadata = z.infer<typeof uploadSessionMetadataSchema>;
 
+/** The upload session row of a format 1 note: its envelope says the rest. */
+export const uploadSessionFormat1MetadataSchema = z.object({
+	envelope: envelopeSchema("chunked"),
+});
+
 export const chunkedUploadInitSchema = uploadSessionMetadataSchema
 	.extend({
-		maxReads: z.number().int().min(0).max(1000).default(1),
+		maxReads: z.number().int().min(0).max(MAX_READS).default(1),
 		chunkCount: z.number().int().min(1).max(10000),
 	})
 	.refine((data) => !data.hasPassword || data.salt !== undefined, {

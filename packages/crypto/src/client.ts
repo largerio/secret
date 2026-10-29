@@ -18,6 +18,8 @@ export {
 	SECRETSTREAM_ABYTES,
 	SECRETSTREAM_HEADERBYTES,
 } from "./encrypt.js";
+export type { PasswordInput } from "./format1.js";
+export { deriveFormat1Key, hkdfExpand, hkdfExtract, stretchPassword } from "./format1.js";
 export {
 	deriveKeyFromPassword,
 	fromBase64,

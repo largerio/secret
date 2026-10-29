@@ -13,12 +13,29 @@ export {
 	MAX_FILES_PER_NOTE,
 	MAX_INLINE_ENCRYPTED_SIZE,
 	MAX_NONCE_LENGTH,
+	MAX_READS,
 	MAX_TEXT_SIZE,
 	MIN_EXPIRY_SECONDS,
 	NOTE_ID_LENGTH,
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 } from "./constants.js";
+export type { Argon2Params, Envelope, EnvelopeKind } from "./envelope.js";
+export {
+	ARGON2_DEFAULT_ITERATIONS,
+	ARGON2_DEFAULT_MEMORY_KIB,
+	ARGON2_MAX_ITERATIONS,
+	ARGON2_MAX_MEMORY_KIB,
+	ARGON2_MIN_ITERATIONS,
+	ARGON2_MIN_MEMORY_KIB,
+	ENVELOPE_LENGTH,
+	ENVELOPE_LENGTH_WITH_PASSWORD,
+	encodeEnvelope,
+	FORMAT_1,
+	NONCE_LENGTH,
+	parseEnvelope,
+	SALT_LENGTH,
+} from "./envelope.js";
 export type {
 	Argon2idVector,
 	EncodingVector,
@@ -45,12 +62,15 @@ export type {
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
 export { withoutTrailingSlashes } from "./url.js";
-export type { UploadSessionMetadata } from "./validation.js";
+export type { AcceptedEnvelope, UploadSessionMetadata } from "./validation.js";
 export {
 	chunkedUploadCompleteResponseSchema,
+	chunkedUploadInitFormat1Schema,
 	chunkedUploadInitResponseSchema,
 	chunkedUploadInitSchema,
 	chunkUploadResponseSchema,
+	createNoteFormat1Schema,
+	createNoteMultipartFormat1Schema,
 	createNoteMultipartSchema,
 	createNoteResponseSchema,
 	createNoteSchema,
@@ -60,5 +80,6 @@ export {
 	noteIdSchema,
 	noteNotFoundResponseSchema,
 	readNoteResponseSchema,
+	uploadSessionFormat1MetadataSchema,
 	uploadSessionMetadataSchema,
 } from "./validation.js";

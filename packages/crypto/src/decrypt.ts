@@ -28,13 +28,7 @@ export function decryptPayload(
 	nonce: Uint8Array,
 	key: Uint8Array,
 ): NotePayload {
-	const decrypted = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
-		null,
-		ciphertext,
-		null,
-		nonce,
-		key,
-	);
+	const decrypted = decryptRaw(ciphertext, nonce, key);
 	const decoded = decode(decrypted);
 	if (!isNotePayload(decoded)) {
 		throw new Error("Decryption failed");
@@ -42,8 +36,19 @@ export function decryptPayload(
 	return decoded;
 }
 
-export function decryptRaw(ciphertext: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array {
-	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, null, nonce, key);
+export function decryptRaw(
+	ciphertext: Uint8Array,
+	nonce: Uint8Array,
+	key: Uint8Array,
+	additionalData: Uint8Array | null = null,
+): Uint8Array {
+	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+		null,
+		ciphertext,
+		additionalData,
+		nonce,
+		key,
+	);
 }
 
 // --- Streaming decryption (secretstream) ---
@@ -63,8 +68,13 @@ export interface DecryptChunkResult {
 export function decryptChunk(
 	state: import("libsodium-wrappers-sumo").StateAddress,
 	encryptedChunk: Uint8Array,
+	additionalData: Uint8Array | null = null,
 ): DecryptChunkResult {
-	const result = sodium.crypto_secretstream_xchacha20poly1305_pull(state, encryptedChunk, null);
+	const result = sodium.crypto_secretstream_xchacha20poly1305_pull(
+		state,
+		encryptedChunk,
+		additionalData,
+	);
 	if (!result) {
 		throw new Error("Decryption failed");
 	}
