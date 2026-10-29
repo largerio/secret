@@ -11,6 +11,7 @@ const NOTE_ERROR_STATUS: Readonly<Record<NoteErrorCode, ContentfulStatusCode>> =
 	wrong_link_proof: 403,
 	password_proof_missing: 400,
 	wrong_password: 403,
+	note_not_padded: 400,
 	note_too_large: 413,
 	note_corrupted: 500,
 	expiry_above_limit: 400,

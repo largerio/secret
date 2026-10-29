@@ -13,6 +13,7 @@ import {
 import { type StorageBackend, StorageNotFoundError } from "../storage/index.js";
 import { NoteError } from "./errors.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
+import { assertPadded } from "./padding.js";
 import {
 	chunkedOpeningOf,
 	type Format1Reading,
@@ -35,18 +36,18 @@ import {
 	takePasswordAttempt,
 } from "./rows.js";
 import { createServerLayer } from "./serverLayer.js";
-import { chunkStream } from "./stream.js";
+import { chunkStream, oneChunkStream } from "./stream.js";
 import type {
 	ChunkedFormat0Opening,
 	ChunkedOpening,
 	CreatedNote,
 	Format0Opening,
+	Format1Opening,
 	NoteInfo,
 	NoteOpening,
 	NoteRead,
 	NoteSettings,
 	NoteStream,
-	ProvenRead,
 	ReadProofs,
 } from "./types.js";
 import { createUploads, type Uploads } from "./uploads.js";
@@ -94,12 +95,13 @@ export interface NotesService extends Uploads {
 	/** Spends a read on a format 0 chunked note, once its first chunk is loaded. */
 	stream(id: string): Promise<NoteStream<ChunkedFormat0Opening>>;
 	/**
-	 * Spends a read on a format 1 note of either kind, once the reader's proofs
-	 * match its verifiers (PROTOCOL.md). Nothing is spent nor loaded before: a
-	 * wrong password counts a failed attempt instead, and the last one the note
-	 * takes deletes it.
+	 * Spends a read on a format 1 note, once the reader's proofs match its
+	 * verifiers (PROTOCOL.md), and serves its messages: a note sent whole as its
+	 * one message, one sent in a session chunk by chunk. Nothing is spent nor
+	 * loaded before: a wrong password counts a failed attempt instead, and the
+	 * last one the note takes deletes it.
 	 */
-	readWithProofs(id: string, proofs: ReadProofs): Promise<ProvenRead>;
+	readWithProofs(id: string, proofs: ReadProofs): Promise<NoteStream<Format1Opening>>;
 	delete(id: string, deleteToken: string): Promise<void>;
 }
 
@@ -135,8 +137,8 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 
 	/**
 	 * The note a format 0 read is about to be served from. A format 1 note is
-	 * refused, whatever its kind, and so is a corrupt one that lost its envelope:
-	 * those reads would serve it to anyone who knows its id.
+	 * refused, however it went up, and so is a corrupt one that lost its
+	 * envelope: those reads would serve it to anyone who knows its id.
 	 */
 	function format0Note(id: string): NoteRow {
 		const note = readableNote(id);
@@ -312,6 +314,10 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 
 	return {
 		async create(ciphertext, settings) {
+			// A format 1 note sent whole is one message, its ciphertext.
+			if (settings.opening.format === 1) {
+				assertPadded([ciphertext.byteLength]);
+			}
 			assertWithinLimits(limits, settings);
 
 			const kind = singleShotPlacement(settings.fileCount);
@@ -454,9 +460,12 @@ export function createNotesService(deps: NotesServiceDeps): NotesService {
 			checkProofs(note, reading, proofs);
 
 			if (isChunked(note)) {
-				return { kind: "chunked", ...(await serveChunked(note, reading.opening)) };
+				return serveChunked(note, reading.opening);
 			}
-			return { kind: "single-shot", ...(await serveSingleShot(note, reading.opening)) };
+			// Sent whole, it is one message, served framed as a session's are: a
+			// reader reads a note the same way, however it went up.
+			const { meta, ciphertext } = await serveSingleShot(note, reading.opening);
+			return { meta, chunkCount: 1, chunks: oneChunkStream(ciphertext) };
 		},
 
 		async delete(id, deleteToken) {

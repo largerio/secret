@@ -6,7 +6,7 @@ import {
 	type UploadSessionMetadata,
 	uploadSessionAnyMetadataSchema,
 } from "@largerio/secret-shared";
-import { count, eq, sql } from "drizzle-orm";
+import { asc, count, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { AppDatabase } from "../db/index.js";
 import { notes, uploadChunks, uploads } from "../db/schema.js";
@@ -17,8 +17,9 @@ import type { StorageBackend } from "../storage/index.js";
 import { NoteError } from "./errors.js";
 import { sessionSettingsOf } from "./formats.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
+import { assertPadded } from "./padding.js";
 import { newDeleteToken, newNoteId, newNoteRow, noteExists } from "./rows.js";
-import type { ServerLayer } from "./serverLayer.js";
+import { SEALED_CHUNK_OVERHEAD, type ServerLayer } from "./serverLayer.js";
 import type {
 	CreatedNote,
 	IncomingChunk,
@@ -93,6 +94,20 @@ export function createUploads(deps: UploadsDeps): Uploads {
 			throw new NoteError("upload_not_found");
 		}
 		return session;
+	}
+
+	/**
+	 * The length of each message a session received, in order: what its chunk
+	 * rows record, less what the server's layer added to each.
+	 */
+	function messageLengthsOf(uploadId: string): number[] {
+		return db
+			.select({ sizeBytes: uploadChunks.sizeBytes })
+			.from(uploadChunks)
+			.where(eq(uploadChunks.uploadId, uploadId))
+			.orderBy(asc(uploadChunks.chunkIndex))
+			.all()
+			.map(({ sizeBytes }) => sizeBytes - SEALED_CHUNK_OVERHEAD);
 	}
 
 	return {
@@ -208,6 +223,12 @@ export function createUploads(deps: UploadsDeps): Uploads {
 				throw new NoteError("upload_corrupted");
 			}
 			const settings = sessionSettingsOf(metadata);
+			// Refused, the session is left as an incomplete one is: its chunks stay
+			// in the storage until it expires, and the cleanup job deletes it and
+			// purges them.
+			if (settings.opening.format === 1) {
+				assertPadded(messageLengthsOf(uploadId));
+			}
 
 			const row = db.transaction((tx) => {
 				if (noteExists(tx, session.noteId)) {

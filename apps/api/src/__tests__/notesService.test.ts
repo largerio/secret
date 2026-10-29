@@ -3,20 +3,22 @@ import { mkdirSync, rmSync } from "node:fs";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
-import { encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
+import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto";
+import { BODY_FLOOR, encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { notes as notesTable, pendingDeletions } from "../db/schema.js";
 import { NoteError, type NoteErrorCode } from "../notes/errors.js";
+import { assertPadded } from "../notes/padding.js";
 import {
 	inStorage,
 	placementOf,
 	settlePasswordAttempt,
 	takePasswordAttempt,
 } from "../notes/rows.js";
-import { createServerLayer } from "../notes/serverLayer.js";
+import { createServerLayer, SEALED_CHUNK_OVERHEAD } from "../notes/serverLayer.js";
 import type { NotesService } from "../notes/service.js";
 import { chunkStream } from "../notes/stream.js";
 import type { ChunkedOpening, NoteSettings } from "../notes/types.js";
@@ -47,26 +49,24 @@ const PASSWORD_PROOF = randomBytes(32);
 const PROOFS = { linkProof: LINK_PROOF, passwordProof: PASSWORD_PROOF };
 const verifierOf = (proof: Uint8Array): Uint8Array => createHash("sha256").update(proof).digest();
 
+// A format 1 note's one message: the smallest body there is, and its tag.
+// Random: the server never opens the client's layer, it only checks lengths.
+const MESSAGE = randomBytes(BODY_FLOOR + SECRETSTREAM_ABYTES);
+
 /**
  * A format 1 note's settings: what its envelope says, the envelope, and the
  * verifiers of the proofs above.
  */
 function format1Settings(
-	kind: "single-shot" | "chunked",
 	fileCount: number,
 	options: { readonly password?: boolean; readonly maxReads?: number } = {},
 ) {
 	const declared = { fileCount, maxReads: options.maxReads ?? 1, expiresIn: 3600 };
-	const start = new Uint8Array(24).fill(7);
 	const argon2 = options.password
 		? { argon2: { salt: new Uint8Array(16).fill(9), iterations: 3, memoryKiB: 262_144 } }
 		: {};
 	const envelope = Buffer.from(
-		encodeEnvelope(
-			kind === "single-shot"
-				? { kind, nonce: start, ...declared, ...argon2 }
-				: { kind, streamHeader: start, ...declared, ...argon2 },
-		),
+		encodeEnvelope({ streamHeader: new Uint8Array(24).fill(7), ...declared, ...argon2 }),
 	);
 	return {
 		...declared,
@@ -79,18 +79,20 @@ function format1Settings(
 	} as const;
 }
 
-/** A chunked format 1 note of one chunk, through its upload session. */
-async function uploadChunkedFormat1(
-	settings: NoteSettings<ChunkedOpening> = format1Settings("chunked", 1),
+/** A format 1 note of the given messages, through its upload session. */
+async function uploadFormat1(
+	settings: NoteSettings<ChunkedOpening> = format1Settings(1),
+	messages: readonly Buffer[] = [MESSAGE],
 ) {
-	const session = notes.openUpload({ ...settings, chunkCount: 1 });
-	const chunk = Buffer.from("head");
-	await notes.receiveChunk({
-		uploadId: session.uploadId,
-		index: 0,
-		hash: sha256(chunk),
-		readBody: asBody(chunk),
-	});
+	const session = notes.openUpload({ ...settings, chunkCount: messages.length });
+	for (const [index, message] of messages.entries()) {
+		await notes.receiveChunk({
+			uploadId: session.uploadId,
+			index,
+			hash: sha256(message),
+			readBody: asBody(message),
+		});
+	}
 	return { ...notes.completeUpload(session.uploadId), settings };
 }
 
@@ -116,8 +118,8 @@ beforeEach(() => {
 		serverKey: randomBytes(32),
 		storage,
 		env: {
-			CHUNK_SIZE: "16",
-			MAX_CHUNKED_FILE_SIZE: "1024",
+			CHUNK_SIZE: "4096",
+			MAX_CHUNKED_FILE_SIZE: "262144",
 			MAX_EXPIRY: "86400",
 			MAX_FILES_PER_NOTE: "3",
 		},
@@ -143,6 +145,15 @@ const sha256 = (data: Buffer): string => createHash("sha256").update(data).diges
 
 /** A chunk as a request body yields it. */
 const asBody = (data: Buffer) => async (): Promise<ArrayBuffer> => new Uint8Array(data).buffer;
+
+/** A stream's chunks, read to its end. */
+async function chunksOf(chunks: ReadableStream<Uint8Array>): Promise<Buffer[]> {
+	const received: Buffer[] = [];
+	for await (const chunk of chunks) {
+		received.push(Buffer.from(chunk));
+	}
+	return received;
+}
 
 /** A chunked note of the given chunks, uploaded through a session. */
 async function uploadChunked(chunks: Buffer[], fileCount = 1) {
@@ -269,28 +280,26 @@ describe("the notes service", () => {
 		expect(notes.check(id)).toMatchObject({ readCount: 0 });
 	});
 
-	it("refuses a format 1 row whose envelope does not fit it, before spending its read", async () => {
-		const single = await notes.create(Buffer.from("x"), format1Settings("single-shot", 0));
-		const { id: chunked } = await uploadChunkedFormat1();
-		const setEnvelope = (id: string, envelope: Buffer) =>
-			db.update(notesTable).set({ envelope }).where(eq(notesTable.id, id)).run();
+	it("refuses a format 1 row whose envelope does not parse, before spending its read", async () => {
+		const { id: whole } = await notes.create(MESSAGE, format1Settings(0));
+		const { id: inSession } = await uploadFormat1();
 
-		setEnvelope(single.id, Buffer.from("garbage"));
-		expect(await refusal(() => notes.readWithProofs(single.id, PROOFS))).toBe("note_corrupted");
-		setEnvelope(single.id, format1Settings("chunked", 0).opening.envelope);
-		expect(await refusal(() => notes.readWithProofs(single.id, PROOFS))).toBe("note_corrupted");
-		setEnvelope(chunked, format1Settings("single-shot", 0).opening.envelope);
-		expect(await refusal(() => notes.readWithProofs(chunked, PROOFS))).toBe("note_corrupted");
+		for (const id of [whole, inSession]) {
+			db.update(notesTable)
+				.set({ envelope: Buffer.from("garbage") })
+				.where(eq(notesTable.id, id))
+				.run();
 
-		expect(notes.check(single.id)).toMatchObject({ readCount: 0 });
-		expect(notes.check(chunked)).toMatchObject({ readCount: 0 });
+			expect(await refusal(() => notes.readWithProofs(id, PROOFS))).toBe("note_corrupted");
+			expect(notes.check(id)).toMatchObject({ readCount: 0 });
+		}
 	});
 
 	it("refuses a note in another format than the read's, before spending its read", async () => {
-		const settings = format1Settings("single-shot", 0);
-		const { id } = await notes.create(Buffer.from("ciphertext"), settings);
+		const settings = format1Settings(0);
+		const { id } = await notes.create(MESSAGE, settings);
 		const format0 = await notes.create(Buffer.from("old"), { ...SETTINGS, fileCount: 0 });
-		const { id: chunked } = await uploadChunkedFormat1();
+		const { id: chunked } = await uploadFormat1();
 
 		expect(await refusal(() => notes.read(id))).toBe("note_format_mismatch");
 		expect(await refusal(() => notes.read(chunked))).toBe("note_format_mismatch");
@@ -304,39 +313,142 @@ describe("the notes service", () => {
 		}
 
 		const read = await notes.readWithProofs(id, PROOFS);
-		expect(read.kind).toBe("single-shot");
 		expect(read.meta.opening.envelope).toEqual(settings.opening.envelope);
-		expect(read.kind === "single-shot" && read.ciphertext.toString()).toBe("ciphertext");
+		expect(await chunksOf(read.chunks)).toEqual([MESSAGE]);
 		expect(notes.check(id)).toBeUndefined();
 	});
 
-	it("serves a chunked format 1 note with its envelope, which holds its stream header", async () => {
-		const { id, settings } = await uploadChunkedFormat1();
+	// A reader reads a format 1 note the same way, however it went up.
+	it("serves a format 1 note sent whole as its one message, as a session's are served", async () => {
+		const settings = format1Settings(1);
+		const { id: whole } = await notes.create(MESSAGE, settings);
+		const { id: inSession } = await uploadFormat1(settings);
 
-		const read = await notes.readWithProofs(id, PROOFS);
-		expect(read).toMatchObject({
-			kind: "chunked",
-			chunkCount: 1,
-			meta: { opening: settings.opening },
-		});
-		if (read.kind === "chunked") {
-			await read.chunks.cancel();
+		for (const id of [whole, inSession]) {
+			const read = await notes.readWithProofs(id, PROOFS);
+
+			expect(read).toMatchObject({ chunkCount: 1, meta: { opening: settings.opening } });
+			expect(await chunksOf(read.chunks)).toEqual([MESSAGE]);
+			expect(notes.check(id)).toBeUndefined();
 		}
+		// Both burned: their purges run in the background.
+		await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
+		expect(await Array.fromAsync(storage.list())).toEqual([]);
+	});
+});
+
+describe("format 1 message lengths", () => {
+	const message = (bodyBytes: number): Buffer => randomBytes(bodyBytes + SECRETSTREAM_ABYTES);
+
+	it("takes a note sent whole whose body is a size class, and refuses any other", async () => {
+		for (const body of [BODY_FLOOR, 4352, 8192]) {
+			const { id } = await notes.create(message(body), format1Settings(1));
+			expect(notes.check(id)).toMatchObject({ chunked: false });
+		}
+
+		for (const body of [0, 1, BODY_FLOOR - 1, BODY_FLOOR + 1, 4353, 8193]) {
+			expect(
+				await refusal(() => notes.create(message(body), format1Settings(1))),
+				String(body),
+			).toBe("note_not_padded");
+		}
+		// Refused before anything is stored.
+		expect(db.select().from(notesTable).all()).toHaveLength(3);
+		expect(await Array.fromAsync(storage.list())).toHaveLength(3);
+	});
+
+	it("leaves format 0 alone, whatever its length", async () => {
+		const { id } = await notes.create(Buffer.from("x"), { ...SETTINGS, fileCount: 0 });
+
+		expect(notes.check(id)).toMatchObject({ chunked: false });
+	});
+
+	it("takes a session of messages cut evenly, its last no longer, its body a size class", async () => {
+		const cuts = [
+			[BODY_FLOOR],
+			[2048, 2048],
+			[4096, 256],
+			[1024, 1024, 1024, 1024],
+			[3000, 3000, 2192],
+		];
+		for (const cut of cuts) {
+			const { id } = await uploadFormat1(format1Settings(1), cut.map(message));
+
+			expect(notes.check(id), cut.join()).toMatchObject({ chunked: true });
+		}
+	});
+
+	it("refuses a session whose messages break the body's rules, and creates no note", async () => {
+		const refused = [
+			// A short message before the last.
+			[2048, 1024, 1024],
+			// A last message longer than the first.
+			[1024, 3072],
+			// A body that is not a size class.
+			[2048, 2047],
+			[BODY_FLOOR - 1],
+			[4096, 1],
+		];
+		for (const cut of refused) {
+			expect(
+				await refusal(() => uploadFormat1(format1Settings(1), cut.map(message))),
+				cut.join(),
+			).toBe("note_not_padded");
+		}
+		expect(db.select().from(notesTable).all()).toEqual([]);
+	});
+
+	it("leaves a refused session as it was, its chunks in the storage, to complete or expire", async () => {
+		const settings = format1Settings(1);
+		const session = notes.openUpload({ ...settings, chunkCount: 2 });
+		const send = (index: number, chunk: Buffer) =>
+			notes.receiveChunk({
+				uploadId: session.uploadId,
+				index,
+				hash: sha256(chunk),
+				readBody: asBody(chunk),
+			});
+		await send(0, message(2048));
+		await send(1, message(2047));
+
+		expect(await refusal(() => notes.completeUpload(session.uploadId))).toBe("note_not_padded");
+		expect(await refusal(() => notes.completeUpload(session.uploadId))).toBe("note_not_padded");
+		expect(await Array.fromAsync(storage.list())).toHaveLength(1);
+
+		// Sent again, under the same index, at the right length, it completes.
+		await send(1, message(2048));
+		const { id } = notes.completeUpload(session.uploadId);
+		expect(notes.check(id)).toMatchObject({ chunked: true });
+	});
+
+	it("reads the messages' lengths from their sealed sizes", () => {
+		const layer = createServerLayer(randomBytes(32));
+
+		expect(layer.sealChunk("aBcDeFgHiJkL", MESSAGE)).toHaveLength(
+			MESSAGE.length + SEALED_CHUNK_OVERHEAD,
+		);
+	});
+
+	it("refuses an empty last message, and a note of no message", () => {
+		const padded = BODY_FLOOR + SECRETSTREAM_ABYTES;
+
+		expect(() => assertPadded([padded])).not.toThrow();
+		// The body adds up, but its last message holds nothing, or less than a tag.
+		expect(() => assertPadded([padded, SECRETSTREAM_ABYTES])).toThrow(NoteError);
+		expect(() => assertPadded([padded + 1, SECRETSTREAM_ABYTES - 1])).toThrow(NoteError);
+		expect(() => assertPadded([])).toThrow(NoteError);
 	});
 });
 
 describe("format 1 proofs, in the service", () => {
 	it("tells what a reader needs to prove anything, and spends nothing for it", async () => {
-		const plain = await notes.create(Buffer.from("x"), format1Settings("single-shot", 0));
-		const withPassword = await notes.create(
-			Buffer.from("x"),
-			format1Settings("single-shot", 0, { password: true }),
-		);
+		const plain = await notes.create(MESSAGE, format1Settings(0));
+		const withPassword = await notes.create(MESSAGE, format1Settings(0, { password: true }));
 		const format0 = await notes.create(Buffer.from("x"), { ...SETTINGS, fileCount: 0 });
 
 		expect(notes.check(plain.id)).toEqual(
 			expect.objectContaining({
-				envelope: format1Settings("single-shot", 0).opening.envelope,
+				envelope: format1Settings(0).opening.envelope,
 			}),
 		);
 		expect(notes.check(plain.id)).not.toHaveProperty("passwordAttemptsLeft");
@@ -349,10 +461,7 @@ describe("format 1 proofs, in the service", () => {
 	});
 
 	it("refuses a wrong link proof without counting anything, whatever the password proof", async () => {
-		const { id } = await notes.create(
-			Buffer.from("x"),
-			format1Settings("single-shot", 0, { password: true }),
-		);
+		const { id } = await notes.create(MESSAGE, format1Settings(0, { password: true }));
 
 		expect(
 			await refusal(() =>
@@ -366,10 +475,7 @@ describe("format 1 proofs, in the service", () => {
 	});
 
 	it("counts wrong passwords over the note's life, and deletes it on the last", async () => {
-		const { id } = await notes.create(
-			Buffer.from("ciphertext"),
-			format1Settings("single-shot", 1, { password: true, maxReads: 0 }),
-		);
+		const { id } = await notes.create(MESSAGE, format1Settings(1, { password: true, maxReads: 0 }));
 		const wrong = { linkProof: LINK_PROOF, passwordProof: LINK_PROOF };
 
 		expect(await refusal(() => notes.readWithProofs(id, { linkProof: LINK_PROOF }))).toBe(
@@ -377,7 +483,7 @@ describe("format 1 proofs, in the service", () => {
 		);
 		expect(await refusal(() => notes.readWithProofs(id, wrong))).toBe("wrong_password");
 		// A read that succeeds does not reset the count.
-		expect((await notes.readWithProofs(id, PROOFS)).kind).toBe("single-shot");
+		expect((await notes.readWithProofs(id, PROOFS)).chunkCount).toBe(1);
 		expect(notes.check(id)).toMatchObject({ passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - 1 });
 
 		for (let left = MAX_PASSWORD_ATTEMPTS - 2; left > 0; left -= 1) {
@@ -404,26 +510,25 @@ describe("format 1 proofs, in the service", () => {
 	});
 
 	it("ignores a password proof sent for a note without a password", async () => {
-		const { id } = await notes.create(Buffer.from("x"), format1Settings("single-shot", 0));
+		const { id } = await notes.create(MESSAGE, format1Settings(0));
 
 		const read = await notes.readWithProofs(id, {
 			linkProof: LINK_PROOF,
 			passwordProof: LINK_PROOF,
 		});
 
-		expect(read.kind).toBe("single-shot");
+		expect(await chunksOf(read.chunks)).toEqual([MESSAGE]);
 	});
 
 	// The routes always give a format 1 write its verifiers (the request schemas
 	// require them). A write that came without would make a note no proof opens:
 	// refused as the corrupt note it is, never served.
 	it("never serves a format 1 note written without verifiers", async () => {
-		const { verifiers: _, ...single } = format1Settings("single-shot", 0);
-		const { id } = await notes.create(Buffer.from("x"), single);
-		const { verifiers: __, ...chunked } = format1Settings("chunked", 1);
+		const { verifiers: _, ...settings } = format1Settings(1);
+		const { id } = await notes.create(MESSAGE, settings);
 
 		expect(await refusal(() => notes.readWithProofs(id, PROOFS))).toBe("note_corrupted");
-		expect(await refusal(() => uploadChunkedFormat1(chunked))).toBe("upload_corrupted");
+		expect(await refusal(() => uploadFormat1(settings))).toBe("upload_corrupted");
 	});
 });
 
@@ -433,8 +538,8 @@ describe("the server layer's verifiers", () => {
 	const id = "aBcDeFgHiJkL";
 	const verifier = verifierOf(LINK_PROOF);
 	const passwordVerifier = verifierOf(PASSWORD_PROOF);
-	const envelope = format1Settings("single-shot", 0, { password: true }).opening.envelope;
-	const withoutPassword = format1Settings("single-shot", 0).opening.envelope;
+	const envelope = format1Settings(0, { password: true }).opening.envelope;
+	const withoutPassword = format1Settings(0).opening.envelope;
 
 	it("seals a verifier as PROTOCOL.md says: HMAC-SHA256 of its role, the id, the envelope's hash and the verifier, under an HKDF key", () => {
 		const key = Buffer.from(

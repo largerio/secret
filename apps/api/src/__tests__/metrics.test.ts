@@ -4,7 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
-import { encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
+import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto";
+import { BODY_FLOOR, encodeEnvelope, MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
 import { Hono } from "hono";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // First: it pulls in `@hono/zod-openapi`, which extends Zod before the shared
@@ -530,8 +531,7 @@ describe("GET /api/metrics", () => {
 			createHash("sha256").update(Buffer.from(proof, "base64")).digest("base64");
 		async function createFormat1(password: boolean) {
 			const envelope = encodeEnvelope({
-				kind: "single-shot",
-				nonce: new Uint8Array(24),
+				streamHeader: new Uint8Array(24),
 				fileCount: 0,
 				maxReads: 1,
 				expiresIn: 3600,
@@ -546,7 +546,8 @@ describe("GET /api/metrics", () => {
 					envelope: Buffer.from(envelope).toString("base64"),
 					linkVerifier: verifierOf(linkProof),
 					...(password ? { passwordVerifier: verifierOf(passwordProof) } : {}),
-					encryptedData: Buffer.from("ciphertext").toString("base64"),
+					// One message: the smallest body, and its tag.
+					encryptedData: randomBytes(BODY_FLOOR + SECRETSTREAM_ABYTES).toString("base64"),
 				}),
 			});
 			expect(res.status).toBe(201);

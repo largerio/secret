@@ -27,6 +27,12 @@ export type NoteErrorCode =
 	 * It counts one failed attempt, and the last one the note takes deletes it.
 	 */
 	| "wrong_password"
+	/**
+	 * A format 1 note whose messages are not those of a padded body
+	 * (PROTOCOL.md, "Messages"): checked as it is written, in one request or at
+	 * its session's completion.
+	 */
+	| "note_not_padded"
 	/** A note without files larger than the database is meant to hold. */
 	| "note_too_large"
 	/** The stored note does not open: corrupt bytes, or a corrupt row. */
@@ -60,6 +66,7 @@ const MESSAGES: Readonly<Record<NoteErrorCode, string>> = {
 	wrong_link_proof: "Invalid link proof",
 	password_proof_missing: "Password proof required",
 	wrong_password: "Wrong password",
+	note_not_padded: "Message lengths do not fit a padded body",
 	note_too_large: "Payload too large",
 	note_corrupted: "Failed to decrypt note",
 	expiry_above_limit: "Expiry above the instance's limit",

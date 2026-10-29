@@ -10,8 +10,9 @@ export interface Format0Opening {
 
 /**
  * How a reader opens a format 1 note: its envelope (PROTOCOL.md), byte for byte
- * as its writer sent it. The ciphertext authenticates it, so the server stores
- * and serves it untouched.
+ * as its writer sent it, which holds the header of the secretstream every
+ * format 1 note is. The ciphertext authenticates it, so the server stores and
+ * serves it untouched.
  */
 export interface Format1Opening {
 	readonly format: 1;
@@ -116,6 +117,10 @@ export interface NoteRead<Opening extends NoteOpening = NoteOpening> {
 	readonly ciphertext: Buffer;
 }
 
+/**
+ * A note's messages as they are served one after the other: a chunked note's
+ * chunks, or a format 1 note sent whole, as its one message.
+ */
 export interface NoteStream<Opening extends ChunkedOpening = ChunkedOpening> {
 	readonly meta: NoteMeta<Opening>;
 	readonly chunkCount: number;
@@ -129,11 +134,6 @@ export interface ReadProofs {
 	/** A password note's: ignored on a note without one. */
 	readonly passwordProof?: Uint8Array | undefined;
 }
-
-/** A format 1 note served once its proofs checked out, of the kind its envelope names. */
-export type ProvenRead =
-	| ({ readonly kind: "single-shot" } & NoteRead<Format1Opening>)
-	| ({ readonly kind: "chunked" } & NoteStream<Format1Opening>);
 
 export interface UploadSession {
 	readonly uploadId: string;

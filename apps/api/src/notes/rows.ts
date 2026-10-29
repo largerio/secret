@@ -72,20 +72,18 @@ export interface Format1Reading {
 
 /**
  * A format 1 row, checked as its writer's request was: no envelope, one that
- * does not parse or is not of the row's kind, no link verifier, a password
- * verifier on a note without a password or missing on one with it, or a
- * verifier of another length than the server seals, make a corrupt row, never
- * served. Served without its proofs checked, a note would be read, and burned,
- * by whoever knows its id.
+ * does not parse, no link verifier, a password verifier on a note without a
+ * password or missing on one with it, or a verifier of another length than the
+ * server seals, make a corrupt row, never served. Served without its proofs
+ * checked, a note would be read, and burned, by whoever knows its id.
  */
 export function format1ReadingOf(note: NoteRow): Format1Reading | undefined {
 	if (note.envelope === null) {
 		return undefined;
 	}
-	const kind = isChunked(note) ? "chunked" : "single-shot";
 	const envelope = parseEnvelope(note.envelope);
 	const link = sealedVerifierOf(note.linkVerifier);
-	if (envelope?.kind !== kind || link === undefined) {
+	if (envelope === undefined || link === undefined) {
 		return undefined;
 	}
 	const hasPassword = envelope.argon2 !== undefined;
