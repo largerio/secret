@@ -511,7 +511,8 @@ strings are reserved for keys format 1 will derive from the same PRK.
 never holds a `.`, so a reader tells the formats apart by the `1.` prefix,
 and SHOULD refuse a malformed format 1 fragment before reading the note. A
 fragment that starts with another number and a dot names a format the reader
-does not know: it MUST refuse it before reading the note.
+does not know: it MUST refuse it before reading the note. A format number is
+written in decimal without a leading zero: `01.` is not format 1.
 
 ### The envelope
 
@@ -521,10 +522,11 @@ from it, stores it, and serves it back byte for byte. It is the additional
 data of every AEAD operation on the note, so a reader detects any change to
 it, once it has derived the key.
 
-The envelope is public: anyone who knows the note's id may obtain it before
-reading the note. It holds nothing derived from the password or from `K`, and
-never will: from such a value, whoever has the link could test passwords
-without reading the note.
+The envelope is public. Today the server serves it only with the ciphertext,
+but a reader will need it before reading once reads require a proof of the
+key, so it is designed for anyone who knows the note's id to obtain. It holds
+nothing derived from the password or from `K`, and never will: from such a
+value, whoever has the link could test passwords without reading the note.
 
 | Offset | Bytes | Field |
 |--------|-------|-------|
@@ -551,8 +553,9 @@ server refuses (`400`) an envelope a reader would refuse, one of the wrong
 kind for the endpoint, or one whose settings exceed the protocol's limits
 (`fileCount` 0 to 10, at least 1 for a multipart upload, `maxReads` 0 to 1000,
 `expiresIn` 300 to 2,592,000), and applies the instance's limits as to a
-format 0 note. Envelopes travel in base64. A request that carries an envelope
-is a format 1 request: format 0's fields beside it are ignored.
+format 0 note. Envelopes travel in base64. A request that carries an
+`envelope` key, whatever its value (`null` included), is a format 1 request:
+format 0's fields beside it are ignored.
 
 ### Single-shot notes in format 1
 
