@@ -320,7 +320,7 @@ export async function decryptNoteChunked(
 		return openChunkedNote(encryptedChunks, fromBase64(streamHeader), decryptionKey, {
 			additionalData: null,
 			isHead: isStreamingHeader,
-			exact: false,
+			strict: false,
 		});
 	} finally {
 		if (password && salt) {
@@ -335,8 +335,12 @@ export interface StreamRules {
 	/** Authenticated with every chunk: format 1's envelope. */
 	readonly additionalData: Uint8Array | null;
 	readonly isHead: (value: unknown) => value is StreamingHeader;
-	/** Whether the file bytes must match the declared sizes exactly, none left over. */
-	readonly exact: boolean;
+	/**
+	 * Format 1's: every chunk but the last carries TAG_MESSAGE, which format 0
+	 * reads into any tag but FINAL, and the file bytes match the declared sizes
+	 * exactly, none left over.
+	 */
+	readonly strict: boolean;
 }
 
 /**
@@ -356,11 +360,11 @@ export function openChunkedNote(
 	if (!firstChunk) {
 		throw new Error("No chunks to decrypt");
 	}
-	const { decrypted: headerBytes, isFinal: headerIsFinal } = cryptoDecryptChunk(
-		state,
-		firstChunk,
-		rules.additionalData,
-	);
+	const {
+		decrypted: headerBytes,
+		isFinal: headerIsFinal,
+		isMessage: headerIsMessage,
+	} = cryptoDecryptChunk(state, firstChunk, rules.additionalData);
 
 	// Decode header to get file metadata
 	const decoded = decodeRawBytes(headerBytes);
@@ -377,6 +381,9 @@ export function openChunkedNote(
 	const isLastChunk = encryptedChunks.length === 1;
 	if (headerIsFinal !== isLastChunk) {
 		throw new Error("Encrypted stream is truncated or extended");
+	}
+	if (rules.strict && !headerIsFinal && !headerIsMessage) {
+		throw new Error("Unexpected secretstream tag");
 	}
 
 	// The header was the only chunk (text-only note or note with 0-byte files)
@@ -400,9 +407,16 @@ export function openChunkedNote(
 	const lastIndex = encryptedChunks.length - 1;
 	for (const [index, chunk] of encryptedChunks.entries()) {
 		if (index === 0) continue;
-		const { decrypted, isFinal } = cryptoDecryptChunk(state, chunk, rules.additionalData);
+		const { decrypted, isFinal, isMessage } = cryptoDecryptChunk(
+			state,
+			chunk,
+			rules.additionalData,
+		);
 		if (isFinal !== (index === lastIndex)) {
 			throw new Error("Encrypted stream is truncated or extended");
+		}
+		if (rules.strict && !isFinal && !isMessage) {
+			throw new Error("Unexpected secretstream tag");
 		}
 		dataChunks.push(decrypted);
 	}
@@ -422,7 +436,7 @@ export function openChunkedNote(
 		byteOffset += meta.size;
 		return { name: meta.name, type: meta.type, size: meta.size, data };
 	});
-	if (rules.exact && byteOffset !== totalData.length) {
+	if (rules.strict && byteOffset !== totalData.length) {
 		throw new Error("Decrypted file data does not match the declared size");
 	}
 

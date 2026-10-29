@@ -240,7 +240,7 @@ export async function decryptNoteChunkedFormat1(
 		const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, key, {
 			additionalData: bytes,
 			isHead: isStrictHead,
-			exact: true,
+			strict: true,
 		});
 		assertFileCount(payload, envelope);
 		return payload;

@@ -19,6 +19,7 @@ import {
 	parseEnvelope,
 	testVectors,
 } from "@largerio/secret-shared";
+import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, test } from "vitest";
 import { ensureInit } from "../crypto.js";
 import { SecretValidationError } from "../errors.js";
@@ -67,8 +68,11 @@ function forgeSingleShot(plaintext: unknown, fileCount = 0) {
 	return { ciphertext, envelope, keyFragment: `1.${keyToBase64Url(linkKey)}` };
 }
 
-/** A chunked format 1 note sealed by hand: each message, the last one FINAL. */
-function forgeChunked(messages: Uint8Array[], fileCount = 0) {
+/**
+ * A chunked format 1 note sealed by hand: each message, the last one FINAL, or
+ * with the tags given.
+ */
+function forgeChunked(messages: Uint8Array[], fileCount = 0, tags?: number[]) {
 	const linkKey = generateKey();
 	const { state, header } = initStreamEncrypt(deriveFormat1Key(linkKey));
 	const envelope = encodeEnvelope({
@@ -77,9 +81,12 @@ function forgeChunked(messages: Uint8Array[], fileCount = 0) {
 		...settings,
 		fileCount,
 	});
-	const chunks = messages.map((message, i) =>
-		encryptChunk(state, message, i === messages.length - 1, envelope),
-	);
+	const chunks = messages.map((message, i) => {
+		const tag = tags?.[i];
+		return tag === undefined
+			? encryptChunk(state, message, i === messages.length - 1, envelope)
+			: sodium.crypto_secretstream_xchacha20poly1305_push(state, message, envelope, tag);
+	});
 	return { chunks, envelope, keyFragment: `1.${keyToBase64Url(linkKey)}` };
 }
 
@@ -343,6 +350,22 @@ describe("chunked format 1 notes", () => {
 		await expect(
 			decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
 		).rejects.toThrow("Unable to decrypt");
+	});
+
+	test("refuse a tag other than MESSAGE before the FINAL chunk", async () => {
+		const head = encodeRaw({ files: [{ name: "a", type: "t", size: 2 }] });
+		const MESSAGE = sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
+		const FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL;
+		const piece = new Uint8Array([1]);
+		for (const tags of [
+			[sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH, MESSAGE, FINAL],
+			[MESSAGE, sodium.crypto_secretstream_xchacha20poly1305_TAG_REKEY, FINAL],
+		]) {
+			const forged = forgeChunked([head, piece, piece], 1, tags);
+			await expect(
+				decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
+			).rejects.toThrow("Unexpected secretstream tag");
+		}
 	});
 
 	test("must hold as many files as their envelope declares", async () => {

@@ -113,7 +113,11 @@ describe("additional data", () => {
 
 		const open = (additionalData: Uint8Array | null) =>
 			decryptChunk(initStreamDecrypt(header, key), chunk, additionalData);
-		expect(open(ad)).toEqual({ decrypted: new Uint8Array([1, 2, 3]), isFinal: true });
+		expect(open(ad)).toEqual({
+			decrypted: new Uint8Array([1, 2, 3]),
+			isFinal: true,
+			isMessage: false,
+		});
 		expect(() => open(null)).toThrow("Decryption failed");
 	});
 });

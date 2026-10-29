@@ -474,10 +474,11 @@ parameters, and stretches the password:
 P = Argon2id(password = UTF-8(NFC(password)), salt, t, m, p = 1, version 0x13, 32 bytes)
 ```
 
-`NFC` is Unicode Normalization Form C. A writer uses t = 3 iterations and
-m = 262,144 KiB (256 MiB, libsodium's moderate setting). A reader MUST refuse
-t outside 1 to 10, or m outside 65,536 to 1,048,576 KiB (64 MiB to 1 GiB),
-before running Argon2id.
+`NFC` is Unicode Normalization Form C. An empty password is no password. By
+default a writer uses t = 3 iterations and m = 262,144 KiB (256 MiB,
+libsodium's moderate setting), and records them in the envelope. A reader runs
+the parameters the envelope gives, but MUST refuse t outside 1 to 10, or m
+outside 65,536 to 1,048,576 KiB (64 MiB to 1 GiB), before running Argon2id.
 
 Then, with HKDF-SHA256 (RFC 5869):
 
@@ -584,21 +585,32 @@ The messages and `/complete` are sent as in format 0. `GET
 `GET /api/v1/notes/{id}/exists` answers as for format 0: `hasPassword` comes
 from the envelope. A format 1 reader MUST refuse:
 
-- a response without an envelope, or with one of the other kind: the note is
-  not the format 1 note of that kind the link names;
+- a response without an envelope, which is a format 0 note behind a format 1
+  link, or with the envelope of the other kind than the endpoint serves;
 - a password note read without a password; a password given for a note
   without one is ignored;
-- a payload, or the head of a chunked note, that is not a map, whose `text`
-  is not a string, whose `contentMode` is not one of the three values, or
-  whose `files` is not an array of at most 10 entries;
+- a payload, or the head of a chunked note, that is not one MessagePack map
+  with nothing after it, whose `text` is not a string, whose `contentMode` is
+  not one of the three values, or whose `files` is not an array of at most 10
+  entries;
 - a file whose `name` or `type` is not a string, or whose `size` is not a
   non-negative integer; in a single-shot note, a file whose `data` is not
   `bin` or whose length is not `size`;
 - a payload with another number of files than the envelope's `fileCount`;
-- in a chunked note, file bytes that fall short of the declared sizes or
-  exceed them, and the tags format 0 refuses.
+- in a chunked note, a message before the last whose tag is not `TAG_MESSAGE`,
+  a last one whose tag is not `TAG_FINAL`, and file bytes that fall short of
+  the declared sizes or exceed them.
 
-It ignores keys it does not know.
+A key present with the value `nil` is not absent: `text: nil` is refused. A
+reader ignores keys it does not know. It need not check where the file bytes
+were cut, nor the length of each message: the tags and the declared sizes are
+enough.
+
+A writer writes each key of a map once, as a `str`, strings in valid UTF-8,
+and `size` as an `int`. The reference reader keeps the last of a repeated key,
+reads an integer key as a string, decodes invalid UTF-8 without refusing it,
+and takes a float with an integer value for an integer; another reader may
+refuse them.
 
 ## Test vectors
 
@@ -624,7 +636,12 @@ and, under `format1`:
 
 The file's `version` field counts revisions of the file, not formats. In the
 `secretstream` vectors, `headerMsgpack` is the head's plaintext and `header`
-the secretstream header.
+the secretstream header, which format 1 vectors carry inside their envelope,
+at offset 10. In `format1.envelopes`, `nonce` holds the nonce or the stream
+header, and the key derivation is Argon2id when `argon2` is present. Bytes are
+in base64 throughout, file `data` included. The `chunkSize` of the
+`secretstream` vectors only says where the file bytes are cut: their heads are
+longer than it, which an instance with that chunk size would refuse.
 
 The vectors are frozen. The repository checks them against libsodium and
 against a second implementation that shares no code with it, OpenSSL through

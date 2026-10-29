@@ -63,6 +63,8 @@ export function initStreamDecrypt(
 export interface DecryptChunkResult {
 	readonly decrypted: Uint8Array;
 	readonly isFinal: boolean;
+	/** Whether the chunk carries TAG_MESSAGE, the tag of every chunk but the last. */
+	readonly isMessage: boolean;
 }
 
 export function decryptChunk(
@@ -81,6 +83,7 @@ export function decryptChunk(
 	return {
 		decrypted: result.message,
 		isFinal: result.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL,
+		isMessage: result.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
 	};
 }
 
