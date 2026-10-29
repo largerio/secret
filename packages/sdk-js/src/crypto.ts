@@ -188,10 +188,13 @@ export async function encryptNoteChunked(
 		const headerBytes = encodeRaw(headerPayload);
 
 		const chunks: Uint8Array[] = [];
-		const hasMoreData =
-			payload.files !== undefined &&
-			payload.files.length > 0 &&
-			payload.files.some((f) => f.data.length > 0);
+		// An empty file gets no chunk, so the stream ends on the last chunk of
+		// the last file with data, which need not be the last file.
+		let lastFileWithData = -1;
+		for (const [fi, file] of (payload.files ?? []).entries()) {
+			if (file.data.length > 0) lastFileWithData = fi;
+		}
+		const hasMoreData = lastFileWithData !== -1;
 
 		// Encrypt header chunk (only final if no file data follows)
 		chunks.push(cryptoEncryptChunk(state, headerBytes, !hasMoreData));
@@ -202,8 +205,8 @@ export async function encryptNoteChunked(
 				for (let offset = 0; offset < file.data.length; offset += chunkSize) {
 					const end = Math.min(offset + chunkSize, file.data.length);
 					const slice = file.data.subarray(offset, end);
-					const isLastChunkOfLastFile = fi === payload.files.length - 1 && end >= file.data.length;
-					chunks.push(cryptoEncryptChunk(state, slice, isLastChunkOfLastFile));
+					const isLastChunk = fi === lastFileWithData && end >= file.data.length;
+					chunks.push(cryptoEncryptChunk(state, slice, isLastChunk));
 				}
 			}
 		}

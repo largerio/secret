@@ -267,6 +267,43 @@ describe("SDK crypto", () => {
 		expect(decrypted.files?.[1]?.data).toEqual(new Uint8Array(0));
 	});
 
+	// The FINAL tag used to go on the last chunk of the last file only: with an
+	// empty file last, no chunk carried it, and the reader refused the note.
+	test("round-trips a chunked note whose last file is empty", async () => {
+		await ensureInit();
+
+		const payload: NotePayload = {
+			files: [
+				{ name: "empty.txt", type: "text/plain", size: 0, data: new Uint8Array(0) },
+				{
+					name: "a.bin",
+					type: "application/octet-stream",
+					size: 10,
+					data: new Uint8Array(10).fill(7),
+				},
+				{ name: "empty2.txt", type: "text/plain", size: 0, data: new Uint8Array(0) },
+			],
+		};
+
+		const encrypted = await encryptNoteChunked(payload, 4);
+
+		// The header, then a.bin in pieces of 4, 4 and 2 bytes.
+		expect(encrypted.chunks).toHaveLength(4);
+
+		const decrypted = await decryptNoteChunked(
+			encrypted.chunks,
+			encrypted.header,
+			encrypted.keyFragment,
+		);
+
+		expect(decrypted.files?.map((f) => [f.name, f.data.length])).toEqual([
+			["empty.txt", 0],
+			["a.bin", 10],
+			["empty2.txt", 0],
+		]);
+		expect(decrypted.files?.[1]?.data).toEqual(new Uint8Array(10).fill(7));
+	});
+
 	test("decryptNoteChunked throws when a file's data is shorter than its declared size", async () => {
 		await ensureInit();
 

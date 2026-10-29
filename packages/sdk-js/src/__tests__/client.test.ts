@@ -839,14 +839,33 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		// Use a very small chunkSize so the text payload exceeds it
+		// Use a very small chunkSize so the file exceeds it
 		const result = await client.createNote({
-			text: "x".repeat(100),
+			files: [{ name: "a.bin", type: "application/octet-stream", data: new Uint8Array(100) }],
 			chunkSize: 10,
 		});
 
 		expect(result.id).toBe("autoChunked12");
 		expect(http.initChunkedUpload).toHaveBeenCalledOnce();
+	});
+
+	// Chunked, the whole text would be the first chunk, which an instance
+	// refuses (413) beyond its chunk size: a long text with a small chunk size
+	// failed, where a single-shot upload takes it.
+	test("createNote keeps a note without files single-shot, whatever its size", async () => {
+		const http = await getHttpMocks();
+		http.postJson.mockResolvedValue({
+			id: "longText1234",
+			expiresAt: "2099-01-01T00:00:00Z",
+			deleteToken: "del-long",
+		});
+
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const result = await client.createNote({ text: "x".repeat(100), chunkSize: 10 });
+
+		expect(result.id).toBe("longText1234");
+		expect(http.postJson).toHaveBeenCalledOnce();
+		expect(http.initChunkedUpload).not.toHaveBeenCalled();
 	});
 
 	test("createNote chunked with password includes salt in metadata", async () => {
