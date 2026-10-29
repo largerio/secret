@@ -407,9 +407,12 @@ file names, MIME types or file bytes. It does learn:
 - the metadata it is given: `hasPassword`, `fileCount`, `maxReads`, the
   expiry, the salt, and when the note was created and read;
 - for a format 1 note, its verifiers, the proofs a reader sends, and how many
-  wrong passwords were tried. These are HKDF outputs, apart from the key: they
-  tell nothing of the key or the password, but whoever holds a note's proofs
-  can have its ciphertext served;
+  wrong passwords were tried. A proof is an HKDF output apart from the key, a
+  verifier its SHA-256: without `K` they tell nothing of the key or the
+  password, but whoever holds a note's proofs can have its ciphertext served,
+  and whoever also holds `K` can test passwords against a password proof or
+  verifier offline, at the cost of Argon2id, as against the ciphertext. Treat
+  them as secrets: a proxy that logs request bodies must not keep them;
 - sizes. A single-shot ciphertext is the MessagePack payload plus 16 bytes,
   which gives the length of the text and of the files together. A chunked
   note shows the size of its head, and, since a piece never holds two files,
@@ -430,11 +433,22 @@ blob moved to another note fails to decrypt.
   note with files.
 - A chunked note stores every message as its own object: IV, ciphertext, tag.
 
-A format 1 note's verifiers are not stored as they came, but as
-HMAC-SHA256 over the note id followed by the verifier, under a key derived
-from `SERVER_ENCRYPTION_KEY` (HKDF-SHA256, no salt, `info` `"secret/server
-verifier"`). A copy of the database without the key thus gives nothing to test
-passwords against, even to whoever holds the link.
+A format 1 note's verifiers are not stored as they came, but sealed:
+
+```
+verifier key = HKDF-SHA256(SERVER_ENCRYPTION_KEY, salt = none, info = "secret/server verifier", 32)
+sealed       = HMAC-SHA256(verifier key, role || 0x00 || note id || SHA-256(envelope) || verifier)
+```
+
+`role` is the ASCII `link` or `password`, the note id its 12 ASCII
+characters. A copy of the database without the key thus gives nothing to test
+passwords against, even to whoever holds the link; and whoever can write to
+the database without the key cannot swap one verifier for the other, or
+rewrite the envelope, and still have the note served.
+
+The server counts a password attempt before it compares the proof, and gives
+it back once the proof matches: a wrong and a right password then cost the
+same writes, so a database that refuses writes tells a reader nothing.
 
 ## Limits of format 0
 
@@ -504,7 +518,10 @@ KiB: libsodium's `memlimit` is m × 1024 bytes. A reader runs
 the parameters the envelope gives, but MUST refuse t outside 1 to 6, or m
 outside 65,536 to 524,288 KiB (64 to 512 MiB), before running Argon2id. It
 runs them before anything can tell the envelope was altered, so these bounds
-are what a server, as much as a writer, can make a reader spend.
+are what a server, as much as a writer, can make a reader spend. The lower
+bounds are a floor too: a server that serves an altered envelope, with a new
+salt and the lightest parameters, gets a password proof that costs no less
+than them to attack offline, and it would need `K` to.
 
 Then, with HKDF-SHA256 (RFC 5869):
 
@@ -526,8 +543,9 @@ password verifier = SHA-256(password proof)
 ```
 
 Without a password, the link proof's PRK is the PRK above. Proofs and verifiers
-are 32 bytes. Other `info` strings are reserved for keys format 1 will derive
-from the same PRK.
+are 32 bytes. The `info` strings form one namespace over both PRKs, which are
+one without a password: other strings are reserved for what format 1 will
+derive from them.
 
 ### The link
 
@@ -683,7 +701,8 @@ and spends a read the same way, once it has loaded the ciphertext. It answers
 - for a chunked note, the length-prefixed messages of `/stream`, and its
   headers but for `X-Stream-Header` and `X-Salt`.
 
-Nothing in the answer says which: the reader knows it from the envelope's kind, and opens the note with the
+The reader knows which from the envelope's kind, as `X-Chunk-Count` only
+confirms, and opens the note with the
 envelope it derived the proofs from. `/raw`, `/stream` and the JSON endpoint
 serve format 0 only: they answer `400` to a format 1 note without spending a
 read, so a client that knows only format 0 never spends one on it. The link a

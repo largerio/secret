@@ -414,6 +414,35 @@ describe("format 1, through the SDK and the application", () => {
 	);
 
 	it(
+		"protects a chunked note with the password too",
+		async () => {
+			const client = await connect();
+			const data = bytes(2 * CHUNK_SIZE + 3);
+			const { id, keyFragment } = await client.createNote({
+				files: [{ name: "big.bin", type: "application/octet-stream", data }],
+				chunkSize: CHUNK_SIZE,
+				password: "chunked secret",
+				format: 1,
+			});
+			expect(calls[0]).toBe("POST /api/v1/notes/upload/init");
+			expect(await client.checkNote(id)).toMatchObject({
+				chunked: true,
+				hasPassword: true,
+				passwordAttemptsLeft: 5,
+			});
+
+			await expect(
+				client.readNote(id, keyFragment, { password: "chunked secreT" }),
+			).rejects.toBeInstanceOf(SecretDecryptionError);
+			expect(await client.checkNote(id)).toMatchObject({ readCount: 0, passwordAttemptsLeft: 4 });
+
+			const { payload } = await client.readNote(id, keyFragment, { password: "chunked secret" });
+			expect(payload.files?.[0]?.data).toEqual(data);
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	it(
 		"deletes a password note at its fifth wrong password",
 		async () => {
 			const client = await connect();

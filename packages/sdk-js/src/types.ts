@@ -104,7 +104,11 @@ export interface ReadNoteOptions {
 	readonly onDownloadProgress?: (progress: number) => void;
 	/** Structured progress callback with phase info. */
 	readonly onProgress?: (info: ProgressInfo) => void;
-	/** Hint from checkNote: true = chunked (stream), false = standard (raw). Skips trial-and-error. */
+	/**
+	 * Hint from checkNote for a format 0 note: true = chunked (stream), false =
+	 * standard (raw). Skips trial-and-error. A format 1 read ignores it: the
+	 * note's envelope says its kind.
+	 */
 	readonly chunked?: boolean;
 }
 

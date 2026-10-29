@@ -1342,8 +1342,10 @@ describe("SecretClient in format 1", () => {
 		passwordAttemptsLeft: 5,
 	};
 	const proofs = { linkProof: "lp", passwordProof: "pp" };
-	const singleShotRead = { envelope: { kind: "single-shot" }, proofs };
-	const chunkedRead = { envelope: { kind: "chunked" }, proofs };
+	// The envelope's file count, which the ciphertext authenticates, differs
+	// from the headers' on purpose: the result must take the envelope's.
+	const singleShotRead = { envelope: { kind: "single-shot", fileCount: 2 }, proofs };
+	const chunkedRead = { envelope: { kind: "chunked", fileCount: 2 }, proofs };
 	const singleShotResponse = { kind: "single-shot", encryptedBytes: new Uint8Array([7]), ...meta };
 	const chunkedResponse = { kind: "chunked", chunks: [new Uint8Array([8])], ...meta };
 
@@ -1386,7 +1388,7 @@ describe("SecretClient in format 1", () => {
 		format1.encryptNoteChunkedFormat1.mockResolvedValue({
 			chunks: [new Uint8Array([1]), new Uint8Array([2])],
 			envelope: "f1StreamEnvelope",
-			verifiers: { linkVerifier: "lv" },
+			verifiers: { linkVerifier: "lv", passwordVerifier: "pv" },
 			keyFragment: "1.f1ChunkedKey",
 		});
 		format1.prepareFormat1Read.mockResolvedValue(singleShotRead);
@@ -1452,6 +1454,7 @@ describe("SecretClient in format 1", () => {
 		expect(http.initChunkedUpload.mock.calls[0]?.[1]).toEqual({
 			envelope: "f1StreamEnvelope",
 			linkVerifier: "lv",
+			passwordVerifier: "pv",
 			chunkCount: 2,
 		});
 		expect(http.uploadChunk).toHaveBeenCalledTimes(2);
@@ -1496,7 +1499,7 @@ describe("SecretClient in format 1", () => {
 			payload: { text: "format 1 single-shot" },
 			createdAt: meta.createdAt,
 			expiresAt: meta.expiresAt,
-			fileCount: meta.fileCount,
+			fileCount: 2,
 		});
 		expect(http.getNoteRaw).not.toHaveBeenCalled();
 		expect(http.getNoteStream).not.toHaveBeenCalled();

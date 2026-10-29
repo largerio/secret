@@ -272,7 +272,7 @@ export interface Format1Read {
 	readonly envelope: Envelope;
 	readonly envelopeBytes: Uint8Array;
 	readonly proofs: ReadProofs;
-	readonly keys: Format1Keys;
+	readonly encryptionKey: Uint8Array;
 }
 
 /**
@@ -309,29 +309,31 @@ export async function prepareFormat1Read(
 	} finally {
 		zeroMemory(linkKey);
 	}
-	return {
-		envelope,
-		envelopeBytes,
-		proofs: {
-			linkProof: toBase64(keys.linkProof),
-			...(keys.passwordProof ? { passwordProof: toBase64(keys.passwordProof) } : {}),
-		},
-		keys,
+	// The proofs are only needed as the request's body: their bytes go now,
+	// the key stays until the note is opened.
+	const proofs = {
+		linkProof: toBase64(keys.linkProof),
+		...(keys.passwordProof ? { passwordProof: toBase64(keys.passwordProof) } : {}),
 	};
+	zeroMemory(keys.linkProof);
+	if (keys.passwordProof) {
+		zeroMemory(keys.passwordProof);
+	}
+	return { envelope, envelopeBytes, proofs, encryptionKey: keys.encryptionKey };
 }
 
-/** Wipes the key and the proofs of a note once it is read, or could not be. */
+/** Wipes the key of a note once it is read, or could not be. */
 export function closeFormat1Read(read: Format1Read): void {
-	zeroFormat1Keys(read.keys);
+	zeroMemory(read.encryptionKey);
 }
 
 /** Opens a single-shot format 1 note. Throws on anything but a well-formed payload. */
 export function openSingleShotFormat1(read: Format1Read, encryptedBytes: Uint8Array): NotePayload {
-	const { envelope, envelopeBytes, keys } = read;
+	const { envelope, envelopeBytes, encryptionKey } = read;
 	if (envelope.kind !== "single-shot") {
 		throw new Error("Not a single-shot note");
 	}
-	const plaintext = decryptRaw(encryptedBytes, envelope.nonce, keys.encryptionKey, envelopeBytes);
+	const plaintext = decryptRaw(encryptedBytes, envelope.nonce, encryptionKey, envelopeBytes);
 	const payload = strictPayload(decodeRawBytes(plaintext));
 	assertFileCount(payload, envelope);
 	return payload;
@@ -339,11 +341,11 @@ export function openSingleShotFormat1(read: Format1Read, encryptedBytes: Uint8Ar
 
 /** Opens a chunked format 1 note. Throws on anything but a well-formed stream. */
 export function openChunkedFormat1(read: Format1Read, encryptedChunks: Uint8Array[]): NotePayload {
-	const { envelope, envelopeBytes, keys } = read;
+	const { envelope, envelopeBytes, encryptionKey } = read;
 	if (envelope.kind !== "chunked") {
 		throw new Error("Not a chunked note");
 	}
-	const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, keys.encryptionKey, {
+	const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, encryptionKey, {
 		additionalData: envelopeBytes,
 		isHead: isStrictHead,
 		strict: true,

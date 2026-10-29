@@ -120,7 +120,9 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   spending one; a burn-after-read note already gave that away by disappearing. An
   unlimited note always reports 0 reads, so the endpoint is not a view counter. For a
   format 1 note it also serves the envelope (the salt and the Argon2id parameters a
-  reader needs) and the password attempts left. It is
+  reader needs, and the expiry chosen, which gives the creation time to the second)
+  and the password attempts left, so anyone with the ID can see wrong passwords
+  being tried. It is
   rate-limited but is not zero-knowledge with respect to existence/metadata. Note IDs are long and
   random, so enumeration is impractical, but the leak is acknowledged.
 - **One instance only.** SQLite, the proof-of-work challenges and the rate-limit

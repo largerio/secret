@@ -82,6 +82,46 @@ async function decryptNoteChunkedFormat1(
 	}
 }
 
+/**
+ * Records the secrets a note's keys are made of, as libsodium hands them out:
+ * the link keys it draws or decodes, and every HMAC-SHA256 output (the PRKs,
+ * the keys, the proofs). `alive` lists those not wiped yet.
+ */
+function recordSecrets() {
+	const linkKeys: Uint8Array[] = [];
+	const hmacs: Uint8Array[] = [];
+	const keygen = sodium.crypto_aead_xchacha20poly1305_ietf_keygen;
+	const fromBase64Of = sodium.from_base64;
+	const hmac = sodium.crypto_auth_hmacsha256;
+	const spies = [
+		vi.spyOn(sodium, "crypto_aead_xchacha20poly1305_ietf_keygen").mockImplementation((() => {
+			const key = keygen();
+			linkKeys.push(key);
+			return key;
+		}) as typeof keygen),
+		vi.spyOn(sodium, "from_base64").mockImplementation((input, variant) => {
+			const bytes = fromBase64Of(input, variant);
+			if (variant === sodium.base64_variants.URLSAFE_NO_PADDING) linkKeys.push(bytes);
+			return bytes;
+		}),
+		vi.spyOn(sodium, "crypto_auth_hmacsha256").mockImplementation(((
+			message: Uint8Array,
+			key: Uint8Array,
+		) => {
+			const output = hmac(message, key);
+			hmacs.push(output);
+			return output;
+		}) as typeof hmac),
+	];
+	return {
+		linkKeys,
+		alive: () => [...linkKeys, ...hmacs].filter((secret) => secret.some((byte) => byte !== 0)),
+		restore: () => {
+			for (const spy of spies) spy.mockRestore();
+		},
+	};
+}
+
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("base64");
 
 const withFiles: NotePayload = {
@@ -577,17 +617,49 @@ describe("preparing a format 1 read", () => {
 				const read = await prepareFormat1Read(toBase64(envelope), v.keyFragment, v.password);
 				expect(read.proofs.linkProof, v.description).toBe(v.linkProof);
 				expect(read.proofs.passwordProof, v.description).toBe(v.passwordProof);
-				expect(toBase64(read.keys.encryptionKey), v.description).toBe(v.encryptionKey);
+				expect(toBase64(read.encryptionKey), v.description).toBe(v.encryptionKey);
 			}
 		},
 		ARGON2_TIMEOUT,
 	);
 
-	test("is wiped once closed", async () => {
-		const { envelope, keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
-		const read = await prepareFormat1Read(envelope, keyFragment, undefined);
-		closeFormat1Read(read);
-		expect(read.keys.encryptionKey).toEqual(new Uint8Array(32));
-		expect(read.keys.linkProof).toEqual(new Uint8Array(32));
-	});
+	test(
+		"keeps no secret but the key, which closing wipes",
+		async () => {
+			const { envelope, keyFragment } = await encryptNoteFormat1({ text: "x" }, settings, "pw");
+			const secrets = recordSecrets();
+			try {
+				const read = await prepareFormat1Read(envelope, keyFragment, "pw");
+				// The link key, the PRKs and the proofs' bytes: all but the key.
+				expect(secrets.linkKeys).toHaveLength(1);
+				expect(secrets.alive().filter((secret) => secret !== read.encryptionKey)).toEqual([]);
+
+				closeFormat1Read(read);
+				expect(secrets.alive()).toEqual([]);
+			} finally {
+				secrets.restore();
+			}
+		},
+		ARGON2_TIMEOUT,
+	);
+});
+
+describe("a format 1 writer", () => {
+	test.each([
+		["single-shot", () => encryptNoteFormat1({ text: "x" }, settings, "pw")],
+		["chunked", () => encryptNoteChunkedFormat1({ text: "x" }, 4, settings, "pw")],
+	])(
+		"keeps no secret once a %s note is written",
+		async (_, write) => {
+			const secrets = recordSecrets();
+			try {
+				await write();
+				expect(secrets.linkKeys).toHaveLength(1);
+				expect(secrets.alive()).toEqual([]);
+			} finally {
+				secrets.restore();
+			}
+		},
+		ARGON2_TIMEOUT,
+	);
 });

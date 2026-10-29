@@ -1,6 +1,6 @@
 import { argon2Sync, createHash, hkdfSync } from "node:crypto";
 import sodium from "libsodium-wrappers-sumo";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { decryptChunk, decryptRaw, initStreamDecrypt } from "../decrypt.js";
 import { encryptChunk, encryptPayload, initStreamEncrypt } from "../encrypt.js";
 import {
@@ -125,6 +125,70 @@ describe("deriveFormat1Keys", () => {
 			k ? hex(k) : "",
 		);
 		expect(new Set(all).size).toBe(4);
+	});
+
+	/** Records every HMAC-SHA256 output: the PRKs and the keys Expand makes from them. */
+	function recordHmacs() {
+		const outputs: Uint8Array[] = [];
+		const hmac = sodium.crypto_auth_hmacsha256;
+		const spy = vi.spyOn(sodium, "crypto_auth_hmacsha256").mockImplementation(((
+			message: Uint8Array,
+			key: Uint8Array,
+		) => {
+			const output = hmac(message, key);
+			outputs.push(output);
+			return output;
+		}) as typeof hmac);
+		return { outputs, restore: () => spy.mockRestore() };
+	}
+
+	// Only Expand's outputs, the keys, may survive: the PRKs go.
+	it("wipes the PRKs, the stretched password and HKDF's input", () => {
+		const hmacs = recordHmacs();
+		const pwhash = sodium.crypto_pwhash;
+		let stretched: Uint8Array | undefined;
+		const pwhashSpy = vi.spyOn(sodium, "crypto_pwhash").mockImplementation(((
+			length: number,
+			input: Uint8Array,
+			salt: Uint8Array,
+			iterations: number,
+			memory: number,
+			algorithm: number,
+		) => {
+			stretched = pwhash(length, input, salt, iterations, memory, algorithm);
+			return stretched;
+		}) as typeof pwhash);
+		try {
+			const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
+			const keys = deriveFormat1Keys(generateKey(), password);
+			const kept: unknown[] = [keys.encryptionKey, keys.linkProof, keys.passwordProof];
+			const wiped = hmacs.outputs.filter((output) => !kept.includes(output));
+
+			expect(wiped).toHaveLength(2);
+			expect(stretched).toEqual(new Uint8Array(32));
+			for (const prk of wiped) {
+				expect(prk).toEqual(new Uint8Array(32));
+			}
+		} finally {
+			hmacs.restore();
+			pwhashSpy.mockRestore();
+		}
+	});
+
+	it("wipes the link's PRK when stretching the password fails", () => {
+		const hmacs = recordHmacs();
+		const pwhashSpy = vi.spyOn(sodium, "crypto_pwhash").mockImplementation(() => {
+			throw new Error("out of memory");
+		});
+		try {
+			const password = { password: "hunter2", argon2: { salt: generateSalt(), ...LIGHT } };
+			expect(() => deriveFormat1Keys(generateKey(), password)).toThrow("out of memory");
+			// The link's PRK alone was made: no key is expanded before the end.
+			expect(hmacs.outputs).toEqual([new Uint8Array(32)]);
+		} finally {
+			hmacs.restore();
+			pwhashSpy.mockRestore();
+		}
 	});
 
 	it("leaves the link's key as it was", () => {

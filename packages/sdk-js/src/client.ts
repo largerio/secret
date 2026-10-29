@@ -421,8 +421,12 @@ export class SecretClient {
 	 * a format this SDK does not know: refused before anything is read.
 	 * @throws {SecretDecryptionError} for a wrong password, a wrong key, or
 	 * tampered ciphertext — deliberately indistinguishable, to avoid an oracle.
+	 * For a format 1 note, also for a password note read without its password,
+	 * an envelope this SDK refuses, or a format 1 link to a format 0 note: all
+	 * refused before any read is spent.
 	 * @throws {SecretApiError} with status 404 when the note is gone (expired,
-	 * already burned, or never existed).
+	 * already burned, or never existed); with status 400 for a format 0 link to
+	 * a format 1 note, which spends no read.
 	 * @throws {SecretNetworkError} if the request never reached the server.
 	 */
 	async readNote(
@@ -638,7 +642,8 @@ export class SecretClient {
 				payload,
 				createdAt: response.createdAt,
 				expiresAt: response.expiresAt,
-				fileCount: response.fileCount,
+				// The envelope's, which the ciphertext authenticates, not the header's.
+				fileCount: read.envelope.fileCount,
 			};
 		} finally {
 			closeFormat1Read(read);

@@ -77,34 +77,37 @@ export interface Format1Keys {
  * link's key, followed for a password note by its stretched password.
  */
 export function deriveFormat1Keys(linkKey: Uint8Array, password?: PasswordInput): Format1Keys {
-	const linkPrk = hkdfExtract(linkKey);
-	if (!password) {
-		try {
+	// Every intermediate secret is wiped on the way out, a throw included: an
+	// Argon2id run the reader cannot allocate memory for is a real failure.
+	const secrets: Uint8Array[] = [];
+	const kept = <T extends Uint8Array>(secret: T): T => {
+		secrets.push(secret);
+		return secret;
+	};
+	try {
+		// The keys are expanded last, in the return: a throw before leaves none.
+		const linkPrk = kept(hkdfExtract(linkKey));
+		if (!password) {
 			return {
 				encryptionKey: hkdfExpand(linkPrk, ENCRYPTION_INFO),
 				linkProof: hkdfExpand(linkPrk, LINK_PROOF_INFO),
 			};
-		} finally {
-			sodium.memzero(linkPrk);
 		}
-	}
 
-	const stretched = stretchPassword(password, linkKey);
-	const ikm = new Uint8Array(linkKey.length + stretched.length);
-	ikm.set(linkKey);
-	ikm.set(stretched, linkKey.length);
-	sodium.memzero(stretched);
-	const prk = hkdfExtract(ikm);
-	try {
+		const stretched = kept(stretchPassword(password, linkKey));
+		const ikm = kept(new Uint8Array(linkKey.length + stretched.length));
+		ikm.set(linkKey);
+		ikm.set(stretched, linkKey.length);
+		const prk = kept(hkdfExtract(ikm));
 		return {
 			encryptionKey: hkdfExpand(prk, ENCRYPTION_INFO),
 			linkProof: hkdfExpand(linkPrk, LINK_PROOF_INFO),
 			passwordProof: hkdfExpand(prk, PASSWORD_PROOF_INFO),
 		};
 	} finally {
-		sodium.memzero(prk);
-		sodium.memzero(linkPrk);
-		sodium.memzero(ikm);
+		for (const secret of secrets) {
+			sodium.memzero(secret);
+		}
 	}
 }
 
