@@ -10,7 +10,7 @@ image. Each version links to its GitHub release. The SDK has
 ### Added
 
 - [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format every release so far uses: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#249)
-- [Format 1](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-1), a draft of the next encryption format: links that name their format (`#1.<key>`), a key derived with HKDF, the Argon2id parameters stored with the note, passwords normalized to NFC, and the note's settings in an envelope that the ciphertext authenticates. The API accepts and serves format 1 notes next to format 0 ones, and the web app opens them. A read names the format it expects, so a client that knows only format 0 is refused a format 1 note without spending a read. Nothing writes format 1 yet: its bytes may still change before it is final.
+- [Format 1](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-1), a draft of the next encryption format: links that name their format (`#1.<key>`), a key derived with HKDF, the Argon2id parameters stored with the note, passwords normalized to NFC, and the note's settings in an envelope that the ciphertext authenticates. The API accepts and serves format 1 notes next to format 0 ones, and the web app opens them. A read names the format it expects, so a client that knows only format 0 is refused a format 1 note without spending a read. Nothing writes format 1 yet: its bytes may still change before it is final. (#253)
 
 ### Changed
 
