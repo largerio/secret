@@ -273,7 +273,8 @@ server checks the length of neither the stream header nor the salt.
    ```
 
    The body is the message's ciphertext. `X-Chunk-Hash` is required: a
-   missing or upper-case hash answers `400`. The answer is `200` with
+   missing or upper-case hash, or one that does not match the body, answers
+   `400`. The answer is `200` with
    `{"received": true}`. Sending a message again replaces it.
 
 3. Close the session:
@@ -530,11 +531,12 @@ received it, never re-encoded.
 
 The settings mean what they mean in format 0, and the envelope tells the
 server nothing format 0's fields do not, the Argon2id parameters aside. The
-server refuses (`400`) an
-envelope of the wrong kind for the endpoint, or whose settings exceed the
-protocol's limits (`fileCount` 0 to 10, at least 1 for a multipart upload,
-`maxReads` 0 to 1000, `expiresIn` 300 to 2,592,000), and applies the
-instance's limits as to a format 0 note. Envelopes travel in base64.
+server refuses (`400`) an envelope a reader would refuse, one of the wrong
+kind for the endpoint, or one whose settings exceed the protocol's limits
+(`fileCount` 0 to 10, at least 1 for a multipart upload, `maxReads` 0 to 1000,
+`expiresIn` 300 to 2,592,000), and applies the instance's limits as to a
+format 0 note. Envelopes travel in base64. A request that carries an envelope
+is a format 1 request: format 0's fields beside it are ignored.
 
 ### Single-shot notes in format 1
 
