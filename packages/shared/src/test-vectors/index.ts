@@ -93,42 +93,69 @@ export interface Format1KeyVector {
 
 export interface Format1EnvelopeVector {
 	readonly description: string;
-	readonly kind: "single-shot" | "chunked";
 	readonly fileCount: number;
 	readonly maxReads: number;
 	readonly expiresIn: number;
-	/** The nonce, or the stream header. */
-	readonly nonce: string;
+	readonly streamHeader: string;
 	readonly argon2?: Format1Argon2Vector;
 	readonly envelope: string;
 }
 
-/** A single-shot format 1 note: the envelope is the ciphertext's additional data. */
-export interface Format1PipelineVector {
-	readonly description: string;
-	readonly keyFragment: string;
-	readonly password?: string;
-	readonly encryptionKey: string;
-	readonly envelope: string;
-	readonly payload: PipelineVector["payload"];
-	readonly payloadMsgpack: string;
-	readonly ciphertext: string;
+/** A body's length before padding, and after. */
+export interface Format1SizeClassVector {
+	readonly length: number;
+	readonly sizeClass: number;
+}
+
+/** A format 1 payload: format 0's keys, each of them optional. */
+export interface Format1PayloadVector {
+	readonly text?: string;
+	readonly contentMode?: string;
+	readonly files?: ReadonlyArray<PipelineFileVector>;
 }
 
 /**
- * A chunked format 1 note, written once: its envelope holds the stream's random
- * header. Every chunk is pushed with the envelope as additional data.
+ * A format 1 note, written once: its envelope holds the stream's random header.
+ * The body is cut every `messageSize` bytes, and every message is pushed with
+ * the envelope as additional data.
  */
-export interface Format1SecretstreamVector {
+export interface Format1NoteVector {
 	readonly description: string;
 	readonly keyFragment: string;
 	readonly password?: string;
 	readonly encryptionKey: string;
 	readonly envelope: string;
-	readonly chunkSize: number;
-	readonly payload: PipelineVector["payload"];
-	readonly headerMsgpack: string;
-	readonly chunks: ReadonlyArray<string>;
+	readonly payload: Format1PayloadVector;
+	/** The payload without the file bytes, as MessagePack. */
+	readonly head: string;
+	/** The head's length, the head, the file bytes, then zeros up to the size class. */
+	readonly body: string;
+	readonly messageSize: number;
+	readonly messages: ReadonlyArray<string>;
+}
+
+/** What a reader MUST refuse before it reads anything. */
+export interface Format1InvalidFragmentVector {
+	readonly description: string;
+	readonly fragment: string;
+}
+
+export interface Format1InvalidEnvelopeVector {
+	readonly description: string;
+	readonly envelope: string;
+}
+
+/**
+ * A format 1 note a reader MUST refuse once it has read it, written once: what
+ * breaks a rule of the stream or of the body is in its messages, which its key
+ * and password open as far as they go.
+ */
+export interface Format1InvalidNoteVector {
+	readonly description: string;
+	readonly keyFragment: string;
+	readonly password?: string;
+	readonly envelope: string;
+	readonly messages: ReadonlyArray<string>;
 }
 
 export interface EncodingVector {
@@ -149,8 +176,13 @@ export interface TestVectors {
 		readonly format1: {
 			readonly keys: ReadonlyArray<Format1KeyVector>;
 			readonly envelopes: ReadonlyArray<Format1EnvelopeVector>;
-			readonly pipeline: ReadonlyArray<Format1PipelineVector>;
-			readonly secretstream: ReadonlyArray<Format1SecretstreamVector>;
+			readonly sizeClasses: ReadonlyArray<Format1SizeClassVector>;
+			readonly notes: ReadonlyArray<Format1NoteVector>;
+			readonly invalid: {
+				readonly fragments: ReadonlyArray<Format1InvalidFragmentVector>;
+				readonly envelopes: ReadonlyArray<Format1InvalidEnvelopeVector>;
+				readonly notes: ReadonlyArray<Format1InvalidNoteVector>;
+			};
 		};
 	};
 }

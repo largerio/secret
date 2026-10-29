@@ -310,19 +310,17 @@ test("the committed test vectors match what the crypto produces", async () => {
 	};
 
 	const envelopeBytes = (
-		kind: "single-shot" | "chunked",
 		settings: Settings,
-		nonce: Uint8Array,
+		streamHeader: Uint8Array,
 		argon2?: Argon2,
 	): Uint8Array => {
-		const head = Buffer.alloc(10);
+		const head = Buffer.alloc(9);
 		head[0] = 1;
-		head[1] = kind === "single-shot" ? 0 : 1;
-		head[2] = argon2 ? 1 : 0;
-		head[3] = settings.fileCount;
-		head.writeUInt16BE(settings.maxReads, 4);
-		head.writeUInt32BE(settings.expiresIn, 6);
-		const parts = [head, Buffer.from(nonce)];
+		head[1] = argon2 ? 1 : 0;
+		head[2] = settings.fileCount;
+		head.writeUInt16BE(settings.maxReads, 3);
+		head.writeUInt32BE(settings.expiresIn, 5);
+		const parts = [head, Buffer.from(streamHeader)];
 		if (argon2) {
 			const params = Buffer.alloc(8);
 			params.writeUInt32BE(argon2.iterations, 0);
@@ -334,84 +332,125 @@ test("the committed test vectors match what the crypto produces", async () => {
 
 	const envelopeVector = (
 		description: string,
-		kind: "single-shot" | "chunked",
 		settings: Settings,
-		nonce: Uint8Array,
+		streamHeader: Uint8Array,
 		argon2?: Argon2,
 	) => ({
 		description,
-		kind,
 		...settings,
-		nonce: toB64(nonce),
+		streamHeader: toB64(streamHeader),
 		...(argon2 ? { argon2: argon2Json(argon2) } : {}),
-		envelope: toB64(envelopeBytes(kind, settings, nonce, argon2)),
+		envelope: toB64(envelopeBytes(settings, streamHeader, argon2)),
 	});
 
-	const format1PipelineVector = (
-		description: string,
-		linkKey: Uint8Array,
-		settings: Settings,
-		payload: NotePayload,
-		password?: string,
-		argon2?: Argon2,
-	) => {
-		const keys = format1Keys(linkKey, password, argon2);
-		const envelope = envelopeBytes("single-shot", settings, NONCE_24, argon2);
-		const msgpack = encode(payload);
-		const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
-			msgpack,
-			envelope,
-			null,
-			NONCE_24,
-			keys.encryptionKey,
-		);
-		return {
-			description,
-			keyFragment: keys.keyFragment,
-			...(password !== undefined ? { password } : {}),
-			encryptionKey: toB64(keys.encryptionKey),
-			envelope: toB64(envelope),
-			payload: payloadJson(payload),
-			payloadMsgpack: toB64(msgpack),
-			ciphertext: toB64(ciphertext),
-		};
+	// Padmé with a floor, in BigInt: apart from the shared package's sizeClass.
+	const sizeClassOf = (length: number): number => {
+		if (length <= 4096) return 4096;
+		const big = BigInt(length);
+		const e = BigInt(big.toString(2).length - 1);
+		const s = BigInt(e.toString(2).length);
+		const step = 1n << (e - s);
+		return Number(((big + step - 1n) / step) * step);
 	};
 
-	const format1SecretstreamVector = (
-		description: string,
-		linkKey: Uint8Array,
-		settings: Settings,
-		payload: NotePayload,
-		chunkSize: number,
-		password?: string,
-		argon2?: Argon2,
-	) => {
-		const keys = format1Keys(linkKey, password, argon2);
-		const { headerBytes, pieces } = streamPlaintexts(payload, chunkSize);
-		const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(
-			keys.encryptionKey,
-		);
-		const envelope = envelopeBytes("chunked", settings, header, argon2);
-		const chunks = pieces.map((piece, i) =>
+	const headOf = (payload: NotePayload): Uint8Array => {
+		const files = payload.files ?? [];
+		return encode({
+			...(payload.text !== undefined ? { text: payload.text } : {}),
+			...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
+			...(files.length > 0
+				? { files: files.map(({ name, type, size }) => ({ name, type, size })) }
+				: {}),
+		});
+	};
+
+	/** The head's length, the head, the file bytes, then zeros up to the size class, or `length`. */
+	const bodyOf = (
+		head: Uint8Array,
+		files: ReadonlyArray<Uint8Array> = [],
+		length?: number,
+	): Uint8Array => {
+		const content = Buffer.concat([Buffer.alloc(4), head, ...files]);
+		content.writeUInt32BE(head.length, 0);
+		const body = Buffer.alloc(length ?? sizeClassOf(content.length));
+		content.copy(body);
+		return new Uint8Array(body);
+	};
+
+	const cut = (body: Uint8Array, messageSize: number): Uint8Array[] => {
+		const messages: Uint8Array[] = [];
+		for (let offset = 0; offset < body.length; offset += messageSize) {
+			messages.push(body.subarray(offset, offset + messageSize));
+		}
+		return messages;
+	};
+
+	const MESSAGE = sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
+	const PUSH = sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH;
+	const FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL;
+
+	// libsodium's push and pull states are the same: a key from HChaCha20 over
+	// the header's first 16 bytes, a nonce from its last 8. From a header,
+	// init_pull makes the state of a writer that drew it, so the vectors can fix
+	// the header a writer draws at random, and every run recompute them.
+	const pushMessages = (
+		key: Uint8Array,
+		streamHeader: Uint8Array,
+		plaintexts: ReadonlyArray<Uint8Array>,
+		additionalData: Uint8Array | null,
+		tags: ReadonlyArray<number> = plaintexts.map((_, i) =>
+			i === plaintexts.length - 1 ? FINAL : MESSAGE,
+		),
+	): Uint8Array[] => {
+		const state = sodium.crypto_secretstream_xchacha20poly1305_init_pull(streamHeader, key);
+		return plaintexts.map((plaintext, i) =>
 			sodium.crypto_secretstream_xchacha20poly1305_push(
 				state,
-				piece,
-				envelope,
-				i === pieces.length - 1
-					? sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
-					: sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
+				plaintext,
+				additionalData,
+				tags[i] ?? MESSAGE,
 			),
+		);
+	};
+
+	const noteVector = (
+		description: string,
+		note: {
+			readonly linkKey: Uint8Array;
+			readonly settings: Settings;
+			readonly payload: NotePayload;
+			readonly streamHeader: Uint8Array;
+			/** The whole body, one message, by default. */
+			readonly messageSize?: number;
+			readonly password?: string;
+			readonly argon2?: Argon2;
+		},
+	) => {
+		const keys = format1Keys(note.linkKey, note.password, note.argon2);
+		const envelope = envelopeBytes(note.settings, note.streamHeader, note.argon2);
+		const head = headOf(note.payload);
+		const body = bodyOf(
+			head,
+			(note.payload.files ?? []).map((file) => file.data),
+		);
+		const messageSize = note.messageSize ?? body.length;
+		const messages = pushMessages(
+			keys.encryptionKey,
+			note.streamHeader,
+			cut(body, messageSize),
+			envelope,
 		);
 		return {
 			description,
 			keyFragment: keys.keyFragment,
-			...(password !== undefined ? { password } : {}),
+			...(note.password !== undefined ? { password: note.password } : {}),
 			encryptionKey: toB64(keys.encryptionKey),
 			envelope: toB64(envelope),
-			chunkSize,
-			payload: payloadJson(payload),
-			headerMsgpack: toB64(headerBytes),
-			chunks: chunks.map(toB64),
+			payload: payloadJson(note.payload),
+			head: toB64(head),
+			body: toB64(body),
+			messageSize,
+			messages: messages.map(toB64),
 		};
 	};
 
@@ -421,6 +460,71 @@ test("the committed test vectors match what the crypto produces", async () => {
 	const defaultArgon2 = { salt: SALT_16, ...DEFAULT_ARGON2 };
 	const lightArgon2 = { salt: SALT_16_B, ...LIGHT_ARGON2 };
 	const oneDay = { fileCount: 0, maxReads: 1, expiresIn: 86_400 };
+
+	// --- What a format 1 reader must refuse ---
+
+	const keyUrl = toB64Url(KEY_32);
+	const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+	// 43 characters hold 258 bits: the last one's two low bits must be zero.
+	const lastWithStrayBits = BASE64URL[BASE64URL.indexOf(keyUrl.slice(-1)) | 1] ?? "";
+
+	const plainEnvelope = envelopeBytes(oneDay, STREAM_HEADER_24);
+	const passwordEnvelope = envelopeBytes(oneDay, STREAM_HEADER_24, lightArgon2);
+	const withByte = (bytes: Uint8Array, offset: number, value: number): Uint8Array => {
+		const copy = bytes.slice();
+		copy[offset] = value;
+		return copy;
+	};
+	const withUint32 = (bytes: Uint8Array, offset: number, value: number): Uint8Array => {
+		const copy = Buffer.from(bytes);
+		copy.writeUInt32BE(value, offset);
+		return new Uint8Array(copy);
+	};
+	const invalidEnvelope = (description: string, envelope: Uint8Array) => ({
+		description,
+		envelope: toB64(envelope),
+	});
+
+	/**
+	 * A note under KEY_32 and the vectors' stream header, its plaintexts pushed
+	 * with FINAL on the last, and the envelope as additional data, unless told
+	 * otherwise: each breaks one rule.
+	 */
+	const invalidNote = (
+		description: string,
+		plaintexts: ReadonlyArray<Uint8Array>,
+		options: {
+			readonly fileCount?: number;
+			readonly tags?: ReadonlyArray<number>;
+			readonly additionalData?: Uint8Array | null;
+		} = {},
+	) => {
+		const keys = format1Keys(KEY_32);
+		const envelope = envelopeBytes(
+			{ ...oneDay, fileCount: options.fileCount ?? 0 },
+			STREAM_HEADER_24,
+		);
+		const messages = pushMessages(
+			keys.encryptionKey,
+			STREAM_HEADER_24,
+			plaintexts,
+			options.additionalData === undefined ? envelope : options.additionalData,
+			options.tags,
+		);
+		return {
+			description,
+			keyFragment: keys.keyFragment,
+			envelope: toB64(envelope),
+			messages: messages.map(toB64),
+		};
+	};
+
+	const textHead = headOf({ text: "invalid", contentMode: "text" });
+	const textBody = bodyOf(textHead);
+	const textHalves = cut(textBody, textBody.length / 2);
+	const withHeadLength = (body: Uint8Array, length: number): Uint8Array =>
+		withUint32(body, 0, length);
+	const oneFileHead = (file: Record<string, unknown>) => encode({ files: [file] });
 
 	const format1 = {
 		keys: [
@@ -434,60 +538,241 @@ test("the committed test vectors match what the crypto produces", async () => {
 			keyVector("password typed in NFD, light parameters", BASE_KEY_32_B, nfdPassword, lightArgon2),
 		],
 		envelopes: [
-			envelopeVector("single-shot note, no password", "single-shot", oneDay, NONCE_24),
+			envelopeVector("no password", oneDay, STREAM_HEADER_24),
 			envelopeVector(
-				"chunked note with a password",
-				"chunked",
+				"with a password",
 				{ fileCount: 3, maxReads: 0, expiresIn: 2_592_000 },
 				STREAM_HEADER_24,
 				defaultArgon2,
 			),
 		],
-		pipeline: [
-			format1PipelineVector("text-only note, no password", KEY_32, oneDay, {
-				text: "Hello, world!",
-				contentMode: "text",
+		sizeClasses: [
+			0,
+			1,
+			4095,
+			4096,
+			4097,
+			4352,
+			4353,
+			8191,
+			8192,
+			8193,
+			32_768,
+			32_769,
+			65_535,
+			65_536,
+			65_537,
+			1_000_000,
+			1_048_575,
+			1_048_576,
+			1_048_577,
+			524_288_000,
+			2 ** 32 - 1,
+			2 ** 32,
+			2 ** 32 + 1,
+		].map((length) => ({ length, sizeClass: sizeClassOf(length) })),
+		notes: [
+			noteVector("text only, no password: one message, padded to the floor", {
+				linkKey: KEY_32,
+				settings: oneDay,
+				payload: { text: "Hello, world!", contentMode: "text" },
+				streamHeader: STREAM_HEADER_24,
 			}),
-			format1PipelineVector(
-				"two files, password typed in NFD",
-				BASE_KEY_32_B,
-				{ fileCount: 2, maxReads: 3, expiresIn: 3600 },
-				multiFilePayload,
-				nfdPassword,
-				lightArgon2,
-			),
-		],
-		secretstream: [
-			format1SecretstreamVector(
-				"two files over five chunks, no password",
-				KEY_32,
-				{ fileCount: 2, maxReads: 1, expiresIn: 86_400 },
+			noteVector("two files, password typed in NFD: one message", {
+				linkKey: BASE_KEY_32_B,
+				settings: { fileCount: 2, maxReads: 3, expiresIn: 3600 },
+				payload: multiFilePayload,
+				streamHeader: STREAM_HEADER_24,
+				password: nfdPassword,
+				argon2: lightArgon2,
+			}),
+			noteVector(
+				"two files over five messages of 1,000 bytes: a message holds the end of one file and the start of the other",
 				{
-					text: "chunked",
-					contentMode: "text",
+					linkKey: KEY_32,
+					settings: { fileCount: 2, maxReads: 1, expiresIn: 86_400 },
+					payload: {
+						text: "messages",
+						contentMode: "text",
+						files: [
+							{
+								name: "a.bin",
+								type: "application/octet-stream",
+								size: 3000,
+								data: new Uint8Array(3000).map((_, i) => i % 251),
+							},
+							{
+								name: "b.txt",
+								type: "text/plain",
+								size: 1200,
+								data: new Uint8Array(1200).fill(0x62),
+							},
+						],
+					},
+					streamHeader: STREAM_HEADER_24,
+					messageSize: 1000,
+				},
+			),
+			noteVector("a long text over two messages: the head does not fit in the first", {
+				linkKey: BASE_KEY_32,
+				settings: { fileCount: 0, maxReads: 0, expiresIn: 300 },
+				payload: { text: "0123456789".repeat(500), contentMode: "markdown" },
+				streamHeader: STREAM_HEADER_24,
+				messageSize: 4096,
+			}),
+			noteVector("nothing but an empty file", {
+				linkKey: KEY_32,
+				settings: { ...oneDay, fileCount: 1 },
+				payload: {
 					files: [
-						{ name: "a.bin", type: "application/octet-stream", size: 10, data: streamFileA },
-						{ name: "b.txt", type: "text/plain", size: 4, data: streamFileB },
+						{
+							name: "empty.bin",
+							type: "application/octet-stream",
+							size: 0,
+							data: new Uint8Array(0),
+						},
 					],
 				},
-				4,
-			),
-			format1SecretstreamVector(
-				"text only, password: the head is the final chunk",
-				BASE_KEY_32_B,
-				{ fileCount: 0, maxReads: 0, expiresIn: 300 },
-				{ text: "only text", contentMode: "markdown" },
-				4,
-				nfdPassword,
-				lightArgon2,
-			),
+				streamHeader: STREAM_HEADER_24,
+			}),
+			noteVector("an empty payload: no text, no files", {
+				linkKey: KEY_32,
+				settings: oneDay,
+				payload: {},
+				streamHeader: STREAM_HEADER_24,
+			}),
 		],
+		invalid: {
+			fragments: [
+				{ description: "a key a character short", fragment: `1.${keyUrl.slice(0, -1)}` },
+				{ description: "a key a character too long", fragment: `1.${keyUrl}A` },
+				{
+					description: "a key whose last character carries stray bits",
+					fragment: `1.${keyUrl.slice(0, -1)}${lastWithStrayBits}`,
+				},
+				{ description: "a key padded as base64", fragment: `1.${keyUrl}=` },
+				{
+					description: "a key with a character outside base64url",
+					fragment: `1.+${keyUrl.slice(1)}`,
+				},
+				{ description: "no key", fragment: "1." },
+				{ description: "format 2", fragment: `2.${keyUrl}` },
+				{ description: "a format number with a leading zero", fragment: `01.${keyUrl}` },
+			],
+			envelopes: [
+				invalidEnvelope("nothing", new Uint8Array(0)),
+				invalidEnvelope("a byte short", plainEnvelope.subarray(0, 32)),
+				invalidEnvelope("a byte too many", new Uint8Array([...plainEnvelope, 0])),
+				invalidEnvelope("a password envelope a byte short", passwordEnvelope.subarray(0, 56)),
+				invalidEnvelope("format 0 in the format byte", withByte(plainEnvelope, 0, 0)),
+				invalidEnvelope("format 2", withByte(plainEnvelope, 0, 2)),
+				invalidEnvelope("an unknown key derivation", withByte(plainEnvelope, 1, 2)),
+				invalidEnvelope(
+					"a key derivation that calls for a password the envelope does not carry",
+					withByte(plainEnvelope, 1, 1),
+				),
+				invalidEnvelope(
+					"a password envelope whose key derivation says none",
+					withByte(passwordEnvelope, 1, 0),
+				),
+				invalidEnvelope("0 Argon2id iterations", withUint32(passwordEnvelope, 49, 0)),
+				invalidEnvelope("7 Argon2id iterations", withUint32(passwordEnvelope, 49, 7)),
+				invalidEnvelope("65,535 KiB of Argon2id memory", withUint32(passwordEnvelope, 53, 65_535)),
+				invalidEnvelope(
+					"524,289 KiB of Argon2id memory",
+					withUint32(passwordEnvelope, 53, 524_289),
+				),
+			],
+			notes: [
+				invalidNote("no message", []),
+				invalidNote(
+					"the final message missing: the stream stops on TAG_MESSAGE",
+					[textHalves[0] ?? new Uint8Array(0)],
+					{ tags: [MESSAGE] },
+				),
+				invalidNote("TAG_FINAL on a message before the last", textHalves, {
+					tags: [FINAL, FINAL],
+				}),
+				invalidNote("TAG_PUSH on a message before the last", textHalves, { tags: [PUSH, FINAL] }),
+				invalidNote("pushed with another envelope as additional data", [textBody], {
+					additionalData: envelopeBytes({ ...oneDay, maxReads: 2 }, STREAM_HEADER_24),
+				}),
+				invalidNote("pushed without additional data", [textBody], { additionalData: null }),
+				invalidNote("a body without padding", [textBody.subarray(0, 4 + textHead.length)]),
+				invalidNote("a body padded past its size class", [bodyOf(textHead, [], 8192)]),
+				invalidNote("a padding byte other than zero", [withByte(textBody, textBody.length - 1, 1)]),
+				invalidNote("a head longer than the body", [withHeadLength(textBody, textBody.length)]),
+				invalidNote("a head whose MessagePack runs past its length", [
+					withHeadLength(textBody, textHead.length - 1),
+				]),
+				invalidNote("a byte after the head's map, within its length", [
+					bodyOf(new Uint8Array([...textHead, 0])),
+				]),
+				invalidNote("a head that is an array", [bodyOf(encode(["invalid"]))]),
+				invalidNote("a head that is a timestamp extension", [bodyOf(encode(new Date(0)))]),
+				invalidNote("text that is not a string", [bodyOf(encode({ text: 5 }))]),
+				invalidNote("text: nil", [bodyOf(encode({ text: null }))]),
+				invalidNote("an unknown contentMode", [
+					bodyOf(encode({ text: "invalid", contentMode: "html" })),
+				]),
+				invalidNote("files that is not an array", [bodyOf(encode({ files: { name: "a" } }))], {
+					fileCount: 1,
+				}),
+				invalidNote(
+					"eleven files",
+					[
+						bodyOf(
+							encode({
+								files: Array.from({ length: 11 }, (_, i) => ({
+									name: `${String(i)}.txt`,
+									type: "text/plain",
+									size: 0,
+								})),
+							}),
+						),
+					],
+					{ fileCount: 11 },
+				),
+				invalidNote(
+					"a file without its size",
+					[bodyOf(oneFileHead({ name: "a", type: "text/plain" }))],
+					{
+						fileCount: 1,
+					},
+				),
+				invalidNote(
+					"a negative file size",
+					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: -1 }))],
+					{ fileCount: 1 },
+				),
+				invalidNote(
+					"a file size that is not an integer",
+					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 1.5 }), [new Uint8Array(1)])],
+					{ fileCount: 1 },
+				),
+				invalidNote(
+					"a file name that is not a string",
+					[bodyOf(oneFileHead({ name: 7, type: "text/plain", size: 0 }))],
+					{ fileCount: 1 },
+				),
+				invalidNote(
+					"fewer files than the envelope declares",
+					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 0 }))],
+					{ fileCount: 2 },
+				),
+				invalidNote(
+					"file sizes beyond the body",
+					[bodyOf(oneFileHead({ name: "a", type: "text/plain", size: 5000 }))],
+					{ fileCount: 1 },
+				),
+			],
+		},
 	};
 
 	// --- Build vectors object ---
 
 	const vectors = {
-		version: 4,
+		version: 5,
 		generatedWith: `libsodium-wrappers-sumo ${sodium.SODIUM_VERSION_STRING}`,
 		vectors: {
 			xchacha20poly1305: [
@@ -686,15 +971,9 @@ test("the committed test vectors match what the crypto produces", async () => {
 	}
 
 	// generatedWith only records the libsodium that wrote the file: another
-	// release producing the same bytes is no change. The secretstream headers
-	// and chunks are random, so they are taken as committed; so is the header
-	// inside a format 1 envelope, whose other bytes must match.
+	// release producing the same bytes is no change. The format 0 secretstream
+	// headers and chunks are random, so they are taken as committed.
 	const committed = JSON.parse(readFileSync(outPath, "utf8")) as typeof vectors;
-	const withCommittedHeader = (envelope: string, committedEnvelope: string | undefined) => {
-		const bytes = Buffer.from(envelope, "base64");
-		Buffer.from(committedEnvelope ?? "", "base64").copy(bytes, 10, 10, 34);
-		return bytes.toString("base64");
-	};
 	expect({
 		...vectors,
 		generatedWith: committed.generatedWith,
@@ -705,17 +984,6 @@ test("the committed test vectors match what the crypto produces", async () => {
 				header: committed.vectors.secretstream[i]?.header,
 				chunks: committed.vectors.secretstream[i]?.chunks,
 			})),
-			format1: {
-				...vectors.vectors.format1,
-				secretstream: vectors.vectors.format1.secretstream.map((v, i) => {
-					const written = committed.vectors.format1.secretstream[i];
-					return {
-						...v,
-						envelope: withCommittedHeader(v.envelope, written?.envelope),
-						chunks: written?.chunks,
-					};
-				}),
-			},
 		},
 	}).toEqual(committed);
 
@@ -726,6 +994,9 @@ test("the committed test vectors match what the crypto produces", async () => {
 	expect(vectors.vectors.secretstream).toHaveLength(2);
 	expect(vectors.vectors.format1.keys).toHaveLength(3);
 	expect(vectors.vectors.format1.envelopes).toHaveLength(2);
-	expect(vectors.vectors.format1.pipeline).toHaveLength(2);
-	expect(vectors.vectors.format1.secretstream).toHaveLength(2);
+	expect(vectors.vectors.format1.sizeClasses).toHaveLength(23);
+	expect(vectors.vectors.format1.notes).toHaveLength(6);
+	expect(vectors.vectors.format1.invalid.fragments).toHaveLength(8);
+	expect(vectors.vectors.format1.invalid.envelopes).toHaveLength(13);
+	expect(vectors.vectors.format1.invalid.notes).toHaveLength(25);
 }, 60_000);

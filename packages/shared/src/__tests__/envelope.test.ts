@@ -11,20 +11,18 @@ import {
 } from "../envelope.js";
 import { testVectors } from "../test-vectors/index.js";
 
-const nonce = new Uint8Array(24).map((_, i) => 0xa0 + i);
+const streamHeader = new Uint8Array(24).map((_, i) => 0xa0 + i);
 const salt = new Uint8Array(16).map((_, i) => 0xc0 + i);
 
-const singleShot: Envelope = {
-	kind: "single-shot",
-	nonce,
+const plain: Envelope = {
+	streamHeader,
 	fileCount: 2,
 	maxReads: 1000,
 	expiresIn: 2_592_000,
 };
 
-const chunked: Envelope = {
-	kind: "chunked",
-	streamHeader: nonce,
+const withPassword: Envelope = {
+	streamHeader,
 	fileCount: 0,
 	maxReads: 0,
 	expiresIn: 300,
@@ -34,15 +32,18 @@ const chunked: Envelope = {
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
 
 describe("encodeEnvelope", () => {
-	it("lays a single-shot envelope out as the protocol says", () => {
-		expect(hex(encodeEnvelope(singleShot))).toBe(
-			`01 00 00 02 03e8 00278d00 ${hex(nonce)}`.replaceAll(" ", ""),
+	it("lays an envelope out as the protocol says", () => {
+		expect(hex(encodeEnvelope(plain))).toBe(
+			`01 00 02 03e8 00278d00 ${hex(streamHeader)}`.replaceAll(" ", ""),
 		);
 	});
 
-	it("lays a chunked password envelope out as the protocol says", () => {
-		expect(hex(encodeEnvelope(chunked))).toBe(
-			`01 01 01 00 0000 0000012c ${hex(nonce)} ${hex(salt)} 00000003 00040000`.replaceAll(" ", ""),
+	it("lays a password envelope out as the protocol says", () => {
+		expect(hex(encodeEnvelope(withPassword))).toBe(
+			`01 01 00 0000 0000012c ${hex(streamHeader)} ${hex(salt)} 00000003 00040000`.replaceAll(
+				" ",
+				"",
+			),
 		);
 	});
 
@@ -54,22 +55,24 @@ describe("encodeEnvelope", () => {
 		["expiresIn", { expiresIn: 2 ** 32 }],
 		["expiresIn", { expiresIn: Number.NaN }],
 	])("refuses a %s that does not fit", (field, change) => {
-		expect(() => encodeEnvelope({ ...singleShot, ...change })).toThrow(
+		expect(() => encodeEnvelope({ ...plain, ...change })).toThrow(
 			new RegExp(`^${field} must be an integer from 0 to \\d+$`),
 		);
-		expect(() => encodeEnvelope({ ...singleShot, ...change })).toThrow(RangeError);
+		expect(() => encodeEnvelope({ ...plain, ...change })).toThrow(RangeError);
 	});
 
-	it("refuses a nonce or a stream header of the wrong length", () => {
-		expect(() => encodeEnvelope({ ...singleShot, nonce: new Uint8Array(23) })).toThrow(RangeError);
-		expect(() => encodeEnvelope({ ...chunked, streamHeader: new Uint8Array(25) })).toThrow(
-			"The nonce or stream header must be 24 bytes",
+	it("refuses a stream header of the wrong length", () => {
+		expect(() => encodeEnvelope({ ...plain, streamHeader: new Uint8Array(23) })).toThrow(
+			RangeError,
+		);
+		expect(() => encodeEnvelope({ ...withPassword, streamHeader: new Uint8Array(25) })).toThrow(
+			"The stream header must be 24 bytes",
 		);
 	});
 
 	it("refuses a salt of the wrong length", () => {
 		const argon2 = { salt: new Uint8Array(15), iterations: 3, memoryKiB: 262_144 };
-		expect(() => encodeEnvelope({ ...chunked, argon2 })).toThrow("The salt must be 16 bytes");
+		expect(() => encodeEnvelope({ ...withPassword, argon2 })).toThrow("The salt must be 16 bytes");
 	});
 
 	it.each([
@@ -78,16 +81,16 @@ describe("encodeEnvelope", () => {
 		["memoryKiB", ARGON2_MIN_ITERATIONS, ARGON2_MIN_MEMORY_KIB - 1],
 		["memoryKiB", ARGON2_MIN_ITERATIONS, ARGON2_MAX_MEMORY_KIB + 1],
 	])("refuses Argon2id %s a reader would not run", (field, iterations, memoryKiB) => {
-		expect(() => encodeEnvelope({ ...chunked, argon2: { salt, iterations, memoryKiB } })).toThrow(
-			`${field} must be an integer from`,
-		);
+		expect(() =>
+			encodeEnvelope({ ...withPassword, argon2: { salt, iterations, memoryKiB } }),
+		).toThrow(`${field} must be an integer from`);
 	});
 });
 
 describe("parseEnvelope", () => {
 	it("reads back what encodeEnvelope wrote", () => {
-		expect(parseEnvelope(encodeEnvelope(singleShot))).toEqual(singleShot);
-		expect(parseEnvelope(encodeEnvelope(chunked))).toEqual(chunked);
+		expect(parseEnvelope(encodeEnvelope(plain))).toEqual(plain);
+		expect(parseEnvelope(encodeEnvelope(withPassword))).toEqual(withPassword);
 	});
 
 	it("accepts the bounds of the Argon2id parameters", () => {
@@ -95,23 +98,23 @@ describe("parseEnvelope", () => {
 			[ARGON2_MIN_ITERATIONS, ARGON2_MIN_MEMORY_KIB],
 			[ARGON2_MAX_ITERATIONS, ARGON2_MAX_MEMORY_KIB],
 		] as const) {
-			const envelope = { ...chunked, argon2: { salt, iterations, memoryKiB } };
+			const envelope = { ...withPassword, argon2: { salt, iterations, memoryKiB } };
 			expect(parseEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
 		}
 	});
 
 	it("reads an envelope that sits inside a larger buffer", () => {
-		const bytes = encodeEnvelope(chunked);
+		const bytes = encodeEnvelope(withPassword);
 		const buffer = new Uint8Array(bytes.length + 7);
 		buffer.set(bytes, 7);
-		expect(parseEnvelope(buffer.subarray(7))).toEqual(chunked);
+		expect(parseEnvelope(buffer.subarray(7))).toEqual(withPassword);
 	});
 
-	it("copies the nonce and the salt out of the bytes it was given", () => {
-		const bytes = encodeEnvelope(chunked);
+	it("copies the stream header and the salt out of the bytes it was given", () => {
+		const bytes = encodeEnvelope(withPassword);
 		const envelope = parseEnvelope(bytes);
 		bytes.fill(0);
-		expect(envelope).toEqual(chunked);
+		expect(envelope).toEqual(withPassword);
 	});
 
 	const withByte = (envelope: Envelope, offset: number, value: number): Uint8Array => {
@@ -121,31 +124,31 @@ describe("parseEnvelope", () => {
 	};
 
 	const withUint32 = (offset: number, value: number): Uint8Array => {
-		const bytes = encodeEnvelope(chunked);
+		const bytes = encodeEnvelope(withPassword);
 		new DataView(bytes.buffer).setUint32(offset, value);
 		return bytes;
 	};
 
 	it.each([
 		["nothing", new Uint8Array(0)],
-		["a byte short", encodeEnvelope(singleShot).subarray(0, 33)],
-		["a byte too many", new Uint8Array([...encodeEnvelope(singleShot), 0])],
-		["format 0 as a format byte", withByte(singleShot, 0, 0)],
-		["format 2", withByte(singleShot, 0, FORMAT_1 + 1)],
-		["an unknown kind", withByte(singleShot, 1, 2)],
-		["an unknown derivation", withByte(singleShot, 2, 2)],
-		["a password envelope cut to the length of one without", withByte(singleShot, 2, 1)],
-		["a password envelope that lost its derivation byte", withByte(chunked, 2, 0)],
-		["0 iterations", withUint32(50, 0)],
-		["too many iterations", withUint32(50, ARGON2_MAX_ITERATIONS + 1)],
-		["too little memory", withUint32(54, ARGON2_MIN_MEMORY_KIB - 1)],
-		["too much memory", withUint32(54, ARGON2_MAX_MEMORY_KIB + 1)],
+		["a byte short", encodeEnvelope(plain).subarray(0, 32)],
+		["a byte too many", new Uint8Array([...encodeEnvelope(plain), 0])],
+		["a password envelope a byte short", encodeEnvelope(withPassword).subarray(0, 56)],
+		["format 0 as a format byte", withByte(plain, 0, 0)],
+		["format 2", withByte(plain, 0, FORMAT_1 + 1)],
+		["an unknown derivation", withByte(plain, 1, 2)],
+		["an envelope without a password that claims one", withByte(plain, 1, 1)],
+		["a password envelope that lost its derivation byte", withByte(withPassword, 1, 0)],
+		["0 iterations", withUint32(49, 0)],
+		["too many iterations", withUint32(49, ARGON2_MAX_ITERATIONS + 1)],
+		["too little memory", withUint32(53, ARGON2_MIN_MEMORY_KIB - 1)],
+		["too much memory", withUint32(53, ARGON2_MAX_MEMORY_KIB + 1)],
 	])("refuses %s", (_, bytes) => {
 		expect(parseEnvelope(bytes)).toBeUndefined();
 	});
 
 	it("leaves the settings to the server's limits", () => {
-		const bytes = encodeEnvelope({ ...singleShot, fileCount: 255, maxReads: 65_535 });
+		const bytes = encodeEnvelope({ ...plain, fileCount: 255, maxReads: 65_535 });
 		expect(parseEnvelope(bytes)).toMatchObject({ fileCount: 255, maxReads: 65_535 });
 	});
 });
@@ -155,11 +158,8 @@ describe("the envelope vectors", () => {
 
 	it("encode and parse to and from the recorded bytes", () => {
 		for (const v of testVectors.vectors.format1.envelopes) {
-			const start = b64(v.nonce);
 			const envelope: Envelope = {
-				...(v.kind === "single-shot"
-					? { kind: "single-shot", nonce: start }
-					: { kind: "chunked", streamHeader: start }),
+				streamHeader: b64(v.streamHeader),
 				fileCount: v.fileCount,
 				maxReads: v.maxReads,
 				expiresIn: v.expiresIn,
@@ -173,12 +173,14 @@ describe("the envelope vectors", () => {
 	});
 
 	it("parse in every note vector", () => {
-		const { pipeline, secretstream } = testVectors.vectors.format1;
-		for (const v of pipeline) {
-			expect(parseEnvelope(b64(v.envelope))?.kind, v.description).toBe("single-shot");
+		for (const v of testVectors.vectors.format1.notes) {
+			expect(parseEnvelope(b64(v.envelope)), v.description).toBeDefined();
 		}
-		for (const v of secretstream) {
-			expect(parseEnvelope(b64(v.envelope))?.kind, v.description).toBe("chunked");
+	});
+
+	it("are refused where a reader must refuse them", () => {
+		for (const v of testVectors.vectors.format1.invalid.envelopes) {
+			expect(parseEnvelope(b64(v.envelope)), v.description).toBeUndefined();
 		}
 	});
 });

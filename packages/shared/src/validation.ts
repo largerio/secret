@@ -15,7 +15,6 @@ import {
 	ENVELOPE_LENGTH,
 	ENVELOPE_LENGTH_WITH_PASSWORD,
 	type Envelope,
-	type EnvelopeKind,
 	parseEnvelope,
 } from "./envelope.js";
 
@@ -67,11 +66,10 @@ export interface AcceptedEnvelope {
 }
 
 /**
- * A format 1 envelope in base64: well formed, of the kind the endpoint
- * creates, and with settings within the protocol's limits, which format 0
- * requests state as fields.
+ * A format 1 envelope in base64: well formed, and with settings within the
+ * protocol's limits, which format 0 requests state as fields.
  */
-function envelopeSchema(kind: EnvelopeKind, minFiles = 0) {
+function envelopeSchema(minFiles = 0) {
 	return z
 		.base64()
 		.min(4 * Math.ceil(ENVELOPE_LENGTH / 3))
@@ -81,14 +79,13 @@ function envelopeSchema(kind: EnvelopeKind, minFiles = 0) {
 			const envelope = parseEnvelope(bytes);
 			if (
 				envelope === undefined ||
-				envelope.kind !== kind ||
 				envelope.fileCount < minFiles ||
 				envelope.fileCount > MAX_FILES_PER_NOTE ||
 				envelope.maxReads > MAX_READS ||
 				envelope.expiresIn < MIN_EXPIRY_SECONDS ||
 				envelope.expiresIn > MAX_EXPIRY_SECONDS
 			) {
-				ctx.addIssue({ code: "custom", message: `Invalid ${kind} envelope` });
+				ctx.addIssue({ code: "custom", message: "Invalid envelope" });
 				return z.NEVER;
 			}
 			return { bytes, envelope };
@@ -133,7 +130,7 @@ const verifiersMatchEnvelope = (data: {
 
 export const createNoteFormat1Schema = z
 	.object({
-		envelope: envelopeSchema("single-shot"),
+		envelope: envelopeSchema(),
 		...format1Verifiers,
 		encryptedData: z.string().min(1, "Encrypted data is required").max(MAX_ENCRYPTED_DATA_SIZE),
 	})
@@ -141,14 +138,14 @@ export const createNoteFormat1Schema = z
 
 export const createNoteMultipartFormat1Schema = z
 	.object({
-		envelope: envelopeSchema("single-shot", 1),
+		envelope: envelopeSchema(1),
 		...format1Verifiers,
 	})
 	.refine(verifiersMatchEnvelope, VERIFIERS_MATCH_ENVELOPE);
 
 export const chunkedUploadInitFormat1Schema = z
 	.object({
-		envelope: envelopeSchema("chunked"),
+		envelope: envelopeSchema(),
 		...format1Verifiers,
 		chunkCount: z.number().int().min(1).max(10000),
 	})
@@ -263,7 +260,7 @@ export type UploadSessionMetadata = z.infer<typeof uploadSessionMetadataSchema>;
  */
 export const uploadSessionFormat1MetadataSchema = z
 	.object({
-		envelope: envelopeSchema("chunked"),
+		envelope: envelopeSchema(),
 		linkVerifier: proofBytes("The link verifier, sealed by the server."),
 		passwordVerifier: proofBytes("The password verifier, sealed by the server.").optional(),
 	})

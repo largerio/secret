@@ -413,10 +413,13 @@ file names, MIME types or file bytes. It does learn:
   and whoever also holds `K` can test passwords against a password proof or
   verifier offline, at the cost of Argon2id, as against the ciphertext. Treat
   them as secrets: a proxy that logs request bodies must not keep them;
-- sizes. A single-shot ciphertext is the MessagePack payload plus 16 bytes,
-  which gives the length of the text and of the files together. A chunked
-  note shows the size of its head, and, since a piece never holds two files,
-  the size of each file.
+- sizes. In format 0, a single-shot ciphertext is the MessagePack payload
+  plus 16 bytes, which gives the length of the text and of the files
+  together. A chunked note shows the size of its head, and, since a piece
+  never holds two files, the size of each file. A format 1 note shows only
+  the [size class](#the-body) of its body, and the length of its messages,
+  which its writer picked: every note up to 4,096 bytes looks the same, and
+  a larger one is known to within 6.25%.
 
 ## Server layer
 
@@ -432,6 +435,9 @@ blob moved to another note fails to decrypt.
   (`notes.encrypted_data`) for a note without files, or in the storage for a
   note with files.
 - A chunked note stores every message as its own object: IV, ciphertext, tag.
+
+A format 1 note sent in one request is kept as a single-shot note, its one
+message as the ciphertext; one sent in a session, as a chunked note.
 
 A format 1 note's verifiers are not stored as they came, but sealed:
 
@@ -474,7 +480,7 @@ same writes, so a database that refuses writes tells a reader nothing.
 
 **Draft.** Instances accept and serve format 1, and the reference SDK reads it,
 but writes it only when asked to (`format: 1`). Its bytes may still change
-before it is marked final, with padding: do not write it outside tests yet. Instances keep reading and accepting format 0
+until it is marked final: do not write it outside tests yet. Instances keep reading and accepting format 0
 throughout the app's 1.x releases, so links already shared and clients that
 only speak format 0 keep working.
 
@@ -487,14 +493,16 @@ What changes from format 0:
   normalized to NFC, and the link's key enters the derivation;
 - the settings a writer declares travel in one **envelope**, which the
   ciphertext authenticates;
+- a note is always one secretstream, whose plaintext is
+  [padded](#the-body) to a size class: the server learns the class, not the
+  size of the text or of any file;
 - a read [proves](#proof-of-reading) that it holds the link, and the password
   of a password note, before the server serves anything: a wrong password
   spends no read, and whoever knows only the note's id can neither read nor
   burn it;
-- a reader checks the payload strictly.
+- a reader checks the note strictly.
 
-The payload, the two kinds of note, the way a chunked note is cut, and every
-endpoint not named below are those of format 0.
+The payload's keys, and every endpoint not named below, are those of format 0.
 
 ### Keys
 
@@ -578,41 +586,90 @@ never served.
 | Offset | Bytes | Field |
 |--------|-------|-------|
 | 0 | 1 | Format: 1 |
-| 1 | 1 | Kind: 0 single-shot, 1 chunked |
-| 2 | 1 | Key derivation: 0 none, 1 Argon2id with a password |
-| 3 | 1 | `fileCount` |
-| 4 | 2 | `maxReads`, unsigned big-endian |
-| 6 | 4 | `expiresIn` in seconds, unsigned big-endian |
-| 10 | 24 | The XChaCha20 nonce (single-shot), or the secretstream header (chunked) |
-| 34 | 16 | The salt (key derivation 1 only) |
-| 50 | 4 | Argon2id `t`, unsigned big-endian (key derivation 1 only) |
-| 54 | 4 | Argon2id `m` in KiB, unsigned big-endian (key derivation 1 only) |
+| 1 | 1 | Key derivation: 0 none, 1 Argon2id with a password |
+| 2 | 1 | `fileCount` |
+| 3 | 2 | `maxReads`, unsigned big-endian |
+| 5 | 4 | `expiresIn` in seconds, unsigned big-endian |
+| 9 | 24 | The secretstream header |
+| 33 | 16 | The salt (key derivation 1 only) |
+| 49 | 4 | Argon2id `t`, unsigned big-endian (key derivation 1 only) |
+| 53 | 4 | Argon2id `m` in KiB, unsigned big-endian (key derivation 1 only) |
 
-An envelope is 34 bytes without a password, 58 with one. A reader MUST refuse
-an envelope whose first byte is not 1, whose kind or key derivation is
-unknown, whose length is not the one its key derivation calls for, or whose
-Argon2id parameters fall outside the bounds above. It uses the envelope as it
+An envelope is 33 bytes without a password, 57 with one. A reader MUST refuse
+an envelope whose first byte is not 1, whose key derivation is unknown, whose
+length is not the one its key derivation calls for, or whose Argon2id
+parameters fall outside the bounds above. It uses the envelope as it
 received it, never re-encoded.
 
 The settings mean what they mean in format 0, and the envelope tells the
 server nothing format 0's fields do not, the Argon2id parameters aside. The
-server refuses (`400`) an envelope a reader would refuse, one of the wrong
-kind for the endpoint, or one whose settings exceed the protocol's limits
-(`fileCount` 0 to 10, at least 1 for a multipart upload, `maxReads` 0 to 1000,
-`expiresIn` 300 to 2,592,000), and applies the instance's limits as to a
-format 0 note. Envelopes travel in base64. A request that carries an
-`envelope` key, whatever its value (`null` included), is a format 1 request:
-format 0's fields beside it are ignored.
+server refuses (`400`) an envelope a reader would refuse, or one whose
+settings exceed the protocol's limits (`fileCount` 0 to 10, at least 1 for a
+multipart upload, `maxReads` 0 to 1000, `expiresIn` 300 to 2,592,000), and
+applies the instance's limits as to a format 0 note. Envelopes travel in
+base64. A request that carries an `envelope` key, whatever its value (`null`
+included), is a format 1 request: format 0's fields beside it are ignored.
 
-### Single-shot notes in format 1
+### The body
 
-1. Encode the payload as MessagePack, as in format 0.
-2. Draw a 24-byte nonce and build the envelope with it (kind 0).
-3. Encrypt with XChaCha20-Poly1305 IETF under the encryption key and the
-   nonce, with the envelope as additional data.
+The plaintext of a format 1 note is its **body**: the head, the file bytes,
+then padding.
 
-The note is sent with the envelope and the [verifiers](#keys-1) in place of
-format 0's fields:
+```
+body = len(head) || head || file 1 || ... || file n || padding
+```
+
+- `len(head)` is the head's length in bytes, 4 bytes unsigned big-endian.
+- The **head** is the payload without the file bytes, as MessagePack:
+  `text` and `contentMode` as in the [payload](#payload) and, for a note with
+  files, `files` as an array of `{name, type, size}` maps that lists every
+  file, empty ones included. A note without files has no `files` key. It is
+  the head of a format 0 chunked note.
+- Each file's bytes follow in turn, `size` bytes each, in the order of
+  `files`.
+- The **padding** is zero bytes, as many as make the body's length the
+  **size class** of the length without them,
+  `L = 4 + len(head) + the sum of the files' sizes`:
+
+```
+size class(L) = 4096                     when L <= 4096
+size class(L) = ceil(L / 2^z) * 2^z      otherwise, where E = floor(log2(L)),
+                                         S = floor(log2(E)) + 1, z = E - S
+```
+
+This is Padmé (Nikitin et al., *Reducing Metadata Leakage from Encrypted
+Files and Communication with PURBs*, PETS 2019) with a floor: every body up
+to 4,096 bytes, a password as much as a private key, has the same length, and
+a longer one is at most 6.25% longer than its content, 3.125% from 65,536
+bytes on. `E` is the bit length of `L` less one: compute in integers, as a
+floating-point `log2` may round up just below a power of two. A body of
+4,097 bytes is 4,352 long, one of 1,000,000 is 1,015,808.
+
+### Messages
+
+The writer opens a secretstream under the encryption key, builds the
+envelope with its header, and cuts the body into messages of `C` bytes, a
+length it picks: every message but the last holds `C` bytes, and the last
+holds the rest, 1 to `C` bytes. A body sent as one message is cut with `C`
+equal to its length. Every message is pushed with the envelope as additional
+data, and its ciphertext is 17 bytes longer than its plaintext. The last
+message, and only the last, carries `TAG_FINAL` (3); every other one carries
+`TAG_MESSAGE` (0).
+
+The cut ignores the body's content: a message can hold the end of the head
+and the start of a file, or bytes of two files.
+
+### Upload
+
+A note goes up as one message, in one request, or message by message, in an
+upload session. A writer SHOULD take the instance's `chunkSize` as `C`, so
+that its messages look like every other writer's there. The reference SDK
+sends a note without files as one message, and a note with files as one
+message when its body fits in `C`, in a session otherwise.
+
+In one request, the note is sent with the envelope and the
+[verifiers](#keys-1) in place of format 0's fields, and its one message as
+the ciphertext:
 
 ```
 POST /api/v1/notes
@@ -622,26 +679,19 @@ Content-Type: application/json
   "envelope": "<base64 envelope>",
   "linkVerifier": "<base64>",
   "passwordVerifier": "<base64>",
-  "encryptedData": "<base64 ciphertext>"
+  "encryptedData": "<base64 message>"
 }
 ```
 
 or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
-set to the same object without `encryptedData`. `passwordVerifier` is sent
-for a password note only: the server refuses (`400`) a format 1 write without
-a link verifier, without a password verifier for a password note, or with one
-for a note without a password. A verifier is 32 bytes. The answer is format
-0's.
+set to the same object without `encryptedData`, and the message as `data`.
+`passwordVerifier` is sent for a password note only: the server refuses
+(`400`) a format 1 write without a link verifier, without a password verifier
+for a password note, or with one for a note without a password. A verifier is
+32 bytes. The answer, and the limits on its size, are format 0's.
 
-### Chunked notes in format 1
-
-The writer opens a secretstream under the encryption key and builds the
-envelope with its header (kind 1). The messages, their tags and the way the
-files are cut are format 0's, but every message is pushed with the envelope
-as additional data.
-
-The upload session opens with the envelope, the verifiers and the number of
-messages:
+In an upload session, `/init` takes the envelope, the verifiers and the
+number of messages:
 
 ```
 POST /api/v1/notes/upload/init
@@ -651,7 +701,14 @@ Content-Type: application/json
 ```
 
 (with `passwordVerifier` too for a password note). The messages and
-`/complete` are sent as in format 0.
+`/complete` are sent as in format 0, so a message holds at most `chunkSize`
+bytes of the body.
+
+The server checks the lengths it sees against the body's rules: it refuses
+(`400`) a note whose body, the messages' length less 17 bytes each, is not a
+size class and, in a session, one whose messages before the last differ in
+length, or whose last message is longer than the first. A session is checked
+at `/complete`. The instance's limits apply to the padded body.
 
 ### Proof of reading
 
@@ -692,18 +749,16 @@ link and a wrong password alike, and their message is meant for a developer;
 the answer does not say whether the note is gone: `/exists` does, with
 `passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.
 
-Once the proofs check out, the server serves the note as format 0's reads do,
-and spends a read the same way, once it has loaded the ciphertext. It answers
-`200`, `Content-Type: application/octet-stream`, with:
+Once the proofs check out, the server serves the note, and spends a read as
+format 0's reads do, once it has loaded the first message. It answers `200`,
+`Content-Type: application/octet-stream`, with the note's messages as
+`/stream` serves them, each preceded by its length, whether the note went up
+in one request or in a session. The headers are those of `/stream` but for
+`X-Stream-Header` and `X-Salt`: `X-Chunk-Count` gives the number of
+messages.
 
-- for a single-shot note, the ciphertext, and the headers of `/raw` but for
-  `X-Client-Nonce` and `X-Salt`;
-- for a chunked note, the length-prefixed messages of `/stream`, and its
-  headers but for `X-Stream-Header` and `X-Salt`.
-
-The reader knows which from the envelope's kind, as `X-Chunk-Count` only
-confirms, and opens the note with the
-envelope it derived the proofs from. `/raw`, `/stream` and the JSON endpoint
+The reader opens the messages with the envelope it derived the proofs from.
+`/raw`, `/stream` and the JSON endpoint
 serve format 0 only: they answer `400` to a format 1 note without spending a
 read, so a client that knows only format 0 never spends one on it. The link a
 reader holds decides the format it reads: a note behind the link of the other
@@ -713,8 +768,9 @@ format is refused, not opened.
 
 In `/exists`, the settings of a format 1 note come from its envelope:
 `hasPassword`, `fileCount`, `maxReads`, and `expiresAt` from its `expiresIn`.
-`chunked` is true for a note of the chunked kind. A reader goes by the
-envelope, which the ciphertext authenticates, not by these fields.
+`chunked` is true for a note that went up in a session; a format 1 reader
+has no use for it. A reader goes by the envelope, which the ciphertext
+authenticates, not by these fields.
 
 A format 1 reader MUST refuse, before it sends a proof:
 
@@ -724,23 +780,23 @@ A format 1 reader MUST refuse, before it sends a proof:
 
 Once it has read the note, it MUST refuse:
 
-- a payload, or the head of a chunked note, that is not one MessagePack map
-  (an extension type, a timestamp included, is not a map) with nothing after
-  it, whose `text` is not a string, whose `contentMode` is
-  not one of the three values, or whose `files` is not an array of at most 10
-  entries;
+- a message before the last whose tag is not `TAG_MESSAGE`, and a last one
+  whose tag is not `TAG_FINAL`;
+- a body shorter than 4 bytes, or than 4 bytes and the head's length;
+- a head that is not one MessagePack map (an extension type, a timestamp
+  included, is not a map) filling its length exactly, whose `text` is not a
+  string, whose `contentMode` is not one of the three values, or whose
+  `files` is not an array of at most 10 entries;
 - a file whose `name` or `type` is not a string, or whose `size` is not a
-  non-negative integer, a missing key included; in a single-shot note, a file whose `data` is not
-  `bin` or whose length is not `size`;
-- a payload with another number of files than the envelope's `fileCount`;
-- in a chunked note, a message before the last whose tag is not `TAG_MESSAGE`,
-  a last one whose tag is not `TAG_FINAL`, and file bytes that fall short of
-  the declared sizes or exceed them.
+  non-negative integer, a missing key included;
+- a head with another number of files than the envelope's `fileCount`;
+- file sizes whose sum exceeds the bytes after the head;
+- a body whose length is not the size class of `L`, or whose padding holds a
+  byte other than zero.
 
 A key present with the value `nil` is not absent: `text: nil` is refused. A
-reader ignores keys it does not know. It need not check where the file bytes
-were cut, nor the length of each message: the tags and the declared sizes are
-enough.
+reader ignores keys it does not know. It need not check the length of each
+message: the server does, and the tags and the body's length are enough.
 
 A writer writes each key of a map once, as a `str`, strings in valid UTF-8
 (a lone surrogate written as U+FFFD), and `size` as an `int`. The reference reader keeps the last of a repeated key,
@@ -767,19 +823,24 @@ and, under `format1`:
 |---------|-------------------|
 | `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK, the encryption key, the proofs and their verifiers. |
 | `envelopes` | Envelopes, from their fields to their bytes. |
-| `pipeline` | Single-shot notes, from the payload to the ciphertext under its envelope. |
-| `secretstream` | Chunked notes. Their envelopes hold a random stream header, so these were written once. |
+| `sizeClasses` | Lengths and their size class: the floor, and either side of the lengths where `z` changes. |
+| `notes` | Notes, from the payload to the head, the body and the messages. |
+| `invalid` | What a reader MUST refuse: fragments, envelopes, and notes whose messages break a rule of the stream or of the body, each with the key that opens it. |
 
 The file's `version` field counts revisions of the file, not formats. In the
-`secretstream` vectors, `headerMsgpack` is the head's plaintext and `header`
-the secretstream header, which format 1 vectors carry inside their envelope,
-at offset 10. In `format1.envelopes`, `nonce` holds the nonce or the stream
-header, and the key derivation is Argon2id when `argon2` is present. Bytes are
-in base64 throughout, file `data` included. The `chunkSize` of the
-`secretstream` vectors only says where the file bytes are cut: their heads are
-longer than it, which an instance with that chunk size would refuse.
+format 0 `secretstream` vectors, `headerMsgpack` is the head's plaintext and
+`header` the secretstream header; a format 1 note carries its header inside
+its envelope, at offset 9. In `format1.envelopes`, the key derivation is
+Argon2id when `argon2` is present. Bytes are in base64 throughout, file
+`data` included. The `chunkSize` of the format 0 `secretstream` vectors only
+says where the file bytes are cut: their heads are longer than it, which an
+instance with that chunk size would refuse. The `messageSize` of a
+`format1.notes` vector is its `C`. A writer draws its stream header at
+random, but the format 1 vectors fix it: libsodium's
+`crypto_secretstream_xchacha20poly1305_init_pull` makes, from a header, the
+state of a writer that drew it, which pushes as well as it pulls.
 
 The vectors are frozen. The repository checks them against libsodium and
 against a second implementation that shares no code with it, OpenSSL through
-`node:crypto` (`vectors-openssl.test.ts`), secretstream aside. A new client
-should pass all of them.
+`node:crypto` (`vectors-openssl.test.ts`). A new client should pass all of
+them.
