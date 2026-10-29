@@ -29,4 +29,14 @@ describe("isKeyFragment", () => {
 		expect(isKeyFragment(KEY.replace("_", "/"))).toBe(false);
 		expect(isKeyFragment("")).toBe(false);
 	});
+
+	it("accepts a format 1 key, which names its format", () => {
+		expect(isKeyFragment(`1.${KEY}`)).toBe(true);
+	});
+
+	it("refuses another format number, or a format 1 key cut short", () => {
+		expect(isKeyFragment(`2.${KEY}`)).toBe(false);
+		expect(isKeyFragment(`1.${KEY.slice(0, 30)}`)).toBe(false);
+		expect(isKeyFragment(`1${KEY}`)).toBe(false);
+	});
 });

@@ -60,6 +60,69 @@ export interface SecretstreamVector {
 	readonly chunks: ReadonlyArray<string>;
 }
 
+/** Argon2id parameters as a format 1 envelope stores them. */
+export interface Format1Argon2Vector {
+	readonly salt: string;
+	readonly iterations: number;
+	readonly memoryKiB: number;
+}
+
+/** Format 1's key schedule, from the link's key (and a password) to the encryption key. */
+export interface Format1KeyVector {
+	readonly description: string;
+	readonly linkKey: string;
+	readonly keyFragment: string;
+	/** As typed: possibly not in NFC, which the derivation normalizes to. */
+	readonly password?: string;
+	readonly argon2?: Format1Argon2Vector;
+	/** Argon2id over the UTF-8 of the password in NFC. */
+	readonly stretchedPassword?: string;
+	/** HKDF-Extract, without salt, over the link's key and the stretched password. */
+	readonly prk: string;
+	/** HKDF-Expand of the PRK with the info `secret/1 enc`. */
+	readonly encryptionKey: string;
+}
+
+export interface Format1EnvelopeVector {
+	readonly description: string;
+	readonly kind: "single-shot" | "chunked";
+	readonly fileCount: number;
+	readonly maxReads: number;
+	readonly expiresIn: number;
+	/** The nonce, or the stream header. */
+	readonly nonce: string;
+	readonly argon2?: Format1Argon2Vector;
+	readonly envelope: string;
+}
+
+/** A single-shot format 1 note: the envelope is the ciphertext's additional data. */
+export interface Format1PipelineVector {
+	readonly description: string;
+	readonly keyFragment: string;
+	readonly password?: string;
+	readonly encryptionKey: string;
+	readonly envelope: string;
+	readonly payload: PipelineVector["payload"];
+	readonly payloadMsgpack: string;
+	readonly ciphertext: string;
+}
+
+/**
+ * A chunked format 1 note, written once: its envelope holds the stream's random
+ * header. Every chunk is pushed with the envelope as additional data.
+ */
+export interface Format1SecretstreamVector {
+	readonly description: string;
+	readonly keyFragment: string;
+	readonly password?: string;
+	readonly encryptionKey: string;
+	readonly envelope: string;
+	readonly chunkSize: number;
+	readonly payload: PipelineVector["payload"];
+	readonly headerMsgpack: string;
+	readonly chunks: ReadonlyArray<string>;
+}
+
 export interface EncodingVector {
 	readonly description: string;
 	readonly raw: string;
@@ -75,6 +138,12 @@ export interface TestVectors {
 		readonly pipeline: ReadonlyArray<PipelineVector>;
 		readonly secretstream: ReadonlyArray<SecretstreamVector>;
 		readonly encoding: ReadonlyArray<EncodingVector>;
+		readonly format1: {
+			readonly keys: ReadonlyArray<Format1KeyVector>;
+			readonly envelopes: ReadonlyArray<Format1EnvelopeVector>;
+			readonly pipeline: ReadonlyArray<Format1PipelineVector>;
+			readonly secretstream: ReadonlyArray<Format1SecretstreamVector>;
+		};
 	};
 }
 

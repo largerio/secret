@@ -1,5 +1,5 @@
 {
-	"version": 2,
+	"version": 3,
 	"generatedWith": "libsodium-wrappers-sumo 1.0.22",
 	"vectors": {
 		"xchacha20poly1305": [
@@ -239,6 +239,160 @@
 				"raw": "/////////////////////w==",
 				"base64url": "_____________________w"
 			}
-		]
+		],
+		"format1": {
+			"keys": [
+				{
+					"description": "no password: the link's key alone",
+					"linkKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+					"keyFragment": "1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+					"prk": "Rr0yBgXFprYWOrcLxjRbkqX5COef5Yl5wj67R9Gl4wc=",
+					"encryptionKey": "nSTGa9G436ID63MpzquTQQIGIe99dXi5IYI5RHh3dCc="
+				},
+				{
+					"description": "password, with the parameters a writer uses",
+					"linkKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+					"keyFragment": "1.ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+					"password": "test-password-123",
+					"argon2": {
+						"salt": "wMHCw8TFxsfIycrLzM3Ozw==",
+						"iterations": 3,
+						"memoryKiB": 262144
+					},
+					"stretchedPassword": "4IVIfNB6+YPTBWEyRiCncNUoyx4FA/QQsiTYfUcDDPY=",
+					"prk": "EeFPevwLKyUZ+92djVi7WjrPLUwv19CdsiSSaU1X3Xk=",
+					"encryptionKey": "mXh4OGLJG4mqmOkl7caHc7HKQjuOfiXYhlPTYfF9MRc="
+				},
+				{
+					"description": "password typed in NFD, light parameters",
+					"linkKey": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+					"keyFragment": "1.QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+					"password": "Pässwörd-2!🔒",
+					"argon2": {
+						"salt": "0NHS09TV1tfY2drb3N3e3w==",
+						"iterations": 1,
+						"memoryKiB": 65536
+					},
+					"stretchedPassword": "jBn/ibkpjoaG6gTLSsQibV2+9YkWtexOjrSLnF4ekYQ=",
+					"prk": "JUxQ1gls3+4QLk4R+aoNSmdbxj9aoZI9HrforTRDvDE=",
+					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA="
+				}
+			],
+			"envelopes": [
+				{
+					"description": "single-shot note, no password",
+					"kind": "single-shot",
+					"fileCount": 0,
+					"maxReads": 1,
+					"expiresIn": 86400,
+					"nonce": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3",
+					"envelope": "AQAAAAABAAFRgKChoqOkpaanqKmqq6ytrq+wsbKztLW2tw=="
+				},
+				{
+					"description": "chunked note with a password",
+					"kind": "chunked",
+					"fileCount": 3,
+					"maxReads": 0,
+					"expiresIn": 2592000,
+					"nonce": "4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3",
+					"argon2": {
+						"salt": "wMHCw8TFxsfIycrLzM3Ozw==",
+						"iterations": 3,
+						"memoryKiB": 262144
+					},
+					"envelope": "AQEBAwAAACeNAODh4uPk5ebn6Onq6+zt7u/w8fLz9PX298DBwsPExcbHyMnKy8zNzs8AAAADAAQAAA=="
+				}
+			],
+			"pipeline": [
+				{
+					"description": "text-only note, no password",
+					"keyFragment": "1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+					"encryptionKey": "nSTGa9G436ID63MpzquTQQIGIe99dXi5IYI5RHh3dCc=",
+					"envelope": "AQAAAAABAAFRgKChoqOkpaanqKmqq6ytrq+wsbKztLW2tw==",
+					"payload": {
+						"text": "Hello, world!",
+						"contentMode": "text"
+					},
+					"payloadMsgpack": "gqR0ZXh0rUhlbGxvLCB3b3JsZCGrY29udGVudE1vZGWkdGV4dA==",
+					"ciphertext": "bVXPpaRzJV11Dfg4eK+qB0Qy7oDQRPgSzjAmLhSBAwwOwG2wd1jWOsBT/oAsoJWeF1t4EEY="
+				},
+				{
+					"description": "two files, password typed in NFD",
+					"keyFragment": "1.QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+					"password": "Pässwörd-2!🔒",
+					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA=",
+					"envelope": "AQABAgADAAAOEKChoqOkpaanqKmqq6ytrq+wsbKztLW2t9DR0tPU1dbX2Nna29zd3t8AAAABAAEAAA==",
+					"payload": {
+						"text": "two files",
+						"contentMode": "text",
+						"files": [
+							{
+								"name": "a.txt",
+								"type": "text/plain",
+								"size": 14,
+								"data": "ZmlsZSBBIGNvbnRlbnQ="
+							},
+							{
+								"name": "b.bin",
+								"type": "application/octet-stream",
+								"size": 6,
+								"data": "AAEC/f7/"
+							}
+						]
+					},
+					"payloadMsgpack": "g6R0ZXh0qXR3byBmaWxlc6tjb250ZW50TW9kZaR0ZXh0pWZpbGVzkoSkbmFtZaVhLnR4dKR0eXBlqnRleHQvcGxhaW6kc2l6ZQ6kZGF0YcQOZmlsZSBBIGNvbnRlbnSEpG5hbWWlYi5iaW6kdHlwZbhhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW2kc2l6ZQakZGF0YcQGAAEC/f7/",
+					"ciphertext": "jh7D1uvvbGO5IBpZiQ9LugWalYgumulMbf0q+H08v7YVpCEECNc8Z9iv8A7fwcEHd8Qc6R5pgsnhzGQsRglYb+U3ALEYX99d53YURmvaQC613qNJVe1CndpZO1V0b36F5q6GAC+C86whKztpS/9yA/sDfE3ugZpgvcnb/sYOenygf3VzJvREtMF9/vrm0FDqhYUM37urNRluevA59MPVmPI9G6wNoZItSaUpRA=="
+				}
+			],
+			"secretstream": [
+				{
+					"description": "two files over five chunks, no password",
+					"keyFragment": "1.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+					"encryptionKey": "nSTGa9G436ID63MpzquTQQIGIe99dXi5IYI5RHh3dCc=",
+					"envelope": "AQEAAgABAAFRgBeaJx72r22y+IoAVruSnAmZkQxYnuE1YA==",
+					"chunkSize": 4,
+					"payload": {
+						"text": "chunked",
+						"contentMode": "text",
+						"files": [
+							{
+								"name": "a.bin",
+								"type": "application/octet-stream",
+								"size": 10,
+								"data": "AAECAwQFBgcICQ=="
+							},
+							{
+								"name": "b.txt",
+								"type": "text/plain",
+								"size": 4,
+								"data": "dGFpbA=="
+							}
+						]
+					},
+					"headerMsgpack": "g6R0ZXh0p2NodW5rZWSrY29udGVudE1vZGWkdGV4dKVmaWxlc5KDpG5hbWWlYS5iaW6kdHlwZbhhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW2kc2l6ZQqDpG5hbWWlYi50eHSkdHlwZap0ZXh0L3BsYWlupHNpemUE",
+					"chunks": [
+						"l0EDfKLgZD5pIxG2JJONuFg/zoRQN/qfSvdbSY5EqU9P2nuPY023K/0bqUUv6vlzlfXHAg7Kil67hZ2/ap+MWZMPj7heUozdeE1GZyzHnyVyYeg24WFNgFHX4sVtdfLjlIAQAxqNF7HKyN7LutGke3cK2XVENzeTczD2Wi550c0xbrYtuyxh5U4=",
+						"6Wke00Ou4R+GHW4BFvbrUr8QScDc",
+						"SQqaB9dQoMhQPMKTP3yc42QcDZkq",
+						"fAXKyK0FT2YH5SqCEOIgdMZhtA==",
+						"w+ty7TVbyHp9AvpK1d/yNjkWMz9u"
+					]
+				},
+				{
+					"description": "text only, password: the head is the final chunk",
+					"keyFragment": "1.QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+					"password": "Pässwörd-2!🔒",
+					"encryptionKey": "CBj/NjzI7AskC1lHgCHbpIYkY59WDs7IV5YdrjeYHwA=",
+					"envelope": "AQEBAAAAAAABLIDbu3FpvmHLpferDmd95hGgX5J9jdoh5tDR0tPU1dbX2Nna29zd3t8AAAABAAEAAA==",
+					"chunkSize": 4,
+					"payload": {
+						"text": "only text",
+						"contentMode": "markdown"
+					},
+					"headerMsgpack": "gqR0ZXh0qW9ubHkgdGV4dKtjb250ZW50TW9kZahtYXJrZG93bg==",
+					"chunks": ["QCUhv4JoFyIhCuGcLCAw2y7Hyt2O7Bo+O2qXpsjAbrSowfV8yf0EoNjEF9a6xLy+gcvLvdww"]
+				}
+			]
+		}
 	}
 }

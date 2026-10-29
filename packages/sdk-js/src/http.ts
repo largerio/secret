@@ -244,9 +244,14 @@ export async function getJson<T>(
 	return res.json() as Promise<T>;
 }
 
+/** Format 0 sends the nonce, format 1 its envelope, which X-Envelope carries. */
+export type RawNoteOpening =
+	| { readonly format: 0; readonly nonceBytes: Uint8Array }
+	| { readonly format: 1; readonly envelope: Uint8Array };
+
 export interface RawNoteResponse {
 	readonly encryptedBytes: Uint8Array;
-	readonly nonceBytes: Uint8Array;
+	readonly opening: RawNoteOpening;
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
 	readonly createdAt: string;
@@ -272,7 +277,10 @@ export async function getNoteRaw(
 	}
 
 	const headers = res.headers;
-	const clientNonce = getRequiredHeader(headers, "X-Client-Nonce");
+	const envelope = headers.get("X-Envelope");
+	const opening: RawNoteOpening = envelope
+		? { format: 1, envelope: safeAtob(envelope) }
+		: { format: 0, nonceBytes: safeAtob(getRequiredHeader(headers, "X-Client-Nonce")) };
 	const hasPassword = headers.get("X-Has-Password") === "true";
 	const fileCount = parsePositiveInt(headers.get("X-File-Count"), 0);
 	const createdAt = getRequiredHeader(headers, "X-Created-At");
@@ -299,11 +307,9 @@ export async function getNoteRaw(
 		return new Blob(chunks as BlobPart[]).arrayBuffer();
 	});
 
-	const nonceBytes = safeAtob(clientNonce);
-
 	return {
 		encryptedBytes: new Uint8Array(data),
-		nonceBytes,
+		opening,
 		hasPassword,
 		fileCount,
 		createdAt,
@@ -454,8 +460,13 @@ export async function completeChunkedUpload(
 
 // --- Chunked download HTTP function ---
 
+/** Format 0 sends the stream header, format 1 its envelope, which holds it. */
+export type StreamNoteOpening =
+	| { readonly format: 0; readonly streamHeader: string }
+	| { readonly format: 1; readonly envelope: Uint8Array };
+
 export interface StreamNoteResponse {
-	readonly streamHeader: string;
+	readonly opening: StreamNoteOpening;
 	readonly chunkCount: number;
 	readonly hasPassword: boolean;
 	readonly fileCount: number;
@@ -483,7 +494,10 @@ export async function getNoteStream(
 	}
 
 	const headers = res.headers;
-	const streamHeader = getRequiredHeader(headers, "X-Stream-Header");
+	const envelope = headers.get("X-Envelope");
+	const opening: StreamNoteOpening = envelope
+		? { format: 1, envelope: safeAtob(envelope) }
+		: { format: 0, streamHeader: getRequiredHeader(headers, "X-Stream-Header") };
 	const chunkCount = parsePositiveInt(headers.get("X-Chunk-Count"), 0);
 	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
 		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
@@ -518,7 +532,7 @@ export async function getNoteStream(
 	}
 
 	return {
-		streamHeader,
+		opening,
 		chunkCount,
 		hasPassword,
 		fileCount,

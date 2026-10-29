@@ -18,11 +18,12 @@ export function splitShareUrl(url: string): ShareUrlParts {
 }
 
 /**
- * Whether a URL fragment can be a note key: 32 bytes in unpadded base64url.
- * Checked before reading, because a read is spent before the key is used —
- * a link cut short by a chat app would otherwise burn reads on a key that
- * can never work, each failure looking like a wrong password.
+ * Whether a URL fragment can be a note key: 32 bytes in unpadded base64url,
+ * after `1.` for a format 1 note. Checked before reading, because a read is
+ * spent before the key is used — a link cut short by a chat app would
+ * otherwise burn reads on a key that can never work, each failure looking
+ * like a wrong password.
  */
 export function isKeyFragment(fragment: string): boolean {
-	return /^[A-Za-z0-9_-]{43}$/.test(fragment);
+	return /^(1\.)?[A-Za-z0-9_-]{43}$/.test(fragment);
 }

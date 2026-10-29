@@ -39,6 +39,11 @@ export {
 export type {
 	Argon2idVector,
 	EncodingVector,
+	Format1Argon2Vector,
+	Format1EnvelopeVector,
+	Format1KeyVector,
+	Format1PipelineVector,
+	Format1SecretstreamVector,
 	PipelineVector,
 	SecretstreamVector,
 	TestVectors,

@@ -18,6 +18,7 @@ import {
 	toBase64,
 	zeroMemory,
 } from "@largerio/secret-crypto/client";
+import type { StateAddress } from "libsodium-wrappers-sumo";
 import { SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { ContentMode, NotePayload } from "./types.js";
 
@@ -168,49 +169,8 @@ export async function encryptNoteChunked(
 	}
 
 	try {
-		// Initialize secretstream
 		const { state, header } = initStreamEncrypt(encryptionKey);
-
-		// Encode header chunk: text + file metadata (no file data)
-		const headerPayload: StreamingHeader = {
-			...(payload.text !== undefined ? { text: payload.text } : {}),
-			...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
-			...(payload.files && payload.files.length > 0
-				? {
-						files: payload.files.map((f) => ({
-							name: f.name,
-							type: f.type,
-							size: f.data.length,
-						})),
-					}
-				: {}),
-		};
-		const headerBytes = encodeRaw(headerPayload);
-
-		const chunks: Uint8Array[] = [];
-		// An empty file gets no chunk, so the stream ends on the last chunk of
-		// the last file with data, which need not be the last file.
-		let lastFileWithData = -1;
-		for (const [fi, file] of (payload.files ?? []).entries()) {
-			if (file.data.length > 0) lastFileWithData = fi;
-		}
-		const hasMoreData = lastFileWithData !== -1;
-
-		// Encrypt header chunk (only final if no file data follows)
-		chunks.push(cryptoEncryptChunk(state, headerBytes, !hasMoreData));
-
-		// Stream file data chunk by chunk (never hold more than chunkSize in memory)
-		if (payload.files && hasMoreData) {
-			for (const [fi, file] of payload.files.entries()) {
-				for (let offset = 0; offset < file.data.length; offset += chunkSize) {
-					const end = Math.min(offset + chunkSize, file.data.length);
-					const slice = file.data.subarray(offset, end);
-					const isLastChunk = fi === lastFileWithData && end >= file.data.length;
-					chunks.push(cryptoEncryptChunk(state, slice, isLastChunk));
-				}
-			}
-		}
-
+		const chunks = pushChunkedNote(state, payload, chunkSize);
 		const keyFragment = keyToBase64Url(baseKey);
 
 		return {
@@ -233,6 +193,59 @@ export async function encryptNoteChunked(
 	}
 }
 
+/**
+ * A chunked note's chunks, pushed on an open secretstream: first its head (text
+ * and file metadata, no file bytes), then each file's bytes cut at chunkSize.
+ * The last chunk, and only it, is FINAL. Format 1 authenticates its envelope
+ * with every chunk as additional data.
+ */
+export function pushChunkedNote(
+	state: StateAddress,
+	payload: NotePayload,
+	chunkSize: number,
+	additionalData: Uint8Array | null = null,
+): Uint8Array[] {
+	const headerPayload: StreamingHeader = {
+		...(payload.text !== undefined ? { text: payload.text } : {}),
+		...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
+		...(payload.files && payload.files.length > 0
+			? {
+					files: payload.files.map((f) => ({
+						name: f.name,
+						type: f.type,
+						size: f.data.length,
+					})),
+				}
+			: {}),
+	};
+	const headerBytes = encodeRaw(headerPayload);
+
+	const chunks: Uint8Array[] = [];
+	// An empty file gets no chunk, so the stream ends on the last chunk of
+	// the last file with data, which need not be the last file.
+	let lastFileWithData = -1;
+	for (const [fi, file] of (payload.files ?? []).entries()) {
+		if (file.data.length > 0) lastFileWithData = fi;
+	}
+	const hasMoreData = lastFileWithData !== -1;
+
+	// Encrypt header chunk (only final if no file data follows)
+	chunks.push(cryptoEncryptChunk(state, headerBytes, !hasMoreData, additionalData));
+
+	// Stream file data chunk by chunk (never hold more than chunkSize in memory)
+	if (payload.files && hasMoreData) {
+		for (const [fi, file] of payload.files.entries()) {
+			for (let offset = 0; offset < file.data.length; offset += chunkSize) {
+				const end = Math.min(offset + chunkSize, file.data.length);
+				const slice = file.data.subarray(offset, end);
+				const isLastChunk = fi === lastFileWithData && end >= file.data.length;
+				chunks.push(cryptoEncryptChunk(state, slice, isLastChunk, additionalData));
+			}
+		}
+	}
+	return chunks;
+}
+
 // Streaming header: file metadata without data bytes
 interface StreamingFileHeader {
 	readonly name: string;
@@ -240,13 +253,13 @@ interface StreamingFileHeader {
 	readonly size: number;
 }
 
-interface StreamingHeader {
+export interface StreamingHeader {
 	readonly text?: string;
 	readonly contentMode?: ContentMode;
 	readonly files?: ReadonlyArray<StreamingFileHeader>;
 }
 
-const CONTENT_MODES: ReadonlySet<string> = new Set(["text", "markdown", "secret"]);
+export const CONTENT_MODES: ReadonlySet<string> = new Set(["text", "markdown", "secret"]);
 
 /**
  * The non-chunked path validates its decoded payload (`isNotePayload`); this one
@@ -304,80 +317,11 @@ export async function decryptNoteChunked(
 	}
 
 	try {
-		const state = initStreamDecrypt(fromBase64(streamHeader), decryptionKey);
-
-		// Decrypt header chunk (first chunk)
-		const firstChunk = encryptedChunks[0];
-		if (!firstChunk) {
-			throw new Error("No chunks to decrypt");
-		}
-		const { decrypted: headerBytes, isFinal: headerIsFinal } = cryptoDecryptChunk(
-			state,
-			firstChunk,
-		);
-
-		// Decode header to get file metadata
-		const decoded = decodeRawBytes(headerBytes);
-		if (!isStreamingHeader(decoded)) {
-			throw new SecretDecryptionError();
-		}
-		const headerData = decoded;
-		const fileMeta = headerData.files ?? [];
-
-		// The stream must end on its FINAL chunk, and nothing may follow it.
-		// secretstream authenticates every chunk and their order, but only the
-		// FINAL tag proves none were dropped from the end: without this check a
-		// server serving the header chunk alone handed back empty files.
-		const isLastChunk = encryptedChunks.length === 1;
-		if (headerIsFinal !== isLastChunk) {
-			throw new Error("Encrypted stream is truncated or extended");
-		}
-
-		// The header was the only chunk (text-only note or note with 0-byte files)
-		if (headerIsFinal) {
-			if (fileMeta.some((f) => f.size > 0)) {
-				throw new Error("Encrypted stream is truncated or extended");
-			}
-			return buildPayload(
-				headerData,
-				fileMeta.map((f) => ({
-					name: f.name,
-					type: f.type,
-					size: f.size,
-					data: new Uint8Array(0),
-				})),
-			);
-		}
-
-		// Decrypt remaining chunks and concatenate all file bytes
-		const dataChunks: Uint8Array[] = [];
-		const lastIndex = encryptedChunks.length - 1;
-		for (const [index, chunk] of encryptedChunks.entries()) {
-			if (index === 0) continue;
-			const { decrypted, isFinal } = cryptoDecryptChunk(state, chunk);
-			if (isFinal !== (index === lastIndex)) {
-				throw new Error("Encrypted stream is truncated or extended");
-			}
-			dataChunks.push(decrypted);
-		}
-
-		const totalData = concatUint8Arrays(dataChunks);
-
-		// Distribute bytes to files based on metadata sizes. subarray() clamps
-		// silently if the decrypted stream is shorter than the header claims, so
-		// validate each slice length explicitly (defense in depth — the stream
-		// is already authenticated) rather than returning truncated file data.
-		let byteOffset = 0;
-		const files = fileMeta.map((meta) => {
-			const data = totalData.subarray(byteOffset, byteOffset + meta.size);
-			if (data.length !== meta.size) {
-				throw new Error("Decrypted file data does not match the declared size");
-			}
-			byteOffset += meta.size;
-			return { name: meta.name, type: meta.type, size: meta.size, data };
+		return openChunkedNote(encryptedChunks, fromBase64(streamHeader), decryptionKey, {
+			additionalData: null,
+			isHead: isStreamingHeader,
+			exact: false,
 		});
-
-		return buildPayload(headerData, files);
 	} finally {
 		if (password && salt) {
 			zeroMemory(decryptionKey);
@@ -386,7 +330,106 @@ export async function decryptNoteChunked(
 	}
 }
 
-function buildPayload(
+/** How strictly a chunked note is read: format 1 asks more of it than format 0. */
+export interface StreamRules {
+	/** Authenticated with every chunk: format 1's envelope. */
+	readonly additionalData: Uint8Array | null;
+	readonly isHead: (value: unknown) => value is StreamingHeader;
+	/** Whether the file bytes must match the declared sizes exactly, none left over. */
+	readonly exact: boolean;
+}
+
+/**
+ * A chunked note's payload, from its chunks: the head first, then the file
+ * bytes split by the sizes the head declares.
+ */
+export function openChunkedNote(
+	encryptedChunks: Uint8Array[],
+	streamHeader: Uint8Array,
+	key: Uint8Array,
+	rules: StreamRules,
+): NotePayload {
+	const state = initStreamDecrypt(streamHeader, key);
+
+	// Decrypt header chunk (first chunk)
+	const firstChunk = encryptedChunks[0];
+	if (!firstChunk) {
+		throw new Error("No chunks to decrypt");
+	}
+	const { decrypted: headerBytes, isFinal: headerIsFinal } = cryptoDecryptChunk(
+		state,
+		firstChunk,
+		rules.additionalData,
+	);
+
+	// Decode header to get file metadata
+	const decoded = decodeRawBytes(headerBytes);
+	if (!rules.isHead(decoded)) {
+		throw new SecretDecryptionError();
+	}
+	const headerData = decoded;
+	const fileMeta = headerData.files ?? [];
+
+	// The stream must end on its FINAL chunk, and nothing may follow it.
+	// secretstream authenticates every chunk and their order, but only the
+	// FINAL tag proves none were dropped from the end: without this check a
+	// server serving the header chunk alone handed back empty files.
+	const isLastChunk = encryptedChunks.length === 1;
+	if (headerIsFinal !== isLastChunk) {
+		throw new Error("Encrypted stream is truncated or extended");
+	}
+
+	// The header was the only chunk (text-only note or note with 0-byte files)
+	if (headerIsFinal) {
+		if (fileMeta.some((f) => f.size > 0)) {
+			throw new Error("Encrypted stream is truncated or extended");
+		}
+		return buildPayload(
+			headerData,
+			fileMeta.map((f) => ({
+				name: f.name,
+				type: f.type,
+				size: f.size,
+				data: new Uint8Array(0),
+			})),
+		);
+	}
+
+	// Decrypt remaining chunks and concatenate all file bytes
+	const dataChunks: Uint8Array[] = [];
+	const lastIndex = encryptedChunks.length - 1;
+	for (const [index, chunk] of encryptedChunks.entries()) {
+		if (index === 0) continue;
+		const { decrypted, isFinal } = cryptoDecryptChunk(state, chunk, rules.additionalData);
+		if (isFinal !== (index === lastIndex)) {
+			throw new Error("Encrypted stream is truncated or extended");
+		}
+		dataChunks.push(decrypted);
+	}
+
+	const totalData = concatUint8Arrays(dataChunks);
+
+	// Distribute bytes to files based on metadata sizes. subarray() clamps
+	// silently if the decrypted stream is shorter than the header claims, so
+	// validate each slice length explicitly (defense in depth — the stream
+	// is already authenticated) rather than returning truncated file data.
+	let byteOffset = 0;
+	const files = fileMeta.map((meta) => {
+		const data = totalData.subarray(byteOffset, byteOffset + meta.size);
+		if (data.length !== meta.size) {
+			throw new Error("Decrypted file data does not match the declared size");
+		}
+		byteOffset += meta.size;
+		return { name: meta.name, type: meta.type, size: meta.size, data };
+	});
+	if (rules.exact && byteOffset !== totalData.length) {
+		throw new Error("Decrypted file data does not match the declared size");
+	}
+
+	return buildPayload(headerData, files);
+}
+
+export function buildPayload(
 	header: StreamingHeader,
 	files: Array<{ name: string; type: string; size: number; data: Uint8Array }>,
 ): NotePayload {

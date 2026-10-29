@@ -3,7 +3,8 @@
 This document specifies how a Secret client encrypts a note, what it sends to
 an instance, and how it reads one back: enough to write a compatible client,
 in any language, without reading the SDK. It describes **format 0**, the
-format every release so far writes and reads.
+format every release so far writes and reads, then [format 1](#format-1),
+its successor, still a draft.
 
 The reference implementation is [`packages/crypto`](packages/crypto/src) and
 [`packages/sdk-js`](packages/sdk-js/src). The [test vectors](#test-vectors)
@@ -11,9 +12,10 @@ pin every step down to the byte. The HTTP API is also described by the
 instance itself, at `/api/v1/openapi.json`.
 
 Format 0 carries no format number: neither the ciphertext nor the link says
-which format it is. [Toward format 1](#toward-format-1) explains what that
-blocks and how the next format will stay compatible with this one. Format
-numbers are unrelated to the version of the app or the SDK.
+which format it is. [Its limits](#limits-of-format-0) say what that blocks,
+and [format 1](#format-1) how the next format lifts them while staying
+compatible with this one. Format numbers are unrelated to the version of the
+app or the SDK.
 
 ## Conventions
 
@@ -438,19 +440,165 @@ blob moved to another note fails to decrypt.
 - **Two kinds of note, three read endpoints**, and two layouts of the server
   layer.
 
-## Toward format 1
+## Format 1
 
-Format 1 is planned to address these limits: a format byte, a numbered
-fragment (`#1.<key>`), keys derived with HKDF, Argon2id parameters stored with
-the note, NFC normalization, metadata in the additional data, padding, a
-single streamed kind of note, and a read token that proves the reader holds
-the key before the server spends a read.
+**Draft.** Instances accept and serve format 1, and the reference SDK reads it,
+but writes it only when asked to (`format: 1`). Its bytes may still change
+before it is marked final, with a proof of reading and padding: do not write
+it outside tests yet. Instances keep reading and accepting format 0
+throughout the app's 1.x releases, so links already shared and clients that
+only speak format 0 keep working.
 
-It will be specified here with its implementation and its test vectors.
-Instances will keep reading and accepting format 0 throughout the app's 1.x
-releases, so links already shared and clients that only speak format 0 keep
-working. A format 0 fragment is exactly 43 base64url characters, an alphabet
-without `.`, so the two formats cannot be mistaken for one another.
+What changes from format 0:
+
+- the link and the stored note name their format;
+- the encryption key is derived with HKDF, so that other keys can be derived
+  from the same secret;
+- the Argon2id parameters are stored with the note, and the password is
+  normalized to NFC;
+- the settings a writer declares travel in one **envelope**, which the
+  ciphertext authenticates;
+- a reader checks the payload strictly.
+
+The payload, the two kinds of note, the way a chunked note is cut, and every
+endpoint not named below are those of format 0.
+
+### Keys
+
+The **link key** `K` is 32 random bytes, as format 0's base key.
+
+With a password, the writer draws a 16-byte salt, picks the Argon2id
+parameters, and stretches the password:
+
+```
+P = Argon2id(password = UTF-8(NFC(password)), salt, t, m, p = 1, version 0x13, 32 bytes)
+```
+
+`NFC` is Unicode Normalization Form C. A writer uses t = 3 iterations and
+m = 262,144 KiB (256 MiB, libsodium's moderate setting). A reader MUST refuse
+t outside 1 to 10, or m outside 65,536 to 1,048,576 KiB (64 MiB to 1 GiB),
+before running Argon2id.
+
+Then, with HKDF-SHA256 (RFC 5869):
+
+```
+IKM = K                      without a password
+IKM = K || P                 with one
+PRK = HKDF-Extract(salt = none, IKM)
+encryption key = HKDF-Expand(PRK, info = "secret/1 enc", 32)
+```
+
+`salt = none` is HKDF's default, 32 zero bytes. `info` is ASCII. Other `info`
+strings are reserved for keys format 1 will derive from the same PRK.
+
+### The link
+
+```
+<origin>/note/<id>#1.<key>
+```
+
+`key` is `K` encoded as in format 0: 43 base64url characters. A format 0 key
+never holds a `.`, so a reader tells the formats apart by the `1.` prefix,
+and SHOULD refuse a malformed format 1 fragment before reading the note.
+
+### The envelope
+
+The envelope holds everything a writer declares besides the ciphertext. The
+server reads the note's settings from it, stores it, and serves it back
+byte for byte. It is the additional data of every AEAD operation on the note,
+so a reader detects any change to it.
+
+| Offset | Bytes | Field |
+|--------|-------|-------|
+| 0 | 1 | Format: 1 |
+| 1 | 1 | Kind: 0 single-shot, 1 chunked |
+| 2 | 1 | Key derivation: 0 none, 1 Argon2id with a password |
+| 3 | 1 | `fileCount` |
+| 4 | 2 | `maxReads`, unsigned big-endian |
+| 6 | 4 | `expiresIn` in seconds, unsigned big-endian |
+| 10 | 24 | The XChaCha20 nonce (single-shot), or the secretstream header (chunked) |
+| 34 | 16 | The salt (key derivation 1 only) |
+| 50 | 4 | Argon2id `t`, unsigned big-endian (key derivation 1 only) |
+| 54 | 4 | Argon2id `m` in KiB, unsigned big-endian (key derivation 1 only) |
+
+An envelope is 34 bytes without a password, 58 with one. A reader MUST refuse
+an envelope whose first byte is not 1, whose kind or key derivation is
+unknown, whose length is not the one its key derivation calls for, or whose
+Argon2id parameters fall outside the bounds above. It uses the envelope as it
+received it, never re-encoded.
+
+The settings mean what they mean in format 0, and the envelope tells the
+server nothing format 0's fields do not, the Argon2id parameters aside. The
+server refuses (`400`) an
+envelope of the wrong kind for the endpoint, or whose settings exceed the
+protocol's limits (`fileCount` 0 to 10, at least 1 for a multipart upload,
+`maxReads` 0 to 1000, `expiresIn` 300 to 2,592,000), and applies the
+instance's limits as to a format 0 note. Envelopes travel in base64.
+
+### Single-shot notes in format 1
+
+1. Encode the payload as MessagePack, as in format 0.
+2. Draw a 24-byte nonce and build the envelope with it (kind 0).
+3. Encrypt with XChaCha20-Poly1305 IETF under the encryption key and the
+   nonce, with the envelope as additional data.
+
+The note is sent with the envelope in place of format 0's fields:
+
+```
+POST /api/v1/notes
+Content-Type: application/json
+
+{"envelope": "<base64 envelope>", "encryptedData": "<base64 ciphertext>"}
+```
+
+or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
+set to `{"envelope": "<base64 envelope>"}`. The answer is format 0's.
+
+`GET /api/v1/notes/{id}/raw` serves the ciphertext as for format 0, with an
+`X-Envelope` header (base64) in place of `X-Client-Nonce` and `X-Salt`. The
+JSON endpoint, `GET /api/v1/notes/{id}`, refuses a format 1 note (`400`)
+without spending a read.
+
+### Chunked notes in format 1
+
+The writer opens a secretstream under the encryption key and builds the
+envelope with its header (kind 1). The messages, their tags and the way the
+files are cut are format 0's, but every message is pushed with the envelope
+as additional data.
+
+The upload session opens with the envelope and the number of messages:
+
+```
+POST /api/v1/notes/upload/init
+Content-Type: application/json
+
+{"envelope": "<base64 envelope>", "chunkCount": 3}
+```
+
+The messages and `/complete` are sent as in format 0. `GET
+/api/v1/notes/{id}/stream` serves the stream as for format 0, with
+`X-Envelope` in place of `X-Stream-Header` and `X-Salt`.
+
+### Reading strictly
+
+`GET /api/v1/notes/{id}/exists` answers as for format 0: `hasPassword` comes
+from the envelope. A format 1 reader MUST refuse:
+
+- a response without an envelope, or with one of the other kind: the note is
+  not the format 1 note of that kind the link names;
+- a password note read without a password; a password given for a note
+  without one is ignored;
+- a payload, or the head of a chunked note, that is not a map, whose `text`
+  is not a string, whose `contentMode` is not one of the three values, or
+  whose `files` is not an array of at most 10 entries;
+- a file whose `name` or `type` is not a string, or whose `size` is not a
+  non-negative integer; in a single-shot note, a file whose `data` is not
+  `bin` or whose length is not `size`;
+- a payload with another number of files than the envelope's `fileCount`;
+- in a chunked note, file bytes that fall short of the declared sizes or
+  exceed them, and the tags format 0 refuses.
+
+It ignores keys it does not know.
 
 ## Test vectors
 
@@ -465,11 +613,20 @@ holds, for format 0:
 | `secretstream` | Chunked notes: head, header and every message. The header is random, so these were written once. |
 | `encoding` | Base64url keys. |
 
+and, under `format1`:
+
+| Section | What it pins down |
+|---------|-------------------|
+| `keys` | The key schedule: the link key, the password (one typed in NFD), the stretched password, the PRK and the encryption key. |
+| `envelopes` | Envelopes, from their fields to their bytes. |
+| `pipeline` | Single-shot notes, from the payload to the ciphertext under its envelope. |
+| `secretstream` | Chunked notes. Their envelopes hold a random stream header, so these were written once. |
+
 The file's `version` field counts revisions of the file, not formats. In the
 `secretstream` vectors, `headerMsgpack` is the head's plaintext and `header`
 the secretstream header.
 
 The vectors are frozen. The repository checks them against libsodium and
 against a second implementation that shares no code with it, OpenSSL through
-`node:crypto` (`vectors-openssl.test.ts`). A new client should pass all of
-them.
+`node:crypto` (`vectors-openssl.test.ts`), secretstream aside. A new client
+should pass all of them.
