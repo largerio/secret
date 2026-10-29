@@ -5,6 +5,19 @@ import { buildNoteHeaders, lengthPrefixed, sanitizeHeaderValue } from "./respons
 
 /** What reads a note: its state, and its ciphertext in one piece or as a stream. */
 export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void {
+	// Hono answers a HEAD with the GET route and drops the body: on the reads
+	// that spend, it would spend one, and burn a single-read note, without
+	// delivering anything. Registered before the routes, so they never run.
+	for (const path of ["/:id", "/:id/raw", "/:id/stream"]) {
+		app.use(path, async (c, next) => {
+			if (c.req.method === "HEAD") {
+				c.header("Allow", "GET");
+				return c.json({ error: "Method not allowed" }, 405);
+			}
+			await next();
+		});
+	}
+
 	app.openapi(existsRoute, (c) => {
 		const info = notes.check(c.req.valid("param").id);
 		if (info === undefined) {

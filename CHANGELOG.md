@@ -17,6 +17,7 @@ image. Each version links to its GitHub release. The SDK has
 
 ### Fixed
 
+- A `HEAD` request on a note's reads (`/api/v1/notes/{id}`, `/raw`, `/stream`) spent one of its reads, and destroyed a single-read note, without delivering anything. It now answers `405`.
 - An authenticated create sent without a body, or without a `Content-Type`, answered `500` and logged an error; it now answers `400` or `415`. (#252)
 - A storage failure while a note was read answered "Failed to decrypt note" and left nothing in the log. It is now logged like any server error, and every `500`, a note that does not decrypt included, carries an `errorId` to find it in the log. (#252)
 - A large note whose last attachment was an empty file, after one with content, was created but could not be opened: its first read failed with "Decryption failed" and still spent a read. (#250)
