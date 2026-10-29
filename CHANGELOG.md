@@ -7,6 +7,10 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Added
+
+- [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format every release so far uses: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#PR)
+
 ## [1.5.0] - 2026-10-28
 
 ### Security
