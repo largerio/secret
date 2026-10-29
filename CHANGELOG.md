@@ -11,6 +11,11 @@ image. Each version links to its GitHub release. The SDK has
 
 - [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format every release so far uses: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#249)
 
+### Fixed
+
+- A large note whose last attachment was an empty file, after one with content, was created but could not be opened: its first read failed with "Decryption failed" and still spent a read. (#250)
+- On an instance whose `CHUNK_SIZE` was set below the default, a long text note could fail with "Payload too large": it was uploaded in chunks, all its text in the first one. A note without files is now always uploaded in one piece. (#250)
+
 ## [1.5.0] - 2026-10-28
 
 ### Security

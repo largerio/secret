@@ -151,9 +151,12 @@ export class SecretClient {
 				: {}),
 		};
 
-		// Estimate payload size to decide between standard and chunked upload
+		// Estimate payload size to decide between standard and chunked upload.
+		// A note without files stays single-shot: chunked, all its text would
+		// go in the first chunk, which an instance refuses beyond its chunk
+		// size, while a single-shot note takes any text MAX_TEXT_SIZE allows.
 		const estimatedSize = this.estimatePayloadSize(payload);
-		const useChunked = options.chunked === true || estimatedSize > chunkSize;
+		const useChunked = options.chunked === true || (fileCount > 0 && estimatedSize > chunkSize);
 
 		if (useChunked) {
 			return this.createNoteChunked(payload, fileCount, chunkSize, options);
