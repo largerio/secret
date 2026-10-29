@@ -2438,6 +2438,74 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 	});
 });
 
+describe("HEAD on the reads that spend", () => {
+	// Hono answers a HEAD with the GET route: these used to spend a read, and
+	// burn a single-read note, without delivering it.
+	async function createChunkedNote(): Promise<string> {
+		const initRes = await app.request("/api/v1/notes/upload/init", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify({
+				streamHeader: Buffer.from("test-header-24-bytes!!!").toString("base64"),
+				clientNonce: Buffer.from("test-nonce-24-bytes!!!!").toString("base64"),
+				hasPassword: false,
+				expiresIn: 3600,
+				maxReads: 1,
+				fileCount: 0,
+				chunkCount: 1,
+			}),
+		});
+		const { uploadId } = (await initRes.json()) as { uploadId: string };
+		const chunk = new Uint8Array(Buffer.from("head"));
+		await app.request(`/api/v1/notes/upload/${uploadId}/chunks/0`, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Hash": createHash("sha256").update(chunk).digest("hex"),
+			},
+			body: chunk as BodyInit,
+		});
+		const completed = await app.request(`/api/v1/notes/upload/${uploadId}/complete`, {
+			method: "POST",
+		});
+		return ((await completed.json()) as { id: string }).id;
+	}
+
+	it("refuses a HEAD with 405 and spends no read", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+		const chunkedId = await createChunkedNote();
+
+		for (const path of [
+			`/api/v1/notes/${id}`,
+			`/api/v1/notes/${id}/raw`,
+			`/api/v1/notes/${chunkedId}/stream`,
+		]) {
+			const res = await app.request(path, { method: "HEAD" });
+			expect(res.status, path).toBe(405);
+			expect(res.headers.get("Allow"), path).toBe("GET");
+		}
+
+		for (const note of [id, chunkedId]) {
+			const exists = await app.request(`/api/v1/notes/${note}/exists`);
+			expect(await exists.json()).toMatchObject({ exists: true, readCount: 0 });
+		}
+		expect((await app.request(`/api/v1/notes/${id}/raw`)).status).toBe(200);
+		const stream = await app.request(`/api/v1/notes/${chunkedId}/stream`);
+		expect(stream.status).toBe(200);
+		await stream.arrayBuffer();
+	});
+
+	it("still answers a HEAD on /exists, which spends nothing", async () => {
+		const { id } = await createTestNote({ maxReads: 1 });
+
+		const res = await app.request(`/api/v1/notes/${id}/exists`, { method: "HEAD" });
+
+		expect(res.status).toBe(200);
+		const exists = await app.request(`/api/v1/notes/${id}/exists`);
+		expect(await exists.json()).toMatchObject({ exists: true, readCount: 0 });
+	});
+});
+
 describe("DELETE /api/v1/notes/:id (chunked)", () => {
 	function chunkData(content: string): Uint8Array {
 		return new Uint8Array(Buffer.from(content));
