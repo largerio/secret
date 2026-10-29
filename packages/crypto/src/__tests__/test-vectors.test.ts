@@ -1,4 +1,4 @@
-import { type NotePayload, parseEnvelope, testVectors } from "@largerio/secret-shared";
+import { type NotePayload, parseEnvelope, sizeClass, testVectors } from "@largerio/secret-shared";
 import { describe, expect, test } from "vitest";
 import {
 	decodeRawBytes,
@@ -7,7 +7,7 @@ import {
 	decryptRaw,
 	initStreamDecrypt,
 } from "../decrypt.js";
-import { encodePayload } from "../encrypt.js";
+import { encodePayload, encryptChunk } from "../encrypt.js";
 import { deriveFormat1Keys, hkdfExtract, stretchPassword, verifierOf } from "../format1.js";
 import {
 	deriveKeyFromPassword,
@@ -179,41 +179,55 @@ describe("test vectors", () => {
 			}
 		}, 30_000);
 
-		test("single-shot notes open under their envelope", async () => {
+		test("notes open message by message under their envelope, into their body", async () => {
 			await initSodium();
 
-			for (const v of format1.pipeline) {
+			for (const v of format1.notes) {
 				const envelopeBytes = fromBase64(v.envelope);
 				const envelope = parseEnvelope(envelopeBytes);
-				if (envelope?.kind !== "single-shot") throw new Error(v.description);
+				if (envelope === undefined) throw new Error(v.description);
 
-				const key = fromBase64(v.encryptionKey);
-				const plaintext = decryptRaw(fromBase64(v.ciphertext), envelope.nonce, key, envelopeBytes);
-				expect(toBase64(plaintext), v.description).toBe(v.payloadMsgpack);
-				expect(() => decryptRaw(fromBase64(v.ciphertext), envelope.nonce, key)).toThrow();
+				const state = initStreamDecrypt(envelope.streamHeader, fromBase64(v.encryptionKey));
+				const opened = v.messages.map((message) =>
+					decryptChunk(state, fromBase64(message), envelopeBytes),
+				);
+				const last = opened.length - 1;
+				expect(
+					opened.map(({ isFinal, isMessage }, i) => (i === last ? isFinal : isMessage)),
+					v.description,
+				).toEqual(opened.map(() => true));
+				const body = Buffer.concat(opened.map(({ decrypted }) => decrypted));
+				expect(body.toString("base64"), v.description).toBe(v.body);
+				expect(body.length, v.description).toBe(sizeClass(body.length));
+				expect(
+					opened.slice(0, -1).every(({ decrypted }) => decrypted.length === v.messageSize),
+					v.description,
+				).toBe(true);
+				const head = body.subarray(4, 4 + body.readUInt32BE(0));
+				expect(head.toString("base64"), v.description).toBe(v.head);
 			}
 		});
 
-		test("chunked notes open chunk by chunk under their envelope, FINAL on the last", async () => {
+		test("a writer that drew the vectors' header pushes their messages", async () => {
 			await initSodium();
 
-			for (const v of format1.secretstream) {
+			for (const v of format1.notes) {
 				const envelopeBytes = fromBase64(v.envelope);
 				const envelope = parseEnvelope(envelopeBytes);
-				if (envelope?.kind !== "chunked") throw new Error(v.description);
+				if (envelope === undefined) throw new Error(v.description);
 
+				// The pull state of a header is its writer's push state.
 				const state = initStreamDecrypt(envelope.streamHeader, fromBase64(v.encryptionKey));
-				const chunks = v.chunks.map((chunk) =>
-					decryptChunk(state, fromBase64(chunk), envelopeBytes),
+				const body = fromBase64(v.body);
+				const messages = v.messages.map((_, i) =>
+					encryptChunk(
+						state,
+						body.subarray(i * v.messageSize, (i + 1) * v.messageSize),
+						i === v.messages.length - 1,
+						envelopeBytes,
+					),
 				);
-				expect(
-					chunks.map((chunk) => chunk.isFinal),
-					v.description,
-				).toEqual(v.chunks.map((_, i) => i === v.chunks.length - 1));
-				expect(chunks[0]?.decrypted).toEqual(fromBase64(v.headerMsgpack));
-				const data = Buffer.concat(chunks.slice(1).map((chunk) => chunk.decrypted));
-				const files = Buffer.concat((v.payload.files ?? []).map((file) => fromBase64(file.data)));
-				expect(new Uint8Array(data)).toEqual(new Uint8Array(files));
+				expect(messages.map(toBase64), v.description).toEqual(v.messages);
 			}
 		});
 	});

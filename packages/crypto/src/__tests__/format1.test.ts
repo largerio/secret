@@ -1,8 +1,8 @@
 import { argon2Sync, createHash, hkdfSync } from "node:crypto";
 import sodium from "libsodium-wrappers-sumo";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { decryptChunk, decryptRaw, initStreamDecrypt } from "../decrypt.js";
-import { encryptChunk, encryptPayload, initStreamEncrypt } from "../encrypt.js";
+import { decryptChunk, initStreamDecrypt } from "../decrypt.js";
+import { encryptChunk, initStreamEncrypt } from "../encrypt.js";
 import {
 	deriveFormat1Keys,
 	hkdfExpand,
@@ -226,22 +226,6 @@ describe("verifierOf", () => {
 
 describe("additional data", () => {
 	const ad = new TextEncoder().encode("envelope");
-
-	it("binds a single-shot ciphertext to it", () => {
-		const key = generateKey();
-		const { ciphertext, nonce } = encryptPayload({ text: "hi" }, key, undefined, ad);
-		expect(decryptRaw(ciphertext, nonce, key, ad)).toBeInstanceOf(Uint8Array);
-		expect(() =>
-			decryptRaw(ciphertext, nonce, key, new TextEncoder().encode("envelopf")),
-		).toThrow();
-		expect(() => decryptRaw(ciphertext, nonce, key)).toThrow();
-	});
-
-	it("uses the nonce it is given", () => {
-		const key = generateKey();
-		const nonce = sodium.randombytes_buf(24);
-		expect(encryptPayload({ text: "hi" }, key, nonce, ad).nonce).toBe(nonce);
-	});
 
 	it("binds every chunk of a stream to it", () => {
 		const key = generateKey();

@@ -13,18 +13,19 @@ import {
 	encryptNoteChunked,
 	ensureInit,
 	sha256Hex,
+	toBase64,
 } from "./crypto.js";
 import { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
 import {
 	assertFormat1Fragment,
 	closeFormat1Read,
-	encryptNoteChunkedFormat1,
 	encryptNoteFormat1,
+	type Format1Body,
 	type Format1Read,
 	type Format1Settings,
+	format1BodyOf,
 	formatOfFragment,
-	openChunkedFormat1,
-	openSingleShotFormat1,
+	openNoteFormat1,
 	prepareFormat1Read,
 } from "./format1.js";
 import type { HttpClientConfig, NoteReadResponse } from "./http.js";
@@ -83,15 +84,26 @@ interface SealedNote {
 	readonly fields: Record<string, unknown>;
 }
 
+/**
+ * Seals a note sent in one request. A format 1 note's body, laid out already,
+ * goes as one message.
+ */
 async function sealNote(
 	payload: NotePayload,
 	fileCount: number,
 	options: CreateNoteOptions,
+	body: Format1Body | undefined,
 ): Promise<SealedNote> {
 	const settings = noteSettings(options, fileCount);
-	if (options.format === 1) {
-		const sealed = await encryptNoteFormat1(payload, settings, options.password);
-		return { ...sealed, fields: { envelope: sealed.envelope, ...sealed.verifiers } };
+	if (body) {
+		const sealed = await encryptNoteFormat1(body, body.length, settings, options.password);
+		const [message] = sealed.messages as [Uint8Array];
+		return {
+			encryptedBytes: message,
+			encryptedData: toBase64(message),
+			keyFragment: sealed.keyFragment,
+			fields: { envelope: sealed.envelope, ...sealed.verifiers },
+		};
 	}
 	const sealed = await encryptNote(payload, options.password);
 	return {
@@ -103,13 +115,6 @@ async function sealNote(
 			...(sealed.salt ? { salt: sealed.salt } : {}),
 		},
 	};
-}
-
-/** A format 1 note's payload, opened as the kind of note its envelope says it is. */
-function openFormat1Note(read: Format1Read, response: NoteReadResponse): NotePayload {
-	return response.kind === "single-shot"
-		? openSingleShotFormat1(read, response.encryptedBytes)
-		: openChunkedFormat1(read, response.chunks);
 }
 
 /** decodeURIComponent, with a malformed escape reported as an invalid share URL. */
@@ -214,19 +219,22 @@ export class SecretClient {
 				: {}),
 		};
 
-		// Estimate payload size to decide between standard and chunked upload.
-		// A note without files stays single-shot: chunked, all its text would
-		// go in the first chunk, which an instance refuses beyond its chunk
-		// size, while a single-shot note takes any text MAX_TEXT_SIZE allows.
-		const estimatedSize = this.estimatePayloadSize(payload);
-		const useChunked = options.chunked === true || (fileCount > 0 && estimatedSize > chunkSize);
+		// The payload's size decides between one request and an upload session:
+		// a format 1 note's padded body, laid out first, or format 0's estimate.
+		// A note without files goes in one request, which takes any text
+		// MAX_TEXT_SIZE allows: format 0 would put all of it in its first chunk,
+		// which an instance refuses beyond its chunk size, and the instance keeps
+		// a note sent whole in its database.
+		const body = options.format === 1 ? format1BodyOf(payload) : undefined;
+		const size = body ? body.length : this.estimatePayloadSize(payload);
+		const useChunked = options.chunked === true || (fileCount > 0 && size > chunkSize);
 
 		if (useChunked) {
-			return this.createNoteChunked(payload, fileCount, chunkSize, options);
+			return this.createNoteChunked(payload, fileCount, chunkSize, options, body);
 		}
 
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
-		const sealed = await sealNote(payload, fileCount, options);
+		const sealed = await sealNote(payload, fileCount, options, body);
 		options.onProgress?.({
 			phase: "encrypting",
 			phaseProgress: 1,
@@ -295,19 +303,15 @@ export class SecretClient {
 		fileCount: number,
 		chunkSize: number,
 		options: CreateNoteOptions,
+		body: Format1Body | undefined,
 	): Promise<CreateNoteResult> {
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const settings = noteSettings(options, fileCount);
 		let encrypted: { readonly chunks: Uint8Array[]; readonly keyFragment: string };
 		let fields: Record<string, unknown>;
-		if (options.format === 1) {
-			const sealed = await encryptNoteChunkedFormat1(
-				payload,
-				chunkSize,
-				settings,
-				options.password,
-			);
-			encrypted = sealed;
+		if (body) {
+			const sealed = await encryptNoteFormat1(body, chunkSize, settings, options.password);
+			encrypted = { chunks: sealed.messages, keyFragment: sealed.keyFragment };
 			fields = { envelope: sealed.envelope, ...sealed.verifiers };
 		} else {
 			const sealed = await encryptNoteChunked(payload, chunkSize, options.password);
@@ -626,7 +630,6 @@ export class SecretClient {
 					this.httpConfig,
 					id,
 					read.proofs,
-					read.envelope.kind,
 					this.downloadProgress(options),
 				);
 			} catch (err) {
@@ -637,7 +640,7 @@ export class SecretClient {
 				}
 				throw err;
 			}
-			const payload = await this.decrypting(() => openFormat1Note(read, response), options);
+			const payload = await this.decrypting(() => openNoteFormat1(read, response.chunks), options);
 			return {
 				payload,
 				createdAt: response.createdAt,

@@ -531,23 +531,20 @@ export async function getNoteStream(
 
 // --- Format 1 read ---
 
-export type NoteReadResponse = NoteReadMeta &
-	(
-		| { readonly kind: "single-shot"; readonly encryptedBytes: Uint8Array }
-		| { readonly kind: "chunked"; readonly chunks: Uint8Array[] }
-	);
+export interface NoteReadResponse extends NoteReadMeta {
+	readonly chunks: Uint8Array[];
+}
 
 /**
  * Reads a format 1 note with the proofs its link and password derive: the
- * server answers a single-shot note's ciphertext, or a chunked note's
- * messages, as the reader knows from the envelope. A wrong proof answers 403
- * and spends no read; a wrong password counts one of the note's attempts.
+ * server answers its messages, length-prefixed, however it went up. A wrong
+ * proof answers 403 and spends no read; a wrong password counts one of the
+ * note's attempts.
  */
 export async function postNoteRead(
 	config: HttpClientConfig,
 	id: string,
 	proofs: ReadProofs,
-	kind: NoteReadResponse["kind"],
 	onProgress?: (progress: number) => void,
 ): Promise<NoteReadResponse> {
 	const res = await requestWithPolicy(
@@ -563,8 +560,5 @@ export async function postNoteRead(
 	await throwUnlessOk(res);
 
 	const meta = noteReadMeta(res.headers);
-	if (kind === "single-shot") {
-		return { ...meta, kind, encryptedBytes: await readCiphertext(res, onProgress) };
-	}
-	return { ...meta, kind, chunks: await readChunks(res, onProgress) };
+	return { ...meta, chunks: await readChunks(res, onProgress) };
 }

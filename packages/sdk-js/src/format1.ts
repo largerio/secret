@@ -1,13 +1,14 @@
 import {
 	decodeRawBytes,
-	decryptRaw,
+	decryptChunk,
 	deriveFormat1Keys,
-	encryptPayload,
+	encodeRaw,
+	encryptChunk,
 	type Format1Keys,
 	fromBase64,
 	generateKey,
-	generateNonce,
 	generateSalt,
+	initStreamDecrypt,
 	initStreamEncrypt,
 	keyFromBase64Url,
 	keyToBase64Url,
@@ -24,19 +25,21 @@ import {
 	type Envelope,
 	type EnvelopeSettings,
 	encodeEnvelope,
+	HEAD_LENGTH_BYTES,
 	MAX_FILES_PER_NOTE,
 	parseEnvelope,
+	sizeClass,
 } from "@largerio/secret-shared";
 import {
 	buildPayload,
 	CONTENT_MODES,
+	concatUint8Arrays,
 	ensureInit,
-	openChunkedNote,
-	pushChunkedNote,
+	headOf,
 	type StreamingHeader,
 } from "./crypto.js";
 import { SecretValidationError } from "./errors.js";
-import type { NoteFile, NotePayload } from "./types.js";
+import type { NotePayload } from "./types.js";
 
 /** What a format 1 link's fragment starts with: `1.`, then the key. */
 const FRAGMENT_PREFIX = "1.";
@@ -163,76 +166,79 @@ function verifiersOf(keys: Format1Keys): Format1Verifiers {
 	};
 }
 
+/** A note's body, before it is encrypted: its parts, and the length padding takes it to. */
+export interface Format1Body {
+	/** The head's length, the head, then each file's bytes. */
+	readonly parts: ReadonlyArray<Uint8Array>;
+	/** The size class of the parts' length: the rest of the body is zeros. */
+	readonly length: number;
+}
+
+/**
+ * A note's body (PROTOCOL.md): the head's length, 4 bytes big-endian, the
+ * head, the file bytes, then zeros up to the size class. Laid out, not copied:
+ * the file bytes are only read as the messages are cut.
+ */
+export function format1BodyOf(payload: NotePayload): Format1Body {
+	const files = payload.files ?? [];
+	const head = encodeRaw(headOf(wellFormedPayload(payload)));
+	const headLength = new Uint8Array(HEAD_LENGTH_BYTES);
+	new DataView(headLength.buffer).setUint32(0, head.length);
+	const parts = [headLength, head, ...files.map((file) => file.data)];
+	const content = parts.reduce((sum, part) => sum + part.length, 0);
+	return { parts, length: sizeClass(content) };
+}
+
+/**
+ * The body, `messageSize` bytes at a time: every message but the last holds
+ * that many, the last the rest. Each is a fresh copy, so that it can be wiped
+ * once encrypted, and only one is held at a time.
+ */
+function* bodyMessages(body: Format1Body, messageSize: number): Generator<Uint8Array> {
+	let part = 0;
+	let offset = 0;
+	for (let start = 0; start < body.length; start += messageSize) {
+		const message = new Uint8Array(Math.min(messageSize, body.length - start));
+		let filled = 0;
+		// Past the last part, the message keeps the zeros it was made with.
+		while (filled < message.length && part < body.parts.length) {
+			const source = body.parts[part] as Uint8Array;
+			const taken = Math.min(source.length - offset, message.length - filled);
+			message.set(source.subarray(offset, offset + taken), filled);
+			filled += taken;
+			offset += taken;
+			if (offset === source.length) {
+				part++;
+				offset = 0;
+			}
+		}
+		yield message;
+	}
+}
+
 export interface Format1EncryptResult {
-	readonly encryptedBytes: Uint8Array;
-	readonly encryptedData: string;
+	readonly messages: Uint8Array[];
 	/** In base64. */
 	readonly envelope: string;
 	readonly verifiers: Format1Verifiers;
 	readonly keyFragment: string;
 }
 
-/** Encrypts a single-shot note in format 1. */
+/**
+ * Encrypts a note in format 1: one secretstream, the body cut into messages of
+ * `messageSize` bytes, each authenticating the envelope. A note sent in one
+ * request is one message: `messageSize` is then the body's length.
+ */
 export async function encryptNoteFormat1(
-	payload: NotePayload,
+	body: Format1Body,
+	messageSize: number,
 	settings: Format1Settings,
 	password?: string,
 ): Promise<Format1EncryptResult> {
 	await ensureInit();
-	const { linkKey, passwordInput } = newNoteSecrets(password);
-	let keys: Format1Keys | undefined;
-	try {
-		const nonce = generateNonce();
-		const envelope = encodeEnvelopeOrRefuse({
-			kind: "single-shot",
-			nonce,
-			...settings,
-			argon2: passwordInput?.argon2,
-		});
-		keys = deriveFormat1Keys(linkKey, passwordInput);
-		const { ciphertext } = encryptPayload(
-			wellFormedPayload(payload),
-			keys.encryptionKey,
-			nonce,
-			envelope,
-		);
-		return {
-			encryptedBytes: ciphertext,
-			encryptedData: toBase64(ciphertext),
-			envelope: toBase64(envelope),
-			verifiers: verifiersOf(keys),
-			keyFragment: `${FRAGMENT_PREFIX}${keyToBase64Url(linkKey)}`,
-		};
-	} finally {
-		if (keys) {
-			zeroFormat1Keys(keys);
-		}
-		zeroMemory(linkKey);
+	if (!Number.isSafeInteger(messageSize) || messageSize < 1) {
+		throw new SecretValidationError("The message size must be a positive integer");
 	}
-}
-
-/** The envelope's bytes, or a SecretValidationError for settings it cannot hold. */
-function encodeEnvelopeOrRefuse(envelope: Envelope): Uint8Array {
-	assertWriterSettings(envelope);
-	return encodeEnvelope(envelope);
-}
-
-export interface Format1ChunkedEncryptResult {
-	readonly chunks: Uint8Array[];
-	/** In base64. */
-	readonly envelope: string;
-	readonly verifiers: Format1Verifiers;
-	readonly keyFragment: string;
-}
-
-/** Encrypts a chunked note in format 1. */
-export async function encryptNoteChunkedFormat1(
-	payload: NotePayload,
-	chunkSize: number,
-	settings: Format1Settings,
-	password?: string,
-): Promise<Format1ChunkedEncryptResult> {
-	await ensureInit();
 	const { linkKey, passwordInput } = newNoteSecrets(password);
 	let keys: Format1Keys | undefined;
 	try {
@@ -242,9 +248,15 @@ export async function encryptNoteChunkedFormat1(
 		assertWriterSettings({ ...settings, argon2 });
 		keys = deriveFormat1Keys(linkKey, passwordInput);
 		const { state, header } = initStreamEncrypt(keys.encryptionKey);
-		const envelope = encodeEnvelope({ kind: "chunked", streamHeader: header, ...settings, argon2 });
+		const envelope = encodeEnvelope({ streamHeader: header, ...settings, argon2 });
+		const count = Math.ceil(body.length / messageSize);
+		const messages: Uint8Array[] = [];
+		for (const plaintext of bodyMessages(body, messageSize)) {
+			messages.push(encryptChunk(state, plaintext, messages.length === count - 1, envelope));
+			zeroMemory(plaintext);
+		}
 		return {
-			chunks: pushChunkedNote(state, wellFormedPayload(payload), chunkSize, envelope),
+			messages,
 			envelope: toBase64(envelope),
 			verifiers: verifiersOf(keys),
 			keyFragment: `${FRAGMENT_PREFIX}${keyToBase64Url(linkKey)}`,
@@ -327,37 +339,67 @@ export function closeFormat1Read(read: Format1Read): void {
 	zeroMemory(read.encryptionKey);
 }
 
-/** Opens a single-shot format 1 note. Throws on anything but a well-formed payload. */
-export function openSingleShotFormat1(read: Format1Read, encryptedBytes: Uint8Array): NotePayload {
+/**
+ * Opens a format 1 note from its messages: the stream checked tag by tag, then
+ * its body, strictly. Throws on anything else.
+ */
+export function openNoteFormat1(
+	read: Format1Read,
+	messages: ReadonlyArray<Uint8Array>,
+): NotePayload {
 	const { envelope, envelopeBytes, encryptionKey } = read;
-	if (envelope.kind !== "single-shot") {
-		throw new Error("Not a single-shot note");
+	if (messages.length === 0) {
+		throw new Error("No message to open");
 	}
-	const plaintext = decryptRaw(encryptedBytes, envelope.nonce, encryptionKey, envelopeBytes);
-	const payload = strictPayload(decodeRawBytes(plaintext));
-	assertFileCount(payload, envelope);
-	return payload;
-}
-
-/** Opens a chunked format 1 note. Throws on anything but a well-formed stream. */
-export function openChunkedFormat1(read: Format1Read, encryptedChunks: Uint8Array[]): NotePayload {
-	const { envelope, envelopeBytes, encryptionKey } = read;
-	if (envelope.kind !== "chunked") {
-		throw new Error("Not a chunked note");
-	}
-	const payload = openChunkedNote(encryptedChunks, envelope.streamHeader, encryptionKey, {
-		additionalData: envelopeBytes,
-		isHead: isStrictHead,
-		strict: true,
+	const state = initStreamDecrypt(envelope.streamHeader, encryptionKey);
+	const plaintexts = messages.map((message, index) => {
+		const { decrypted, isFinal, isMessage } = decryptChunk(state, message, envelopeBytes);
+		// The last message, and only it, is FINAL: secretstream authenticates
+		// each message and their order, but only the tags prove none were
+		// dropped from the end.
+		const isLast = index === messages.length - 1;
+		if (isLast ? !isFinal : !isMessage) {
+			throw new Error("Encrypted stream is truncated or extended");
+		}
+		return decrypted;
 	});
-	assertFileCount(payload, envelope);
-	return payload;
+	return openBody(concatUint8Arrays(plaintexts), envelope);
 }
 
-function assertFileCount(payload: NotePayload, envelope: Envelope): void {
-	if ((payload.files?.length ?? 0) !== envelope.fileCount) {
+/** A note's payload, from its body: read as PROTOCOL.md lays it out, and refused otherwise. */
+function openBody(body: Uint8Array, envelope: Envelope): NotePayload {
+	if (body.length < HEAD_LENGTH_BYTES) {
+		throw new Error("Malformed body");
+	}
+	const headEnd =
+		HEAD_LENGTH_BYTES + new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(0);
+	if (headEnd > body.length) {
+		throw new Error("Malformed body");
+	}
+	// One MessagePack value that fills the head: the decoder refuses a value cut
+	// short, and bytes left after it.
+	const head = decodeRawBytes(body.subarray(HEAD_LENGTH_BYTES, headEnd));
+	if (!isStrictHead(head)) {
+		throw new Error("Malformed payload");
+	}
+	const declared = head.files ?? [];
+	if (declared.length !== envelope.fileCount) {
 		throw new Error("The payload does not hold the files its envelope declares");
 	}
+
+	let offset = headEnd;
+	const files = declared.map(({ name, type, size }) => {
+		if (size > body.length - offset) {
+			throw new Error("Decrypted file data does not match the declared size");
+		}
+		const data = body.subarray(offset, offset + size);
+		offset += size;
+		return { name, type, size, data };
+	});
+	if (body.length !== sizeClass(offset) || body.subarray(offset).some((byte) => byte !== 0)) {
+		throw new Error("Malformed padding");
+	}
+	return buildPayload(head, files);
 }
 
 // --- The payload, read strictly ---
@@ -398,22 +440,4 @@ function hasValidFiles(value: Record<string, unknown>, isFile: (file: unknown) =
 
 function isStrictHead(value: unknown): value is StreamingHeader {
 	return isMap(value) && hasValidText(value) && hasValidFiles(value, isFileHead);
-}
-
-function isStrictFile(value: unknown): value is NoteFile {
-	if (!isFileHead(value)) return false;
-	const { data } = value as { readonly data?: unknown };
-	return data instanceof Uint8Array && data.length === value.size;
-}
-
-/** A single-shot payload, rebuilt from its known keys once every one checks out. */
-function strictPayload(value: unknown): NotePayload {
-	if (!isMap(value) || !hasValidText(value) || !hasValidFiles(value, isStrictFile)) {
-		throw new Error("Malformed payload");
-	}
-	const files = (value["files"] as NoteFile[] | undefined) ?? [];
-	return buildPayload(
-		value as StreamingHeader,
-		files.map(({ name, type, size, data }) => ({ name, type, size, data })),
-	);
 }

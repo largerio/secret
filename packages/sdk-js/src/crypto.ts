@@ -22,9 +22,9 @@ import type { StateAddress } from "libsodium-wrappers-sumo";
 import { SecretDecryptionError, SecretValidationError } from "./errors.js";
 import type { ContentMode, NotePayload } from "./types.js";
 
-export { sha256Hex } from "@largerio/secret-crypto/client";
+export { sha256Hex, toBase64 } from "@largerio/secret-crypto/client";
 
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
+export function concatUint8Arrays(arrays: ReadonlyArray<Uint8Array>): Uint8Array {
 	const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
 	const result = new Uint8Array(totalLen);
 	let offset = 0;
@@ -194,18 +194,12 @@ export async function encryptNoteChunked(
 }
 
 /**
- * A chunked note's chunks, pushed on an open secretstream: first its head (text
- * and file metadata, no file bytes), then each file's bytes cut at chunkSize.
- * The last chunk, and only it, is FINAL. Format 1 authenticates its envelope
- * with every chunk as additional data.
+ * A note's head: its payload without the file bytes, keys in the protocol's
+ * order. The first chunk of a format 0 chunked note, and part of a format 1
+ * note's body.
  */
-export function pushChunkedNote(
-	state: StateAddress,
-	payload: NotePayload,
-	chunkSize: number,
-	additionalData: Uint8Array | null = null,
-): Uint8Array[] {
-	const headerPayload: StreamingHeader = {
+export function headOf(payload: NotePayload): StreamingHeader {
+	return {
 		...(payload.text !== undefined ? { text: payload.text } : {}),
 		...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
 		...(payload.files && payload.files.length > 0
@@ -218,7 +212,19 @@ export function pushChunkedNote(
 				}
 			: {}),
 	};
-	const headerBytes = encodeRaw(headerPayload);
+}
+
+/**
+ * A format 0 chunked note's chunks, pushed on an open secretstream: first its
+ * head (text and file metadata, no file bytes), then each file's bytes cut at
+ * chunkSize. The last chunk, and only it, is FINAL.
+ */
+export function pushChunkedNote(
+	state: StateAddress,
+	payload: NotePayload,
+	chunkSize: number,
+): Uint8Array[] {
+	const headerBytes = encodeRaw(headOf(payload));
 
 	const chunks: Uint8Array[] = [];
 	// An empty file gets no chunk, so the stream ends on the last chunk of
@@ -230,7 +236,7 @@ export function pushChunkedNote(
 	const hasMoreData = lastFileWithData !== -1;
 
 	// Encrypt header chunk (only final if no file data follows)
-	chunks.push(cryptoEncryptChunk(state, headerBytes, !hasMoreData, additionalData));
+	chunks.push(cryptoEncryptChunk(state, headerBytes, !hasMoreData));
 
 	// Stream file data chunk by chunk (never hold more than chunkSize in memory)
 	if (payload.files && hasMoreData) {
@@ -239,7 +245,7 @@ export function pushChunkedNote(
 				const end = Math.min(offset + chunkSize, file.data.length);
 				const slice = file.data.subarray(offset, end);
 				const isLastChunk = fi === lastFileWithData && end >= file.data.length;
-				chunks.push(cryptoEncryptChunk(state, slice, isLastChunk, additionalData));
+				chunks.push(cryptoEncryptChunk(state, slice, isLastChunk));
 			}
 		}
 	}
@@ -317,11 +323,7 @@ export async function decryptNoteChunked(
 	}
 
 	try {
-		return openChunkedNote(encryptedChunks, fromBase64(streamHeader), decryptionKey, {
-			additionalData: null,
-			isHead: isStreamingHeader,
-			strict: false,
-		});
+		return openChunkedNote(encryptedChunks, fromBase64(streamHeader), decryptionKey);
 	} finally {
 		if (password && salt) {
 			zeroMemory(decryptionKey);
@@ -330,28 +332,14 @@ export async function decryptNoteChunked(
 	}
 }
 
-/** How strictly a chunked note is read: format 1 asks more of it than format 0. */
-export interface StreamRules {
-	/** Authenticated with every chunk: format 1's envelope. */
-	readonly additionalData: Uint8Array | null;
-	readonly isHead: (value: unknown) => value is StreamingHeader;
-	/**
-	 * Format 1's: every chunk but the last carries TAG_MESSAGE, which format 0
-	 * reads into any tag but FINAL, and the file bytes match the declared sizes
-	 * exactly, none left over.
-	 */
-	readonly strict: boolean;
-}
-
 /**
- * A chunked note's payload, from its chunks: the head first, then the file
- * bytes split by the sizes the head declares.
+ * A format 0 chunked note's payload, from its chunks: the head first, then the
+ * file bytes split by the sizes the head declares.
  */
-export function openChunkedNote(
+function openChunkedNote(
 	encryptedChunks: Uint8Array[],
 	streamHeader: Uint8Array,
 	key: Uint8Array,
-	rules: StreamRules,
 ): NotePayload {
 	const state = initStreamDecrypt(streamHeader, key);
 
@@ -360,15 +348,11 @@ export function openChunkedNote(
 	if (!firstChunk) {
 		throw new Error("No chunks to decrypt");
 	}
-	const {
-		decrypted: headerBytes,
-		isFinal: headerIsFinal,
-		isMessage: headerIsMessage,
-	} = cryptoDecryptChunk(state, firstChunk, rules.additionalData);
+	const { decrypted: headerBytes, isFinal: headerIsFinal } = cryptoDecryptChunk(state, firstChunk);
 
 	// Decode header to get file metadata
 	const decoded = decodeRawBytes(headerBytes);
-	if (!rules.isHead(decoded)) {
+	if (!isStreamingHeader(decoded)) {
 		throw new SecretDecryptionError();
 	}
 	const headerData = decoded;
@@ -381,9 +365,6 @@ export function openChunkedNote(
 	const isLastChunk = encryptedChunks.length === 1;
 	if (headerIsFinal !== isLastChunk) {
 		throw new Error("Encrypted stream is truncated or extended");
-	}
-	if (rules.strict && !headerIsFinal && !headerIsMessage) {
-		throw new Error("Unexpected secretstream tag");
 	}
 
 	// The header was the only chunk (text-only note or note with 0-byte files)
@@ -407,16 +388,9 @@ export function openChunkedNote(
 	const lastIndex = encryptedChunks.length - 1;
 	for (const [index, chunk] of encryptedChunks.entries()) {
 		if (index === 0) continue;
-		const { decrypted, isFinal, isMessage } = cryptoDecryptChunk(
-			state,
-			chunk,
-			rules.additionalData,
-		);
+		const { decrypted, isFinal } = cryptoDecryptChunk(state, chunk);
 		if (isFinal !== (index === lastIndex)) {
 			throw new Error("Encrypted stream is truncated or extended");
-		}
-		if (rules.strict && !isFinal && !isMessage) {
-			throw new Error("Unexpected secretstream tag");
 		}
 		dataChunks.push(decrypted);
 	}
@@ -436,9 +410,6 @@ export function openChunkedNote(
 		byteOffset += meta.size;
 		return { name: meta.name, type: meta.type, size: meta.size, data };
 	});
-	if (rules.strict && byteOffset !== totalData.length) {
-		throw new Error("Decrypted file data does not match the declared size");
-	}
 
 	return buildPayload(headerData, files);
 }
