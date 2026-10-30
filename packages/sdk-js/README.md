@@ -166,6 +166,20 @@ try {
 
 Note that a missing note is a `404` from `readNote`, but `{ exists: false }` from `checkNote` — the latter never throws for that case.
 
+## Cancelling
+
+Every call takes an `AbortSignal`: `createNote` and `readNote` in their options, `checkNote` and `deleteNote` in a last argument. A cancelled call rejects with the signal's reason, an `AbortError` unless you gave another:
+
+```ts
+const controller = new AbortController();
+cancelButton.onclick = () => controller.abort();
+
+await client.createNote({ files, signal: controller.signal });
+await client.checkNote(id, { signal: AbortSignal.timeout(5_000) });
+```
+
+What was done stays done. A read the server has started to serve is spent, and an upload session cut short is left to expire on the instance.
+
 ## Configuration
 
 ```ts
@@ -175,7 +189,7 @@ await SecretClient.create({
   timeoutMs: 30_000,                      // default: none
   maxRetries: 2,                          // default: 0 — checkNote and chunk PUTs only
   retryBackoffMs: (attempt) => attempt * 500, // ms before retry N (1-based). Default: 2 ** N * 250
-  fetch: customFetch,                     // defaults to globalThis.fetch
+  fetch: customFetch,                     // defaults to globalThis.fetch; uploads go through it too, without upload progress
 });
 ```
 

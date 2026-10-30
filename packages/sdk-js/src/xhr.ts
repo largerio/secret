@@ -19,10 +19,17 @@ export function postFormDataXhr(
 	formData: FormData,
 	onProgress: (progress: number) => void,
 	timeoutMs?: number,
+	signal?: AbortSignal,
 ): Promise<CreateNoteResponse> {
 	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
 		const xhr = new XMLHttpRequest();
 		xhr.open("POST", url);
+		// The caller's signal cancels the upload, which then rejects with its reason.
+		signal?.addEventListener("abort", () => xhr.abort(), { once: true });
 
 		if (timeoutMs !== undefined) {
 			xhr.timeout = timeoutMs;
@@ -68,7 +75,9 @@ export function postFormDataXhr(
 		// Same contract as the fetch path: a request that never got a response is a
 		// SecretNetworkError, which callers can tell from a server rejection.
 		xhr.addEventListener("error", () => reject(new SecretNetworkError("Network request failed")));
-		xhr.addEventListener("abort", () => reject(new SecretApiError("Upload cancelled", 0)));
+		xhr.addEventListener("abort", () =>
+			reject(signal?.aborted ? signal.reason : new SecretApiError("Upload cancelled", 0)),
+		);
 
 		xhr.send(formData);
 	});

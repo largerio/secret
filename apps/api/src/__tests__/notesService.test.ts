@@ -208,9 +208,17 @@ describe("the notes service", () => {
 		expect(await refusal(() => notes.create(Buffer.from("x"), { ...SETTINGS, fileCount: 4 }))).toBe(
 			"too_many_files",
 		);
-		expect(
-			await refusal(() => notes.openUpload({ ...CHUNKED_SETTINGS, fileCount: 1, chunkCount: 65 })),
-		).toBe("too_many_chunks");
+		// 256 KiB of files take 64 messages of 4 KiB; format 0 adds its head's
+		// and a message started per file, format 1 pads 256 KiB and its head's
+		// allowance to 768 KiB.
+		const open = (settings: Parameters<typeof notes.openUpload>[0]) => () =>
+			notes.openUpload(settings);
+		expect(open({ ...CHUNKED_SETTINGS, fileCount: 1, chunkCount: 66 })).not.toThrow();
+		expect(await refusal(open({ ...CHUNKED_SETTINGS, fileCount: 1, chunkCount: 67 }))).toBe(
+			"too_many_chunks",
+		);
+		expect(open({ ...format1Settings(1), chunkCount: 192 })).not.toThrow();
+		expect(await refusal(open({ ...format1Settings(1), chunkCount: 193 }))).toBe("too_many_chunks");
 	});
 
 	it("deletes a note only with its token", async () => {

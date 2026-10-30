@@ -176,6 +176,53 @@ describe("SecretClient", () => {
 		await expect(client.deleteNote("aBcDeFgHiJkL", "bad-token")).rejects.toThrow(SecretApiError);
 	});
 
+	test("hands each call its own signal, and no other call", async () => {
+		const http = await getHttpMocks();
+		http.checkNote.mockResolvedValue({ exists: false });
+		http.deleteNote.mockResolvedValue(undefined);
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const { signal } = new AbortController();
+
+		await client.checkNote("aBcDeFgHiJkL", { signal });
+		await client.deleteNote("aBcDeFgHiJkL", "token", undefined, { signal });
+		await client.checkNote("aBcDeFgHiJkL");
+
+		type Config = import("../http.js").HttpClientConfig;
+		expect((http.checkNote.mock.calls[0]?.[0] as Config | undefined)?.signal).toBe(signal);
+		expect((http.deleteNote.mock.calls[0]?.[0] as Config | undefined)?.signal).toBe(signal);
+		expect((http.checkNote.mock.calls[1]?.[0] as Config | undefined)?.signal).toBeUndefined();
+	});
+
+	test("uploads through XMLHttpRequest only without a fetch of the caller's", async () => {
+		const http = await getHttpMocks();
+		http.checkNote.mockResolvedValue({ exists: false });
+		type Config = import("../http.js").HttpClientConfig;
+
+		await (await SecretClient.create({ baseUrl: "https://example.com" })).checkNote("aBcDeFgHiJkL");
+		await (
+			await SecretClient.create({ baseUrl: "https://example.com", fetch: vi.fn<typeof fetch>() })
+		).checkNote("aBcDeFgHiJkL");
+
+		expect((http.checkNote.mock.calls[0]?.[0] as Config | undefined)?.xhrUploads).toBe(true);
+		expect((http.checkNote.mock.calls[1]?.[0] as Config | undefined)?.xhrUploads).toBe(false);
+	});
+
+	test("createNote encrypts nothing once its signal is aborted", async () => {
+		const crypto = await getCryptoMocks();
+		const format1 = await getFormat1Mocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const reason = new Error("cancelled");
+
+		for (const chunked of [false, true]) {
+			await expect(
+				client.createNote({ text: "t", format: 0, chunked, signal: AbortSignal.abort(reason) }),
+			).rejects.toBe(reason);
+		}
+		expect(crypto.encryptNote).not.toHaveBeenCalled();
+		expect(crypto.encryptNoteChunked).not.toHaveBeenCalled();
+		expect(format1.encryptNoteFormat1).not.toHaveBeenCalled();
+	});
+
 	test("passes apiKey through to httpConfig", async () => {
 		const http = await getHttpMocks();
 		http.checkNote.mockResolvedValue({
@@ -1678,6 +1725,25 @@ describe("SecretClient in format 1", () => {
 			expect((err as SecretApiError).status).toBe(status);
 		}
 		expect(format1.closeFormat1Read).toHaveBeenCalledTimes(3);
+	});
+
+	test("readNote decrypts nothing once its signal is aborted, and wipes the keys", async () => {
+		const format1 = await getFormat1Mocks();
+		const controller = new AbortController();
+		const http = await getHttpMocks();
+		http.postNoteRead.mockImplementation(() => {
+			controller.abort();
+			return Promise.resolve(response);
+		});
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		const err = await client
+			.readNote("noteId123456", "1.key", { signal: controller.signal })
+			.catch((e: unknown) => e);
+
+		expect(err).toBe(controller.signal.reason);
+		expect(format1.openNoteFormat1).not.toHaveBeenCalled();
+		expect(format1.closeFormat1Read).toHaveBeenCalledWith(read);
 	});
 
 	test("readNote surfaces a note that does not open as a failed decryption", async () => {

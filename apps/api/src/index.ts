@@ -1,8 +1,10 @@
+import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, which config.js loads first and the routes extend.
 import "@hono/zod-openapi";
 import { parseServerKey } from "@largerio/secret-crypto/server";
+import { lingerOnClose } from "@largerio/secret-shared/linger";
 import { readBuildInfo } from "./buildInfo.js";
 import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
@@ -60,6 +62,9 @@ const { app, rateLimiters, drain, storage, stopJobs } = startInstance({
 });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port });
+// A refusal sent before a body was read must reach its client (the web
+// server's proxy, mostly) before the connection closes.
+lingerOnClose(server as Server);
 
 // An unhandled rejection would otherwise terminate the process with no usable
 // log line; surface it, then let the normal shutdown path run.

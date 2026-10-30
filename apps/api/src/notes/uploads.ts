@@ -16,7 +16,12 @@ import { enqueueDeletion, runDeletion } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { NoteError } from "./errors.js";
 import { sessionSettingsOf } from "./formats.js";
-import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
+import {
+	assertStorageAvailable,
+	assertWithinLimits,
+	maxChunksOf,
+	type NotesLimits,
+} from "./limits.js";
 import { assertPadded } from "./padding.js";
 import { newDeleteToken, newNoteId, newNoteRow, noteExists, toTheSecond } from "./rows.js";
 import { SEALED_CHUNK_OVERHEAD, type ServerLayer } from "./serverLayer.js";
@@ -138,7 +143,7 @@ export function createUploads(deps: UploadsDeps): Uploads {
 
 	return {
 		openUpload(settings) {
-			const maxChunks = Math.ceil(limits.maxChunkedFileSize / limits.chunkSize);
+			const maxChunks = maxChunksOf(limits, settings.opening.format, settings.fileCount);
 			if (settings.chunkCount > maxChunks) {
 				throw new NoteError("too_many_chunks", {
 					message: `Maximum ${String(maxChunks)} chunks allowed`,

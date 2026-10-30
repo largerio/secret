@@ -193,6 +193,46 @@ describe("postFormDataXhr", () => {
 		expect((error as { code?: string }).code).toBeUndefined();
 	});
 
+	test("rejects with the signal's reason, without a request, when already aborted", async () => {
+		const { xhr } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+		const reason = new Error("gone");
+
+		const promise = postFormDataXhr(
+			"https://example.com/upload",
+			{},
+			new FormData(),
+			vi.fn(),
+			undefined,
+			AbortSignal.abort(reason),
+		);
+
+		await expect(promise).rejects.toBe(reason);
+		expect(xhr.open).not.toHaveBeenCalled();
+	});
+
+	test("aborts the upload when the signal does, and rejects with its reason", async () => {
+		const { xhr, triggerEvent } = createMockXhr();
+		const abort = vi.fn(() => triggerEvent("abort"));
+		installXhr(Object.assign(xhr, { abort }));
+		const { postFormDataXhr } = await import("../xhr.js");
+		const controller = new AbortController();
+
+		const promise = postFormDataXhr(
+			"https://example.com/upload",
+			{},
+			new FormData(),
+			vi.fn(),
+			undefined,
+			controller.signal,
+		);
+		controller.abort();
+
+		await expect(promise).rejects.toBe(controller.signal.reason);
+		expect(abort).toHaveBeenCalledOnce();
+	});
+
 	test("rejects with Invalid JSON when response is not parseable", async () => {
 		const { xhr, triggerEvent } = createMockXhr();
 		installXhr(xhr);

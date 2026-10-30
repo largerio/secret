@@ -1433,6 +1433,130 @@ describe("postNoteRead", () => {
 	});
 });
 
+describe("a call's signal", () => {
+	const config = (
+		fetchMock: typeof fetch,
+		extra: Partial<HttpClientConfig> = {},
+	): HttpClientConfig => ({
+		baseUrl: "https://api.example.com",
+		fetch: fetchMock,
+		...extra,
+	});
+
+	/** A fetch that answers only when its request is aborted, as fetch does. */
+	const hangingFetch = () =>
+		vi.fn<typeof fetch>(
+			(_url, init) =>
+				new Promise((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+				}),
+		);
+
+	test("rejects at once with its reason when already aborted, and sends nothing", async () => {
+		const fetchMock = vi.fn<typeof fetch>();
+		const reason = new Error("left the page");
+
+		await expect(
+			checkNote(config(fetchMock, { signal: AbortSignal.abort(reason) }), "id"),
+		).rejects.toBe(reason);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	test("aborts the request in flight, timeout or not, and retries nothing", async () => {
+		for (const extra of [{}, { timeoutMs: 60_000 }]) {
+			const fetchMock = hangingFetch();
+			const controller = new AbortController();
+			const call = checkNote(
+				config(fetchMock, { ...extra, signal: controller.signal, maxRetries: 3 }),
+				"id",
+			);
+
+			controller.abort();
+
+			const err = await call.catch((e: unknown) => e);
+			expect(err).toBe(controller.signal.reason);
+			expect((err as DOMException).name).toBe("AbortError");
+			expect(fetchMock).toHaveBeenCalledOnce();
+		}
+	});
+
+	test("cuts short the wait before a retry", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(errorResponse(503, {})));
+		const controller = new AbortController();
+		const call = checkNote(
+			config(fetchMock, {
+				signal: controller.signal,
+				maxRetries: 3,
+				retryBackoffMs: () => 60_000,
+			}),
+			"id",
+		);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+		controller.abort();
+
+		await expect(call).rejects.toBe(controller.signal.reason);
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	test("waits out a retry it was not asked to cut short", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(errorResponse(503, {}))
+			.mockResolvedValueOnce(okResponse({ exists: false }));
+		const controller = new AbortController();
+
+		const info = await checkNote(
+			config(fetchMock, { signal: controller.signal, maxRetries: 1, retryBackoffMs: () => 1 }),
+			"id",
+		);
+
+		expect(info).toEqual({ exists: false });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	test("rejects with its reason, not a lost connection, once aborted mid-download", async () => {
+		const controller = new AbortController();
+		const body = new ReadableStream<Uint8Array>({
+			start(stream) {
+				stream.enqueue(new Uint8Array([1]));
+				controller.signal.addEventListener("abort", () => stream.error(controller.signal.reason));
+			},
+		});
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(body, { status: 200, headers: { "Content-Length": "9" } })),
+		);
+		const call = getJson(config(fetchMock, { signal: controller.signal }), "/notes/x", vi.fn());
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+		controller.abort();
+
+		await expect(call).rejects.toBe(controller.signal.reason);
+	});
+
+	test("does not send a multipart upload through XMLHttpRequest around the caller's fetch", async () => {
+		const xhr = vi.fn();
+		(globalThis as Record<string, unknown>)["XMLHttpRequest"] = xhr;
+		try {
+			const fetchMock = vi.fn<typeof fetch>(() =>
+				Promise.resolve(okResponse({ id: "x", expiresAt: "", deleteToken: "" })),
+			);
+
+			await postFormData(
+				config(fetchMock, { xhrUploads: false }),
+				"/notes/upload",
+				new FormData(),
+				vi.fn(),
+			);
+
+			expect(fetchMock).toHaveBeenCalledOnce();
+			expect(xhr).not.toHaveBeenCalled();
+		} finally {
+			delete (globalThis as Record<string, unknown>)["XMLHttpRequest"];
+		}
+	});
+});
+
 describe("request policy (timeout + retry)", () => {
 	function policyConfig(
 		fetchMock: typeof fetch,

@@ -17,12 +17,14 @@ const CONSUMING_READ = false;
 
 /**
  * Read a response body, reporting a connection lost mid-download as the
- * transport failure it is rather than a raw TypeError.
+ * transport failure it is rather than a raw TypeError, and a call cancelled
+ * by its signal as the signal's reason.
  */
-async function readBody<T>(read: () => Promise<T>): Promise<T> {
+async function readBody<T>(read: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
 	try {
 		return await read();
 	} catch (err) {
+		signal?.throwIfAborted();
 		throw new SecretNetworkError("Connection lost while downloading the note", { cause: err });
 	}
 }
@@ -62,11 +64,31 @@ export interface HttpClientConfig {
 	readonly timeoutMs?: number;
 	readonly maxRetries?: number;
 	readonly retryBackoffMs?: (attempt: number) => number;
+	/** The call's: aborting it rejects the call with its reason. */
+	readonly signal?: AbortSignal;
+	/**
+	 * Whether a multipart upload with progress may go through XMLHttpRequest,
+	 * which reports it, rather than `fetch`. False when the caller gave its own
+	 * `fetch`: XMLHttpRequest would go around it.
+	 */
+	readonly xhrUploads?: boolean;
 }
 
 const defaultBackoffMs = (attempt: number): number => 2 ** attempt * 250;
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/** Waits `ms` before a retry, or rejects with the signal's reason once it aborts. */
+const delay = (ms: number, signal: AbortSignal | undefined): Promise<void> =>
+	new Promise((resolve, reject) => {
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal?.reason);
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
 
 /**
  * Wrap `config.fetch` with a per-request timeout and, for idempotent requests
@@ -87,8 +109,10 @@ async function requestWithPolicy(
 	const maxAttempts = idempotent ? 1 + Math.max(0, config.maxRetries ?? 0) : 1;
 	const backoff = config.retryBackoffMs ?? defaultBackoffMs;
 
+	const { signal } = config;
 	let lastError: unknown;
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		signal?.throwIfAborted();
 		const controller = config.timeoutMs === undefined ? undefined : new AbortController();
 		let timedOut = false;
 		const timer =
@@ -98,17 +122,22 @@ async function requestWithPolicy(
 						timedOut = true;
 						controller.abort();
 					}, config.timeoutMs);
+		// The caller's signal aborts the request, its body included, even once
+		// the timeout no longer runs: the listener stays for the body's sake.
+		signal?.addEventListener("abort", () => controller?.abort(signal.reason), { once: true });
+		const requestSignal = controller?.signal ?? signal;
 		try {
 			const res = await config.fetch(url, {
 				...init,
-				...(controller ? { signal: controller.signal } : {}),
+				...(requestSignal ? { signal: requestSignal } : {}),
 			});
 			if (res.status >= 500 && attempt < maxAttempts) {
-				await delay(backoff(attempt));
+				await delay(backoff(attempt), signal);
 				continue;
 			}
 			return res;
 		} catch (err) {
+			signal?.throwIfAborted();
 			// Surface our own timeouts as a typed SecretApiError so callers can
 			// rely on the same error contract as every other failure path (a raw
 			// AbortError DOMException would slip past `instanceof SecretApiError`).
@@ -119,7 +148,7 @@ async function requestWithPolicy(
 				? new SecretApiError("Request timed out", 0)
 				: new SecretNetworkError("Network request failed", { cause: err });
 			if (attempt >= maxAttempts) throw lastError;
-			await delay(backoff(attempt));
+			await delay(backoff(attempt), signal);
 		} finally {
 			if (timer !== undefined) clearTimeout(timer);
 		}
@@ -176,13 +205,14 @@ export async function postFormData(
 	onProgress?: (progress: number) => void,
 	capToken?: string,
 ): Promise<CreateNoteResponse> {
-	if (onProgress && isXhrAvailable()) {
+	if (onProgress && config.xhrUploads !== false && isXhrAvailable()) {
 		return postFormDataXhr(
 			`${config.baseUrl}${path}`,
 			authHeaders(config.apiKey, capToken),
 			formData,
 			onProgress,
 			config.timeoutMs,
+			config.signal,
 		);
 	}
 
@@ -213,30 +243,8 @@ export async function getJson<T>(
 		throw await apiError(res);
 	}
 
-	if (onProgress && res.body) {
-		const contentLength = res.headers.get("content-length");
-		const total = contentLength ? parseInt(contentLength, 10) : 0;
-
-		if (total > 0) {
-			const reader = res.body.getReader();
-			const chunks: Uint8Array[] = [];
-			let loaded = 0;
-
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				chunks.push(value);
-				loaded += value.length;
-				onProgress(loaded / total);
-			}
-
-			const combined = await new Blob(chunks as BlobPart[]).arrayBuffer();
-			const text = new TextDecoder().decode(combined);
-			return JSON.parse(text) as T;
-		}
-	}
-
-	return res.json() as Promise<T>;
+	const body = await download(res, config.signal, onProgress);
+	return JSON.parse(new TextDecoder().decode(body)) as T;
 }
 
 /** What the headers of a read say about the note, besides how to open it. */
@@ -265,6 +273,7 @@ function noteReadMeta(headers: Headers): NoteReadMeta {
  */
 async function download(
 	res: Response,
+	signal: AbortSignal | undefined,
 	onProgress?: (progress: number) => void,
 ): Promise<ArrayBuffer> {
 	return readBody(async () => {
@@ -285,15 +294,16 @@ async function download(
 		}
 
 		return new Blob(chunks as BlobPart[]).arrayBuffer();
-	});
+	}, signal);
 }
 
 /** A single-shot note's ciphertext: the whole body. */
 async function readCiphertext(
 	res: Response,
+	signal: AbortSignal | undefined,
 	onProgress?: (progress: number) => void,
 ): Promise<Uint8Array> {
-	return new Uint8Array(await download(res, onProgress));
+	return new Uint8Array(await download(res, signal, onProgress));
 }
 
 /**
@@ -303,6 +313,7 @@ async function readCiphertext(
  */
 async function readChunks(
 	res: Response,
+	signal: AbortSignal | undefined,
 	onProgress?: (progress: number) => void,
 ): Promise<Uint8Array[]> {
 	const chunkCount = parsePositiveInt(res.headers.get("X-Chunk-Count"), 0);
@@ -314,7 +325,7 @@ async function readChunks(
 	// progress; a note sent in a session reports it message by message, once
 	// downloaded.
 	const sized = parsePositiveInt(res.headers.get("Content-Length"), 0) > 0;
-	const bodyData = await download(res, sized ? onProgress : undefined);
+	const bodyData = await download(res, signal, sized ? onProgress : undefined);
 	const view = new DataView(bodyData);
 	const chunks: Uint8Array[] = [];
 	let offset = 0;
@@ -365,7 +376,11 @@ export async function getNoteRaw(
 
 	const nonceBytes = safeAtob(getRequiredHeader(res.headers, "X-Client-Nonce"));
 	const meta = noteReadMeta(res.headers);
-	return { ...meta, nonceBytes, encryptedBytes: await readCiphertext(res, onProgress) };
+	return {
+		...meta,
+		nonceBytes,
+		encryptedBytes: await readCiphertext(res, config.signal, onProgress),
+	};
 }
 
 export async function getNote(
@@ -532,7 +547,7 @@ export async function getNoteStream(
 
 	const streamHeader = getRequiredHeader(res.headers, "X-Stream-Header");
 	const meta = noteReadMeta(res.headers);
-	const chunks = await readChunks(res, onProgress);
+	const chunks = await readChunks(res, config.signal, onProgress);
 	return { ...meta, streamHeader, chunkCount: chunks.length, chunks };
 }
 
@@ -567,5 +582,5 @@ export async function postNoteRead(
 	await throwUnlessOk(res);
 
 	const meta = noteReadMeta(res.headers);
-	return { ...meta, chunks: await readChunks(res, onProgress) };
+	return { ...meta, chunks: await readChunks(res, config.signal, onProgress) };
 }
