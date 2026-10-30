@@ -1,5 +1,6 @@
+import { MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
 import { describe, expect, it } from "vitest";
-import { isLastRead, readsAfter, readsBefore, readsLeft } from "../reads.js";
+import { attemptsLeft, isLastRead, readsAfter, readsBefore, readsLeft } from "../reads.js";
 
 describe("readsLeft", () => {
 	it("subtracts the reads already spent from the limit", () => {
@@ -75,5 +76,25 @@ describe("readsAfter", () => {
 
 	it("has nothing to count on a note without a limit", () => {
 		expect(readsAfter(0, { exists: true, readCount: 0 })).toEqual({ kind: "unlimited" });
+	});
+});
+
+describe("attemptsLeft", () => {
+	it("says nothing while every attempt is left, or when the count is unknown", () => {
+		expect(attemptsLeft(MAX_PASSWORD_ATTEMPTS)).toEqual({ kind: "none" });
+		expect(attemptsLeft(null)).toEqual({ kind: "none" });
+	});
+
+	it("counts the attempts once one is spent", () => {
+		expect(attemptsLeft(MAX_PASSWORD_ATTEMPTS - 1)).toEqual({
+			kind: "left",
+			count: MAX_PASSWORD_ATTEMPTS - 1,
+		});
+		expect(attemptsLeft(2)).toEqual({ kind: "left", count: 2 });
+	});
+
+	it("warns of the last one, and of none left on a note a crash cut short", () => {
+		expect(attemptsLeft(1)).toEqual({ kind: "last" });
+		expect(attemptsLeft(0)).toEqual({ kind: "last" });
 	});
 });
