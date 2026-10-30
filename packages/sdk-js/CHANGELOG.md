@@ -1,5 +1,24 @@
 # @largerio/secret-sdk
 
+## 1.4.0
+
+### Minor Changes
+
+- 828a605: Calls can be cancelled.
+  
+  - Every call takes an `AbortSignal`: `signal` in the options of `createNote` and `readNote`, and a new last argument `{ signal }` for `checkNote` and `deleteNote`. A cancelled call rejects with the signal's reason, whether the request is in flight, its body being read, or a retry being waited for, and is not retried.
+  - A client given its own `fetch` now sends multipart uploads through it too. They used to go through `XMLHttpRequest` whenever one existed, around the `fetch` the caller gave; such an upload reports no upload progress.
+- e8492d2: Errors name their cause.
+  
+  - `SecretApiError` carries the instance's `code` for the error (`note_not_found`, `wrong_delete_token`, `rate_limited`…, listed in [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors)), and `retryAfter`, the seconds a `429` asks to wait. Instances from 1.7.0 answer every error with problem details; the SDK still reads the `{"error"}` answers of older ones, without a code.
+  - A `403` that the instance did not answer, from a firewall or a proxy in front of it, is no longer read as a wrong password or link: `readNote` throws it as a `SecretApiError`, without a code, instead of a `SecretDecryptionError`. A reader would otherwise spend password attempts on a password that was right.
+- 9feb10e: Large notes no longer need to fit in memory.
+  
+  - A file's `data` may be a `Blob`: a browser's `File` as it was picked, or `fs.openAsBlob()` in Node. The SDK reads it a slice at a time as it encrypts it.
+  - A note sent in an upload session has its session opened first, then each chunk encrypted as it goes up: only the chunk being sent is held, and a refused session (too large, a full instance) costs no encryption. Format 0 notes are still encrypted whole.
+  - `readNoteInto(id, keyFragment, { openFile })` writes each file to a `WritableStream` you open for it, as the download reaches it, and returns the text and the list of files. Each stream is closed once the whole note is read and checked, and aborted otherwise, so nothing of a note cut short or tampered with is kept. Format 0 notes are read whole, then written out.
+  - Reads take the note's chunks off the response as they arrive, rather than once the whole response is in.
+
 ## 1.3.0
 
 ### Minor Changes
