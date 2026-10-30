@@ -388,7 +388,7 @@ answers the limits a client should respect before uploading:
 | `maxFilesPerNote` | The largest `fileCount`. |
 | `maxExpiry` | The largest `expiresIn`, in seconds. |
 | `chunkSize` | The largest message plaintext of a chunked note, in bytes. |
-| `maxChunkedFileSize` | The largest chunked note, in bytes. |
+| `maxChunkedFileSize` | The most file bytes a chunked note carries. It bounds the files, not what the format adds to them: an upload session may announce as many messages as that many bytes of files take in its format, a format 0 note's head message and a message started per file, or a format 1 body padded to its size class, with 524,288 bytes of room for its head. |
 
 ## Errors
 
@@ -774,7 +774,9 @@ size class and, in a session, one whose messages before the last differ in
 length, or whose last message is longer than the first or holds no byte of
 the body. A session is checked at `/complete`: refused, it stays open, as one
 with a message missing, until it is completed or expires. The instance's
-limits apply to the padded body.
+`maxChunkedFileSize` bounds the files, not the padding: a session may
+announce the messages of the padded body that many bytes of files make,
+with 524,288 bytes of room for the head ([Instance limits](#instance-limits)).
 
 ### Proof of reading
 

@@ -1769,16 +1769,17 @@ describe("the instance's limits, for format 1", () => {
 	});
 
 	it("refuses more chunks than the instance takes", async () => {
-		const small = createApp({ CHUNK_SIZE: "16", MAX_CHUNKED_FILE_SIZE: "32" });
+		// 2 MiB of files, with the head's allowance, pad to 2.5 MiB: three messages
+		// of 1 MiB.
+		const small = createApp({ CHUNK_SIZE: "1048576", MAX_CHUNKED_FILE_SIZE: "2097152" });
 		const envelope = envelopeOf({ fileCount: 1 });
+		const init = (chunkCount: number) =>
+			postInit({ envelope: b64(envelope), ...verifiersFor(envelope), chunkCount }, small);
 
-		const res = await postInit(
-			{ envelope: b64(envelope), ...verifiersFor(envelope), chunkCount: 3 },
-			small,
-		);
-
+		expect((await init(3)).status).toBe(201);
+		const res = await init(4);
 		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual(problemOf(400, "too_many_chunks", "Maximum 2 chunks allowed"));
+		expect(await res.json()).toEqual(problemOf(400, "too_many_chunks", "Maximum 3 chunks allowed"));
 	});
 });
 
