@@ -578,3 +578,118 @@ describe("format 1, through the SDK and the application", () => {
 		expect(payload.text).toBe("by URL");
 	});
 });
+
+/** Streams to read a note into, each recording its bytes and how it ended. */
+function streamsToRead() {
+	const files: { name: string; bytes: Uint8Array[]; end?: string }[] = [];
+	const openFile = (file: { name: string }) => {
+		const record: (typeof files)[number] = { name: file.name, bytes: [] };
+		files.push(record);
+		return new WritableStream<Uint8Array>({
+			write: (chunk) => {
+				record.bytes.push(chunk);
+			},
+			close: () => {
+				record.end = "closed";
+			},
+			abort: () => {
+				record.end = "aborted";
+			},
+		});
+	};
+	const dataOf = (index: number) => new Uint8Array(Buffer.concat(files[index]?.bytes ?? []));
+	return { files, openFile, dataOf };
+}
+
+describe("streams, through the SDK and the application", () => {
+	it("sends Blobs a message at a time, then reads the note into streams", async () => {
+		const client = await connect();
+		const big = bytes(3 * CHUNK_SIZE + 5);
+		const small = bytes(100);
+		const { id, keyFragment } = await client.createNote({
+			text: "streamed",
+			files: [
+				{ name: "big.bin", type: "application/octet-stream", data: new Blob([big]) },
+				{ name: "small.bin", type: "application/octet-stream", data: new Blob([small]) },
+			],
+			chunkSize: CHUNK_SIZE,
+		});
+		// The session is opened before the first message is encrypted.
+		expect(calls.slice(0, 2)).toEqual([
+			"POST /api/v1/notes/upload/init",
+			"PUT /api/v1/notes/upload/:id/chunks/:n",
+		]);
+
+		const { files, openFile, dataOf } = streamsToRead();
+		const note = await client.readNoteInto(id, keyFragment, { openFile });
+
+		expect(note).toMatchObject({
+			text: "streamed",
+			fileCount: 2,
+			files: [
+				{ name: "big.bin", type: "application/octet-stream", size: big.length },
+				{ name: "small.bin", type: "application/octet-stream", size: 100 },
+			],
+		});
+		expect(files.map((file) => file.end)).toEqual(["closed", "closed"]);
+		expect(dataOf(0)).toEqual(big);
+		expect(dataOf(1)).toEqual(small);
+		// Its bytes went out a message at a time, not whole.
+		const written = files[0]?.bytes.map((chunk) => chunk.length) ?? [];
+		expect(Math.max(...written)).toBeLessThanOrEqual(CHUNK_SIZE);
+		expect(await client.checkNote(id)).toEqual({ exists: false });
+	});
+
+	it("reads a note sent in one request into streams", async () => {
+		const client = await connect();
+		const data = bytes(1000);
+		const { id, keyFragment } = await client.createNote({
+			files: [{ name: "a.bin", type: "application/octet-stream", data }],
+			chunkSize: CHUNK_SIZE,
+		});
+		expect(calls[0]).toBe("POST /api/v1/notes/upload");
+
+		const { openFile, dataOf } = streamsToRead();
+		const note = await client.readNoteInto(id, keyFragment, { openFile });
+		expect(note.files).toEqual([{ name: "a.bin", type: "application/octet-stream", size: 1000 }]);
+		expect(dataOf(0)).toEqual(data);
+	});
+
+	it(
+		"opens no stream for a wrong password, which spends no read",
+		async () => {
+			const client = await connect();
+			const { id, keyFragment } = await client.createNote({
+				files: [{ name: "a.bin", type: "application/octet-stream", data: bytes(10) }],
+				password: "right",
+				maxReads: 2,
+			});
+			const { files, openFile } = streamsToRead();
+
+			await expect(
+				client.readNoteInto(id, keyFragment, { password: "wrong", openFile }),
+			).rejects.toBeInstanceOf(SecretDecryptionError);
+			expect(files).toEqual([]);
+			expect(await client.checkNote(id)).toMatchObject({ readCount: 0, passwordAttemptsLeft: 4 });
+		},
+		ARGON2_TIMEOUT,
+	);
+
+	it("reads a format 0 note into streams too", async () => {
+		const client = await connect();
+		const data = bytes(2 * CHUNK_SIZE);
+		const { id, keyFragment } = await client.createNote({
+			files: [{ name: "zero.bin", type: "application/octet-stream", data: new Blob([data]) }],
+			chunkSize: CHUNK_SIZE,
+			format: 0,
+		});
+
+		const { files, openFile, dataOf } = streamsToRead();
+		const note = await client.readNoteInto(id, keyFragment, { openFile });
+		expect(note.files).toEqual([
+			{ name: "zero.bin", type: "application/octet-stream", size: data.length },
+		]);
+		expect(files.map((file) => file.end)).toEqual(["closed"]);
+		expect(dataOf(0)).toEqual(data);
+	});
+});

@@ -32,8 +32,11 @@ import {
 	encryptNoteFormat1,
 	format1BodyOf,
 	formatOfFragment,
+	OutsideFailure,
 	openNoteFormat1,
 	prepareFormat1Read,
+	sealNoteFormat1,
+	streamNoteFormat1,
 } from "../format1.js";
 
 beforeAll(async () => {
@@ -84,6 +87,82 @@ async function open(
 	}
 }
 
+/** Messages handed out one at a time, as a download does. */
+async function* messagesOf(messages: ReadonlyArray<Uint8Array>): AsyncGenerator<Uint8Array> {
+	yield* messages;
+}
+
+interface SinkRecord {
+	readonly file: { name: string; type: string; size: number };
+	readonly chunks: Uint8Array[];
+	end?: "closed" | "aborted";
+}
+
+/** Streams that record what is written to them, and how they end. */
+function recordingSinks() {
+	const records: SinkRecord[] = [];
+	const openFile = vi.fn((file: SinkRecord["file"]) => {
+		const record: SinkRecord = { file, chunks: [] };
+		records.push(record);
+		return new WritableStream<Uint8Array>({
+			write: (chunk) => {
+				record.chunks.push(chunk);
+			},
+			close: () => {
+				record.end = "closed";
+			},
+			abort: () => {
+				record.end = "aborted";
+			},
+		});
+	});
+	return { records, openFile };
+}
+
+/** One array of the bytes a stream was written. */
+const concat = (chunks: ReadonlyArray<Uint8Array>) => new Uint8Array(Buffer.concat(chunks));
+
+/**
+ * Opens a note as a streamed read does, its files gathered from the streams
+ * they were written to: every stream closed once it resolves, every one
+ * aborted once it rejects.
+ */
+async function openStreamed(
+	messages: ReadonlyArray<Uint8Array>,
+	envelope: string,
+	keyFragment: string,
+	password?: string,
+): Promise<NotePayload> {
+	const read = await prepareFormat1Read(envelope, keyFragment, password);
+	const { records, openFile } = recordingSinks();
+	try {
+		const head = await streamNoteFormat1(read, messagesOf(messages), openFile);
+		expect(records.map((record) => record.end)).toEqual(records.map(() => "closed"));
+		const files = head.files.map((file, index) => ({
+			...file,
+			data: concat(records[index]?.chunks ?? []),
+		}));
+		return {
+			...(head.text !== undefined ? { text: head.text } : {}),
+			...(head.contentMode ? { contentMode: head.contentMode } : {}),
+			...(files.length > 0 ? { files } : {}),
+		};
+	} catch (err) {
+		expect(records.map((record) => record.end)).toEqual(records.map(() => "aborted"));
+		throw err;
+	} finally {
+		closeFormat1Read(read);
+	}
+}
+
+type Reader = typeof open;
+
+/** The two readers of a format 1 note, which must read every note alike. */
+const READERS: ReadonlyArray<[string, Reader]> = [
+	["whole", open],
+	["as a stream", openStreamed],
+];
+
 /** The plaintext of a note's messages, pulled under the key its link derives. */
 function bodyOf(written: { messages: Uint8Array[]; envelope: string; keyFragment: string }) {
 	const envelope = fromBase64(written.envelope);
@@ -130,8 +209,8 @@ function forge(plaintexts: Uint8Array[], fileCount = 0, tags?: number[]) {
 }
 
 /** Opens a forged note. */
-function openForged(forged: ReturnType<typeof forge>): Promise<NotePayload> {
-	return open(forged.messages, forged.envelope, forged.keyFragment);
+function openForged(forged: ReturnType<typeof forge>, reader: Reader = open): Promise<NotePayload> {
+	return reader(forged.messages, forged.envelope, forged.keyFragment);
 }
 
 /**
@@ -434,11 +513,16 @@ describe("format 1 notes", () => {
 		});
 	});
 
-	test(
-		"hold the payload as the vectors record",
-		async () => {
+	test.each(READERS)(
+		"hold the payload as the vectors record, read %s",
+		async (_, reader) => {
 			for (const v of format1.notes) {
-				const read = await open(v.messages.map(fromBase64), v.envelope, v.keyFragment, v.password);
+				const read = await reader(
+					v.messages.map(fromBase64),
+					v.envelope,
+					v.keyFragment,
+					v.password,
+				);
 				expect(read, v.description).toEqual(vectorPayload(v.payload));
 			}
 		},
@@ -468,17 +552,22 @@ describe("format 1 notes", () => {
 		padding: /^Malformed padding$/,
 	};
 
-	test("refuse every note the vectors say a reader must refuse, for the rule they name", async () => {
-		for (const v of format1.invalid.notes) {
-			await expect(
-				open(v.messages.map(fromBase64), v.envelope, v.keyFragment),
-				v.description,
-			).rejects.toThrow(REFUSALS[v.rule]);
-		}
-	});
+	test.each(READERS)(
+		"refuse every note the vectors say a reader must refuse, for the rule they name, read %s",
+		async (_, reader) => {
+			for (const v of format1.invalid.notes) {
+				await expect(
+					reader(v.messages.map(fromBase64), v.envelope, v.keyFragment),
+					v.description,
+				).rejects.toThrow(REFUSALS[v.rule]);
+			}
+		},
+	);
 });
 
-describe("the body of a format 1 note, read strictly", () => {
+describe.each(READERS)("the body of a format 1 note, read %s, strictly", (_, reader) => {
+	const openWith = (forged: ReturnType<typeof forge>) => openForged(forged, reader);
+
 	const goodFile = { name: "a", type: "t", size: 0 };
 
 	test.each([
@@ -488,52 +577,52 @@ describe("the body of a format 1 note, read strictly", () => {
 		["a file without a type", { files: [{ name: "a", size: 0 }] }],
 		["a file that is not a map", { files: [[1]] }],
 		["a file whose size is a string", { files: [{ ...goodFile, size: "0" }] }],
-	])("is refused when its head holds %s", async (_, head) => {
+	])("is refused when its head holds %s", async (_case, head) => {
 		const files = (head as { files?: unknown }).files;
 		const fileCount = Array.isArray(files) ? files.length : 0;
-		await expect(openForged(forge([forgeBody(head)], fileCount))).rejects.toThrow(
+		await expect(openWith(forge([forgeBody(head)], fileCount))).rejects.toThrow(
 			"Malformed payload",
 		);
 	});
 
 	test("may hold 10 files, the most a note holds", async () => {
 		const files = Array.from({ length: 10 }, () => goodFile);
-		const read = await openForged(forge([forgeBody({ files })], 10));
+		const read = await openWith(forge([forgeBody({ files })], 10));
 		expect(read.files).toHaveLength(10);
 	});
 
 	test("is rebuilt from its known keys, unknown ones left out", async () => {
 		const head = { text: "t", future: 1, files: [{ ...goodFile, extra: 2 }] };
-		const read = await openForged(forge([forgeBody(head)], 1));
+		const read = await openWith(forge([forgeBody(head)], 1));
 		expect(read).toEqual({ text: "t", files: [{ ...goodFile, data: new Uint8Array(0) }] });
 	});
 
 	test("is refused when shorter than the head's length field", async () => {
-		await expect(openForged(forge([new Uint8Array(3)]))).rejects.toThrow("Malformed body");
+		await expect(openWith(forge([new Uint8Array(3)]))).rejects.toThrow("Malformed body");
 	});
 
 	test("is refused when the head runs past the body", async () => {
 		const body = forgeBody({ text: "t" });
 		new DataView(body.buffer).setUint32(0, 4093);
-		await expect(openForged(forge([body]))).rejects.toThrow("Malformed body");
+		await expect(openWith(forge([body]))).rejects.toThrow("Malformed body");
 	});
 
 	test("is refused when its files run past it", async () => {
 		const body = forgeBody({ files: [{ ...goodFile, size: 4096 }] });
-		await expect(openForged(forge([body], 1))).rejects.toThrow("does not match the declared size");
+		await expect(openWith(forge([body], 1))).rejects.toThrow("does not match the declared size");
 	});
 
 	test("must hold as many files as the envelope declares", async () => {
-		await expect(openForged(forge([forgeBody({ files: [goodFile] })], 2))).rejects.toThrow(
+		await expect(openWith(forge([forgeBody({ files: [goodFile] })], 2))).rejects.toThrow(
 			"The payload does not hold the files its envelope declares",
 		);
 	});
 
 	test("is refused padded to another length than its size class", async () => {
-		await expect(openForged(forge([forgeBody({ text: "t" }, undefined, 8192)]))).rejects.toThrow(
+		await expect(openWith(forge([forgeBody({ text: "t" }, undefined, 8192)]))).rejects.toThrow(
 			"Malformed padding",
 		);
-		await expect(openForged(forge([forgeBody({ text: "t" }, undefined, 4095)]))).rejects.toThrow(
+		await expect(openWith(forge([forgeBody({ text: "t" }, undefined, 4095)]))).rejects.toThrow(
 			"Malformed padding",
 		);
 	});
@@ -541,11 +630,11 @@ describe("the body of a format 1 note, read strictly", () => {
 	test("is refused when its padding holds a byte other than zero", async () => {
 		const body = forgeBody({ text: "t" });
 		body[4095] = 1;
-		await expect(openForged(forge([body]))).rejects.toThrow("Malformed padding");
+		await expect(openWith(forge([body]))).rejects.toThrow("Malformed padding");
 	});
 
 	test("comes in at least one message, the last one FINAL and every other MESSAGE", async () => {
-		await expect(openForged(forge([]))).rejects.toThrow("No message to open");
+		await expect(openWith(forge([]))).rejects.toThrow("No message to open");
 
 		const body = forgeBody({ text: "t" });
 		const halves = [body.subarray(0, 2048), body.subarray(2048)];
@@ -557,11 +646,11 @@ describe("the body of a format 1 note, read strictly", () => {
 			[FINAL, FINAL],
 			[MESSAGE, MESSAGE],
 		]) {
-			await expect(openForged(forge(halves, 0, tags)), String(tags)).rejects.toThrow(
+			await expect(openWith(forge(halves, 0, tags)), String(tags)).rejects.toThrow(
 				"Encrypted stream is truncated or extended",
 			);
 		}
-		await expect(openForged(forge(halves, 0, [MESSAGE, FINAL]))).resolves.toEqual({ text: "t" });
+		await expect(openWith(forge(halves, 0, [MESSAGE, FINAL]))).resolves.toEqual({ text: "t" });
 	});
 });
 
@@ -697,4 +786,311 @@ describe("a format 1 writer", () => {
 		},
 		ARGON2_TIMEOUT,
 	);
+});
+
+describe("a format 1 note written from Blobs", () => {
+	test("lays each Blob out by its size, unread", async () => {
+		const data = new Blob([new Uint8Array(10).fill(1)]);
+		const slice = vi.spyOn(data, "slice");
+		const body = format1BodyOf({ files: [{ name: "a.bin", type: "t", data }] });
+		expect(body.files[0]).toBe(data);
+		expect(body.length).toBe(4096);
+		expect(slice).not.toHaveBeenCalled();
+	});
+
+	test.each([1, 1000, 4096])(
+		"round-trips as the same bytes in memory do, in messages of %i bytes",
+		async (messageSize) => {
+			const first = new Uint8Array(3000).map((_, i) => i % 251);
+			const second = new Uint8Array(1200).fill(2);
+			const payload: NotePayload = {
+				text: "blobs",
+				files: [file("a", first), file("empty", new Uint8Array(0)), file("b", second)],
+			};
+			const body = format1BodyOf({
+				text: "blobs",
+				files: [
+					{ name: "a", type: "application/octet-stream", data: new Blob([first]) },
+					{ name: "empty", type: "application/octet-stream", data: new Blob([]) },
+					{ name: "b", type: "application/octet-stream", data: new Blob([second]) },
+				],
+			});
+			const written = await encryptNoteFormat1(body, messageSize, { ...settings, fileCount: 3 });
+			expect(toBase64(bodyOf(written))).toBe(
+				toBase64(bodyOf(await write(payload, { messageSize }))),
+			);
+			await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual(
+				payload,
+			);
+		},
+	);
+
+	test("reads a Blob a slice at a time, no slice longer than a message", async () => {
+		const data = new Blob([new Uint8Array(5000).fill(3)]);
+		const slice = vi.spyOn(data, "slice");
+		const body = format1BodyOf({ files: [{ name: "a", type: "t", data }] });
+		await encryptNoteFormat1(body, 1000, { ...settings, fileCount: 1 });
+		const lengths = slice.mock.calls.map(([start = 0, end = 0]) => end - start);
+		expect(lengths.reduce((sum, length) => sum + length, 0)).toBe(5000);
+		expect(Math.max(...lengths)).toBeLessThanOrEqual(1000);
+	});
+
+	test("refuses a file that changed while it was read, and wipes the head", async () => {
+		// A file shortened on disk once its size was taken.
+		class Shortened extends Blob {
+			override slice(start?: number, end?: number): Blob {
+				return super.slice(start, (end ?? this.size) - 1);
+			}
+		}
+		const body = format1BodyOf({
+			files: [{ name: "a", type: "t", data: new Shortened([new Uint8Array(100)]) }],
+		});
+		await expect(encryptNoteFormat1(body, 4096, { ...settings, fileCount: 1 })).rejects.toThrow(
+			new SecretValidationError("A file changed while it was read"),
+		);
+		expect(body.head.every((byte) => byte === 0)).toBe(true);
+	});
+});
+
+describe("sealing a format 1 note", () => {
+	test("derives the keys and the envelope before encrypting any message", async () => {
+		const push = vi.spyOn(sodium, "crypto_secretstream_xchacha20poly1305_push");
+		try {
+			const body = format1BodyOf({ files: [file("a", new Uint8Array(5000))] });
+			const sealing = await sealNoteFormat1(body, 1000, { ...settings, fileCount: 1 });
+			expect(sealing.messageCount).toBe(Math.ceil(body.length / 1000));
+			expect(parseEnvelope(fromBase64(sealing.envelope))?.fileCount).toBe(1);
+			expect(sealing.verifiers.linkVerifier).toBeTypeOf("string");
+			expect(push).not.toHaveBeenCalled();
+
+			const messages: Uint8Array[] = [];
+			for await (const message of sealing.messages) {
+				expect(push).toHaveBeenCalledTimes(messages.length + 1);
+				messages.push(message);
+			}
+			expect(messages).toHaveLength(sealing.messageCount);
+			expect(body.head.every((byte) => byte === 0)).toBe(true);
+			await expect(
+				open(messages, sealing.envelope, sealing.keyFragment).then((p) => p.files?.[0]?.size),
+			).resolves.toBe(5000);
+		} finally {
+			push.mockRestore();
+		}
+	});
+
+	test("wipes the head of a note given up before its messages, once closed", async () => {
+		const body = format1BodyOf({ text: "given up" });
+		const sealing = await sealNoteFormat1(body, 1000, settings);
+		expect(body.head.some((byte) => byte !== 0)).toBe(true);
+		sealing.close();
+		expect(body.head.every((byte) => byte === 0)).toBe(true);
+	});
+
+	test("wipes the head of a note it refuses", async () => {
+		const body = format1BodyOf({ text: "refused" });
+		await expect(sealNoteFormat1(body, 1000, { ...settings, maxReads: -1 })).rejects.toThrow(
+			SecretValidationError,
+		);
+		expect(body.head.every((byte) => byte === 0)).toBe(true);
+	});
+
+	test(
+		"keeps no secret but the stream's state once sealed, before any message",
+		async () => {
+			const secrets = recordSecrets();
+			try {
+				const sealing = await sealNoteFormat1(format1BodyOf({ text: "x" }), 1000, settings, "pw");
+				expect(secrets.linkKeys).toHaveLength(1);
+				expect(secrets.alive()).toEqual([]);
+				sealing.close();
+			} finally {
+				secrets.restore();
+			}
+		},
+		ARGON2_TIMEOUT,
+	);
+});
+
+describe("a format 1 note read as a stream", () => {
+	const payload: NotePayload = {
+		text: "streamed",
+		files: [
+			file(
+				"a",
+				new Uint8Array(3000).map((_, i) => i % 251),
+			),
+			file("empty", new Uint8Array(0)),
+			file("b", new Uint8Array(1200).fill(2)),
+		],
+	};
+
+	test.each([1, 3, 1000, 4095, 4096])(
+		"round-trips in messages of %i bytes, a file's bytes written as they come",
+		async (messageSize) => {
+			const written = await write(payload, { messageSize });
+			await expect(
+				openStreamed(written.messages, written.envelope, written.keyFragment),
+			).resolves.toEqual(payload);
+		},
+	);
+
+	test("opens each file's stream once the body reaches it, in order", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const { records, openFile } = recordingSinks();
+		const opened: number[] = [];
+		async function* counted() {
+			for (const message of written.messages) {
+				opened.push(records.length);
+				yield message;
+			}
+		}
+		const head = await streamNoteFormat1(read, counted(), openFile);
+		// The head and the first 1000 - head bytes of "a" fill the first message;
+		// "a" ends in the fourth, where "empty" and "b" start.
+		expect(opened.slice(0, 2)).toEqual([0, 1]);
+		expect(opened[4]).toBe(3);
+		expect(openFile.mock.calls).toEqual([
+			[{ name: "a", type: "application/octet-stream", size: 3000 }, 0],
+			[{ name: "empty", type: "application/octet-stream", size: 0 }, 1],
+			[{ name: "b", type: "application/octet-stream", size: 1200 }, 2],
+		]);
+		expect(head.files).toEqual(openFile.mock.calls.map(([info]) => info));
+	});
+
+	test("closes no stream before the last message is open and the body checked", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const { records, openFile } = recordingSinks();
+		async function* watched() {
+			for (const message of written.messages) {
+				expect(records.some((record) => record.end !== undefined)).toBe(false);
+				yield message;
+			}
+		}
+		await streamNoteFormat1(read, watched(), openFile);
+		expect(records.map((record) => record.end)).toEqual(["closed", "closed", "closed"]);
+	});
+
+	test("aborts every stream of a note cut short, and stops its download", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const { records, openFile } = recordingSinks();
+		const tampered = written.messages.map((message, index) => {
+			if (index !== 2) return message;
+			const copy = message.slice();
+			copy[0] = (copy[0] as number) ^ 1;
+			return copy;
+		});
+		const stopped = vi.fn();
+		const pulled: number[] = [];
+		async function* download() {
+			try {
+				for (const [index, message] of tampered.entries()) {
+					pulled.push(index);
+					yield message;
+				}
+			} finally {
+				stopped();
+			}
+		}
+		await expect(streamNoteFormat1(read, download(), openFile)).rejects.toThrow(
+			"Decryption failed",
+		);
+		expect(pulled).toEqual([0, 1, 2]);
+		expect(stopped).toHaveBeenCalledOnce();
+		expect(records.map((record) => record.end)).toEqual(["aborted"]);
+	});
+
+	test("throws a failed download as an outside failure, aborting the streams", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const { records, openFile } = recordingSinks();
+		const lost = new Error("connection lost");
+		async function* download() {
+			yield written.messages[0] as Uint8Array;
+			throw lost;
+		}
+		const err = await streamNoteFormat1(read, download(), openFile).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(OutsideFailure);
+		expect((err as OutsideFailure).cause).toBe(lost);
+		expect(records.map((record) => record.end)).toEqual(["aborted"]);
+	});
+
+	test.each([
+		// The second stream fails to open: the first is aborted.
+		["opening it", "open", "empty", ["aborted a"]],
+		// The third fails a write: the others are aborted.
+		["writing to it", "write", "b", ["aborted a", "aborted empty"]],
+		// The second fails to close: the first is closed already, the third aborted.
+		["closing it", "close", "empty", ["closed a", "aborted b"]],
+	] as const)(
+		"throws a stream's failure on %s as an outside failure",
+		async (_, step, failing, ends) => {
+			const written = await write(payload, { messageSize: 1000 });
+			const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+			const full = new Error("disk full");
+			const seen: string[] = [];
+			const openFile = (info: { name: string }) => {
+				const fails = info.name === failing;
+				if (fails && step === "open") throw full;
+				return new WritableStream<Uint8Array>({
+					write: () => {
+						if (fails && step === "write") throw full;
+					},
+					close: () => {
+						if (fails && step === "close") throw full;
+						seen.push(`closed ${info.name}`);
+					},
+					abort: () => {
+						seen.push(`aborted ${info.name}`);
+					},
+				});
+			};
+			const err = await streamNoteFormat1(read, messagesOf(written.messages), openFile).catch(
+				(e: unknown) => e,
+			);
+			expect(err).toBeInstanceOf(OutsideFailure);
+			expect((err as OutsideFailure).cause).toBe(full);
+			expect(seen).toEqual(ends);
+		},
+	);
+
+	test("throws the note's failure, not a stream's that fails to abort", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const openFile = () =>
+			new WritableStream<Uint8Array>({
+				abort: () => {
+					throw new Error("cannot abort");
+				},
+			});
+		const cut = written.messages.slice(0, -1);
+		await expect(streamNoteFormat1(read, messagesOf(cut), openFile)).rejects.toThrow(
+			"Encrypted stream is truncated or extended",
+		);
+	});
+
+	test("hands each stream a copy, the reader's own bytes wiped", async () => {
+		const written = await write(payload, { messageSize: 1000 });
+		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
+		const decrypted: Uint8Array[] = [];
+		const pull = sodium.crypto_secretstream_xchacha20poly1305_pull;
+		const spy = vi.spyOn(sodium, "crypto_secretstream_xchacha20poly1305_pull").mockImplementation(((
+			...args: Parameters<typeof pull>
+		) => {
+			const result = pull(...args);
+			decrypted.push(result.message);
+			return result;
+		}) as typeof pull);
+		try {
+			const { records, openFile } = recordingSinks();
+			await streamNoteFormat1(read, messagesOf(written.messages), openFile);
+			expect(decrypted.every((message) => message.every((byte) => byte === 0))).toBe(true);
+			expect(concat(records[0]?.chunks ?? [])).toEqual(payload.files?.[0]?.data);
+		} finally {
+			spy.mockRestore();
+			closeFormat1Read(read);
+		}
+	});
 });

@@ -134,10 +134,54 @@ const { id, keyFragment } = await client.createNote({
 });
 ```
 
-In the browser, turn a picked `File` into that shape with
-`{ name: file.name, type: file.type, data: new Uint8Array(await file.arrayBuffer()) }`.
+`data` may also be a `Blob`: a browser's `File` as it was picked, or `fs.openAsBlob()` in Node 20 and later. The SDK reads it a slice at a time as it encrypts it, so a large file is never held in memory:
 
-Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`. A note's size counts its padding: up to 6.25% more than its content, and 4 KiB at least.
+```ts
+import { openAsBlob } from "node:fs";
+
+const data = await openAsBlob("backup.tar");
+await client.createNote({ files: [{ name: "backup.tar", type: "application/x-tar", data }] });
+
+// In the browser, the picked File as it is:
+await client.createNote({ files: [{ name: file.name, type: file.type, data: file }] });
+```
+
+Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. The upload session is opened first, then each chunk is encrypted as it goes up: only the chunk being sent is in memory. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`. A note's size counts its padding: up to 6.25% more than its content, and 4 KiB at least. A `format: 0` note is encrypted whole, its Blobs read into memory first.
+
+### Reading into streams
+
+`readNote` returns the files in memory. `readNoteInto` writes each one to a `WritableStream` you open for it, as the download reaches it, and returns the text and the list of files: a format 1 note is never held whole in memory, only the chunk being read.
+
+```ts
+import { createWriteStream } from "node:fs";
+import { rename, rm } from "node:fs/promises";
+import { Writable } from "node:stream";
+
+const note = await client.readNoteInto(id, keyFragment, {
+  password,
+  openFile: (file, index) => {
+    const part = `./out/${index}.part`;
+    const stream = Writable.toWeb(createWriteStream(part));
+    const writer = stream.getWriter();
+    return new WritableStream({
+      write: (chunk) => writer.write(chunk),
+      // Only now is the file whole: keep it.
+      close: async () => {
+        await writer.close();
+        await rename(part, `./out/${index}-${file.name}`);
+      },
+      // The note was refused or the read failed: drop it.
+      abort: async (reason) => {
+        await writer.abort(reason);
+        await rm(part, { force: true });
+      },
+    });
+  },
+});
+console.log(note.text, note.files); // [{ name, type, size }]
+```
+
+A file's stream is closed only once the whole note is read and checked, and aborted if it is not: until then, what it holds may be a note cut short or tampered with, and must not be shown. A browser's `FileSystemWritableFileStream` works that way already: it writes to a copy, which `close()` keeps and `abort()` drops. A wrong password opens no stream. It consumes a read as `readNote` does, and takes the same options; a failure of one of your streams is thrown as it is. A format 0 note is read whole, then written out.
 
 ## Errors
 
@@ -168,7 +212,7 @@ Note that a missing note is a `404` from `readNote`, but `{ exists: false }` fro
 
 ## Cancelling
 
-Every call takes an `AbortSignal`: `createNote` and `readNote` in their options, `checkNote` and `deleteNote` in a last argument. A cancelled call rejects with the signal's reason, an `AbortError` unless you gave another:
+Every call takes an `AbortSignal`: `createNote`, `readNote` and `readNoteInto` in their options, `checkNote` and `deleteNote` in a last argument. A cancelled call rejects with the signal's reason, an `AbortError` unless you gave another:
 
 ```ts
 const controller = new AbortController();
@@ -202,6 +246,7 @@ Note creation, deletion and `readNote` are deliberately never retried: a retried
 | `SecretClient.create(config?)` | Build a client with libsodium initialised |
 | `createNote(options)` | Encrypt and upload; returns `{ id, keyFragment, deleteToken, expiresAt }` |
 | `readNote(id, keyFragment, options?)` | Download and decrypt — **consumes a read** |
+| `readNoteInto(id, keyFragment, options)` | Download and decrypt into your streams — **consumes a read** |
 | `checkNote(id)` | Metadata only; consumes nothing |
 | `deleteNote(id, deleteToken, capToken?)` | Revoke before expiry |
 | `buildShareUrl(id, keyFragment)` | Assemble the share URL |

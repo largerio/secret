@@ -306,45 +306,108 @@ async function readCiphertext(
 	return new Uint8Array(await download(res, signal, onProgress));
 }
 
+/** Bytes received and not read yet, taken off the front in the lengths asked for. */
+class ByteQueue {
+	private readonly pieces: Uint8Array[] = [];
+	length = 0;
+
+	push(piece: Uint8Array): void {
+		this.pieces.push(piece);
+		this.length += piece.length;
+	}
+
+	/** The next `length` bytes, copied out: that many must be queued. */
+	take(length: number): Uint8Array {
+		const taken = new Uint8Array(length);
+		let filled = 0;
+		while (filled < length) {
+			const piece = this.pieces[0] as Uint8Array;
+			const size = Math.min(piece.length, length - filled);
+			taken.set(piece.subarray(0, size), filled);
+			filled += size;
+			if (size === piece.length) {
+				this.pieces.shift();
+			} else {
+				this.pieces[0] = piece.subarray(size);
+			}
+		}
+		this.length -= length;
+		return taken;
+	}
+}
+
 /**
- * A chunked note's messages: X-Chunk-Count of them, each preceded by its
- * length. The body bounds each one: a message may be as long as the length
- * prefix allows.
+ * A note's messages as they arrive: X-Chunk-Count of them, each preceded by
+ * its length, read off the body a message at a time. The body bounds each
+ * one: a message may be as long as the length prefix allows. Its progress is
+ * reported against Content-Length when the server sent one (a note sent
+ * whole), message by message otherwise (a note sent in a session). Once its
+ * reader stops, the download stops too.
  */
+function framedMessages(
+	res: Response,
+	signal: AbortSignal | undefined,
+	onProgress?: (progress: number) => void,
+): AsyncGenerator<Uint8Array> {
+	const count = parsePositiveInt(res.headers.get("X-Chunk-Count"), 0);
+	if (count > MAX_REASONABLE_CHUNK_COUNT) {
+		throw new SecretApiError(`Chunk count ${String(count)} exceeds maximum`, 502);
+	}
+	const total = parsePositiveInt(res.headers.get("Content-Length"), 0);
+	return messagesOf(res.body?.getReader(), count, total, signal, onProgress);
+}
+
+async function* messagesOf(
+	reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
+	count: number,
+	total: number,
+	signal: AbortSignal | undefined,
+	onProgress?: (progress: number) => void,
+): AsyncGenerator<Uint8Array> {
+	const queue = new ByteQueue();
+	let loaded = 0;
+	/** Whether `length` bytes are queued, once read or the body ended short of them. */
+	const fill = async (length: number): Promise<boolean> => {
+		while (queue.length < length) {
+			const chunk = reader ? await readBody(() => reader.read(), signal) : undefined;
+			if (chunk === undefined || chunk.done) {
+				return false;
+			}
+			queue.push(chunk.value);
+			loaded += chunk.value.length;
+			if (total > 0) onProgress?.(loaded / total);
+		}
+		return true;
+	};
+	let received = 0;
+	try {
+		while (received < count && (await fill(UINT32_SIZE))) {
+			const length = new DataView(queue.take(UINT32_SIZE).buffer).getUint32(0); // big-endian
+			if (!(await fill(length))) break;
+			yield queue.take(length);
+			received++;
+			if (total === 0) onProgress?.(received / count);
+		}
+	} finally {
+		await reader?.cancel().catch(() => undefined);
+	}
+	if (received !== count) {
+		throw new SecretApiError(
+			`Expected ${String(count)} chunks but received ${String(received)}`,
+			502,
+		);
+	}
+}
+
+/** A note's messages, all of them. */
 async function readChunks(
 	res: Response,
 	signal: AbortSignal | undefined,
 	onProgress?: (progress: number) => void,
 ): Promise<Uint8Array[]> {
-	const chunkCount = parsePositiveInt(res.headers.get("X-Chunk-Count"), 0);
-	if (chunkCount > MAX_REASONABLE_CHUNK_COUNT) {
-		throw new SecretApiError(`Chunk count ${String(chunkCount)} exceeds maximum`, 502);
-	}
-
-	// A note sent whole comes with its length, and its download reports its
-	// progress; a note sent in a session reports it message by message, once
-	// downloaded.
-	const sized = parsePositiveInt(res.headers.get("Content-Length"), 0) > 0;
-	const bodyData = await download(res, signal, sized ? onProgress : undefined);
-	const view = new DataView(bodyData);
 	const chunks: Uint8Array[] = [];
-	let offset = 0;
-
-	for (let i = 0; i < chunkCount; i++) {
-		if (offset + UINT32_SIZE > bodyData.byteLength) break;
-		const len = view.getUint32(offset, false); // explicit big-endian
-		offset += UINT32_SIZE;
-		if (offset + len > bodyData.byteLength) break;
-		chunks.push(new Uint8Array(bodyData, offset, len));
-		offset += len;
-		if (!sized) onProgress?.((i + 1) / chunkCount);
-	}
-
-	if (chunks.length !== chunkCount) {
-		throw new SecretApiError(
-			`Expected ${String(chunkCount)} chunks but received ${String(chunks.length)}`,
-			502,
-		);
+	for await (const message of framedMessages(res, signal, onProgress)) {
+		chunks.push(message);
 	}
 	return chunks;
 }
@@ -569,6 +632,33 @@ export async function postNoteRead(
 	proofs: ReadProofs,
 	onProgress?: (progress: number) => void,
 ): Promise<NoteReadResponse> {
+	const res = await requestNoteRead(config, id, proofs);
+	const meta = noteReadMeta(res.headers);
+	return { ...meta, chunks: await readChunks(res, config.signal, onProgress) };
+}
+
+export interface NoteReadStream extends NoteReadMeta {
+	/** The note's messages as they arrive: pulled once, the download stopping with them. */
+	readonly messages: AsyncGenerator<Uint8Array>;
+}
+
+/** Reads a format 1 note as {@link postNoteRead} does, its messages handed out as they arrive. */
+export async function postNoteReadStream(
+	config: HttpClientConfig,
+	id: string,
+	proofs: ReadProofs,
+	onProgress?: (progress: number) => void,
+): Promise<NoteReadStream> {
+	const res = await requestNoteRead(config, id, proofs);
+	const meta = noteReadMeta(res.headers);
+	return { ...meta, messages: framedMessages(res, config.signal, onProgress) };
+}
+
+async function requestNoteRead(
+	config: HttpClientConfig,
+	id: string,
+	proofs: ReadProofs,
+): Promise<Response> {
 	const res = await requestWithPolicy(
 		config,
 		`${config.baseUrl}/notes/${id}/reads`,
@@ -580,7 +670,5 @@ export async function postNoteRead(
 		CONSUMING_READ,
 	);
 	await throwUnlessOk(res);
-
-	const meta = noteReadMeta(res.headers);
-	return { ...meta, chunks: await readChunks(res, config.signal, onProgress) };
+	return res;
 }

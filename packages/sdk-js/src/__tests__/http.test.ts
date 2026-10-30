@@ -24,6 +24,7 @@ import {
 	postFormData,
 	postJson,
 	postNoteRead,
+	postNoteReadStream,
 	uploadChunk,
 } from "../http.js";
 
@@ -1430,6 +1431,159 @@ describe("postNoteRead", () => {
 
 		expect(err.status).toBe(403);
 		expect(err.message).toBe("Wrong password");
+	});
+});
+
+describe("postNoteReadStream", () => {
+	const proofs = { linkProof: "bGluaw==" };
+	const readHeaders: Record<string, string> = {
+		"X-Has-Password": "false",
+		"X-File-Count": "0",
+		"X-Created-At": "2024-01-01T00:00:00Z",
+		"X-Expires-At": "2099-01-01T00:00:00Z",
+	};
+
+	function framed(chunks: Uint8Array[]): Uint8Array {
+		const body = new Uint8Array(chunks.reduce((n, c) => n + 4 + c.length, 0));
+		const view = new DataView(body.buffer);
+		let offset = 0;
+		for (const chunk of chunks) {
+			view.setUint32(offset, chunk.length);
+			body.set(chunk, offset + 4);
+			offset += 4 + chunk.length;
+		}
+		return body;
+	}
+
+	/** A body that arrives in pieces of `size` bytes, its cancellation recorded. */
+	function piecewise(bytes: Uint8Array, size: number) {
+		const cancel = vi.fn();
+		let offset = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull: (controller) => {
+				if (offset >= bytes.length) {
+					controller.close();
+					return;
+				}
+				controller.enqueue(bytes.slice(offset, offset + size));
+				offset += size;
+			},
+			cancel,
+		});
+		return { body, cancel, sent: () => offset };
+	}
+
+	const respond = (body: BodyInit | null, headers: Record<string, string>) =>
+		vi.fn<typeof fetch>(() =>
+			Promise.resolve(new Response(body, { status: 200, headers: { ...readHeaders, ...headers } })),
+		);
+
+	async function pulled(messages: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> {
+		const all: Uint8Array[] = [];
+		for await (const message of messages) all.push(message);
+		return all;
+	}
+
+	test("posts the proofs, then hands the messages out as they arrive, in whatever pieces", async () => {
+		const chunks = [new Uint8Array([1, 2, 3, 4, 5]), new Uint8Array([6]), new Uint8Array(0)];
+		const { body } = piecewise(framed(chunks), 3);
+		const fetchMock = respond(body, { "X-Chunk-Count": "3" });
+		const onProgress = vi.fn();
+
+		const result = await postNoteReadStream(
+			createConfig(fetchMock, "read-key"),
+			"noteId123456",
+			proofs,
+			onProgress,
+		);
+
+		expect(result).toMatchObject({ hasPassword: false, createdAt: "2024-01-01T00:00:00Z" });
+		expect(await pulled(result.messages)).toEqual(chunks);
+		expect(onProgress.mock.calls).toEqual([[1 / 3], [2 / 3], [1]]);
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(url).toBe("https://api.example.com/notes/noteId123456/reads");
+		expect(JSON.parse((init as RequestInit).body as string)).toEqual(proofs);
+	});
+
+	test("reports a note sent whole by its bytes, as they arrive", async () => {
+		const bytes = framed([new Uint8Array(8).fill(1)]);
+		const { body } = piecewise(bytes, 6);
+		const fetchMock = respond(body, {
+			"X-Chunk-Count": "1",
+			"Content-Length": String(bytes.length),
+		});
+		const onProgress = vi.fn();
+
+		const result = await postNoteReadStream(
+			createConfig(fetchMock),
+			"noteId123456",
+			proofs,
+			onProgress,
+		);
+		await pulled(result.messages);
+
+		expect(onProgress.mock.calls).toEqual([[0.5], [1]]);
+	});
+
+	test("stops the download once its messages are no longer pulled", async () => {
+		const chunks = Array.from({ length: 10 }, () => new Uint8Array(100));
+		const piece = piecewise(framed(chunks), 104);
+		const fetchMock = respond(piece.body, { "X-Chunk-Count": "10" });
+
+		const result = await postNoteReadStream(createConfig(fetchMock), "noteId123456", proofs);
+		for await (const _message of result.messages) {
+			break;
+		}
+
+		expect(piece.cancel).toHaveBeenCalledOnce();
+		expect(piece.sent()).toBeLessThan(10 * 104);
+	});
+
+	test("answers a body cut short as a bad gateway, once its messages run out", async () => {
+		const bytes = framed([new Uint8Array([1]), new Uint8Array([2, 3])]);
+		const fetchMock = respond(bytes.slice(0, -1) as BodyInit, { "X-Chunk-Count": "2" });
+
+		const result = await postNoteReadStream(createConfig(fetchMock), "noteId123456", proofs);
+		const messages: Uint8Array[] = [];
+		const err = await (async () => {
+			for await (const message of result.messages) messages.push(message);
+		})().catch((e: unknown) => e);
+
+		expect(messages).toEqual([new Uint8Array([1])]);
+		expect(err).toBeInstanceOf(SecretApiError);
+		expect((err as SecretApiError).status).toBe(502);
+		expect((err as SecretApiError).message).toBe("Expected 2 chunks but received 1");
+	});
+
+	test("answers an answer without a body as a bad gateway", async () => {
+		const fetchMock = respond(null, { "X-Chunk-Count": "1" });
+
+		const result = await postNoteReadStream(createConfig(fetchMock), "noteId123456", proofs);
+
+		await expect(pulled(result.messages)).rejects.toThrow("Expected 1 chunks but received 0");
+	});
+
+	test("refuses a count of messages past reason before reading any", async () => {
+		const fetchMock = respond(new Uint8Array(0) as BodyInit, { "X-Chunk-Count": "10001" });
+
+		const err = await catchApiError(
+			postNoteReadStream(createConfig(fetchMock), "noteId123456", proofs),
+		);
+
+		expect(err.status).toBe(502);
+		expect(err.message).toContain("exceeds maximum");
+	});
+
+	test("surfaces a refused proof with its status", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(errorResponse(403, { error: "Wrong password" })),
+		);
+
+		const err = await catchApiError(
+			postNoteReadStream(createConfig(fetchMock), "noteId123456", proofs),
+		);
+
+		expect(err.status).toBe(403);
 	});
 });
 
