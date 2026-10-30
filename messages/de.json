@@ -14,6 +14,7 @@
 	"error_server": "Auf dem Server ist ein Problem aufgetreten. Versuchen Sie es gleich noch einmal.",
 	"error_rate_limited": "Zu viele Anfragen aus Ihrem Netzwerk. Warten Sie eine Minute und versuchen Sie es dann erneut.",
 	"error_check_failed": "Die Spam-Schutzprüfung wurde abgelehnt. Versuchen Sie es erneut.",
+	"error_blocked": "Etwas zwischen Ihnen und dem Server hat die Anfrage abgelehnt: eine Firewall oder ein Proxy, nicht die Notiz. Versuchen Sie es aus einem anderen Netzwerk.",
 	"error_too_large": "Die Notiz ist größer, als dieser Server annimmt.",
 	"error_storage_full": "Auf dem Server ist kein Platz mehr für diese Notiz. Versuchen Sie es später erneut.",
 	"error_clipboard": "Kopieren in die Zwischenablage fehlgeschlagen",

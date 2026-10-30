@@ -14,6 +14,7 @@
 	"error_server": "Il server ha riscontrato un problema. Riprova tra un momento.",
 	"error_rate_limited": "Troppe richieste dalla tua rete. Attendi un minuto, poi riprova.",
 	"error_check_failed": "La verifica anti-spam è stata rifiutata. Riprova.",
+	"error_blocked": "Qualcosa tra te e il server ha rifiutato la richiesta: un firewall o un proxy, non la nota. Riprova da un'altra rete.",
 	"error_too_large": "La nota supera la dimensione accettata da questo server.",
 	"error_storage_full": "Il server non ha più spazio per questa nota. Riprova più tardi.",
 	"error_clipboard": "Impossibile copiare negli appunti",

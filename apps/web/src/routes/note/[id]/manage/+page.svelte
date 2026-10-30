@@ -53,7 +53,10 @@ async function handleDelete(): Promise<void> {
 		isDeleted = true;
 	} catch (e) {
 		if (e instanceof SecretApiError && e.status === 404) gone = true;
-		else if (e instanceof SecretApiError && e.status === 403) error = t("manage_wrong_token");
+		// The instance's refusal of the token: a 403 without its code is a
+		// firewall's or a proxy's, which the token has nothing to do with.
+		else if (e instanceof SecretApiError && e.code === "wrong_delete_token")
+			error = t("manage_wrong_token");
 		else error = requestErrorMessage(e);
 	} finally {
 		isDeleting = false;

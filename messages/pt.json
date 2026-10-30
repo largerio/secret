@@ -14,6 +14,7 @@
 	"error_server": "O servidor encontrou um problema. Tente novamente daqui a pouco.",
 	"error_rate_limited": "Demasiados pedidos a partir da sua rede. Aguarde um minuto e tente novamente.",
 	"error_check_failed": "A verificação anti-spam foi recusada. Tente novamente.",
+	"error_blocked": "Algo entre si e o servidor recusou o pedido: uma firewall ou um proxy, não a nota. Tente a partir de outra rede.",
 	"error_too_large": "A nota excede o tamanho que este servidor aceita.",
 	"error_storage_full": "O servidor não tem espaço para esta nota. Tente novamente mais tarde.",
 	"error_clipboard": "Falha ao copiar para a área de transferência",

@@ -14,6 +14,7 @@
 	"error_server": "The server ran into a problem. Try again in a moment.",
 	"error_rate_limited": "Too many requests from your network. Wait a minute, then try again.",
 	"error_check_failed": "The anti-spam check was refused. Try again.",
+	"error_blocked": "Something between you and the server refused the request: a firewall or a proxy, not the note. Try again from another network.",
 	"error_too_large": "The note is larger than this server accepts.",
 	"error_storage_full": "The server has no room left for this note. Try again later.",
 	"error_clipboard": "Failed to copy to clipboard",

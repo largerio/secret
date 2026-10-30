@@ -41,7 +41,7 @@ Monorepo with pnpm workspaces:
   - Storage: Abstracted backend — local filesystem or S3 (`src/storage/`)
   - Middleware: Rate limiting, security headers, CORS (`src/middleware/`)
   - Auth: PoW tokens via Cap widget for browser writes, API keys for SDK writes, attached per route (`middleware` of the write routes in `routes/notes/writes.ts`, before validation). Reads need none: a format 1 read proves the link instead
-  - Error handling: the notes service refuses with `NoteError`, which the app's error handler answers through `routes/notes/errorStatus.ts` (its `toHttpException` option); request validation goes through the route schemas and `defaultHook`. A 500 is logged with an `errorId`, returned to the client; a refusal (4xx, or 507 for a full instance) is not logged
+  - Error handling: every error answers problem details (RFC 9457, `application/problem+json`) through `src/middleware/problem.ts`: `code` (stable, the client's to branch on, listed in PROTOCOL.md "Errors"), `detail`, and `error` repeating it for older clients. The notes service refuses with `NoteError`, whose code the app's error handler answers through `routes/notes/errorStatus.ts` (its `toHttpException` option, a `ProblemException`); request validation goes through the route schemas and `defaultHook`; middlewares answer with `problem()`. A 500 is logged with an `errorId`, returned to the client; a refusal (4xx, or 507 for a full instance) is not logged
   - Logging: structured JSON lines (`src/logger.ts`, zero-dependency); per-request `X-Request-Id` + request log middleware (`src/middleware/requestContext.ts`). Logs record route *patterns*, never raw paths (note ids stay out of logs); 500s carry `errorId` + `requestId` for correlation
   - Cleanup: Background job deletes expired notes (`src/cleanup.ts`). Storage purges go through the `pending_deletions` outbox (`src/pendingDeletions.ts`): enqueued in the transaction that deletes the row, run after commit, retried by the job. A daily sweep (`src/reconcile.ts`) purges stored objects no row points to, only on storage no other database has claimed
   - Health and metrics: `/api/health/live` (process up), `/api/health/ready` (database + storage, `503` once shutdown starts), `/api/health` (readiness plus version and revision, from `src/buildInfo.ts`). `/api/metrics` (Prometheus text, `src/metrics.ts` + `src/prometheus.ts`, zero-dependency) exists only when `METRICS_TOKEN` is set; labels hold route patterns and bounded values, never note ids
@@ -100,7 +100,7 @@ Monorepo with pnpm workspaces:
 - **No `any`**: Biome enforces `noExplicitAny`
 - **Imports**: Use `type` imports for type-only (`import type { ... }`)
 - **Async storage**: All `StorageBackend` methods are async (return `Promise`)
-- **Error handling**: Routes return `{ error: string }` JSON — never leak internal details
+- **Error handling**: Errors answer problem details with a stable `code` (`problem()`, `ProblemException`); a new error gets a code in PROTOCOL.md's table — never leak internal details
 
 ## Gotchas
 

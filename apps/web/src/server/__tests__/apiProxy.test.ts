@@ -58,14 +58,21 @@ describe("handleUpstreamError", () => {
 		};
 	}
 
-	it("answers 502 with a JSON error and logs the cause", () => {
+	it("answers 502 with problem details and logs the cause", () => {
 		const log = vi.spyOn(console, "error").mockImplementation(() => {});
 		const res = fakeResponse();
 
 		handleUpstreamError(res as unknown as ServerResponse, new Error("connect ECONNREFUSED"));
 
-		expect(res.writeHead).toHaveBeenCalledWith(502, { "content-type": "application/json" });
-		expect(res.end).toHaveBeenCalledWith(JSON.stringify({ error: "Bad Gateway" }));
+		expect(res.writeHead).toHaveBeenCalledWith(502, { "content-type": "application/problem+json" });
+		expect(JSON.parse(res.end.mock.calls[0]?.[0] as string)).toEqual({
+			type: "about:blank",
+			title: "Bad Gateway",
+			status: 502,
+			code: "bad_gateway",
+			detail: "Bad Gateway",
+			error: "Bad Gateway",
+		});
 		expect(log.mock.calls[0]?.[0]).toContain("connect ECONNREFUSED");
 		log.mockRestore();
 	});

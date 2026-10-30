@@ -21,6 +21,10 @@ function messageKey(error: unknown): MessageKey {
 		case 401:
 			// The proof-of-work token every write carries: a retry solves a new one.
 			return "error_check_failed";
+		case 403:
+			// The instance's own 403s are a wrong proof or token, which the pages
+			// handle before asking here: this one is a firewall's or a proxy's.
+			return "error_blocked";
 		case 413:
 			return "error_too_large";
 		case 429:

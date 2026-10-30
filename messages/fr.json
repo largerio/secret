@@ -14,6 +14,7 @@
 	"error_server": "Le serveur a rencontré un problème. Réessayez dans un instant.",
 	"error_rate_limited": "Trop de requêtes depuis votre réseau. Attendez une minute, puis réessayez.",
 	"error_check_failed": "La vérification anti-spam a été refusée. Réessayez.",
+	"error_blocked": "Un intermédiaire entre vous et le serveur a refusé la requête : un pare-feu ou un proxy, pas la note. Réessayez depuis un autre réseau.",
 	"error_too_large": "La note dépasse la taille que ce serveur accepte.",
 	"error_storage_full": "Le serveur n'a plus de place pour cette note. Réessayez plus tard.",
 	"error_clipboard": "Échec de la copie dans le presse-papiers",

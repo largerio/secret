@@ -14,6 +14,7 @@
 	"error_server": "服务器出现问题，请稍后重试。",
 	"error_rate_limited": "来自您网络的请求过多。请等待一分钟后重试。",
 	"error_check_failed": "反垃圾验证未通过，请重试。",
+	"error_blocked": "您与服务器之间的某个环节拒绝了该请求：是防火墙或代理，而不是笔记本身。请换一个网络再试。",
 	"error_too_large": "笔记超出了此服务器接受的大小。",
 	"error_storage_full": "服务器已没有空间存放此笔记，请稍后重试。",
 	"error_clipboard": "复制到剪贴板失败",
