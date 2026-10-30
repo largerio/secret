@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createRateLimit } from "../middleware/rateLimit.js";
 import { type CapChallengeConfig, createCapRoutes, DEFAULT_CAP_CONFIG } from "../routes/cap.js";
+import { problemOf } from "./problems.js";
 
 function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
 	return { incoming: { socket: { remoteAddress } } };
@@ -145,7 +146,7 @@ describe("rate limiting", () => {
 			mockEnv("9.9.9.9"),
 		);
 		expect(blocked.status).toBe(429);
-		expect(await blocked.json()).toEqual({ error: "Too many requests" });
+		expect(await blocked.json()).toEqual(problemOf(429, "rate_limited", "Too many requests"));
 
 		rl.cleanup();
 	});

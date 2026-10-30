@@ -18,6 +18,7 @@ import { createWriteAuth } from "./middleware/auth.js";
 import { createBodyLimits } from "./middleware/bodyLimit.js";
 import { createCloseAfterError } from "./middleware/connection.js";
 import { createErrorHandler } from "./middleware/errorHandler.js";
+import { problem } from "./middleware/problem.js";
 import {
 	classifyNotesPath,
 	createRateLimit,
@@ -90,7 +91,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		createErrorHandler({ debug: config.debug, logger, toHttpException: noteErrorToHttp }),
 	);
 
-	app.notFound((c) => c.json({ error: "Not found" }, 404));
+	app.notFound((c) => problem(c, 404, "not_found", "Not found"));
 
 	// First so every later middleware, handler and the error handler can
 	// correlate their log lines with this request. Health probes are skipped:

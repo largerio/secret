@@ -1,6 +1,9 @@
 import { verifyApiKeyBuffers } from "@largerio/secret-shared/auth";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { cap } from "../routes/cap.js";
+import { problem } from "./problem.js";
+
+const unauthorized = (c: Context) => problem(c, 401, "unauthorized", "Unauthorized");
 
 /**
  * Write authentication (PROTOCOL.md): an API key the operator configured, or a
@@ -22,18 +25,18 @@ export function createWriteAuth(apiKeys: ReadonlyArray<string>): MiddlewareHandl
 				return;
 			}
 
-			return c.json({ error: "Unauthorized" }, 401);
+			return unauthorized(c);
 		}
 
 		const capToken = c.req.header("x-cap-token");
 		if (!capToken) {
-			return c.json({ error: "Unauthorized" }, 401);
+			return unauthorized(c);
 		}
 
 		// keepToken: false makes the PoW token single-use (replay protection).
 		const { success } = await cap.validateToken(capToken, { keepToken: false });
 		if (!success) {
-			return c.json({ error: "Unauthorized" }, 401);
+			return unauthorized(c);
 		}
 
 		await next();

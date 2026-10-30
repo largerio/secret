@@ -1,5 +1,6 @@
 import { BlockList, isIPv4, isIPv6 } from "node:net";
 import type { Context, MiddlewareHandler } from "hono";
+import { problem } from "./problem.js";
 
 interface RateLimitStore {
 	readonly hits: number;
@@ -119,7 +120,7 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 
 function tooManyRequests(c: Context, resetAt: number, now: number): Response {
 	c.header("Retry-After", String(Math.max(1, Math.ceil((resetAt - now) / 1000))));
-	return c.json({ error: "Too many requests" }, 429);
+	return problem(c, 429, "rate_limited", "Too many requests");
 }
 
 export type NotesRateClass = "create" | "read" | "exists" | "chunks";

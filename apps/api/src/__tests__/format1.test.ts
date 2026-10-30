@@ -1,6 +1,7 @@
 import { createHash, createHmac, hkdfSync, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { problemOf } from "./problems.js";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
@@ -487,7 +488,7 @@ describe("format 1 write refusals: the verifiers", () => {
 
 		for (const res of [json, multipart, init]) {
 			expect(res.status).toBe(400);
-			expect(await res.json()).toEqual({ error: "Invalid request" });
+			expect(await res.json()).toEqual(problemOf(400, "invalid_request", "Invalid request"));
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(0);
 		expect(db.select().from(uploadsTable).all()).toHaveLength(0);
@@ -731,9 +732,9 @@ describe("format 1 reads, with proofs", () => {
 		const read = await postReads(id);
 
 		expect(read.status).toBe(400);
-		expect(await read.json()).toEqual({
-			error: "Note is in another format than the one asked for",
-		});
+		expect(await read.json()).toEqual(
+			problemOf(400, "note_format_mismatch", "Note is in another format than the one asked for"),
+		);
 		expect(rowOf(id)?.readCount).toBe(0);
 		expect((await app.request(`/api/v1/notes/${id}/raw`)).status).toBe(200);
 	});
@@ -748,7 +749,7 @@ describe("format 1 reads, with proofs", () => {
 		const res = await postReads(id);
 
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(await res.json()).toEqual(problemOf(404, "note_not_found", "Note not found"));
 		expect(rowOf(id)).toBeUndefined();
 	});
 
@@ -764,7 +765,7 @@ describe("format 1 reads, with proofs", () => {
 		]) {
 			const res = await postReads(id, body);
 			expect(res.status, JSON.stringify(body)).toBe(400);
-			expect(await res.json()).toEqual({ error: "Invalid request" });
+			expect(await res.json()).toEqual(problemOf(400, "invalid_request", "Invalid request"));
 		}
 		const bare = await app.request(`/api/v1/notes/${id}/reads`, { method: "POST" });
 		expect(bare.status).toBe(400);
@@ -782,7 +783,7 @@ describe("format 1 read refusals: the proofs", () => {
 			for (let attempt = 0; attempt <= MAX_PASSWORD_ATTEMPTS; attempt += 1) {
 				const res = await postReads(note, WRONG_LINK);
 				expect(res.status).toBe(403);
-				expect(await res.json()).toEqual({ error: "Invalid link proof" });
+				expect(await res.json()).toEqual(problemOf(403, "wrong_link_proof", "Invalid link proof"));
 			}
 			expect(rowOf(note)).toMatchObject({ readCount: 0, failedAttempts: 0 });
 		}
@@ -798,7 +799,7 @@ describe("format 1 read refusals: the proofs", () => {
 		const res = await postReads(id, { linkProof: b64(PASSWORD_PROOF) });
 
 		expect(res.status).toBe(403);
-		expect(await res.json()).toEqual({ error: "Invalid link proof" });
+		expect(await res.json()).toEqual(problemOf(403, "wrong_link_proof", "Invalid link proof"));
 		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
 	});
 
@@ -808,7 +809,9 @@ describe("format 1 read refusals: the proofs", () => {
 		const res = await postReads(id, { linkProof: b64(LINK_PROOF) });
 
 		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({ error: "Password proof required" });
+		expect(await res.json()).toEqual(
+			problemOf(400, "password_proof_missing", "Password proof required"),
+		);
 		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
 	});
 
@@ -818,7 +821,7 @@ describe("format 1 read refusals: the proofs", () => {
 		const res = await postReads(id, WRONG_PASSWORD);
 
 		expect(res.status).toBe(403);
-		expect(await res.json()).toEqual({ error: "Wrong password" });
+		expect(await res.json()).toEqual(problemOf(403, "wrong_password", "Wrong password"));
 		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 1 });
 		expect(await existsOf(id)).toMatchObject({ passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - 1 });
 
@@ -845,7 +848,7 @@ describe("format 1 read refusals: the proofs", () => {
 		for (let attempt = 1; attempt <= MAX_PASSWORD_ATTEMPTS; attempt += 1) {
 			const res = await postReads(id, WRONG_PASSWORD, target);
 			expect(res.status).toBe(403);
-			expect(await res.json()).toEqual({ error: "Wrong password" });
+			expect(await res.json()).toEqual(problemOf(403, "wrong_password", "Wrong password"));
 			if (attempt < MAX_PASSWORD_ATTEMPTS) {
 				expect(await existsOf(id)).toMatchObject({
 					passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS - attempt,
@@ -1008,10 +1011,9 @@ describe("password attempts, taken before the proof is compared", () => {
 
 		for (const res of [right, wrong]) {
 			expect(res.status).toBe(500);
-			expect(await res.json()).toEqual({
-				error: "Internal server error",
-				errorId: expect.any(String),
-			});
+			expect(await res.json()).toEqual(
+				problemOf(500, "internal_error", "Internal server error", { errorId: expect.any(String) }),
+			);
 		}
 		expect(read).not.toHaveBeenCalled();
 		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
@@ -1057,7 +1059,7 @@ describe("password attempts, taken before the proof is compared", () => {
 		const res = await postReads(id);
 
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(await res.json()).toEqual(problemOf(404, "note_not_found", "Note not found"));
 		expect(rowOf(id)).toBeUndefined();
 		await vi.waitFor(() => expect(db.select().from(pendingDeletions).all()).toEqual([]));
 		expect(await storedObjects()).toEqual([]);
@@ -1117,7 +1119,7 @@ describe("the last wrong password, while a right reader awaits the storage", () 
 		hold.release();
 		const res = await reader;
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(await res.json()).toEqual(problemOf(404, "note_not_found", "Note not found"));
 	});
 
 	// Its read spent, a reader of a chunked note that takes several reads is
@@ -1181,7 +1183,7 @@ describe("the sealed verifiers, against a write to the database", () => {
 			const res = await postReads(id, proofs);
 
 			expect(res.status).toBe(403);
-			expect(await res.json()).toEqual({ error: "Wrong password" });
+			expect(await res.json()).toEqual(problemOf(403, "wrong_password", "Wrong password"));
 		}
 		expect(rowOf(id)).toMatchObject({ readCount: 0 });
 	});
@@ -1197,7 +1199,7 @@ describe("the sealed verifiers, against a write to the database", () => {
 			const res = await postReads(id, proofs);
 
 			expect(res.status).toBe(403);
-			expect(await res.json()).toEqual({ error: "Invalid link proof" });
+			expect(await res.json()).toEqual(problemOf(403, "wrong_link_proof", "Invalid link proof"));
 		}
 		expect(rowOf(id)).toMatchObject({ readCount: 0, failedAttempts: 0 });
 	});
@@ -1226,9 +1228,9 @@ describe("format 0 reads of a format 1 note", () => {
 		const res = await app.request(`/api/v1/notes/${id}`);
 
 		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({
-			error: "Note is in another format than the one asked for",
-		});
+		expect(await res.json()).toEqual(
+			problemOf(400, "note_format_mismatch", "Note is in another format than the one asked for"),
+		);
 		expect(rowOf(id)?.readCount).toBe(0);
 
 		// Still there, and still burned by its one read.
@@ -1396,7 +1398,7 @@ describe("format 1 refusals", () => {
 			const res = await postNote({ envelope, ...verifiers, encryptedData: b64(CIPHERTEXT) });
 
 			expect(res.status).toBe(400);
-			expect(await res.json()).toEqual({ error: "Invalid request" });
+			expect(await res.json()).toEqual(problemOf(400, "invalid_request", "Invalid request"));
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(0);
 	});
@@ -1465,7 +1467,7 @@ describe("format 1 refusals", () => {
 		]) {
 			const res = await postMultipart({ envelope: b64(envelope), ...verifiersFor(envelope) });
 			expect(res.status).toBe(400);
-			expect(await res.json()).toEqual({ error: "Invalid request" });
+			expect(await res.json()).toEqual(problemOf(400, "invalid_request", "Invalid request"));
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(0);
 	});
@@ -1477,7 +1479,7 @@ describe("format 1 refusals", () => {
 		]) {
 			const res = await postInit(body);
 			expect(res.status).toBe(400);
-			expect(await res.json()).toEqual({ error: "Invalid request" });
+			expect(await res.json()).toEqual(problemOf(400, "invalid_request", "Invalid request"));
 		}
 		expect(db.select().from(uploadsTable).all()).toHaveLength(0);
 	});
@@ -1513,7 +1515,7 @@ describe("format 1 refusals", () => {
 });
 
 describe("format 1 message lengths", () => {
-	const NOT_PADDED = { error: "Message lengths do not fit a padded body" };
+	const NOT_PADDED = problemOf(400, "note_not_padded", "Message lengths do not fit a padded body");
 
 	/** Sends a format 1 note's messages in an upload session, then asks to complete it. */
 	async function uploadMessages(messages: readonly Buffer[]) {
@@ -1643,7 +1645,9 @@ describe("format 1 message lengths", () => {
 
 		const early = await complete(uploadId, racing);
 		expect(early.status).toBe(409);
-		expect(await early.json()).toEqual({ error: "A chunk is still being written" });
+		expect(await early.json()).toEqual(
+			problemOf(409, "chunk_in_flight", "A chunk is still being written"),
+		);
 		held.release();
 		expect((await writing).status).toBe(200);
 		expect(await (await complete(uploadId, racing)).json()).toEqual(NOT_PADDED);
@@ -1703,8 +1707,8 @@ describe("the instance's limits, for format 1", () => {
 		const tight = createApp({ MAX_EXPIRY: "3600", MAX_FILES_PER_NOTE: "3" });
 		const tooLong = { expiresIn: 7200, fileCount: 1 };
 		const tooMany = { expiresIn: 3600, fileCount: 4 };
-		const expiry = { error: "Maximum expiry is 3600 seconds" };
-		const files = { error: "Maximum 3 files per note" };
+		const expiry = problemOf(400, "expiry_above_limit", "Maximum expiry is 3600 seconds");
+		const files = problemOf(400, "too_many_files", "Maximum 3 files per note");
 
 		for (const [declared, error] of [
 			[tooLong, expiry],
@@ -1774,7 +1778,7 @@ describe("the instance's limits, for format 1", () => {
 		);
 
 		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({ error: "Maximum 2 chunks allowed" });
+		expect(await res.json()).toEqual(problemOf(400, "too_many_chunks", "Maximum 2 chunks allowed"));
 	});
 });
 

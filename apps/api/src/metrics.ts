@@ -4,6 +4,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { BuildInfo } from "./buildInfo.js";
 import type { AppDatabase } from "./db/index.js";
 import { type Logger, log } from "./logger.js";
+import { problem } from "./middleware/problem.js";
 import { matchedRoute } from "./middleware/requestContext.js";
 import { createRegistry, EXPOSITION_CONTENT_TYPE } from "./prometheus.js";
 import type { SweepOutcome } from "./reconcile.js";
@@ -342,7 +343,7 @@ export function createMetricsHandler(metrics: AppMetrics, token: string): (c: Co
 		const candidate = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
 		if (!verifyApiKeyBuffers(candidate, known)) {
 			c.header("WWW-Authenticate", 'Bearer realm="metrics"');
-			return c.json({ error: "Unauthorized" }, 401);
+			return problem(c, 401, "unauthorized", "Unauthorized");
 		}
 		c.header("Cache-Control", "no-store");
 		c.header("Content-Type", EXPOSITION_CONTENT_TYPE);

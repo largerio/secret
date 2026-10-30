@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { problem } from "./problem.js";
 
 /**
  * Limit for every request body that is not a note payload: /upload/init, Cap's
@@ -27,12 +28,12 @@ const CHUNK_PATH = /^\/api\/v1\/notes\/upload\/[^/]+\/chunks\/[^/]+$/;
  * its size, and a few gigabytes were enough to take the container down.
  */
 export function createBodyLimits(limits: BodyLimits): MiddlewareHandler {
-	const payloadTooLarge = (c: Context) => c.json({ error: "Payload too large" }, 413);
+	const payloadTooLarge = (c: Context) => problem(c, 413, "payload_too_large", "Payload too large");
 
 	const note = bodyLimit({ maxSize: limits.note, onError: payloadTooLarge });
 	const chunk = bodyLimit({
 		maxSize: limits.chunk,
-		onError: (c) => c.json({ error: "Chunk too large" }, 413),
+		onError: (c) => problem(c, 413, "chunk_too_large", "Chunk too large"),
 	});
 	const other = bodyLimit({ maxSize: DEFAULT_BODY_LIMIT, onError: payloadTooLarge });
 

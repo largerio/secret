@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { type Logger, log } from "../logger.js";
+import { codeOfStatus, ProblemException, problem } from "./problem.js";
 import { matchedRoute } from "./requestContext.js";
 
 export interface ErrorHandlerOptions {
@@ -38,6 +39,8 @@ export function createErrorHandler(
 	return (thrown, c) => {
 		const requestId = c.get("requestId") as string | undefined;
 		const err = options.toHttpException?.(thrown) ?? thrown;
+		const code = (exception: HTTPException) =>
+			exception instanceof ProblemException ? exception.code : codeOfStatus(exception.status);
 
 		if (err instanceof HTTPException && err.status !== 500) {
 			// A refusal, an instance out of space (507) included: deliberate and
@@ -50,7 +53,7 @@ export function createErrorHandler(
 					cause: err.cause,
 				});
 			}
-			return c.json({ error: err.message }, err.status);
+			return problem(c, err.status, code(err), err.message);
 		}
 
 		// The errorId is returned to the client AND logged next to the requestId,
@@ -71,7 +74,7 @@ export function createErrorHandler(
 				message: err.message,
 				...(options.debug && err.cause !== undefined ? { cause: err.cause } : {}),
 			});
-			return c.json({ error: err.message, errorId }, err.status);
+			return problem(c, err.status, code(err), err.message, { errorId });
 		}
 
 		logger.error("unhandled error", {
@@ -81,6 +84,6 @@ export function createErrorHandler(
 			route: matchedRoute(c),
 			...(options.debug ? { error: err } : sanitizeError(err)),
 		});
-		return c.json({ error: "Internal server error", errorId }, 500);
+		return problem(c, 500, "internal_error", "Internal server error", { errorId });
 	};
 }

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { problemOf } from "./problems.js";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
@@ -172,7 +173,7 @@ describe("write authentication", () => {
 		] as const) {
 			const res = await app.request(path, init);
 			expect(res.status, `${init.method} ${path}`).toBe(401);
-			expect(await res.json()).toEqual({ error: "Unauthorized" });
+			expect(await res.json()).toEqual(problemOf(401, "unauthorized", "Unauthorized"));
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(1);
 	});
@@ -225,6 +226,23 @@ describe("write authentication", () => {
 });
 
 describe("POST /api/v1/notes", () => {
+	// The database keeps a time to the second: a create used to answer the
+	// expiry with milliseconds no read would ever answer.
+	it("answers the expiry it keeps, to the second, as every read does", async () => {
+		const res = await app.request("/api/v1/notes", {
+			method: "POST",
+			headers: authHeaders({ "Content-Type": "application/json" }),
+			body: JSON.stringify(validBody()),
+		});
+		const { id, expiresAt } = (await res.json()) as { id: string; expiresAt: string };
+
+		expect(expiresAt).toMatch(/\.000Z$/);
+		const info = (await (await app.request(`/api/v1/notes/${id}/exists`)).json()) as {
+			expiresAt: string;
+		};
+		expect(info.expiresAt).toBe(expiresAt);
+	});
+
 	it("rejects requests without Cap token or API key", async () => {
 		const res = await app.request("/api/v1/notes", {
 			method: "POST",
@@ -247,7 +265,7 @@ describe("POST /api/v1/notes", () => {
 			),
 		});
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Payload too large" });
+		expect(await res.json()).toEqual(problemOf(413, "note_too_large", "Payload too large"));
 	});
 
 	it("accepts a note without files at the inline ceiling", async () => {
@@ -939,10 +957,9 @@ describe("GET /api/v1/notes/:id", () => {
 		// reported as a note that failed to decrypt, and not logged.
 		const failed = await flakyApp.request(`/api/v1/notes/${id}`);
 		expect(failed.status).toBe(500);
-		expect(await failed.json()).toEqual({
-			error: "Internal server error",
-			errorId: expect.any(String),
-		});
+		expect(await failed.json()).toEqual(
+			problemOf(500, "internal_error", "Internal server error", { errorId: expect.any(String) }),
+		);
 
 		storageDown = false;
 		const served = await flakyApp.request(`/api/v1/notes/${id}`);
@@ -1402,6 +1419,11 @@ describe("Chunked upload flow", () => {
 		});
 		return { res, json: (await res.json()) as { uploadId: string; expiresAt: string } };
 	}
+
+	it("answers a session's expiry to the second, as it keeps it", async () => {
+		const { json } = await initUpload();
+		expect(json.expiresAt).toMatch(/\.000Z$/);
+	});
 
 	function chunkData(content: string): Uint8Array {
 		return new Uint8Array(Buffer.from(content));
@@ -2430,7 +2452,7 @@ describe("GET /api/v1/notes/:id/stream edge cases", () => {
 
 		const res = await missingApp.request(`/api/v1/notes/${id}/stream`);
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(await res.json()).toEqual(problemOf(404, "note_not_found", "Note not found"));
 	});
 
 	it("keeps a burn-after-read note whose chunk 0 is missing", async () => {

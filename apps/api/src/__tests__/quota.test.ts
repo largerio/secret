@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
+import { problemOf } from "./problems.js";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
@@ -222,7 +223,9 @@ describe("storage quota over HTTP", () => {
 			body: createBody(60),
 		});
 		expect(second.status).toBe(507);
-		expect(await second.json()).toEqual({ error: "Storage quota exceeded" });
+		expect(await second.json()).toEqual(
+			problemOf(507, "storage_quota_exceeded", "Storage quota exceeded"),
+		);
 	});
 
 	it("frees quota when a note is deleted", async () => {

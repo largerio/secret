@@ -31,6 +31,29 @@ const uploadIdParam = z
 
 const binaryBody = z.string().openapi({ format: "binary" });
 
+// Every route answers its errors as problem details (PROTOCOL.md, "Errors").
+const problemSchema = z
+	.object({
+		type: z.literal("about:blank"),
+		title: z.string(),
+		status: z.number().int(),
+		code: z.string().openapi({ example: "note_not_found" }),
+		detail: z.string(),
+		error: z.string().openapi({ description: "`detail` again, for clients written before codes." }),
+		errorId: z
+			.string()
+			.optional()
+			.openapi({ description: "A 500's: the instance logs it with the error." }),
+	})
+	.openapi("Problem");
+
+const ERRORS = {
+	default: {
+		content: { "application/problem+json": { schema: problemSchema } },
+		description: "An error, named by its `code` (PROTOCOL.md, Errors)",
+	},
+} as const;
+
 // Every route below validates its parameters, headers and JSON or multipart
 // body with these schemas (app.openapi): what the documentation says is what
 // the API accepts. Two things are checked past them: a chunk's bytes, by the
@@ -68,6 +91,7 @@ export const createNoteRoute = createRoute({
 		},
 	},
 	responses: {
+		...ERRORS,
 		201: {
 			content: { "application/json": { schema: createNoteResponseSchema } },
 			description: "Note created",
@@ -102,6 +126,7 @@ export const uploadNoteRoute = createRoute({
 		},
 	},
 	responses: {
+		...ERRORS,
 		201: {
 			content: { "application/json": { schema: createNoteResponseSchema } },
 			description: "Note created",
@@ -120,6 +145,7 @@ export const existsRoute = createRoute({
 		params: z.object({ id: noteIdParam }),
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: {
 				"application/json": {
@@ -141,6 +167,7 @@ export const readNoteRoute = createRoute({
 		params: z.object({ id: noteIdParam }),
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/json": { schema: readNoteResponseSchema } },
 			description: "Note data (still client-encrypted)",
@@ -158,6 +185,7 @@ export const rawNoteRoute = createRoute({
 		params: z.object({ id: noteIdParam }),
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/octet-stream": { schema: binaryBody } },
 			description: "Client-encrypted note bytes; metadata in X-* headers",
@@ -175,6 +203,7 @@ export const deleteNoteRoute = createRoute({
 		headers: z.object({ "x-delete-token": z.string().openapi({ example: "abc123..." }) }),
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/json": { schema: deleteNoteResponseSchema } },
 			description: "Note deleted",
@@ -199,6 +228,7 @@ export const uploadInitRoute = createRoute({
 		},
 	},
 	responses: {
+		...ERRORS,
 		201: {
 			content: { "application/json": { schema: chunkedUploadInitResponseSchema } },
 			description: "Upload session created",
@@ -230,6 +260,7 @@ export const uploadChunkRoute = createRoute({
 		body: { content: { "application/octet-stream": { schema: binaryBody } } },
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/json": { schema: chunkUploadResponseSchema } },
 			description: "Chunk received",
@@ -248,6 +279,7 @@ export const uploadCompleteRoute = createRoute({
 		params: z.object({ uploadId: uploadIdParam }),
 	},
 	responses: {
+		...ERRORS,
 		201: {
 			content: { "application/json": { schema: chunkedUploadCompleteResponseSchema } },
 			description: "Note created from the uploaded chunks",
@@ -265,6 +297,7 @@ export const streamNoteRoute = createRoute({
 		params: z.object({ id: noteIdParam }),
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/octet-stream": { schema: binaryBody } },
 			description: "Length-prefixed client-encrypted chunks; metadata in X-* headers",
@@ -288,6 +321,7 @@ export const readWithProofsRoute = createRoute({
 		},
 	},
 	responses: {
+		...ERRORS,
 		200: {
 			content: { "application/octet-stream": { schema: binaryBody } },
 			description:

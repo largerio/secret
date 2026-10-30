@@ -1,4 +1,5 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
+import { problem } from "../../middleware/problem.js";
 import type { NotesService } from "../../notes/service.js";
 import {
 	existsRoute,
@@ -24,7 +25,7 @@ export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void 
 		app.get(path, async (c, next) => {
 			if (c.req.method === "HEAD") {
 				c.header("Allow", "GET");
-				return c.json({ error: "Method not allowed" }, 405);
+				return problem(c, 405, "method_not_allowed", "Method not allowed");
 			}
 			await next();
 		});
@@ -33,36 +34,42 @@ export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void 
 	app.openapi(existsRoute, (c) => {
 		const info = notes.check(c.req.valid("param").id);
 		if (info === undefined) {
-			return c.json({ exists: false as const });
+			return c.json({ exists: false as const }, 200);
 		}
 		// Field by field: what the service learns about a note is not all public.
-		return c.json({
-			exists: true as const,
-			hasPassword: info.hasPassword,
-			fileCount: info.fileCount,
-			expiresAt: info.expiresAt.toISOString(),
-			maxReads: info.maxReads,
-			readCount: info.readCount,
-			chunked: info.chunked,
-			...(info.envelope ? { envelope: info.envelope.toString("base64") } : {}),
-			...(info.passwordAttemptsLeft !== undefined
-				? { passwordAttemptsLeft: info.passwordAttemptsLeft }
-				: {}),
-		});
+		return c.json(
+			{
+				exists: true as const,
+				hasPassword: info.hasPassword,
+				fileCount: info.fileCount,
+				expiresAt: info.expiresAt.toISOString(),
+				maxReads: info.maxReads,
+				readCount: info.readCount,
+				chunked: info.chunked,
+				...(info.envelope ? { envelope: info.envelope.toString("base64") } : {}),
+				...(info.passwordAttemptsLeft !== undefined
+					? { passwordAttemptsLeft: info.passwordAttemptsLeft }
+					: {}),
+			},
+			200,
+		);
 	});
 
 	app.openapi(readNoteRoute, async (c) => {
 		// Its answer has format 0's fields: format 1 notes are not served here.
 		const { meta, ciphertext } = await notes.read(c.req.valid("param").id);
-		return c.json({
-			encryptedData: ciphertext.toString("base64"),
-			clientNonce: meta.opening.clientNonce,
-			hasPassword: meta.hasPassword,
-			...(meta.opening.salt ? { salt: meta.opening.salt } : {}),
-			fileCount: meta.fileCount,
-			createdAt: meta.createdAt.toISOString(),
-			expiresAt: meta.expiresAt.toISOString(),
-		});
+		return c.json(
+			{
+				encryptedData: ciphertext.toString("base64"),
+				clientNonce: meta.opening.clientNonce,
+				hasPassword: meta.hasPassword,
+				...(meta.opening.salt ? { salt: meta.opening.salt } : {}),
+				fileCount: meta.fileCount,
+				createdAt: meta.createdAt.toISOString(),
+				expiresAt: meta.expiresAt.toISOString(),
+			},
+			200,
+		);
 	});
 
 	app.openapi(rawNoteRoute, async (c) => {
