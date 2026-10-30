@@ -376,7 +376,8 @@ describe("format 1, through the SDK and the application", () => {
 			format: 1,
 		});
 		expect(calls[0]).toBe("POST /api/v1/notes/upload/init");
-		expect(await client.checkNote(id)).toMatchObject({ chunked: true, fileCount: 1 });
+		// Sent in a session, as /exists does not tell: it would hint at the size.
+		expect(await client.checkNote(id)).toMatchObject({ chunked: false, fileCount: 1 });
 
 		const { payload } = await client.readNote(id, keyFragment);
 		expect(payload.files?.[0]?.data).toEqual(data);
@@ -426,7 +427,7 @@ describe("format 1, through the SDK and the application", () => {
 			});
 			expect(calls[0]).toBe("POST /api/v1/notes/upload/init");
 			expect(await client.checkNote(id)).toMatchObject({
-				chunked: true,
+				chunked: false,
 				hasPassword: true,
 				passwordAttemptsLeft: 5,
 			});

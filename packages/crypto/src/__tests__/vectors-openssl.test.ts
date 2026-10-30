@@ -1,4 +1,11 @@
-import { argon2Sync, createDecipheriv, createHash, hkdfSync } from "node:crypto";
+import {
+	argon2Sync,
+	createCipheriv,
+	createDecipheriv,
+	createHash,
+	hkdfSync,
+	timingSafeEqual,
+} from "node:crypto";
 import { testVectors } from "@largerio/secret-shared";
 import { decode } from "@msgpack/msgpack";
 import { describe, expect, test } from "vitest";
@@ -7,9 +14,11 @@ import { describe, expect, test } from "vitest";
  * The committed vectors, checked by a second implementation: OpenSSL, through
  * node:crypto, which shares no code with libsodium. XChaCha20-Poly1305 is
  * HChaCha20 (below, checked against its specification) for the subkey, then
- * OpenSSL's ChaCha20-Poly1305; Argon2id is OpenSSL's. What both agree on is
- * the format, rather than one library's behaviour, and another client can be
- * written against it.
+ * OpenSSL's ChaCha20-Poly1305; Argon2id is OpenSSL's. Secretstream is
+ * written out below from OpenSSL's ChaCha20, HChaCha20 and a Poly1305 of its
+ * own, both checked against RFC 8439. What both agree on is the format,
+ * rather than one library's behaviour, and another client can be written
+ * against it.
  */
 
 const { vectors } = testVectors;
@@ -67,6 +76,185 @@ function openXChaCha(ciphertext: Buffer, nonce: Buffer, key: Buffer, aad?: Buffe
 	return Buffer.concat([decipher.update(ciphertext.subarray(0, -16)), decipher.final()]);
 }
 
+/** ChaCha20 (RFC 8439) from block `counter` on: OpenSSL's IV is the counter, little-endian, then the nonce. */
+function chacha20(key: Buffer, nonce12: Buffer, counter: number, data: Buffer): Buffer {
+	const iv = Buffer.alloc(16);
+	iv.writeUInt32LE(counter, 0);
+	nonce12.copy(iv, 4);
+	return createCipheriv("chacha20", key, iv).update(data);
+}
+
+const littleEndian = (bytes: Buffer): bigint =>
+	BigInt(`0x${Buffer.from(bytes).reverse().toString("hex") || "0"}`);
+
+/** Poly1305 (RFC 8439, section 2.5), over the whole message at once. */
+function poly1305(key: Buffer, message: Buffer): Buffer {
+	const p = (1n << 130n) - 5n;
+	const r = littleEndian(key.subarray(0, 16)) & 0x0ffffffc0ffffffc0ffffffc0fffffffn;
+	const s = littleEndian(key.subarray(16, 32));
+	let accumulator = 0n;
+	for (let offset = 0; offset < message.length; offset += 16) {
+		const block = message.subarray(offset, offset + 16);
+		accumulator = ((accumulator + littleEndian(block) + (1n << BigInt(8 * block.length))) * r) % p;
+	}
+	const tag = (accumulator + s) & ((1n << 128n) - 1n);
+	return Buffer.from(tag.toString(16).padStart(32, "0"), "hex").reverse();
+}
+
+const u64 = (value: number): Buffer => {
+	const bytes = Buffer.alloc(8);
+	bytes.writeBigUInt64LE(BigInt(value));
+	return bytes;
+};
+
+const TAG_MESSAGE = 0;
+const TAG_REKEY = 2;
+const TAG_FINAL = 3;
+
+/**
+ * libsodium's crypto_secretstream_xchacha20poly1305, pulled: a key from
+ * HChaCha20 over the header's first 16 bytes, a 12-byte nonce of a counter
+ * from 1 and the header's last 8 bytes. Each message is its tag, encrypted as
+ * the first byte of ChaCha20's block 1, then its text from block 2, then a
+ * Poly1305 tag over the additional data, that block, the text and their
+ * lengths; the tag's first 8 bytes are XORed into the nonce, the counter
+ * moves on, and a REKEY or FINAL tag rekeys. As libsodium does, the text is
+ * padded with `length mod 16` zeros before the lengths, not to 16.
+ */
+function pullSecretstream(
+	key: Buffer,
+	header: Buffer,
+	messages: ReadonlyArray<Buffer>,
+	additionalData: Buffer,
+): Array<{ tag: number; text: Buffer }> {
+	let streamKey: Buffer = hchacha20(key, header.subarray(0, 16));
+	let counter = 1;
+	let innerNonce: Buffer = Buffer.from(header.subarray(16, 24));
+	const nonce = (): Buffer => {
+		const bytes = Buffer.alloc(12);
+		bytes.writeUInt32LE(counter, 0);
+		innerNonce.copy(bytes, 4);
+		return bytes;
+	};
+
+	return messages.map((message) => {
+		if (message.length < 17) throw new Error("Message too short");
+		const textLength = message.length - 17;
+		const polyKey = chacha20(streamKey, nonce(), 0, Buffer.alloc(64)).subarray(0, 32);
+		const block = chacha20(streamKey, nonce(), 1, Buffer.alloc(64));
+		const tag = (block[0] ?? 0) ^ (message[0] ?? 0);
+		block[0] = message[0] ?? 0;
+		const ciphertext = message.subarray(1, 1 + textLength);
+		const mac = poly1305(
+			polyKey,
+			Buffer.concat([
+				additionalData,
+				Buffer.alloc((16 - (additionalData.length % 16)) % 16),
+				block,
+				ciphertext,
+				Buffer.alloc(textLength % 16),
+				u64(additionalData.length),
+				u64(64 + textLength),
+			]),
+		);
+		if (!timingSafeEqual(mac, message.subarray(1 + textLength))) {
+			throw new Error("Decryption failed");
+		}
+		const text = chacha20(streamKey, nonce(), 2, ciphertext);
+
+		for (let i = 0; i < 8; i++) {
+			innerNonce[i] = (innerNonce[i] ?? 0) ^ (mac[i] ?? 0);
+		}
+		counter = (counter + 1) >>> 0;
+		if ((tag & TAG_REKEY) !== 0 || counter === 0) {
+			const next = chacha20(streamKey, nonce(), 0, Buffer.concat([streamKey, innerNonce]));
+			streamKey = next.subarray(0, 32);
+			innerNonce = next.subarray(32, 40);
+			counter = 1;
+		}
+		return { tag, text };
+	});
+}
+
+/** Padmé with a 4096-byte floor (PROTOCOL.md, "The body"), in BigInt. */
+function sizeClassOf(length: number): number {
+	if (length <= 4096) return 4096;
+	const big = BigInt(length);
+	const e = BigInt(big.toString(2).length - 1);
+	const s = BigInt(e.toString(2).length);
+	const step = 1n << (e - s);
+	return Number(((big + step - 1n) / step) * step);
+}
+
+interface ReadFile {
+	readonly name: string;
+	readonly type: string;
+	readonly size: number;
+	readonly data: Buffer;
+}
+
+const isMap = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+
+/** A refusal, named by the rule of "Reading strictly" it enforces, as the invalid vectors name theirs. */
+class Refused extends Error {}
+
+const refuse = (rule: string): never => {
+	throw new Refused(rule);
+};
+
+/**
+ * A format 1 body read as "Reading strictly" says, written from PROTOCOL.md
+ * apart from the SDK's reader: the payload, or a Refused for whatever a reader
+ * must refuse.
+ */
+function readBody(
+	body: Buffer,
+	fileCount: number,
+): { text?: unknown; contentMode?: unknown; files: ReadFile[] } {
+	if (body.length < 4) refuse("body");
+	const headEnd = 4 + body.readUInt32BE(0);
+	if (headEnd > body.length) refuse("body");
+	let head: unknown;
+	try {
+		head = decode(body.subarray(4, headEnd));
+	} catch {
+		refuse("head");
+	}
+	if (!isMap(head)) return refuse("head");
+	if ("text" in head && typeof head["text"] !== "string") refuse("head");
+	if (
+		"contentMode" in head &&
+		!["text", "markdown", "secret"].includes(head["contentMode"] as string)
+	)
+		refuse("head");
+	const declared = head["files"] ?? [];
+	if (!Array.isArray(declared) || declared.length > 10) return refuse("head");
+	const listed = declared.map((file: unknown) => {
+		if (!isMap(file) || typeof file["name"] !== "string" || typeof file["type"] !== "string")
+			return refuse("file");
+		const size = file["size"];
+		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return refuse("file");
+		return { name: file["name"], type: file["type"], size };
+	});
+	if (listed.length !== fileCount) refuse("file-count");
+
+	let offset = headEnd;
+	const files = listed.map((file): ReadFile => {
+		if (file.size > body.length - offset) refuse("file-sizes");
+		const data = body.subarray(offset, offset + file.size);
+		offset += file.size;
+		return { ...file, data };
+	});
+	if (body.length !== sizeClassOf(offset)) refuse("padding");
+	if (body.subarray(offset).some((byte) => byte !== 0)) refuse("padding");
+	return {
+		...("text" in head ? { text: head["text"] } : {}),
+		...("contentMode" in head ? { contentMode: head["contentMode"] } : {}),
+		files,
+	};
+}
+
 // The derivation the vectors record: libsodium's crypto_pwhash, whose limits
 // are passes and bytes (OpenSSL takes KiB), over `${password}:${base64url(baseKey)}`.
 const ARGON2 = vectors.argon2id[0];
@@ -96,6 +284,26 @@ describe("test vectors, checked by OpenSSL", () => {
 		expect(hchacha20(key, nonce).toString("hex")).toBe(
 			"82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc",
 		);
+	});
+
+	test("ChaCha20 and Poly1305 match RFC 8439", () => {
+		// Section 2.4.2: the sunscreen text, from block 1.
+		const key = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
+		const nonce = Buffer.from("000000000000004a00000000", "hex");
+		const sunscreen = Buffer.from(
+			"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+		);
+		expect(chacha20(key, nonce, 1, sunscreen).subarray(0, 16).toString("hex")).toBe(
+			"6e2e359a2568f98041ba0728dd0d6981",
+		);
+		// Section 2.5.2.
+		const polyKey = Buffer.from(
+			"85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b",
+			"hex",
+		);
+		expect(
+			poly1305(polyKey, Buffer.from("Cryptographic Forum Research Group")).toString("hex"),
+		).toBe("a8061dc1305136c6c22b8baf0c0127a9");
 	});
 
 	test("opens every XChaCha20-Poly1305 vector", () => {
@@ -166,6 +374,24 @@ describe("test vectors, checked by OpenSSL", () => {
 		}
 	});
 
+	test("opens every format 0 chunked note, from its head to its file bytes", () => {
+		for (const v of vectors.secretstream) {
+			const pulled = pullSecretstream(
+				b64(v.key),
+				b64(v.header),
+				v.chunks.map(b64),
+				Buffer.alloc(0),
+			);
+			expect(
+				pulled.map(({ tag }) => tag),
+				v.description,
+			).toEqual(pulled.map((_, i) => (i === pulled.length - 1 ? TAG_FINAL : TAG_MESSAGE)));
+			expect(pulled[0]?.text.toString("base64"), v.description).toBe(v.headerMsgpack);
+			const files = Buffer.concat((v.payload.files ?? []).map((file) => b64(file.data)));
+			expect(Buffer.concat(pulled.slice(1).map(({ text }) => text)).equals(files)).toBe(true);
+		}
+	});
+
 	describe("format 1", () => {
 		const { format1 } = vectors;
 
@@ -227,52 +453,132 @@ describe("test vectors, checked by OpenSSL", () => {
 
 		test("lays every envelope out byte by byte", () => {
 			for (const v of format1.envelopes) {
-				const head = Buffer.alloc(10);
+				const head = Buffer.alloc(9);
 				head.writeUInt8(1, 0);
-				head.writeUInt8(v.kind === "single-shot" ? 0 : 1, 1);
-				head.writeUInt8(v.argon2 ? 1 : 0, 2);
-				head.writeUInt8(v.fileCount, 3);
-				head.writeUInt16BE(v.maxReads, 4);
-				head.writeUInt32BE(v.expiresIn, 6);
+				head.writeUInt8(v.argon2 ? 1 : 0, 1);
+				head.writeUInt8(v.fileCount, 2);
+				head.writeUInt16BE(v.maxReads, 3);
+				head.writeUInt32BE(v.expiresIn, 5);
 				const params = Buffer.alloc(v.argon2 ? 8 : 0);
 				if (v.argon2) {
 					params.writeUInt32BE(v.argon2.iterations, 0);
 					params.writeUInt32BE(v.argon2.memoryKiB, 4);
 				}
 				const salt = v.argon2 ? b64(v.argon2.salt) : Buffer.alloc(0);
-				expect(Buffer.concat([head, b64(v.nonce), salt, params]).toString("base64")).toBe(
+				expect(Buffer.concat([head, b64(v.streamHeader), salt, params]).toString("base64")).toBe(
 					v.envelope,
 				);
 			}
 		});
 
-		test(
-			"opens every single-shot note, the envelope as its additional data",
-			() => {
-				for (const v of format1.pipeline) {
-					const linkKey = Buffer.from(v.keyFragment.slice(2), "base64url");
-					const envelope = b64(v.envelope);
-					const argon2 =
-						envelope[2] === 1
-							? {
-									salt: envelope.subarray(34, 50).toString("base64"),
-									iterations: envelope.readUInt32BE(50),
-									memoryKiB: envelope.readUInt32BE(54),
-								}
-							: undefined;
-					const key = format1Key(linkKey, v.password, argon2);
-					expect(key.toString("base64"), v.description).toBe(v.encryptionKey);
+		test("pads to the size classes", () => {
+			for (const v of format1.sizeClasses) {
+				expect(sizeClassOf(v.length), String(v.length)).toBe(v.sizeClass);
+			}
+		});
 
-					const nonce = envelope.subarray(10, 34);
-					const plaintext = openXChaCha(b64(v.ciphertext), nonce, key, envelope);
-					expect(plaintext.toString("base64"), v.description).toBe(v.payloadMsgpack);
+		/** A note's key and its messages pulled, under the envelope the vector gives. */
+		function pullNote(v: {
+			keyFragment: string;
+			password?: string;
+			envelope: string;
+			messages: ReadonlyArray<string>;
+		}) {
+			const linkKey = Buffer.from(v.keyFragment.slice(2), "base64url");
+			const envelope = b64(v.envelope);
+			const argon2 =
+				envelope[1] === 1
+					? {
+							salt: envelope.subarray(33, 49).toString("base64"),
+							iterations: envelope.readUInt32BE(49),
+							memoryKiB: envelope.readUInt32BE(53),
+						}
+					: undefined;
+			const key = format1Key(linkKey, v.password, argon2);
+			const pulled = pullSecretstream(key, envelope.subarray(9, 33), v.messages.map(b64), envelope);
+			return { key, envelope, pulled };
+		}
+
+		test(
+			"opens every note into its body, and reads its payload back",
+			() => {
+				for (const v of format1.notes) {
+					const { key, envelope, pulled } = pullNote(v);
+					expect(key.toString("base64"), v.description).toBe(v.encryptionKey);
+					expect(
+						pulled.map(({ tag }) => tag),
+						v.description,
+					).toEqual(pulled.map((_, i) => (i === pulled.length - 1 ? TAG_FINAL : TAG_MESSAGE)));
+					const body = Buffer.concat(pulled.map(({ text }) => text));
+					expect(body.toString("base64"), v.description).toBe(v.body);
+					expect(body.subarray(4, 4 + body.readUInt32BE(0)).toString("base64"), v.description).toBe(
+						v.head,
+					);
+
+					const payload = readBody(body, envelope.readUInt8(2));
+					expect(payload.text, v.description).toBe(v.payload.text);
+					expect(payload.contentMode, v.description).toBe(v.payload.contentMode);
+					expect(
+						payload.files.map((file) => ({ ...file, data: file.data.toString("base64") })),
+						v.description,
+					).toEqual(v.payload.files ?? []);
 
 					const altered = Buffer.from(envelope);
-					altered.writeUInt16BE(altered.readUInt16BE(4) + 1, 4);
-					expect(() => openXChaCha(b64(v.ciphertext), nonce, key, altered)).toThrow();
+					altered.writeUInt16BE(altered.readUInt16BE(3) + 1, 3);
+					expect(() =>
+						pullSecretstream(key, envelope.subarray(9, 33), v.messages.map(b64), altered),
+					).toThrow();
 				}
 			},
 			ARGON2_TIMEOUT,
 		);
+
+		/** Why a reader refuses a note: the rule it breaks, or undefined for a note it reads. */
+		function refusalOf(v: (typeof format1.invalid.notes)[number]): string | undefined {
+			try {
+				let opened: ReturnType<typeof pullNote>;
+				try {
+					opened = pullNote(v);
+				} catch {
+					return "decryption";
+				}
+				const { envelope, pulled } = opened;
+				const last = pulled.length - 1;
+				if (last < 0) refuse("stream");
+				pulled.forEach(({ tag }, i) => {
+					if (tag !== (i === last ? TAG_FINAL : TAG_MESSAGE)) refuse("stream");
+				});
+				readBody(Buffer.concat(pulled.map(({ text }) => text)), envelope.readUInt8(2));
+				return undefined;
+			} catch (err) {
+				if (err instanceof Refused) return err.message;
+				throw err;
+			}
+		}
+
+		test("refuses every note a reader must refuse, for the rule it names", () => {
+			for (const v of format1.invalid.notes) {
+				expect(refusalOf(v), v.description).toBe(v.rule);
+			}
+		});
+
+		test("rekeys after a REKEY or FINAL tag, as libsodium does", () => {
+			for (const [description, tags] of [
+				["TAG_FINAL on a message before the last", [TAG_FINAL, TAG_FINAL]],
+				["TAG_REKEY on a message before the last", [TAG_REKEY, TAG_FINAL]],
+			] as const) {
+				const v = format1.invalid.notes.find((note) => note.description === description);
+				if (v === undefined) throw new Error(description);
+				// The second message opens only under the key the first one's tag
+				// rekeyed: the stream is whole, only its tags are wrong.
+				const { envelope, pulled } = pullNote(v);
+				expect(
+					pulled.map(({ tag }) => tag),
+					description,
+				).toEqual(tags);
+				const body = Buffer.concat(pulled.map(({ text }) => text));
+				expect(readBody(body, envelope.readUInt8(2)).text, description).toBe("invalid");
+			}
+		});
 	});
 });

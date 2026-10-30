@@ -718,6 +718,10 @@ ways that look random:
   them lands on another replica, the note is refused.
 - **Rate limits are counted per process**, so every replica adds its own
   allowance.
+- **The chunks being written are tracked in memory.** An upload's completion
+  waits for its last chunk to be stored: a completion that reaches another
+  replica while a chunk is still being written there is not refused, and the
+  note can keep a chunk nothing checked.
 - **SQLite takes one writer at a time.** A second process on the same database
   file waits for the lock or fails with `database is locked`. And the locking
   SQLite relies on does not hold over a network filesystem (NFS, SMB): keep the

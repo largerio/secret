@@ -16,6 +16,32 @@ export function stubStorage(overrides: Partial<StorageBackend> = {}): StorageBac
 	};
 }
 
+/**
+ * A real backend whose first chunk write, its bytes stored, waits for
+ * `release()` before it answers: the moment the chunk is in the storage and
+ * its size not yet recorded. `written` resolves then.
+ */
+export function holdFirstChunkWrite(storage: StorageBackend) {
+	const written = Promise.withResolvers<void>();
+	const released = Promise.withResolvers<void>();
+	let writes = 0;
+	return {
+		storage: overrideStorage(storage, {
+			saveChunk: async (noteId, index, data) => {
+				const key = await storage.saveChunk(noteId, index, data);
+				writes += 1;
+				if (writes === 1) {
+					written.resolve();
+					await released.promise;
+				}
+				return key;
+			},
+		}),
+		written: written.promise,
+		release: () => released.resolve(),
+	};
+}
+
 /** A real backend with some methods replaced, to make it fail on cue. */
 export function overrideStorage(
 	storage: StorageBackend,

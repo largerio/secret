@@ -5,6 +5,12 @@ import type { ReadVerifiers, SealedVerifier, SealedVerifiers, VerifierRole } fro
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
+/**
+ * What sealing adds to a chunk: its IV in front, its tag after. An upload
+ * records each chunk's sealed length: its message is this much shorter.
+ */
+export const SEALED_CHUNK_OVERHEAD = IV_LENGTH + AUTH_TAG_LENGTH;
+
 // The key verifiers are sealed under, derived from the instance key (PROTOCOL.md,
 // "Server layer") so that the AES key is not an HMAC key as well.
 const VERIFIER_KEY_INFO = "secret/server verifier";

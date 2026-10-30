@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto/client";
 import {
 	CLEANUP_INTERVAL_MS,
 	DEFAULT_CAP_CHALLENGE_COUNT,
@@ -10,6 +11,7 @@ import {
 	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MAX_MESSAGE_LENGTH,
 	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { afterAll, describe, expect, it } from "vitest";
@@ -319,6 +321,20 @@ describe("parseConfig", () => {
 			],
 		])("rejects %o", (overrides, message) => {
 			expectConfigError(baseEnv(overrides as Record<string, string>), message);
+		});
+
+		// A read frames each message, the chunk and its 17-byte tag, with a
+		// 4-byte length.
+		it("caps CHUNK_SIZE at the longest message a read can frame, less its tag", () => {
+			const largest = MAX_MESSAGE_LENGTH - SECRETSTREAM_ABYTES;
+			const env = (chunkSize: number) =>
+				baseEnv({ CHUNK_SIZE: String(chunkSize), MAX_CHUNKED_FILE_SIZE: String(2 ** 40) });
+
+			expect(parseConfig(env(largest)).chunkSize).toBe(largest);
+			expectConfigError(
+				env(largest + 1),
+				`CHUNK_SIZE cannot exceed ${String(largest)} (a message's length must fit in 4 bytes)`,
+			);
 		});
 
 		it("rejects an invalid TRUSTED_PROXIES entry with the underlying detail", () => {

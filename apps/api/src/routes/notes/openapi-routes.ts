@@ -7,6 +7,7 @@ import {
 	createNoteRequestSchema,
 	createNoteResponseSchema,
 	deleteNoteResponseSchema,
+	MAX_MESSAGE_LENGTH,
 	MAX_PASSWORD_ATTEMPTS,
 	noteExistsResponseSchema,
 	noteIdSchema,
@@ -47,6 +48,8 @@ const binaryBody = z.string().openapi({ format: "binary" });
 const WRITE_FORMATS =
 	"Format 1 sends `envelope`, the note's envelope in base64, which holds its settings, with `linkVerifier` and, for a password note, `passwordVerifier`; format 0 sends its settings as fields.";
 
+const ONE_MESSAGE = `A format 1 note sent in one request is one message: its ciphertext, less its 17-byte tag, must be a size class (PROTOCOL.md, The body), or it is refused with 400, and it must be at most ${String(MAX_MESSAGE_LENGTH)} bytes, the most a read's 4-byte length frames, or it is refused with 413: both before anything is stored.`;
+
 const FORMAT_0_ONLY =
 	"Format 0 notes only: a format 1 note is refused with 400 before any read is spent, and is read from POST /{id}/reads.";
 
@@ -55,7 +58,7 @@ export const createNoteRoute = createRoute({
 	path: "/",
 	tags: ["Notes"],
 	summary: "Create an encrypted note (JSON)",
-	description: WRITE_FORMATS,
+	description: `${WRITE_FORMATS} ${ONE_MESSAGE}`,
 	request: {
 		body: {
 			content: {
@@ -77,8 +80,7 @@ export const uploadNoteRoute = createRoute({
 	path: "/upload",
 	tags: ["Notes"],
 	summary: "Create an encrypted note with a binary payload (multipart)",
-	description:
-		'Same as POST / but the encrypted payload travels as a binary multipart part (no base64 overhead). `metadata` is a JSON string with the same fields as the JSON create request, minus `encryptedData`: `{"envelope", "linkVerifier"}`, with `"passwordVerifier"` for a password note, in format 1. The note has at least one file.',
+	description: `Same as POST / but the encrypted payload travels as a binary multipart part (no base64 overhead). \`metadata\` is a JSON string with the same fields as the JSON create request, minus \`encryptedData\`: \`{"envelope", "linkVerifier"}\`, with \`"passwordVerifier"\` for a password note, in format 1. The note has at least one file. ${ONE_MESSAGE}`,
 	request: {
 		body: {
 			content: {
@@ -113,7 +115,7 @@ export const existsRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Check if a note exists",
 	description:
-		"Spends no read. For a format 1 note, the answer also carries its envelope, which its reader derives its proofs from, and for a password note the wrong passwords it still takes.",
+		"Spends no read. `chunked` tells a format 0 note's reader which endpoint serves it, /stream or the others; it is false for every format 1 note, which POST /{id}/reads serves however it went up. For a format 1 note, the answer also carries its envelope, which its reader derives its proofs from, and for a password note the wrong passwords it still takes.",
 	request: {
 		params: z.object({ id: noteIdParam }),
 	},
@@ -185,7 +187,7 @@ export const uploadInitRoute = createRoute({
 	path: "/upload/init",
 	tags: ["Notes"],
 	summary: "Start a chunked upload session",
-	description: `Creates an upload session for large notes. Chunks are then sent individually and the session is finalized via the complete endpoint. Sessions expire after one hour. ${WRITE_FORMATS}`,
+	description: `Creates an upload session for large notes. Chunks are then sent individually and the session is finalized via the complete endpoint. Sessions expire after one hour. ${WRITE_FORMATS} A format 1 note's chunks are the messages of its secretstream, whose lengths the complete endpoint checks.`,
 	request: {
 		body: {
 			content: {
@@ -210,7 +212,7 @@ export const uploadChunkRoute = createRoute({
 	tags: ["Notes"],
 	summary: "Upload one encrypted chunk",
 	description:
-		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the lower-case hex SHA-256 of the body. Re-uploading the same index is idempotent.",
+		"Sends a single secretstream chunk as a binary body. The X-Chunk-Hash header must carry the lower-case hex SHA-256 of the body. Sending a chunk again replaces it, once its first send has answered: while a chunk is being written, another send of the same index answers 409.",
 	request: {
 		params: z.object({
 			uploadId: uploadIdParam,
@@ -240,7 +242,8 @@ export const uploadCompleteRoute = createRoute({
 	path: "/upload/{uploadId}/complete",
 	tags: ["Notes"],
 	summary: "Finalize a chunked upload",
-	description: "Verifies that every chunk arrived and turns the session into a readable note.",
+	description:
+		"Verifies that every chunk arrived and turns the session into a readable note. It answers 409 while a chunk is still being written: complete once every chunk upload has answered. A format 1 note's messages must be those of a padded body (PROTOCOL.md, Messages): every message before the last as long as the first, the last no longer and not empty (more than its 17-byte tag), and their lengths, less 17 bytes each, adding up to a size class. Otherwise it answers 400 and creates no note. The session stays open, as one still missing chunks does, until it is completed, its messages sent again at the right lengths, or it expires and its chunks are purged.",
 	request: {
 		params: z.object({ uploadId: uploadIdParam }),
 	},
@@ -274,7 +277,7 @@ export const readWithProofsRoute = createRoute({
 	path: "/{id}/reads",
 	tags: ["Notes"],
 	summary: "Read a format 1 note with the proofs of its link and password",
-	description: `Format 1 notes only, of either kind: a format 0 note is refused with 400, no read spent. Nothing is spent before the proofs check out: a wrong link proof answers 403 and counts nothing; a password note's read needs \`passwordProof\` (400 without it), and a wrong one answers 403 and counts a failed attempt. A note takes ${String(MAX_PASSWORD_ATTEMPTS)} over its life, and the last deletes it. Then a single-shot note is served as /raw serves one, without X-Client-Nonce and X-Salt, and a chunked note as /stream does, without X-Stream-Header and X-Salt: the reader has its envelope from /exists.`,
+	description: `Format 1 notes only: a format 0 note is refused with 400, no read spent. Nothing is spent before the proofs check out: a wrong link proof answers 403 and counts nothing; a password note's read needs \`passwordProof\` (400 without it), and a wrong one answers 403 and counts a failed attempt. A note takes ${String(MAX_PASSWORD_ATTEMPTS)} over its life, and the last deletes it. Then the note's messages are served as /stream serves a chunked note's, each preceded by its 4-byte big-endian length, whether the note went up in one request (one message) or in an upload session. The headers are /stream's, X-Chunk-Count giving the number of messages, without X-Stream-Header and X-Salt: the reader has the envelope from /exists.`,
 	request: {
 		params: z.object({ id: noteIdParam }),
 		body: {
@@ -288,7 +291,7 @@ export const readWithProofsRoute = createRoute({
 		200: {
 			content: { "application/octet-stream": { schema: binaryBody } },
 			description:
-				"Client-encrypted note bytes, length-prefixed chunks for a chunked note (X-Chunk-Count); metadata in X-* headers",
+				"Length-prefixed client-encrypted messages (X-Chunk-Count of them); metadata in X-* headers",
 		},
 	},
 });

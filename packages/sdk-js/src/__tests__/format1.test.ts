@@ -1,23 +1,24 @@
 import { createHash } from "node:crypto";
 import {
-	decryptRaw,
+	decryptChunk,
 	deriveFormat1Keys,
 	encodeRaw,
 	encryptChunk,
-	encryptPayload,
 	fromBase64,
 	generateKey,
 	generateNonce,
+	initStreamDecrypt,
 	initStreamEncrypt,
 	keyFromBase64Url,
 	keyToBase64Url,
 	toBase64,
 } from "@largerio/secret-crypto/client";
 import {
-	type Envelope,
 	encodeEnvelope,
+	type Format1InvalidNoteRule,
 	type NotePayload,
 	parseEnvelope,
+	sizeClass,
 	testVectors,
 } from "@largerio/secret-shared";
 import { ExtData } from "@msgpack/msgpack";
@@ -28,11 +29,10 @@ import { SecretValidationError } from "../errors.js";
 import {
 	assertFormat1Fragment,
 	closeFormat1Read,
-	encryptNoteChunkedFormat1,
 	encryptNoteFormat1,
+	format1BodyOf,
 	formatOfFragment,
-	openChunkedFormat1,
-	openSingleShotFormat1,
+	openNoteFormat1,
 	prepareFormat1Read,
 } from "../format1.js";
 
@@ -52,34 +52,86 @@ const file = (name: string, data: Uint8Array) => ({
 	data,
 });
 
-/** Opens a single-shot note as a reader does: proofs from the envelope, then the ciphertext. */
-async function decryptNoteFormat1(
-	ciphertext: Uint8Array,
-	envelope: Uint8Array,
+/**
+ * Writes a note as the client does: its body laid out, then cut into messages
+ * of `messageSize` bytes, the whole body as one message by default.
+ */
+function write(
+	payload: NotePayload,
+	options: { readonly messageSize?: number; readonly password?: string } = {},
+) {
+	const body = format1BodyOf(payload);
+	return encryptNoteFormat1(
+		body,
+		options.messageSize ?? body.length,
+		{ ...settings, fileCount: payload.files?.length ?? 0 },
+		options.password,
+	);
+}
+
+/** Opens a note as a reader does: proofs from the envelope, then the messages. */
+async function open(
+	messages: ReadonlyArray<Uint8Array>,
+	envelope: string,
 	keyFragment: string,
 	password?: string,
 ): Promise<NotePayload> {
-	const read = await prepareFormat1Read(toBase64(envelope), keyFragment, password);
+	const read = await prepareFormat1Read(envelope, keyFragment, password);
 	try {
-		return openSingleShotFormat1(read, ciphertext);
+		return openNoteFormat1(read, messages);
 	} finally {
 		closeFormat1Read(read);
 	}
 }
 
-/** Opens a chunked note as a reader does. */
-async function decryptNoteChunkedFormat1(
-	chunks: Uint8Array[],
-	envelope: Uint8Array,
-	keyFragment: string,
-	password?: string,
-): Promise<NotePayload> {
-	const read = await prepareFormat1Read(toBase64(envelope), keyFragment, password);
-	try {
-		return openChunkedFormat1(read, chunks);
-	} finally {
-		closeFormat1Read(read);
-	}
+/** The plaintext of a note's messages, pulled under the key its link derives. */
+function bodyOf(written: { messages: Uint8Array[]; envelope: string; keyFragment: string }) {
+	const envelope = fromBase64(written.envelope);
+	const parsed = parseEnvelope(envelope);
+	if (parsed === undefined) throw new Error("no envelope");
+	const key = deriveFormat1Keys(keyFromBase64Url(written.keyFragment.slice(2))).encryptionKey;
+	const state = initStreamDecrypt(parsed.streamHeader, key);
+	return new Uint8Array(
+		Buffer.concat(
+			written.messages.map((message) => decryptChunk(state, message, envelope).decrypted),
+		),
+	);
+}
+
+/** A body laid out by hand around any head: its length, the head, the bytes, then zeros. */
+function forgeBody(
+	head: unknown,
+	bytes: Uint8Array = new Uint8Array(0),
+	length = 4096,
+): Uint8Array {
+	const encoded = encodeRaw(head);
+	const body = new Uint8Array(length);
+	new DataView(body.buffer).setUint32(0, encoded.length);
+	body.set(encoded, 4);
+	body.set(bytes, 4 + encoded.length);
+	return body;
+}
+
+/**
+ * A note sealed by hand around any body, under a valid envelope: its messages
+ * the last one FINAL, or with the tags given.
+ */
+function forge(plaintexts: Uint8Array[], fileCount = 0, tags?: number[]) {
+	const linkKey = generateKey();
+	const { state, header } = initStreamEncrypt(deriveFormat1Keys(linkKey).encryptionKey);
+	const envelope = encodeEnvelope({ streamHeader: header, ...settings, fileCount });
+	const messages = plaintexts.map((plaintext, i) => {
+		const tag = tags?.[i];
+		return tag === undefined
+			? encryptChunk(state, plaintext, i === plaintexts.length - 1, envelope)
+			: sodium.crypto_secretstream_xchacha20poly1305_push(state, plaintext, envelope, tag);
+	});
+	return { messages, envelope: toBase64(envelope), keyFragment: `1.${keyToBase64Url(linkKey)}` };
+}
+
+/** Opens a forged note. */
+function openForged(forged: ReturnType<typeof forge>): Promise<NotePayload> {
+	return open(forged.messages, forged.envelope, forged.keyFragment);
 }
 
 /**
@@ -130,59 +182,27 @@ const withFiles: NotePayload = {
 	files: [file("a.bin", new Uint8Array(10).fill(1)), file("empty", new Uint8Array(0))],
 };
 
-/** A format 1 note sealed by hand, around any plaintext, under a valid envelope. */
-function forgeSingleShot(plaintext: unknown, fileCount = 0) {
-	const linkKey = generateKey();
-	const nonce = generateNonce();
-	const envelope = encodeEnvelope({ kind: "single-shot", nonce, ...settings, fileCount });
-	const { ciphertext } = encryptPayload(
-		plaintext as NotePayload,
-		deriveFormat1Keys(linkKey).encryptionKey,
-		nonce,
-		envelope,
-	);
-	return { ciphertext, envelope, keyFragment: `1.${keyToBase64Url(linkKey)}` };
-}
-
-/**
- * A chunked format 1 note sealed by hand: each message, the last one FINAL, or
- * with the tags given.
- */
-function forgeChunked(messages: Uint8Array[], fileCount = 0, tags?: number[]) {
-	const linkKey = generateKey();
-	const { state, header } = initStreamEncrypt(deriveFormat1Keys(linkKey).encryptionKey);
-	const envelope = encodeEnvelope({
-		kind: "chunked",
-		streamHeader: header,
-		...settings,
-		fileCount,
-	});
-	const chunks = messages.map((message, i) => {
-		const tag = tags?.[i];
-		return tag === undefined
-			? encryptChunk(state, message, i === messages.length - 1, envelope)
-			: sodium.crypto_secretstream_xchacha20poly1305_push(state, message, envelope, tag);
-	});
-	return { chunks, envelope, keyFragment: `1.${keyToBase64Url(linkKey)}` };
-}
-
 function vectorPayload(payload: {
-	readonly text: string;
-	readonly contentMode: string;
+	readonly text?: string;
+	readonly contentMode?: string;
 	readonly files?: ReadonlyArray<{ name: string; type: string; size: number; data: string }>;
 }): NotePayload {
 	return {
-		text: payload.text,
-		contentMode: payload.contentMode as NotePayload["contentMode"] & string,
+		...(payload.text !== undefined ? { text: payload.text } : {}),
+		...(payload.contentMode !== undefined
+			? { contentMode: payload.contentMode as NotePayload["contentMode"] & string }
+			: {}),
 		...(payload.files
 			? { files: payload.files.map((f) => ({ ...f, data: fromBase64(f.data) })) }
 			: {}),
 	};
 }
 
+const { format1 } = testVectors.vectors;
+
 describe("format 1 fragments", () => {
 	test("start with 1. then the key", async () => {
-		const { keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
+		const { keyFragment } = await write({ text: "x" });
 		expect(keyFragment).toMatch(/^1\.[A-Za-z0-9_-]{43}$/);
 		expect(formatOfFragment(keyFragment)).toBe(1);
 		expect(() => assertFormat1Fragment(keyFragment)).not.toThrow();
@@ -211,100 +231,188 @@ describe("format 1 fragments", () => {
 			new SecretValidationError("Invalid key fragment"),
 		);
 	});
+
+	test("refuse every fragment the vectors say a reader must refuse", () => {
+		for (const v of format1.invalid.fragments) {
+			expect(() => {
+				if (formatOfFragment(v.fragment) === 1) assertFormat1Fragment(v.fragment);
+			}, v.description).toThrow(SecretValidationError);
+		}
+	});
 });
 
-describe("single-shot format 1 notes", () => {
-	test("round-trip without a password, with an envelope that says so", async () => {
-		const written = await encryptNoteFormat1(withFiles, { ...settings, fileCount: 2 });
-		const envelope = fromBase64(written.envelope);
-		expect(parseEnvelope(envelope)).toMatchObject({
-			kind: "single-shot",
+describe("a format 1 body", () => {
+	test("is the head's length, the head, the file bytes, padded to the floor", () => {
+		const body = format1BodyOf(withFiles);
+		const head = encodeRaw({
+			text: "two files",
+			contentMode: "markdown",
+			files: [
+				{ name: "a.bin", type: "application/octet-stream", size: 10 },
+				{ name: "empty", type: "application/octet-stream", size: 0 },
+			],
+		});
+		expect(body.head).toEqual(new Uint8Array([0, 0, 0, head.length, ...head]));
+		// The files' own bytes, not copies: the body is laid out, not built.
+		expect(body.files[0]).toBe(withFiles.files?.[0]?.data);
+		expect(body.length).toBe(4096);
+	});
+
+	test("is padded to its size class past the floor", () => {
+		const data = new Uint8Array(999_000);
+		const body = format1BodyOf({ files: [file("b", data)] });
+		const head = encodeRaw({
+			files: [{ name: "b", type: "application/octet-stream", size: 999_000 }],
+		});
+		// Past 2^19 bytes, size classes step by 2^14.
+		expect(body.length).toBe(sizeClass(4 + head.length + data.length));
+		expect(body.length).toBe(61 * 2 ** 14);
+	});
+});
+
+describe("format 1 notes", () => {
+	test("round-trip as one message, padded, under an envelope that says so", async () => {
+		const written = await write(withFiles);
+		expect(parseEnvelope(fromBase64(written.envelope))).toMatchObject({
 			fileCount: 2,
 			maxReads: 1,
 			expiresIn: 3600,
 		});
-		expect(parseEnvelope(envelope)?.argon2).toBeUndefined();
-		expect(written.encryptedData).toBe(toBase64(written.encryptedBytes));
+		expect(parseEnvelope(fromBase64(written.envelope))?.argon2).toBeUndefined();
+		expect(written.messages.map((message) => message.length)).toEqual([4096 + 17]);
 
-		const read = await decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment);
+		const read = await open(written.messages, written.envelope, written.keyFragment);
 		expect(read).toEqual(withFiles);
+	});
+
+	test("round-trip over messages of one size, a message holding bytes of two files", async () => {
+		const payload: NotePayload = {
+			files: [file("a", new Uint8Array(3000).fill(1)), file("b", new Uint8Array(1200).fill(2))],
+		};
+		const written = await write(payload, { messageSize: 1000 });
+		expect(written.messages.map((message) => message.length)).toEqual([
+			1017,
+			1017,
+			1017,
+			1017,
+			352 + 17,
+		]);
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual(
+			payload,
+		);
+	});
+
+	test("cut a body that the message size divides into full messages", async () => {
+		const written = await write({ text: "t" }, { messageSize: 1024 });
+		expect(written.messages.map((message) => message.length)).toEqual([1041, 1041, 1041, 1041]);
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual({
+			text: "t",
+		});
+	});
+
+	test("are one message when the message size exceeds the body", async () => {
+		const written = await write({ text: "t" }, { messageSize: 1 << 20 });
+		expect(written.messages).toHaveLength(1);
+	});
+
+	test.each([0, -1, 1.5, Number.NaN])("refuse a message size of %s", async (messageSize) => {
+		await expect(write({ text: "t" }, { messageSize })).rejects.toThrow(
+			new SecretValidationError("The message size must be a positive integer"),
+		);
+	});
+
+	test("leave the payload's bytes as they were, wiping only their copies", async () => {
+		const data = new Uint8Array(5000).fill(7);
+		await write({ files: [file("a", data)] }, { messageSize: 1000 });
+		expect(data.every((byte) => byte === 7)).toBe(true);
+	});
+
+	test("wipe every message's plaintext, and the head, once encrypted", async () => {
+		const push = sodium.crypto_secretstream_xchacha20poly1305_push;
+		const plaintexts: Uint8Array[] = [];
+		const spy = vi.spyOn(sodium, "crypto_secretstream_xchacha20poly1305_push").mockImplementation(((
+			state,
+			message,
+			ad,
+			tag,
+		) => {
+			plaintexts.push(message as Uint8Array);
+			return push(state, message, ad, tag);
+		}) as typeof push);
+		try {
+			const body = format1BodyOf({
+				text: "secret",
+				files: [file("a", new Uint8Array(5000).fill(7))],
+			});
+			await encryptNoteFormat1(body, 1000, { ...settings, fileCount: 1 });
+			expect(plaintexts).toHaveLength(Math.ceil(body.length / 1000));
+			expect(plaintexts.every((plaintext) => plaintext.every((byte) => byte === 0))).toBe(true);
+			expect(body.head.every((byte) => byte === 0)).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test.each([1, 3, 5, 4095, 4097])("round-trip in messages of %i bytes", async (messageSize) => {
+		const payload: NotePayload = { text: "t", files: [file("e", new Uint8Array(0))] };
+		const written = await write(payload, { messageSize });
+		expect(written.messages).toHaveLength(Math.ceil(4096 / messageSize));
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual(
+			payload,
+		);
 	});
 
 	test(
 		"round-trip with a password typed in another Unicode form",
 		async () => {
-			const written = await encryptNoteFormat1(
-				{ text: "hi" },
-				settings,
-				"Pässwörd".normalize("NFC"),
-			);
-			const envelope = fromBase64(written.envelope);
-			expect(parseEnvelope(envelope)?.argon2).toMatchObject({ iterations: 3, memoryKiB: 262_144 });
+			const written = await write({ text: "hi" }, { password: "Pässwörd".normalize("NFC") });
+			expect(parseEnvelope(fromBase64(written.envelope))?.argon2).toMatchObject({
+				iterations: 3,
+				memoryKiB: 262_144,
+			});
 
-			const read = await decryptNoteFormat1(
-				written.encryptedBytes,
-				envelope,
-				written.keyFragment,
-				"Pässwörd".normalize("NFD"),
+			const { messages, envelope, keyFragment } = written;
+			const nfd = "Pässwörd".normalize("NFD");
+			await expect(open(messages, envelope, keyFragment, nfd)).resolves.toEqual({ text: "hi" });
+			await expect(open(messages, envelope, keyFragment, "wrong")).rejects.toThrow();
+			await expect(open(messages, envelope, keyFragment)).rejects.toThrow(
+				"The note requires a password",
 			);
-			expect(read).toEqual({ text: "hi" });
-			await expect(
-				decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment, "wrong"),
-			).rejects.toThrow();
-			await expect(
-				decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment),
-			).rejects.toThrow("The note requires a password");
 		},
 		ARGON2_TIMEOUT,
 	);
 
 	test("round-trip files without any text", async () => {
 		const payload: NotePayload = { files: [file("only.bin", new Uint8Array([5]))] };
-		const written = await encryptNoteFormat1(payload, { ...settings, fileCount: 1 });
-		const read = await decryptNoteFormat1(
-			written.encryptedBytes,
-			fromBase64(written.envelope),
-			written.keyFragment,
+		const written = await write(payload);
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual(
+			payload,
 		);
-		expect(read).toEqual(payload);
 	});
 
 	test("ignore a password given for a note without one", async () => {
-		const written = await encryptNoteFormat1({ text: "hi" }, settings);
-		const read = await decryptNoteFormat1(
-			written.encryptedBytes,
-			fromBase64(written.envelope),
-			written.keyFragment,
-			"unused",
-		);
-		expect(read).toEqual({ text: "hi" });
+		const written = await write({ text: "hi" });
+		await expect(
+			open(written.messages, written.envelope, written.keyFragment, "unused"),
+		).resolves.toEqual({ text: "hi" });
 	});
 
 	test("do not open once a byte of the envelope changed", async () => {
-		const written = await encryptNoteFormat1({ text: "hi" }, settings);
+		const written = await write({ text: "hi" });
 		const envelope = fromBase64(written.envelope);
-		envelope[5] = 0xff; // maxReads
-		await expect(
-			decryptNoteFormat1(written.encryptedBytes, envelope, written.keyFragment),
-		).rejects.toThrow();
-	});
-
-	test("do not open under a chunked envelope", async () => {
-		const written = await encryptNoteFormat1({ text: "hi" }, settings);
-		const chunked = encodeEnvelope({ kind: "chunked", streamHeader: generateNonce(), ...settings });
-		await expect(
-			decryptNoteFormat1(written.encryptedBytes, chunked, written.keyFragment),
-		).rejects.toThrow("Not a single-shot note");
+		envelope[4] = 0xff; // maxReads
+		await expect(open(written.messages, toBase64(envelope), written.keyFragment)).rejects.toThrow();
 	});
 
 	test("refuse settings the envelope cannot carry, before stretching the password", async () => {
 		const pwhash = vi.spyOn(sodium, "crypto_pwhash");
+		const body = format1BodyOf({ text: "hi" });
 		try {
 			await expect(
-				encryptNoteFormat1({ text: "hi" }, { ...settings, maxReads: 70_000 }, "pw"),
+				encryptNoteFormat1(body, body.length, { ...settings, maxReads: 70_000 }, "pw"),
 			).rejects.toThrow(new SecretValidationError("maxReads must be an integer from 0 to 65535"));
 			await expect(
-				encryptNoteChunkedFormat1({ text: "hi" }, 4, { ...settings, expiresIn: -1 }, "pw"),
+				encryptNoteFormat1(body, 4, { ...settings, expiresIn: -1 }, "pw"),
 			).rejects.toThrow(
 				new SecretValidationError("expiresIn must be an integer from 0 to 4294967295"),
 			);
@@ -319,220 +427,147 @@ describe("single-shot format 1 notes", () => {
 			text: "cut\uD83D",
 			files: [{ name: "\uDE00name", type: "t", size: 0, data: new Uint8Array() }],
 		};
-		const written = await encryptNoteFormat1(payload, { ...settings, fileCount: 1 });
-		const read = await decryptNoteFormat1(
-			written.encryptedBytes,
-			fromBase64(written.envelope),
-			written.keyFragment,
-		);
-		expect(read).toEqual({
-			text: "cut\uFFFD",
-			files: [{ name: "\uFFFDname", type: "t", size: 0, data: new Uint8Array() }],
+		const written = await write(payload);
+		await expect(open(written.messages, written.envelope, written.keyFragment)).resolves.toEqual({
+			text: "cut�",
+			files: [{ name: "�name", type: "t", size: 0, data: new Uint8Array() }],
 		});
 	});
 
 	test(
 		"hold the payload as the vectors record",
 		async () => {
-			for (const v of testVectors.vectors.format1.pipeline) {
-				const read = await decryptNoteFormat1(
-					fromBase64(v.ciphertext),
-					fromBase64(v.envelope),
-					v.keyFragment,
-					v.password,
-				);
+			for (const v of format1.notes) {
+				const read = await open(v.messages.map(fromBase64), v.envelope, v.keyFragment, v.password);
 				expect(read, v.description).toEqual(vectorPayload(v.payload));
 			}
 		},
 		ARGON2_TIMEOUT,
 	);
 
-	// The nonce is random, so the ciphertext differs: its plaintext must not.
+	// The stream header is random, so the messages differ: their body must not.
 	test("are written as the vectors record", async () => {
-		for (const v of testVectors.vectors.format1.pipeline.filter((vector) => !vector.password)) {
-			const payload = vectorPayload(v.payload);
-			const written = await encryptNoteFormat1(payload, {
-				...settings,
-				fileCount: payload.files?.length ?? 0,
-			});
-			const envelope = fromBase64(written.envelope);
-			const parsed = parseEnvelope(envelope) as Extract<Envelope, { kind: "single-shot" }>;
-			const linkKey = keyFromBase64Url(written.keyFragment.slice(2));
-			const plaintext = decryptRaw(
-				written.encryptedBytes,
-				parsed.nonce,
-				deriveFormat1Keys(linkKey).encryptionKey,
-				envelope,
-			);
-			expect(toBase64(plaintext), v.description).toBe(v.payloadMsgpack);
+		for (const v of format1.notes.filter((vector) => !vector.password)) {
+			const written = await write(vectorPayload(v.payload), { messageSize: v.messageSize });
+			expect(written.messages, v.description).toHaveLength(v.messages.length);
+			expect(toBase64(bodyOf(written)), v.description).toBe(v.body);
+		}
+	});
+
+	// How this reader words each rule it enforces.
+	const REFUSALS: Record<Format1InvalidNoteRule, RegExp> = {
+		// libsodium refuses a message shorter than its tag before it tries it.
+		decryption: /^(Decryption failed|cipher is too short)$/,
+		stream: /^(Encrypted stream is truncated or extended|No message to open)$/,
+		body: /^Malformed body$/,
+		// The MessagePack decoder refuses a head cut short, or with bytes after it.
+		head: /^(Malformed payload|Insufficient data|Extra \d+ of \d+ byte\(s\) .*)$/,
+		file: /^Malformed payload$/,
+		"file-count": /^The payload does not hold the files its envelope declares$/,
+		"file-sizes": /^Decrypted file data does not match the declared size$/,
+		padding: /^Malformed padding$/,
+	};
+
+	test("refuse every note the vectors say a reader must refuse, for the rule they name", async () => {
+		for (const v of format1.invalid.notes) {
+			await expect(
+				open(v.messages.map(fromBase64), v.envelope, v.keyFragment),
+				v.description,
+			).rejects.toThrow(REFUSALS[v.rule]);
 		}
 	});
 });
 
-describe("the payload of a single-shot format 1 note", () => {
-	const bin = new Uint8Array([1, 2]);
-	const goodFile = { name: "a", type: "t", size: 2, data: bin };
+describe("the body of a format 1 note, read strictly", () => {
+	const goodFile = { name: "a", type: "t", size: 0 };
 
 	test.each([
-		["an array", [1, 2]],
-		["a string", "text"],
-		["bytes", new Uint8Array([1])],
-		["nil", null],
-		["a timestamp extension", new Date(0)],
 		["another extension", new ExtData(5, new Uint8Array([1]))],
-		["a text that is not a string", { text: 3 }],
-		["a nil text", { text: null }],
 		["a nil content mode", { contentMode: null }],
 		["nil files", { files: null }],
-		["an unknown content mode", { contentMode: "html" }],
-		["files that are not an array", { files: "a" }],
-		["more than 10 files", { files: Array.from({ length: 11 }, () => goodFile) }],
-		["a file without a name", { files: [{ ...goodFile, name: 1 }] }],
-		["a file without a type", { files: [{ ...goodFile, type: undefined }] }],
-		["a file without a size", { files: [{ name: "a", type: "t", data: bin }] }],
-		["a negative size", { files: [{ ...goodFile, size: -1 }] }],
-		["a fractional size", { files: [{ ...goodFile, size: 1.5 }] }],
-		["data that is not bytes", { files: [{ ...goodFile, data: "ab" }] }],
-		["data shorter than its size", { files: [{ ...goodFile, size: 3 }] }],
-		["data longer than its size", { files: [{ ...goodFile, size: 1 }] }],
+		["a file without a type", { files: [{ name: "a", size: 0 }] }],
 		["a file that is not a map", { files: [[1]] }],
-	])("is refused when it is %s", async (_, plaintext) => {
-		const files = (plaintext as { files?: unknown } | null)?.files;
-		const forged = forgeSingleShot(plaintext, Array.isArray(files) ? files.length : 0);
-		await expect(
-			decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment),
-		).rejects.toThrow("Malformed payload");
+		["a file whose size is a string", { files: [{ ...goodFile, size: "0" }] }],
+	])("is refused when its head holds %s", async (_, head) => {
+		const files = (head as { files?: unknown }).files;
+		const fileCount = Array.isArray(files) ? files.length : 0;
+		await expect(openForged(forge([forgeBody(head)], fileCount))).rejects.toThrow(
+			"Malformed payload",
+		);
 	});
 
 	test("may hold 10 files, the most a note holds", async () => {
 		const files = Array.from({ length: 10 }, () => goodFile);
-		const forged = forgeSingleShot({ files }, 10);
-		const read = await decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment);
+		const read = await openForged(forge([forgeBody({ files })], 10));
 		expect(read.files).toHaveLength(10);
 	});
 
-	test("must hold as many files as its envelope declares", async () => {
-		const forged = forgeSingleShot({ files: [goodFile] }, 2);
-		await expect(
-			decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment),
-		).rejects.toThrow("The payload does not hold the files its envelope declares");
-	});
-
 	test("is rebuilt from its known keys, unknown ones left out", async () => {
-		const forged = forgeSingleShot({ text: "t", future: 1, files: [{ ...goodFile, extra: 2 }] }, 1);
-		const read = await decryptNoteFormat1(forged.ciphertext, forged.envelope, forged.keyFragment);
-		expect(read).toEqual({ text: "t", files: [goodFile] });
-	});
-});
-
-describe("chunked format 1 notes", () => {
-	test("round-trip files, empty ones included", async () => {
-		const written = await encryptNoteChunkedFormat1(withFiles, 4, { ...settings, fileCount: 2 });
-		expect(written.chunks).toHaveLength(4); // the head, then 10 bytes in 4-byte pieces
-		const envelope = fromBase64(written.envelope);
-		expect(parseEnvelope(envelope)).toMatchObject({ kind: "chunked", fileCount: 2 });
-
-		const read = await decryptNoteChunkedFormat1(written.chunks, envelope, written.keyFragment);
-		expect(read).toEqual(withFiles);
+		const head = { text: "t", future: 1, files: [{ ...goodFile, extra: 2 }] };
+		const read = await openForged(forge([forgeBody(head)], 1));
+		expect(read).toEqual({ text: "t", files: [{ ...goodFile, data: new Uint8Array(0) }] });
 	});
 
-	test(
-		"round-trip with a password",
-		async () => {
-			const written = await encryptNoteChunkedFormat1({ text: "t" }, 4, settings, "pw");
-			const envelope = fromBase64(written.envelope);
-			expect(parseEnvelope(envelope)?.argon2).toBeDefined();
-			await expect(
-				decryptNoteChunkedFormat1(written.chunks, envelope, written.keyFragment, "pw"),
-			).resolves.toEqual({ text: "t" });
-		},
-		ARGON2_TIMEOUT,
-	);
-
-	test("do not open once a byte of the envelope changed, or under a single-shot one", async () => {
-		const written = await encryptNoteChunkedFormat1({ text: "t" }, 4, settings);
-		const altered = fromBase64(written.envelope);
-		altered[9] = (altered[9] ?? 0) ^ 1; // expiresIn
-		await expect(
-			decryptNoteChunkedFormat1(written.chunks, altered, written.keyFragment),
-		).rejects.toThrow();
-
-		const singleShot = encodeEnvelope({ kind: "single-shot", nonce: generateNonce(), ...settings });
-		await expect(
-			decryptNoteChunkedFormat1(written.chunks, singleShot, written.keyFragment),
-		).rejects.toThrow("Not a chunked note");
+	test("is refused when shorter than the head's length field", async () => {
+		await expect(openForged(forge([new Uint8Array(3)]))).rejects.toThrow("Malformed body");
 	});
 
-	test("refuse file bytes beyond the sizes the head declares", async () => {
-		const head = encodeRaw({ files: [{ name: "a", type: "t", size: 2 }] });
-		const forged = forgeChunked([head, new Uint8Array([1, 2, 3])], 1);
-		await expect(
-			decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
-		).rejects.toThrow("does not match the declared size");
+	test("is refused when the head runs past the body", async () => {
+		const body = forgeBody({ text: "t" });
+		new DataView(body.buffer).setUint32(0, 4093);
+		await expect(openForged(forge([body]))).rejects.toThrow("Malformed body");
 	});
 
-	test.each([
-		["not a map", [1]],
-		["an extension", new Date(0)],
-		["a nil text", { text: null }],
-		["nil files", { files: null }],
-		[
-			"more than 10 files",
-			{ files: Array.from({ length: 11 }, () => ({ name: "a", type: "t", size: 0 })) },
-		],
-		["a negative size", { files: [{ name: "a", type: "t", size: -1 }] }],
-		["a file without a size", { files: [{ name: "a", type: "t" }] }],
-	])("refuse a head that is %s", async (_, head) => {
-		const forged = forgeChunked([encodeRaw(head)]);
-		await expect(
-			decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
-		).rejects.toThrow("Unable to decrypt");
+	test("is refused when its files run past it", async () => {
+		const body = forgeBody({ files: [{ ...goodFile, size: 4096 }] });
+		await expect(openForged(forge([body], 1))).rejects.toThrow("does not match the declared size");
 	});
 
-	test("refuse a tag other than MESSAGE before the FINAL chunk", async () => {
-		const head = encodeRaw({ files: [{ name: "a", type: "t", size: 2 }] });
+	test("must hold as many files as the envelope declares", async () => {
+		await expect(openForged(forge([forgeBody({ files: [goodFile] })], 2))).rejects.toThrow(
+			"The payload does not hold the files its envelope declares",
+		);
+	});
+
+	test("is refused padded to another length than its size class", async () => {
+		await expect(openForged(forge([forgeBody({ text: "t" }, undefined, 8192)]))).rejects.toThrow(
+			"Malformed padding",
+		);
+		await expect(openForged(forge([forgeBody({ text: "t" }, undefined, 4095)]))).rejects.toThrow(
+			"Malformed padding",
+		);
+	});
+
+	test("is refused when its padding holds a byte other than zero", async () => {
+		const body = forgeBody({ text: "t" });
+		body[4095] = 1;
+		await expect(openForged(forge([body]))).rejects.toThrow("Malformed padding");
+	});
+
+	test("comes in at least one message, the last one FINAL and every other MESSAGE", async () => {
+		await expect(openForged(forge([]))).rejects.toThrow("No message to open");
+
+		const body = forgeBody({ text: "t" });
+		const halves = [body.subarray(0, 2048), body.subarray(2048)];
 		const MESSAGE = sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
 		const FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL;
-		const piece = new Uint8Array([1]);
 		for (const tags of [
-			[sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH, MESSAGE, FINAL],
-			[MESSAGE, sodium.crypto_secretstream_xchacha20poly1305_TAG_REKEY, FINAL],
+			[sodium.crypto_secretstream_xchacha20poly1305_TAG_PUSH, FINAL],
+			[sodium.crypto_secretstream_xchacha20poly1305_TAG_REKEY, FINAL],
+			[FINAL, FINAL],
+			[MESSAGE, MESSAGE],
 		]) {
-			const forged = forgeChunked([head, piece, piece], 1, tags);
-			await expect(
-				decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
-			).rejects.toThrow("Unexpected secretstream tag");
+			await expect(openForged(forge(halves, 0, tags)), String(tags)).rejects.toThrow(
+				"Encrypted stream is truncated or extended",
+			);
 		}
+		await expect(openForged(forge(halves, 0, [MESSAGE, FINAL]))).resolves.toEqual({ text: "t" });
 	});
-
-	test("must hold as many files as their envelope declares", async () => {
-		const head = encodeRaw({ files: [{ name: "a", type: "t", size: 0 }] });
-		const forged = forgeChunked([head], 0);
-		await expect(
-			decryptNoteChunkedFormat1(forged.chunks, forged.envelope, forged.keyFragment),
-		).rejects.toThrow("The payload does not hold the files its envelope declares");
-	});
-
-	test(
-		"hold the payload as the vectors record",
-		async () => {
-			for (const v of testVectors.vectors.format1.secretstream) {
-				const read = await decryptNoteChunkedFormat1(
-					v.chunks.map(fromBase64),
-					fromBase64(v.envelope),
-					v.keyFragment,
-					v.password,
-				);
-				expect(read, v.description).toEqual(vectorPayload(v.payload));
-			}
-		},
-		ARGON2_TIMEOUT,
-	);
 });
 
 describe("the verifiers a format 1 writer sends", () => {
 	test("check the proofs its readers derive, without a password", async () => {
-		const written = await encryptNoteFormat1({ text: "hi" }, settings);
+		const written = await write({ text: "hi" });
 		expect(written.verifiers.passwordVerifier).toBeUndefined();
 
 		const read = await prepareFormat1Read(written.envelope, written.keyFragment, undefined);
@@ -543,7 +578,7 @@ describe("the verifiers a format 1 writer sends", () => {
 	test(
 		"check both proofs of a password note, and tell a wrong password apart",
 		async () => {
-			const written = await encryptNoteChunkedFormat1({ text: "t" }, 4, settings, "pw");
+			const written = await write({ text: "t" }, { password: "pw", messageSize: 1024 });
 			const right = await prepareFormat1Read(written.envelope, written.keyFragment, "pw");
 			const wrong = await prepareFormat1Read(written.envelope, written.keyFragment, "pW");
 
@@ -559,15 +594,25 @@ describe("the verifiers a format 1 writer sends", () => {
 	);
 
 	test("differ from note to note", async () => {
-		const first = await encryptNoteFormat1({ text: "hi" }, settings);
-		const second = await encryptNoteFormat1({ text: "hi" }, settings);
+		const first = await write({ text: "hi" });
+		const second = await write({ text: "hi" });
 		expect(first.verifiers.linkVerifier).not.toBe(second.verifiers.linkVerifier);
 	});
 });
 
 describe("preparing a format 1 read", () => {
+	test("refuses every envelope the vectors say a reader must refuse", async () => {
+		const { keyFragment } = await write({ text: "x" });
+		for (const v of format1.invalid.envelopes) {
+			await expect(
+				prepareFormat1Read(v.envelope, keyFragment, "pw"),
+				v.description,
+			).rejects.toThrow("Not a format 1 envelope");
+		}
+	});
+
 	test("refuses a note that sent no envelope, or one a reader refuses", async () => {
-		const { keyFragment } = await encryptNoteFormat1({ text: "x" }, settings);
+		const { keyFragment } = await write({ text: "x" });
 		await expect(prepareFormat1Read(undefined, keyFragment, undefined)).rejects.toThrow(
 			"Not a format 1 note",
 		);
@@ -579,12 +624,7 @@ describe("preparing a format 1 read", () => {
 
 	test("refuses a password note without a password, before stretching anything", async () => {
 		const argon2 = { salt: new Uint8Array(16), iterations: 1, memoryKiB: 65_536 };
-		const envelope = encodeEnvelope({
-			kind: "single-shot",
-			nonce: generateNonce(),
-			...settings,
-			argon2,
-		});
+		const envelope = encodeEnvelope({ streamHeader: generateNonce(), ...settings, argon2 });
 		const pwhash = vi.spyOn(sodium, "crypto_pwhash");
 		try {
 			await expect(
@@ -597,7 +637,7 @@ describe("preparing a format 1 read", () => {
 	});
 
 	test("refuses a malformed link", async () => {
-		const { envelope } = await encryptNoteFormat1({ text: "x" }, settings);
+		const { envelope } = await write({ text: "x" });
 		await expect(prepareFormat1Read(envelope, "1.abc", undefined)).rejects.toThrow(
 			new SecretValidationError("Invalid key fragment"),
 		);
@@ -606,14 +646,9 @@ describe("preparing a format 1 read", () => {
 	test(
 		"derives the proofs the vectors record",
 		async () => {
-			for (const v of testVectors.vectors.format1.keys) {
+			for (const v of format1.keys) {
 				const argon2 = v.argon2 && { ...v.argon2, salt: fromBase64(v.argon2.salt) };
-				const envelope = encodeEnvelope({
-					kind: "single-shot",
-					nonce: generateNonce(),
-					...settings,
-					argon2,
-				});
+				const envelope = encodeEnvelope({ streamHeader: generateNonce(), ...settings, argon2 });
 				const read = await prepareFormat1Read(toBase64(envelope), v.keyFragment, v.password);
 				expect(read.proofs.linkProof, v.description).toBe(v.linkProof);
 				expect(read.proofs.passwordProof, v.description).toBe(v.passwordProof);
@@ -626,7 +661,7 @@ describe("preparing a format 1 read", () => {
 	test(
 		"keeps no secret but the key, which closing wipes",
 		async () => {
-			const { envelope, keyFragment } = await encryptNoteFormat1({ text: "x" }, settings, "pw");
+			const { envelope, keyFragment } = await write({ text: "x" }, { password: "pw" });
 			const secrets = recordSecrets();
 			try {
 				const read = await prepareFormat1Read(envelope, keyFragment, "pw");
@@ -646,14 +681,14 @@ describe("preparing a format 1 read", () => {
 
 describe("a format 1 writer", () => {
 	test.each([
-		["single-shot", () => encryptNoteFormat1({ text: "x" }, settings, "pw")],
-		["chunked", () => encryptNoteChunkedFormat1({ text: "x" }, 4, settings, "pw")],
+		["one message", 4096],
+		["several messages", 1000],
 	])(
-		"keeps no secret once a %s note is written",
-		async (_, write) => {
+		"keeps no secret once a note is written as %s",
+		async (_, messageSize) => {
 			const secrets = recordSecrets();
 			try {
-				await write();
+				await write({ text: "x" }, { messageSize, password: "pw" });
 				expect(secrets.linkKeys).toHaveLength(1);
 				expect(secrets.alive()).toEqual([]);
 			} finally {

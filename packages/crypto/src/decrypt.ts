@@ -36,19 +36,8 @@ export function decryptPayload(
 	return decoded;
 }
 
-export function decryptRaw(
-	ciphertext: Uint8Array,
-	nonce: Uint8Array,
-	key: Uint8Array,
-	additionalData: Uint8Array | null = null,
-): Uint8Array {
-	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
-		null,
-		ciphertext,
-		additionalData,
-		nonce,
-		key,
-	);
+export function decryptRaw(ciphertext: Uint8Array, nonce: Uint8Array, key: Uint8Array): Uint8Array {
+	return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, null, nonce, key);
 }
 
 // --- Streaming decryption (secretstream) ---

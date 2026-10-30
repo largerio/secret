@@ -12,20 +12,12 @@ export function encodeRaw(data: unknown): Uint8Array {
 	return encode(data);
 }
 
-/**
- * `additionalData` is authenticated, not encrypted: format 1 passes its
- * envelope, format 0 nothing.
- */
-export function encryptPayload(
-	payload: NotePayload,
-	key: Uint8Array,
-	nonce: Uint8Array = generateNonce(),
-	additionalData: Uint8Array | null = null,
-): EncryptedNote {
+export function encryptPayload(payload: NotePayload, key: Uint8Array): EncryptedNote {
 	const encoded = encode(payload);
+	const nonce = generateNonce();
 	const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
 		encoded,
-		additionalData,
+		null,
 		null,
 		nonce,
 		key,

@@ -1,3 +1,4 @@
+export { BODY_FLOOR, HEAD_LENGTH_BYTES, isSizeClass, sizeClass } from "./body.js";
 export {
 	CAP_CHALLENGE_EXPIRES_MS,
 	CAP_CHALLENGE_SIZE,
@@ -12,6 +13,7 @@ export {
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 	MAX_INLINE_ENCRYPTED_SIZE,
+	MAX_MESSAGE_LENGTH,
 	MAX_NONCE_LENGTH,
 	MAX_PASSWORD_ATTEMPTS,
 	MAX_READS,
@@ -22,7 +24,7 @@ export {
 	UPLOAD_ID_LENGTH,
 	UPLOAD_SESSION_TTL,
 } from "./constants.js";
-export type { Argon2Params, Envelope, EnvelopeKind, EnvelopeSettings } from "./envelope.js";
+export type { Argon2Params, Envelope, EnvelopeSettings } from "./envelope.js";
 export {
 	ARGON2_DEFAULT_ITERATIONS,
 	ARGON2_DEFAULT_MEMORY_KIB,
@@ -35,18 +37,23 @@ export {
 	ENVELOPE_LENGTH_WITH_PASSWORD,
 	encodeEnvelope,
 	FORMAT_1,
-	NONCE_LENGTH,
 	parseEnvelope,
 	SALT_LENGTH,
+	STREAM_HEADER_LENGTH,
 } from "./envelope.js";
 export type {
 	Argon2idVector,
 	EncodingVector,
 	Format1Argon2Vector,
 	Format1EnvelopeVector,
+	Format1InvalidEnvelopeVector,
+	Format1InvalidFragmentVector,
+	Format1InvalidNoteRule,
+	Format1InvalidNoteVector,
 	Format1KeyVector,
-	Format1PipelineVector,
-	Format1SecretstreamVector,
+	Format1NoteVector,
+	Format1PayloadVector,
+	Format1SizeClassVector,
 	PipelineVector,
 	SecretstreamVector,
 	TestVectors,

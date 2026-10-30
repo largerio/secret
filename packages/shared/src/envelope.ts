@@ -11,15 +11,22 @@
 /** The first byte of an envelope: the note's format. */
 export const FORMAT_1 = 1;
 
-const KIND_SINGLE_SHOT = 0;
-const KIND_CHUNKED = 1;
 const KDF_NONE = 0;
 const KDF_ARGON2ID13 = 1;
 
-export const NONCE_LENGTH = 24;
+export const STREAM_HEADER_LENGTH = 24;
 export const SALT_LENGTH = 16;
-export const ENVELOPE_LENGTH = 34;
-export const ENVELOPE_LENGTH_WITH_PASSWORD = 58;
+export const ENVELOPE_LENGTH = 33;
+export const ENVELOPE_LENGTH_WITH_PASSWORD = 57;
+
+// Where each field starts.
+const KDF_OFFSET = 1;
+const FILE_COUNT_OFFSET = 2;
+const MAX_READS_OFFSET = 3;
+const EXPIRES_IN_OFFSET = 5;
+const STREAM_HEADER_OFFSET = 9;
+const ITERATIONS_OFFSET = 49;
+const MEMORY_OFFSET = 53;
 
 // The Argon2id parameters a reader agrees to run. A reader runs them before
 // anything can tell the envelope was altered, so a server, as much as a
@@ -50,13 +57,10 @@ export interface EnvelopeSettings {
 	readonly argon2?: Argon2Params | undefined;
 }
 
-export type Envelope = EnvelopeSettings &
-	(
-		| { readonly kind: "single-shot"; readonly nonce: Uint8Array }
-		| { readonly kind: "chunked"; readonly streamHeader: Uint8Array }
-	);
-
-export type EnvelopeKind = Envelope["kind"];
+/** A note's settings, and the header of the secretstream that holds its body. */
+export interface Envelope extends EnvelopeSettings {
+	readonly streamHeader: Uint8Array;
+}
 
 function assertRange(name: string, value: number, max: number, min = 0): void {
 	if (!Number.isInteger(value) || value < min || value > max) {
@@ -90,31 +94,29 @@ export function assertEnvelopeSettings(settings: EnvelopeSettings): void {
 /** The envelope's bytes. Throws a RangeError as assertEnvelopeSettings does. */
 export function encodeEnvelope(envelope: Envelope): Uint8Array {
 	assertEnvelopeSettings(envelope);
-	const start = envelope.kind === "single-shot" ? envelope.nonce : envelope.streamHeader;
-	assertLength("The nonce or stream header", start, NONCE_LENGTH);
+	assertLength("The stream header", envelope.streamHeader, STREAM_HEADER_LENGTH);
 
 	const { argon2 } = envelope;
 	const bytes = new Uint8Array(argon2 ? ENVELOPE_LENGTH_WITH_PASSWORD : ENVELOPE_LENGTH);
 	const view = new DataView(bytes.buffer);
 	bytes[0] = FORMAT_1;
-	bytes[1] = envelope.kind === "single-shot" ? KIND_SINGLE_SHOT : KIND_CHUNKED;
-	bytes[2] = argon2 ? KDF_ARGON2ID13 : KDF_NONE;
-	bytes[3] = envelope.fileCount;
-	view.setUint16(4, envelope.maxReads);
-	view.setUint32(6, envelope.expiresIn);
-	bytes.set(start, 10);
+	bytes[KDF_OFFSET] = argon2 ? KDF_ARGON2ID13 : KDF_NONE;
+	bytes[FILE_COUNT_OFFSET] = envelope.fileCount;
+	view.setUint16(MAX_READS_OFFSET, envelope.maxReads);
+	view.setUint32(EXPIRES_IN_OFFSET, envelope.expiresIn);
+	bytes.set(envelope.streamHeader, STREAM_HEADER_OFFSET);
 
 	if (argon2) {
 		bytes.set(argon2.salt, ENVELOPE_LENGTH);
-		view.setUint32(50, argon2.iterations);
-		view.setUint32(54, argon2.memoryKiB);
+		view.setUint32(ITERATIONS_OFFSET, argon2.iterations);
+		view.setUint32(MEMORY_OFFSET, argon2.memoryKiB);
 	}
 	return bytes;
 }
 
 /**
  * The envelope these bytes hold, or undefined unless they are one exactly:
- * format 1, a known kind and derivation, the length they call for, and Argon2id
+ * format 1, a known key derivation, the length it calls for, and Argon2id
  * parameters a reader agrees to run. The settings are not checked against the
  * protocol's limits: that is the server's part, when it accepts a note.
  */
@@ -122,11 +124,7 @@ export function parseEnvelope(bytes: Uint8Array): Envelope | undefined {
 	if (bytes.length < ENVELOPE_LENGTH || bytes[0] !== FORMAT_1) {
 		return undefined;
 	}
-	const kind = bytes[1];
-	const kdf = bytes[2];
-	if (kind !== KIND_SINGLE_SHOT && kind !== KIND_CHUNKED) {
-		return undefined;
-	}
+	const kdf = bytes[KDF_OFFSET];
 	if (kdf !== KDF_NONE && kdf !== KDF_ARGON2ID13) {
 		return undefined;
 	}
@@ -136,19 +134,19 @@ export function parseEnvelope(bytes: Uint8Array): Envelope | undefined {
 	}
 
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const start = bytes.slice(10, ENVELOPE_LENGTH);
 	const settings = {
-		fileCount: view.getUint8(3),
-		maxReads: view.getUint16(4),
-		expiresIn: view.getUint32(6),
+		fileCount: view.getUint8(FILE_COUNT_OFFSET),
+		maxReads: view.getUint16(MAX_READS_OFFSET),
+		expiresIn: view.getUint32(EXPIRES_IN_OFFSET),
+		streamHeader: bytes.slice(STREAM_HEADER_OFFSET, ENVELOPE_LENGTH),
 	};
 
 	let argon2: Argon2Params | undefined;
 	if (kdf === KDF_ARGON2ID13) {
 		argon2 = {
 			salt: bytes.slice(ENVELOPE_LENGTH, ENVELOPE_LENGTH + SALT_LENGTH),
-			iterations: view.getUint32(50),
-			memoryKiB: view.getUint32(54),
+			iterations: view.getUint32(ITERATIONS_OFFSET),
+			memoryKiB: view.getUint32(MEMORY_OFFSET),
 		};
 		if (argon2.iterations < ARGON2_MIN_ITERATIONS || argon2.iterations > ARGON2_MAX_ITERATIONS) {
 			return undefined;
@@ -158,8 +156,5 @@ export function parseEnvelope(bytes: Uint8Array): Envelope | undefined {
 		}
 	}
 
-	const withArgon2 = argon2 ? { argon2 } : {};
-	return kind === KIND_SINGLE_SHOT
-		? { kind: "single-shot", nonce: start, ...settings, ...withArgon2 }
-		: { kind: "chunked", streamHeader: start, ...settings, ...withArgon2 };
+	return { ...settings, ...(argon2 ? { argon2 } : {}) };
 }

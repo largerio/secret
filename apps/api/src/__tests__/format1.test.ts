@@ -4,12 +4,18 @@ import type { DatabaseSync } from "node:sqlite";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
-import { deriveFormat1Keys, initSodium, verifierOf } from "@largerio/secret-crypto";
+import {
+	deriveFormat1Keys,
+	initSodium,
+	SECRETSTREAM_ABYTES,
+	verifierOf,
+} from "@largerio/secret-crypto";
 import {
 	ARGON2_DEFAULT_ITERATIONS,
 	ARGON2_DEFAULT_MEMORY_KIB,
 	ARGON2_MIN_ITERATIONS,
 	ARGON2_MIN_MEMORY_KIB,
+	BODY_FLOOR,
 	ENVELOPE_LENGTH,
 	ENVELOPE_LENGTH_WITH_PASSWORD,
 	encodeEnvelope,
@@ -19,17 +25,19 @@ import {
 	MAX_PASSWORD_ATTEMPTS,
 	MAX_READS,
 	MIN_EXPIRY_SECONDS,
+	sizeClass,
 } from "@largerio/secret-shared";
 import { eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../app.js";
+import { runCleanup } from "../cleanup.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { notes as notesTable, pendingDeletions, uploads as uploadsTable } from "../db/schema.js";
 import { drainPendingDeletions } from "../pendingDeletions.js";
 import type { StorageBackend } from "../storage/index.js";
 import { LocalStorage } from "../storage/local.js";
-import { overrideStorage } from "./storageDoubles.js";
+import { holdFirstChunkWrite, overrideStorage } from "./storageDoubles.js";
 import { createTestApp } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/format1-test.db";
@@ -38,8 +46,12 @@ const SERVER_KEY = randomBytes(32);
 const API_KEY = randomBytes(32).toString("base64url");
 const AUTH = { Authorization: `Bearer ${API_KEY}` };
 
-const CIPHERTEXT = Buffer.from("format 1 ciphertext, opaque to the server");
-const NONCE = new Uint8Array(24).fill(7);
+/** A message holding a body of `bodyBytes`: random, the server never opens the client's layer. */
+const messageOf = (bodyBytes: number): Buffer => randomBytes(bodyBytes + SECRETSTREAM_ABYTES);
+
+// A format 1 note sent whole: one message, the smallest body there is.
+const CIPHERTEXT = messageOf(BODY_FLOOR);
+const STREAM_HEADER = new Uint8Array(24).fill(7);
 const SALT = new Uint8Array(16).fill(9);
 
 // A reader's proofs. Random: the server only ever sees them, and the verifiers
@@ -99,7 +111,7 @@ interface Declared {
 }
 
 /** A format 1 envelope's bytes, as a writer encodes it. */
-function envelopeOf(kind: "single-shot" | "chunked", declared: Declared = {}): Buffer {
+function envelopeOf(declared: Declared = {}): Buffer {
 	const settings = {
 		fileCount: declared.fileCount ?? 0,
 		maxReads: declared.maxReads ?? 1,
@@ -114,13 +126,7 @@ function envelopeOf(kind: "single-shot" | "chunked", declared: Declared = {}): B
 				}
 			: {}),
 	};
-	return Buffer.from(
-		encodeEnvelope(
-			kind === "single-shot"
-				? { kind, nonce: NONCE, ...settings }
-				: { kind, streamHeader: NONCE, ...settings },
-		),
-	);
+	return Buffer.from(encodeEnvelope({ streamHeader: STREAM_HEADER, ...settings }));
 }
 
 /** An envelope's bytes with some of them overwritten, at their offsets. */
@@ -161,10 +167,14 @@ function postNote(body: unknown, target: Hono<AppEnv> = app) {
 	});
 }
 
-function postMultipart(metadata: unknown, target: Hono<AppEnv> = app) {
+function postMultipart(
+	metadata: unknown,
+	target: Hono<AppEnv> = app,
+	ciphertext: Buffer = CIPHERTEXT,
+) {
 	const form = new FormData();
 	form.append("metadata", JSON.stringify(metadata));
-	form.append("data", new Blob([CIPHERTEXT] as BlobPart[], { type: "application/octet-stream" }));
+	form.append("data", new Blob([ciphertext] as BlobPart[], { type: "application/octet-stream" }));
 	return target.request("/api/v1/notes/upload", { method: "POST", headers: AUTH, body: form });
 }
 
@@ -195,22 +205,27 @@ async function createNote(envelope: Buffer, ciphertext: Buffer = CIPHERTEXT) {
 	return (await res.json()) as { id: string; expiresAt: string; deleteToken: string };
 }
 
+function putChunk(uploadId: string, index: number, chunk: Buffer, target: Hono<AppEnv> = app) {
+	return target.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(index)}`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256(chunk) },
+		body: new Uint8Array(chunk) as BodyInit,
+	});
+}
+
 async function sendChunks(uploadId: string, chunks: readonly Buffer[]): Promise<void> {
 	for (const [index, chunk] of chunks.entries()) {
-		const res = await app.request(`/api/v1/notes/upload/${uploadId}/chunks/${String(index)}`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "X-Chunk-Hash": sha256(chunk) },
-			body: new Uint8Array(chunk) as BodyInit,
-		});
-		expect(res.status).toBe(200);
+		expect((await putChunk(uploadId, index, chunk)).status).toBe(200);
 	}
 }
 
-function complete(uploadId: string) {
-	return app.request(`/api/v1/notes/upload/${uploadId}/complete`, { method: "POST" });
+function complete(uploadId: string, target: Hono<AppEnv> = app) {
+	return target.request(`/api/v1/notes/upload/${uploadId}/complete`, { method: "POST" });
 }
 
-const CHUNKS = [Buffer.from("the head"), Buffer.from("a piece of a file")];
+// A format 1 note sent in a session: two messages, cut evenly, holding the
+// smallest body.
+const CHUNKS = [messageOf(BODY_FLOOR / 2), messageOf(BODY_FLOOR / 2)];
 
 async function createChunkedNote(envelope: Buffer) {
 	const init = await postInit({
@@ -259,6 +274,11 @@ async function existsOf(id: string) {
 	>;
 }
 
+/** The messages a format 1 read served, its framing undone. */
+async function messagesOf(res: Response): Promise<Buffer[]> {
+	return unframe(new Uint8Array(await res.arrayBuffer()));
+}
+
 /** The chunks of a length-prefixed body, its framing undone. */
 function unframe(body: Uint8Array): Buffer[] {
 	const chunks: Buffer[] = [];
@@ -297,7 +317,7 @@ function sealedAs(
 
 describe("format 1 writes", () => {
 	it("creates a note from its envelope, kept byte for byte, and its sealed link verifier", async () => {
-		const envelope = envelopeOf("single-shot", { maxReads: 3, expiresIn: 600 });
+		const envelope = envelopeOf({ maxReads: 3, expiresIn: 600 });
 
 		const { id, expiresAt } = await createNote(envelope);
 
@@ -320,7 +340,7 @@ describe("format 1 writes", () => {
 	});
 
 	it("marks a note whose envelope carries Argon2id parameters as a password note", async () => {
-		const envelope = envelopeOf("single-shot", { password: true });
+		const envelope = envelopeOf({ password: true });
 		expect(envelope).toHaveLength(ENVELOPE_LENGTH_WITH_PASSWORD);
 
 		const { id } = await createNote(envelope);
@@ -334,7 +354,7 @@ describe("format 1 writes", () => {
 	// A copy of the database, without the instance key, gives nothing to test a
 	// proof or a password against, and a verifier moved to another note fails.
 	it("never stores a verifier as it came, and seals each with its note's id", async () => {
-		const envelope = envelopeOf("single-shot", { password: true });
+		const envelope = envelopeOf({ password: true });
 
 		const first = rowOf((await createNote(envelope)).id);
 		const second = rowOf((await createNote(envelope)).id);
@@ -351,14 +371,14 @@ describe("format 1 writes", () => {
 	});
 
 	it("keeps a note with files in the storage", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { fileCount: 2 }));
+		const { id } = await createNote(envelopeOf({ fileCount: 2 }));
 
 		expect(rowOf(id)).toMatchObject({ fileCount: 2, filePath: expect.any(String) });
 	});
 
 	it("creates a note from a multipart upload whose metadata is the envelope and its verifiers", async () => {
 		for (const password of [false, true]) {
-			const envelope = envelopeOf("single-shot", { fileCount: 1, password });
+			const envelope = envelopeOf({ fileCount: 1, password });
 
 			const res = await postMultipart({ envelope: b64(envelope), ...verifiersFor(envelope) });
 
@@ -377,7 +397,7 @@ describe("format 1 writes", () => {
 	});
 
 	it("keeps the envelope and the sealed verifiers in the upload session, then in its note", async () => {
-		const envelope = envelopeOf("chunked", { fileCount: 1, password: true, maxReads: 0 });
+		const envelope = envelopeOf({ fileCount: 1, password: true, maxReads: 0 });
 
 		const init = await postInit({
 			envelope: b64(envelope),
@@ -417,8 +437,8 @@ describe("format 1 writes", () => {
 });
 
 describe("format 1 write refusals: the verifiers", () => {
-	const plain = envelopeOf("single-shot", { fileCount: 1 });
-	const withPassword = envelopeOf("single-shot", { fileCount: 1, password: true });
+	const plain = envelopeOf({ fileCount: 1 });
+	const withPassword = envelopeOf({ fileCount: 1, password: true });
 	const tooShort = b64(randomBytes(31));
 	const tooLong = b64(randomBytes(33));
 
@@ -457,15 +477,13 @@ describe("format 1 write refusals: the verifiers", () => {
 	];
 
 	it.each(refused)("refuses a write that %s", async (_, envelope, verifiers) => {
-		const chunked = tampered(envelope, { 1: 1 });
-
 		const json = await postNote({
 			envelope: b64(envelope),
 			...verifiers,
 			encryptedData: b64(CIPHERTEXT),
 		});
 		const multipart = await postMultipart({ envelope: b64(envelope), ...verifiers });
-		const init = await postInit({ envelope: b64(chunked), ...verifiers, chunkCount: 1 });
+		const init = await postInit({ envelope: b64(envelope), ...verifiers, chunkCount: 1 });
 
 		for (const res of [json, multipart, init]) {
 			expect(res.status).toBe(400);
@@ -478,8 +496,8 @@ describe("format 1 write refusals: the verifiers", () => {
 
 describe("/exists, for format 1", () => {
 	it("serves a format 1 note's envelope, and a password note's attempts left", async () => {
-		const withPassword = envelopeOf("single-shot", { fileCount: 3, maxReads: 5, password: true });
-		const chunked = envelopeOf("chunked", { fileCount: 1 });
+		const withPassword = envelopeOf({ fileCount: 3, maxReads: 5, password: true });
+		const chunked = envelopeOf({ fileCount: 1 });
 		const { id } = await createNote(withPassword);
 		const { id: chunkedId } = await createChunkedNote(chunked);
 
@@ -494,6 +512,8 @@ describe("/exists, for format 1", () => {
 			envelope: b64(withPassword),
 			passwordAttemptsLeft: MAX_PASSWORD_ATTEMPTS,
 		});
+		// Sent in a session, it still answers chunked: false: anyone with the id
+		// would learn from it how the note went up, which hints at its size.
 		expect(await existsOf(chunkedId)).toEqual({
 			exists: true,
 			hasPassword: false,
@@ -501,9 +521,26 @@ describe("/exists, for format 1", () => {
 			expiresAt: expect.any(String),
 			maxReads: 1,
 			readCount: 0,
-			chunked: true,
+			chunked: false,
 			envelope: b64(chunked),
 		});
+	});
+
+	it("still tells a format 0 note's reader which endpoint serves it", async () => {
+		const init = await postInit({
+			streamHeader: "header",
+			clientNonce: "nonce",
+			hasPassword: false,
+			expiresIn: 3600,
+			maxReads: 1,
+			fileCount: 1,
+			chunkCount: 1,
+		});
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		await sendChunks(uploadId, [Buffer.from("chunk")]);
+		const { id } = (await (await complete(uploadId)).json()) as { id: string };
+
+		expect(await existsOf(id)).toMatchObject({ exists: true, chunked: true });
 	});
 
 	it("serves neither to a format 0 note", async () => {
@@ -525,28 +562,26 @@ describe("/exists, for format 1", () => {
 });
 
 describe("format 1 reads, with proofs", () => {
-	it("serves a note from the database once its link proof checks out, then burns it", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 1 }));
+	// Sent whole, a note is one message, framed as a session's are: a reader
+	// reads every format 1 note the same way.
+	it("serves a note from the database as its one message, framed, then burns it", async () => {
+		const { id } = await createNote(envelopeOf({ maxReads: 1 }));
 
 		const res = await postReads(id, { linkProof: b64(LINK_PROOF) });
 
 		expect(res.status).toBe(200);
-		expect(Buffer.from(await res.arrayBuffer())).toEqual(CIPHERTEXT);
+		const body = Buffer.from(await res.arrayBuffer());
+		expect(body.readUInt32BE(0)).toBe(CIPHERTEXT.length);
+		expect(body.subarray(4)).toEqual(CIPHERTEXT);
 		expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
-		expect(res.headers.get("Content-Length")).toBe(String(CIPHERTEXT.length));
 		expect(res.headers.get("Cache-Control")).toBe("no-store");
+		expect(res.headers.get("X-Chunk-Count")).toBe("1");
 		expect(res.headers.get("X-Has-Password")).toBe("false");
 		expect(res.headers.get("X-File-Count")).toBe("0");
 		expect(res.headers.get("X-Created-At")).toMatch(/Z$/);
 		expect(res.headers.get("X-Expires-At")).toMatch(/Z$/);
 		// The reader has the envelope from /exists: nothing else to open it with.
-		for (const header of [
-			"X-Envelope",
-			"X-Client-Nonce",
-			"X-Salt",
-			"X-Stream-Header",
-			"X-Chunk-Count",
-		]) {
+		for (const header of ["X-Envelope", "X-Client-Nonce", "X-Salt", "X-Stream-Header"]) {
 			expect(res.headers.get(header), header).toBeNull();
 		}
 
@@ -555,17 +590,16 @@ describe("format 1 reads, with proofs", () => {
 	});
 
 	it("serves a password note from the storage once both proofs check out", async () => {
-		const { id } = await createNote(
-			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 2 }),
-		);
+		const { id } = await createNote(envelopeOf({ fileCount: 1, password: true, maxReads: 2 }));
 
 		const res = await postReads(id);
 
 		expect(res.status).toBe(200);
+		expect(res.headers.get("X-Chunk-Count")).toBe("1");
 		expect(res.headers.get("X-Has-Password")).toBe("true");
 		expect(res.headers.get("X-File-Count")).toBe("1");
 		expect(res.headers.get("X-Salt")).toBeNull();
-		expect(Buffer.from(await res.arrayBuffer())).toEqual(CIPHERTEXT);
+		expect(await messagesOf(res)).toEqual([CIPHERTEXT]);
 		expect(rowOf(id)).toMatchObject({ readCount: 1, failedAttempts: 0 });
 		expect(await existsOf(id)).toMatchObject({
 			readCount: 1,
@@ -573,8 +607,8 @@ describe("format 1 reads, with proofs", () => {
 		});
 	});
 
-	it("streams a chunked note as /stream does, without its stream header, then burns it", async () => {
-		const { id } = await createChunkedNote(envelopeOf("chunked", { fileCount: 1, password: true }));
+	it("streams a note sent in a session as /stream does, without its stream header, then burns it", async () => {
+		const { id } = await createChunkedNote(envelopeOf({ fileCount: 1, password: true }));
 
 		const res = await postReads(id);
 
@@ -585,12 +619,33 @@ describe("format 1 reads, with proofs", () => {
 		for (const header of ["X-Envelope", "X-Stream-Header", "X-Client-Nonce", "X-Salt"]) {
 			expect(res.headers.get(header), header).toBeNull();
 		}
-		expect(unframe(new Uint8Array(await res.arrayBuffer()))).toEqual(CHUNKS);
+		expect(await messagesOf(res)).toEqual(CHUNKS);
 		expect((await postReads(id)).status).toBe(404);
 	});
 
+	// Known for a note sent whole, so that a reader can show its progress. A
+	// session's would take reading every message before the answer starts.
+	it("tells the length of a note sent whole, not of one sent in a session", async () => {
+		const { id } = await createNote(envelopeOf({ fileCount: 1 }));
+		const { id: chunkedId } = await createChunkedNote(envelopeOf({ fileCount: 1 }));
+
+		// Compression would drop it: the answer is never compressed.
+		const whole = await app.request(`/api/v1/notes/${id}/reads`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "Accept-Encoding": "gzip" },
+			body: JSON.stringify(PROOFS),
+		});
+		const inSession = await postReads(chunkedId);
+
+		expect(whole.headers.get("Content-Length")).toBe(String(4 + CIPHERTEXT.length));
+		expect(whole.headers.get("Content-Encoding")).toBeNull();
+		expect(Buffer.from(await whole.arrayBuffer())).toHaveLength(4 + CIPHERTEXT.length);
+		expect(inSession.headers.get("Content-Length")).toBeNull();
+		expect(await messagesOf(inSession)).toEqual(CHUNKS);
+	});
+
 	it("needs no write authentication", async () => {
-		const { id } = await createNote(envelopeOf("single-shot"));
+		const { id } = await createNote(envelopeOf());
 
 		const res = await app.request(`/api/v1/notes/${id}/reads`, {
 			method: "POST",
@@ -610,8 +665,7 @@ describe("format 1 reads, with proofs", () => {
 		};
 		const envelope = Buffer.from(
 			encodeEnvelope({
-				kind: "single-shot",
-				nonce: NONCE,
+				streamHeader: STREAM_HEADER,
 				fileCount: 0,
 				maxReads: 0,
 				expiresIn: 3600,
@@ -641,12 +695,12 @@ describe("format 1 reads, with proofs", () => {
 		expect((await postReads(id, proofs(wrong))).status).toBe(403);
 		const res = await postReads(id, proofs(reader));
 		expect(res.status).toBe(200);
-		expect(Buffer.from(await res.arrayBuffer())).toEqual(CIPHERTEXT);
+		expect(await messagesOf(res)).toEqual([CIPHERTEXT]);
 
 		// Without a password, the link proof alone.
 		const plainKey = randomBytes(32);
 		const plain = await postNote({
-			envelope: b64(envelopeOf("single-shot")),
+			envelope: b64(envelopeOf()),
 			linkVerifier: b64(verifierOf(deriveFormat1Keys(plainKey).linkProof)),
 			encryptedData: b64(CIPHERTEXT),
 		});
@@ -656,7 +710,7 @@ describe("format 1 reads, with proofs", () => {
 	});
 
 	it("ignores a password proof sent for a note without a password", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 0 }));
+		const { id } = await createNote(envelopeOf({ maxReads: 0 }));
 
 		expect((await postReads(id, WRONG_PASSWORD)).status).toBe(200);
 		expect((await postReads(id, { linkProof: b64(LINK_PROOF) })).status).toBe(200);
@@ -685,7 +739,7 @@ describe("format 1 reads, with proofs", () => {
 	});
 
 	it("refuses an expired note as one that never existed, and deletes it", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { fileCount: 1 }));
+		const { id } = await createNote(envelopeOf({ fileCount: 1 }));
 		db.update(notesTable)
 			.set({ expiresAt: new Date(Date.now() - 1000) })
 			.where(eq(notesTable.id, id))
@@ -699,7 +753,7 @@ describe("format 1 reads, with proofs", () => {
 	});
 
 	it("refuses a request without its proofs, or with malformed ones", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		const { id } = await createNote(envelopeOf({ password: true }));
 
 		for (const body of [
 			{},
@@ -721,8 +775,8 @@ describe("format 1 reads, with proofs", () => {
 
 describe("format 1 read refusals: the proofs", () => {
 	it("refuses a wrong link proof and counts nothing, whatever the password proof", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
-		const { id: plainId } = await createNote(envelopeOf("single-shot"));
+		const { id } = await createNote(envelopeOf({ password: true }));
+		const { id: plainId } = await createNote(envelopeOf());
 
 		for (const note of [id, plainId]) {
 			for (let attempt = 0; attempt <= MAX_PASSWORD_ATTEMPTS; attempt += 1) {
@@ -739,7 +793,7 @@ describe("format 1 read refusals: the proofs", () => {
 	// The link proof is checked first: a request that has neither proof right
 	// learns nothing of what else the note asks.
 	it("refuses a wrong link proof sent without a password proof as a wrong link proof", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		const { id } = await createNote(envelopeOf({ password: true }));
 
 		const res = await postReads(id, { linkProof: b64(PASSWORD_PROOF) });
 
@@ -749,7 +803,7 @@ describe("format 1 read refusals: the proofs", () => {
 	});
 
 	it("asks a password note's read for its password proof, and counts nothing", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		const { id } = await createNote(envelopeOf({ password: true }));
 
 		const res = await postReads(id, { linkProof: b64(LINK_PROOF) });
 
@@ -759,7 +813,7 @@ describe("format 1 read refusals: the proofs", () => {
 	});
 
 	it("counts a wrong password, spends no read, and still serves the right one", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 1 }));
+		const { id } = await createNote(envelopeOf({ password: true, maxReads: 1 }));
 
 		const res = await postReads(id, WRONG_PASSWORD);
 
@@ -773,7 +827,7 @@ describe("format 1 read refusals: the proofs", () => {
 	});
 
 	it("keeps counting across reads that succeed: the count is the note's, for its life", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 3 }));
+		const { id } = await createNote(envelopeOf({ password: true, maxReads: 3 }));
 
 		expect((await postReads(id, WRONG_PASSWORD)).status).toBe(403);
 		expect((await postReads(id, WRONG_PASSWORD)).status).toBe(403);
@@ -810,9 +864,7 @@ describe("format 1 read refusals: the proofs", () => {
 	])(
 		"deletes a single-shot note %s on its last wrong password, and purges it",
 		async (_, fileCount) => {
-			const { id } = await createNote(
-				envelopeOf("single-shot", { fileCount, password: true, maxReads: 0 }),
-			);
+			const { id } = await createNote(envelopeOf({ fileCount, password: true, maxReads: 0 }));
 
 			await exhaust(id);
 
@@ -828,7 +880,7 @@ describe("format 1 read refusals: the proofs", () => {
 		const purge = vi.fn((noteId: string) => storage.purge(noteId));
 		const watched = createApp({}, overrideStorage(storage, { purge }));
 		const { id } = await createChunkedNote(
-			envelopeOf("chunked", { fileCount: 1, password: true, maxReads: 0 }),
+			envelopeOf({ fileCount: 1, password: true, maxReads: 0 }),
 		);
 
 		await exhaust(id, watched);
@@ -845,7 +897,7 @@ describe("format 1 read refusals: the proofs", () => {
 	});
 
 	it("counts wrong passwords sent at once, and deletes the note once", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 0 }));
+		const { id } = await createNote(envelopeOf({ password: true, maxReads: 0 }));
 
 		const answers = await Promise.all(
 			Array.from({ length: MAX_PASSWORD_ATTEMPTS + 1 }, () => postReads(id, WRONG_PASSWORD)),
@@ -884,7 +936,7 @@ describe("format 1 read refusals: the proofs", () => {
 	] as const)(
 		"refuses a format 1 row that %s, before anything is spent",
 		async (_, declared, corrupt) => {
-			const { id } = await createNote(envelopeOf("single-shot", declared));
+			const { id } = await createNote(envelopeOf(declared));
 			db.update(notesTable).set(corrupt).where(eq(notesTable.id, id)).run();
 
 			for (const proofs of [PROOFS, WRONG_PASSWORD]) {
@@ -907,9 +959,9 @@ describe("format 1 read refusals: the proofs", () => {
 	] as const)(
 		"refuses a row that lost its envelope but kept %s, on every read, spending nothing",
 		async (_, kept) => {
-			const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 1 }));
+			const { id } = await createNote(envelopeOf({ password: true, maxReads: 1 }));
 			const { id: chunkedId } = await createChunkedNote(
-				envelopeOf("chunked", { fileCount: 1, password: true }),
+				envelopeOf({ fileCount: 1, password: true }),
 			);
 
 			for (const note of [id, chunkedId]) {
@@ -947,9 +999,7 @@ describe("password attempts, taken before the proof is compared", () => {
 		const storage = new LocalStorage(TEST_FILES_PATH);
 		const read = vi.fn((key: string) => storage.read(key));
 		const watched = createApp({}, overrideStorage(storage, { read }));
-		const { id } = await createNote(
-			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
-		);
+		const { id } = await createNote(envelopeOf({ fileCount: 1, password: true, maxReads: 0 }));
 		sqlite.exec(`CREATE TRIGGER disk_full BEFORE UPDATE OF failed_attempts ON notes
 			BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
 
@@ -969,12 +1019,12 @@ describe("password attempts, taken before the proof is compared", () => {
 		sqlite.exec("DROP TRIGGER disk_full");
 		const res = await postReads(id, PROOFS, watched);
 		expect(res.status).toBe(200);
-		expect(Buffer.from(await res.arrayBuffer())).toEqual(CIPHERTEXT);
+		expect(await messagesOf(res)).toEqual([CIPHERTEXT]);
 		expect(read).toHaveBeenCalledOnce();
 	});
 
 	it("gives a right password back the attempt it took, even the last one left", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true, maxReads: 0 }));
+		const { id } = await createNote(envelopeOf({ password: true, maxReads: 0 }));
 		for (let attempt = 1; attempt < MAX_PASSWORD_ATTEMPTS; attempt += 1) {
 			expect((await postReads(id, WRONG_PASSWORD)).status).toBe(403);
 		}
@@ -995,9 +1045,7 @@ describe("password attempts, taken before the proof is compared", () => {
 		["at the limit", MAX_PASSWORD_ATTEMPTS],
 		["past it", MAX_PASSWORD_ATTEMPTS + 1],
 	])("deletes a note a crash left %s, refused as gone", async (_, failedAttempts) => {
-		const { id } = await createNote(
-			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
-		);
+		const { id } = await createNote(envelopeOf({ fileCount: 1, password: true, maxReads: 0 }));
 		db.update(notesTable).set({ failedAttempts }).where(eq(notesTable.id, id)).run();
 
 		// Gone already, to a reader. A wrong link proof takes no attempt, and
@@ -1052,9 +1100,7 @@ describe("the last wrong password, while a right reader awaits the storage", () 
 				},
 			}),
 		);
-		const { id } = await createNote(
-			envelopeOf("single-shot", { fileCount: 1, password: true, maxReads: 0 }),
-		);
+		const { id } = await createNote(envelopeOf({ fileCount: 1, password: true, maxReads: 0 }));
 		await takeAllButOne(id, racing);
 
 		const reader = postReads(id, PROOFS, racing);
@@ -1094,7 +1140,7 @@ describe("the last wrong password, while a right reader awaits the storage", () 
 			}),
 		);
 		const { id } = await createChunkedNote(
-			envelopeOf("chunked", { fileCount: 1, password: true, maxReads: 3 }),
+			envelopeOf({ fileCount: 1, password: true, maxReads: 3 }),
 		);
 		await takeAllButOne(id, racing);
 
@@ -1128,7 +1174,7 @@ describe("the sealed verifiers, against a write to the database", () => {
 	// Whoever can write to the database, but lacks the instance key, holds the
 	// link but not the password.
 	it("refuses a note whose link verifier was copied over its password verifier", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		const { id } = await createNote(envelopeOf({ password: true }));
 		sqlite.prepare("UPDATE notes SET password_verifier = link_verifier WHERE id = ?").run(id);
 
 		for (const proofs of [WRONG_PASSWORD, PROOFS]) {
@@ -1141,9 +1187,9 @@ describe("the sealed verifiers, against a write to the database", () => {
 	});
 
 	it("refuses a note whose envelope was rewritten without a password, its verifier dropped", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { password: true }));
+		const { id } = await createNote(envelopeOf({ password: true }));
 		db.update(notesTable)
-			.set({ envelope: envelopeOf("single-shot"), hasPassword: false, passwordVerifier: null })
+			.set({ envelope: envelopeOf(), hasPassword: false, passwordVerifier: null })
 			.where(eq(notesTable.id, id))
 			.run();
 
@@ -1157,7 +1203,7 @@ describe("the sealed verifiers, against a write to the database", () => {
 	});
 
 	it("seals the same verifier apart as the link's and as the password's", async () => {
-		const envelope = envelopeOf("single-shot", { password: true });
+		const envelope = envelopeOf({ password: true });
 		const res = await postNote({
 			envelope: b64(envelope),
 			linkVerifier: LINK_VERIFIER,
@@ -1175,7 +1221,7 @@ describe("the sealed verifiers, against a write to the database", () => {
 
 describe("format 0 reads of a format 1 note", () => {
 	it("refuses a format 1 note on the JSON read without spending a read", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 1 }));
+		const { id } = await createNote(envelopeOf({ maxReads: 1 }));
 
 		const res = await app.request(`/api/v1/notes/${id}`);
 
@@ -1191,7 +1237,7 @@ describe("format 0 reads of a format 1 note", () => {
 	});
 
 	it("keeps the read count of a multi-read note the JSON read refuses", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 2 }));
+		const { id } = await createNote(envelopeOf({ maxReads: 2 }));
 
 		expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(400);
 		expect((await app.request(`/api/v1/notes/${id}`)).status).toBe(400);
@@ -1200,11 +1246,11 @@ describe("format 0 reads of a format 1 note", () => {
 	});
 
 	// What a client that knows only format 0 does (the SDK up to 1.2): every
-	// read of its own must be refused before any read is spent, whatever the
-	// note's kind, and so is a draft client asking for format 1 by query.
-	it("refuses a format 1 note on every format 0 read, whatever its kind", async () => {
-		const { id } = await createNote(envelopeOf("single-shot", { maxReads: 1 }));
-		const { id: chunkedId } = await createChunkedNote(envelopeOf("chunked", { fileCount: 1 }));
+	// read of its own must be refused before any read is spent, however the
+	// note went up, and so is a draft client asking for format 1 by query.
+	it("refuses a format 1 note on every format 0 read, however it went up", async () => {
+		const { id } = await createNote(envelopeOf({ maxReads: 1 }));
+		const { id: chunkedId } = await createChunkedNote(envelopeOf({ fileCount: 1 }));
 
 		for (const note of [id, chunkedId]) {
 			for (const path of ["", "/raw", "/raw?format=1", "/stream", "/stream?format=1"]) {
@@ -1219,14 +1265,14 @@ describe("format 0 reads of a format 1 note", () => {
 	});
 
 	it("refuses a corrupt format 1 row there as format 1, not as corrupt", async () => {
-		const { id } = await createNote(envelopeOf("single-shot"));
+		const { id } = await createNote(envelopeOf());
 		db.update(notesTable).set({ linkVerifier: null }).where(eq(notesTable.id, id)).run();
 
 		expect((await app.request(`/api/v1/notes/${id}/raw`)).status).toBe(400);
 	});
 
 	it("deletes a format 1 note with its token", async () => {
-		const { id, deleteToken } = await createNote(envelopeOf("single-shot", { fileCount: 1 }));
+		const { id, deleteToken } = await createNote(envelopeOf({ fileCount: 1 }));
 
 		const res = await app.request(`/api/v1/notes/${id}`, {
 			method: "DELETE",
@@ -1314,32 +1360,28 @@ describe("format 0 reads, unchanged", () => {
 });
 
 describe("format 1 refusals", () => {
-	const single = envelopeOf("single-shot");
-	const withPassword = envelopeOf("single-shot", { password: true });
+	const plain = envelopeOf();
+	const withPassword = envelopeOf({ password: true });
 
 	// Every way an envelope is refused before a note is made of it.
 	const malformed: ReadonlyArray<readonly [string, string]> = [
 		["is not base64", "not base64!"],
 		["is empty", ""],
 		["is longer than any envelope", b64(Buffer.alloc(ENVELOPE_LENGTH_WITH_PASSWORD + 3))],
-		["is not format 1", b64(tampered(single, { 0: 2 }))],
-		["has an unknown kind", b64(tampered(single, { 1: 2 }))],
-		["has an unknown derivation", b64(tampered(single, { 2: 2 }))],
-		["is cut short", b64(single.subarray(0, ENVELOPE_LENGTH - 1))],
-		["declares a password it does not carry", b64(tampered(single, { 2: 1 }))],
-		["carries a password it does not declare", b64(tampered(withPassword, { 2: 0 }))],
-		["asks too few Argon2id iterations", b64(tampered(withPassword, { 53: 0 }))],
-		["asks too many Argon2id iterations", b64(tampered(withPassword, { 53: 11 }))],
-		["asks too little Argon2id memory", b64(tampered(withPassword, { 55: 0 }))],
-		["asks too much Argon2id memory", b64(tampered(withPassword, { 54: 0xff }))],
-		["is a chunked note's", b64(envelopeOf("chunked"))],
-		[
-			"declares too many files",
-			b64(envelopeOf("single-shot", { fileCount: MAX_FILES_PER_NOTE + 1 })),
-		],
-		["declares too many reads", b64(envelopeOf("single-shot", { maxReads: MAX_READS + 1 }))],
-		["expires too soon", b64(envelopeOf("single-shot", { expiresIn: MIN_EXPIRY_SECONDS - 1 }))],
-		["expires too late", b64(envelopeOf("single-shot", { expiresIn: MAX_EXPIRY_SECONDS + 1 }))],
+		["is not format 1", b64(tampered(plain, { 0: 2 }))],
+		["has an unknown derivation", b64(tampered(plain, { 1: 2 }))],
+		["is cut short", b64(plain.subarray(0, ENVELOPE_LENGTH - 1))],
+		["is a password note's cut short", b64(withPassword.subarray(0, -1))],
+		["declares a password it does not carry", b64(tampered(plain, { 1: 1 }))],
+		["carries a password it does not declare", b64(tampered(withPassword, { 1: 0 }))],
+		["asks too few Argon2id iterations", b64(tampered(withPassword, { 52: 0 }))],
+		["asks too many Argon2id iterations", b64(tampered(withPassword, { 52: 7 }))],
+		["asks too little Argon2id memory", b64(tampered(withPassword, { 54: 0 }))],
+		["asks too much Argon2id memory", b64(tampered(withPassword, { 53: 0xff }))],
+		["declares too many files", b64(envelopeOf({ fileCount: MAX_FILES_PER_NOTE + 1 }))],
+		["declares too many reads", b64(envelopeOf({ maxReads: MAX_READS + 1 }))],
+		["expires too soon", b64(envelopeOf({ expiresIn: MIN_EXPIRY_SECONDS - 1 }))],
+		["expires too late", b64(envelopeOf({ expiresIn: MAX_EXPIRY_SECONDS + 1 }))],
 	];
 
 	// With either set of verifiers, so that the envelope, and not a verifier
@@ -1364,7 +1406,7 @@ describe("format 1 refusals", () => {
 			{ fileCount: MAX_FILES_PER_NOTE, maxReads: MAX_READS, expiresIn: MAX_EXPIRY_SECONDS },
 			{ fileCount: 0, maxReads: 0, expiresIn: MIN_EXPIRY_SECONDS },
 		]) {
-			const envelope = envelopeOf("single-shot", declared);
+			const envelope = envelopeOf(declared);
 			const res = await postNote({
 				envelope: b64(envelope),
 				...verifiersFor(envelope),
@@ -1375,17 +1417,17 @@ describe("format 1 refusals", () => {
 	});
 
 	it("refuses an envelope without a ciphertext", async () => {
-		expect((await postNote({ envelope: b64(single), ...verifiersFor(single) })).status).toBe(400);
+		expect((await postNote({ envelope: b64(plain), ...verifiersFor(plain) })).status).toBe(400);
 	});
 
 	// Format 0's schema ignores an `envelope` key: an envelope refused must not
 	// let the same request through as a format 0 note, behind a format 1 link.
 	it("refuses an envelope it refuses, whatever format 0 fields come with it", async () => {
 		const format0 = { clientNonce: "nonce", hasPassword: false, expiresIn: 3600, maxReads: 1 };
-		const tooManyReads = { 4: 0xff, 5: 0xff }; // maxReads 65535
-		const chunked = envelopeOf("chunked");
+		const tooManyReads = { 3: 0xff, 4: 0xff }; // maxReads 65535
+		const refused = ["!!!", b64(tampered(plain, tooManyReads))];
 
-		for (const envelope of ["!!!", b64(chunked), b64(tampered(single, tooManyReads))]) {
+		for (const envelope of refused) {
 			const ciphertext = CIPHERTEXT.toString("base64");
 			const json = await postNote({
 				...format0,
@@ -1402,8 +1444,6 @@ describe("format 1 refusals", () => {
 				fileCount: 1,
 			});
 			expect(multipart.status).toBe(400);
-		}
-		for (const envelope of ["!!!", b64(single), b64(tampered(chunked, tooManyReads))]) {
 			const init = await postInit({
 				...format0,
 				envelope,
@@ -1418,11 +1458,10 @@ describe("format 1 refusals", () => {
 		expect(db.select().from(uploadsTable).all()).toHaveLength(0);
 	});
 
-	it("refuses a multipart envelope of no file, of a chunked note, or malformed", async () => {
+	it("refuses a multipart envelope of no file, or malformed", async () => {
 		for (const envelope of [
-			envelopeOf("single-shot", { fileCount: 0 }),
-			envelopeOf("chunked", { fileCount: 1 }),
-			tampered(envelopeOf("single-shot", { fileCount: 1 }), { 0: 0 }),
+			envelopeOf({ fileCount: 0 }),
+			tampered(envelopeOf({ fileCount: 1 }), { 0: 0 }),
 		]) {
 			const res = await postMultipart({ envelope: b64(envelope), ...verifiersFor(envelope) });
 			expect(res.status).toBe(400);
@@ -1431,12 +1470,10 @@ describe("format 1 refusals", () => {
 		expect(db.select().from(notesTable).all()).toHaveLength(0);
 	});
 
-	it("refuses an upload session for a single-shot envelope, a malformed one, or no chunk count", async () => {
-		const chunked = envelopeOf("chunked");
+	it("refuses an upload session for a malformed envelope, or without a chunk count", async () => {
 		for (const body of [
-			{ envelope: b64(single), ...verifiersFor(single), chunkCount: 2 },
-			{ envelope: b64(tampered(chunked, { 1: 7 })), ...verifiersFor(chunked), chunkCount: 2 },
-			{ envelope: b64(chunked), ...verifiersFor(chunked) },
+			{ envelope: b64(tampered(plain, { 1: 7 })), ...verifiersFor(plain), chunkCount: 2 },
+			{ envelope: b64(plain), ...verifiersFor(plain) },
 		]) {
 			const res = await postInit(body);
 			expect(res.status).toBe(400);
@@ -1446,23 +1483,21 @@ describe("format 1 refusals", () => {
 	});
 
 	it("refuses to complete a session whose envelope or verifiers no longer hold", async () => {
-		const chunked = envelopeOf("chunked");
-		const withPasswordChunked = envelopeOf("chunked", { password: true });
 		for (const metadata of [
 			{ envelope: "not base64!", linkVerifier: LINK_VERIFIER },
-			{ envelope: b64(single), linkVerifier: LINK_VERIFIER },
-			{ envelope: b64(chunked) },
-			{ envelope: b64(chunked), linkVerifier: "short" },
-			{ envelope: b64(withPasswordChunked), linkVerifier: LINK_VERIFIER },
-			{ envelope: b64(chunked), linkVerifier: LINK_VERIFIER, passwordVerifier: PASSWORD_VERIFIER },
+			{ envelope: b64(tampered(plain, { 0: 2 })), linkVerifier: LINK_VERIFIER },
+			{ envelope: b64(plain) },
+			{ envelope: b64(plain), linkVerifier: "short" },
+			{ envelope: b64(withPassword), linkVerifier: LINK_VERIFIER },
+			{ envelope: b64(plain), linkVerifier: LINK_VERIFIER, passwordVerifier: PASSWORD_VERIFIER },
 		]) {
 			const init = await postInit({
-				envelope: b64(chunked),
-				...verifiersFor(chunked),
+				envelope: b64(plain),
+				...verifiersFor(plain),
 				chunkCount: 1,
 			});
 			const { uploadId } = (await init.json()) as { uploadId: string };
-			await sendChunks(uploadId, [Buffer.from("head")]);
+			await sendChunks(uploadId, [CIPHERTEXT]);
 			db.update(uploadsTable)
 				.set({ metadata: JSON.stringify(metadata) })
 				.where(eq(uploadsTable.id, uploadId))
@@ -1474,6 +1509,192 @@ describe("format 1 refusals", () => {
 			expect((await res.json()).error).toBe("Corrupted upload session");
 		}
 		expect(db.select().from(notesTable).all()).toHaveLength(0);
+	});
+});
+
+describe("format 1 message lengths", () => {
+	const NOT_PADDED = { error: "Message lengths do not fit a padded body" };
+
+	/** Sends a format 1 note's messages in an upload session, then asks to complete it. */
+	async function uploadMessages(messages: readonly Buffer[]) {
+		const envelope = envelopeOf({ fileCount: 1 });
+		const init = await postInit({
+			envelope: b64(envelope),
+			...verifiersFor(envelope),
+			chunkCount: messages.length,
+		});
+		expect(init.status).toBe(201);
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		await sendChunks(uploadId, messages);
+		return { uploadId, res: await complete(uploadId) };
+	}
+
+	it("takes a note sent in one request whose body is a size class", async () => {
+		for (const body of [BODY_FLOOR, sizeClass(BODY_FLOOR + 1)]) {
+			const message = messageOf(body);
+			const text = envelopeOf();
+			const files = envelopeOf({ fileCount: 1 });
+
+			const json = await postNote({
+				envelope: b64(text),
+				...verifiersFor(text),
+				encryptedData: b64(message),
+			});
+			const multipart = await postMultipart(
+				{ envelope: b64(files), ...verifiersFor(files) },
+				app,
+				message,
+			);
+
+			for (const res of [json, multipart]) {
+				expect(res.status, String(body)).toBe(201);
+				const { id } = (await res.json()) as { id: string };
+				expect(await messagesOf(await postReads(id))).toEqual([message]);
+			}
+		}
+	});
+
+	// Below the floor, and one byte past a class: its body, the message less
+	// its tag, is no size class. Refused before anything is stored or spent.
+	it.each([
+		["below the floor", BODY_FLOOR - 1],
+		["one byte past the floor", BODY_FLOOR + 1],
+		["one byte past a class", sizeClass(BODY_FLOOR + 1) + 1],
+		["of no body at all", 0],
+	])("refuses a note sent in one request whose body is %s", async (_, body) => {
+		const message = messageOf(body);
+		const text = envelopeOf();
+		const files = envelopeOf({ fileCount: 1 });
+
+		const json = await postNote({
+			envelope: b64(text),
+			...verifiersFor(text),
+			encryptedData: b64(message),
+		});
+		const multipart = await postMultipart(
+			{ envelope: b64(files), ...verifiersFor(files) },
+			app,
+			message,
+		);
+
+		for (const res of [json, multipart]) {
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual(NOT_PADDED);
+		}
+		expect(db.select().from(notesTable).all()).toEqual([]);
+		expect(db.select().from(pendingDeletions).all()).toEqual([]);
+		expect(await storedObjects()).toEqual([]);
+	});
+
+	it.each([
+		["a single message", [BODY_FLOOR]],
+		["messages cut evenly", [1024, 1024, 1024, 1024]],
+		["a last message shorter than the others", [4096, 256]],
+		["messages cut at no power of two, the last holding the rest", [3000, 3000, 2192]],
+	])("completes a session of %s, its body a size class", async (_, bodies) => {
+		const messages = bodies.map(messageOf);
+
+		const { res } = await uploadMessages(messages);
+
+		expect(res.status).toBe(201);
+		const { id } = (await res.json()) as { id: string };
+		const read = await postReads(id);
+		expect(read.headers.get("X-Chunk-Count")).toBe(String(messages.length));
+		expect(await messagesOf(read)).toEqual(messages);
+	});
+
+	it.each([
+		["a short message before the last", [2048, 1024, 1024]],
+		["a last message longer than the first", [1024, 3072]],
+		["messages whose body is no size class", [4096, 1]],
+		["a single message whose body is no size class", [BODY_FLOOR - 1]],
+	])("refuses to complete a session of %s, and creates no note", async (_, bodies) => {
+		const { uploadId, res } = await uploadMessages(bodies.map(messageOf));
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual(NOT_PADDED);
+		expect(db.select().from(notesTable).all()).toEqual([]);
+		// The session is left as an incomplete one is, its chunks with it.
+		expect(db.select().from(uploadsTable).all()).toMatchObject([{ id: uploadId }]);
+		expect(await storedObjects()).toHaveLength(1);
+		expect((await complete(uploadId)).status).toBe(400);
+	});
+
+	// A message sent again reaches the storage before its length is recorded:
+	// a completion in between would check the old lengths and keep the new
+	// message, which no rule would have seen.
+	it("checks a message sent again only once it is written, and refuses to complete before", async () => {
+		const envelope = envelopeOf({ fileCount: 1 });
+		const init = await postInit({
+			envelope: b64(envelope),
+			...verifiersFor(envelope),
+			chunkCount: 2,
+		});
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		const first = messageOf(2048);
+		await sendChunks(uploadId, [first, messageOf(2048)]);
+		const held = holdFirstChunkWrite(new LocalStorage(TEST_FILES_PATH));
+		const racing = createApp({}, held.storage);
+
+		// The last message sent again, one byte short: stored, its length not
+		// yet recorded.
+		const writing = putChunk(uploadId, 1, messageOf(2047), racing);
+		await held.written;
+
+		const early = await complete(uploadId, racing);
+		expect(early.status).toBe(409);
+		expect(await early.json()).toEqual({ error: "A chunk is still being written" });
+		held.release();
+		expect((await writing).status).toBe(200);
+		expect(await (await complete(uploadId, racing)).json()).toEqual(NOT_PADDED);
+
+		// Once its writes have answered, the session completes.
+		const last = messageOf(2048);
+		expect((await putChunk(uploadId, 1, last, racing)).status).toBe(200);
+		const done = await complete(uploadId, racing);
+		expect(done.status).toBe(201);
+		const { id } = (await done.json()) as { id: string };
+		expect(await messagesOf(await postReads(id))).toEqual([first, last]);
+	});
+
+	it("leaves a refused session's chunks to the cleanup job, once it expires", async () => {
+		const { uploadId, res } = await uploadMessages([messageOf(1024), messageOf(3072)]);
+		expect(res.status).toBe(400);
+
+		db.update(uploadsTable)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(uploadsTable.id, uploadId))
+			.run();
+		await runCleanup(db, new LocalStorage(TEST_FILES_PATH));
+
+		expect(db.select().from(uploadsTable).all()).toEqual([]);
+		expect(await storedObjects()).toEqual([]);
+	});
+
+	it("leaves format 0 alone: any length in one request, chunks cut any way in a session", async () => {
+		const format0 = { clientNonce: "nonce", hasPassword: false, expiresIn: 3600, maxReads: 1 };
+		const short = Buffer.from("x");
+		const json = await postNote({ ...format0, fileCount: 0, encryptedData: b64(short) });
+		expect(json.status).toBe(201);
+		const { id } = (await json.json()) as { id: string };
+		expect(Buffer.from(await (await app.request(`/api/v1/notes/${id}/raw`)).arrayBuffer())).toEqual(
+			short,
+		);
+
+		const chunks = [Buffer.from("a"), Buffer.from("a longer chunk"), Buffer.from("mid")];
+		const init = await postInit({
+			...format0,
+			streamHeader: "header",
+			fileCount: 1,
+			chunkCount: chunks.length,
+		});
+		const { uploadId } = (await init.json()) as { uploadId: string };
+		await sendChunks(uploadId, chunks);
+		const done = await complete(uploadId);
+		expect(done.status).toBe(201);
+		const { id: chunkedId } = (await done.json()) as { id: string };
+		const stream = await app.request(`/api/v1/notes/${chunkedId}/stream`);
+		expect(unframe(new Uint8Array(await stream.arrayBuffer()))).toEqual(chunks);
 	});
 });
 
@@ -1489,18 +1710,17 @@ describe("the instance's limits, for format 1", () => {
 			[tooLong, expiry],
 			[tooMany, files],
 		] as const) {
-			const single = envelopeOf("single-shot", declared);
-			const chunked = envelopeOf("chunked", declared);
+			const envelope = envelopeOf(declared);
 			const json = await postNote(
-				{ envelope: b64(single), ...verifiersFor(single), encryptedData: b64(CIPHERTEXT) },
+				{ envelope: b64(envelope), ...verifiersFor(envelope), encryptedData: b64(CIPHERTEXT) },
 				tight,
 			);
 			const multipart = await postMultipart(
-				{ envelope: b64(single), ...verifiersFor(single) },
+				{ envelope: b64(envelope), ...verifiersFor(envelope) },
 				tight,
 			);
 			const init = await postInit(
-				{ envelope: b64(chunked), ...verifiersFor(chunked), chunkCount: 1 },
+				{ envelope: b64(envelope), ...verifiersFor(envelope), chunkCount: 1 },
 				tight,
 			);
 			for (const res of [json, multipart, init]) {
@@ -1509,7 +1729,7 @@ describe("the instance's limits, for format 1", () => {
 			}
 		}
 
-		const atCeiling = envelopeOf("single-shot", { expiresIn: 3600, fileCount: 3 });
+		const atCeiling = envelopeOf({ expiresIn: 3600, fileCount: 3 });
 		const res = await postNote(
 			{ envelope: b64(atCeiling), ...verifiersFor(atCeiling), encryptedData: b64(CIPHERTEXT) },
 			tight,
@@ -1517,12 +1737,16 @@ describe("the instance's limits, for format 1", () => {
 		expect(res.status).toBe(201);
 	});
 
+	// The ceiling sees the padded message: the first size class whose message
+	// is over it is refused, though its content may have fitted.
 	it("keeps a note without files to the inline ceiling", async () => {
-		const envelope = envelopeOf("single-shot");
+		const envelope = envelopeOf();
+		const over = sizeClass(MAX_INLINE_ENCRYPTED_SIZE - SECRETSTREAM_ABYTES + 1);
+
 		const res = await postNote({
 			envelope: b64(envelope),
 			...verifiersFor(envelope),
-			encryptedData: b64(Buffer.alloc(MAX_INLINE_ENCRYPTED_SIZE + 1)),
+			encryptedData: b64(messageOf(over)),
 		});
 
 		expect(res.status).toBe(413);
@@ -1530,7 +1754,7 @@ describe("the instance's limits, for format 1", () => {
 
 	it("refuses a note past the storage quota", async () => {
 		const full = createApp({ STORAGE_QUOTA_BYTES: "16" });
-		const envelope = envelopeOf("single-shot");
+		const envelope = envelopeOf();
 
 		const res = await postNote(
 			{ envelope: b64(envelope), ...verifiersFor(envelope), encryptedData: b64(CIPHERTEXT) },
@@ -1542,7 +1766,7 @@ describe("the instance's limits, for format 1", () => {
 
 	it("refuses more chunks than the instance takes", async () => {
 		const small = createApp({ CHUNK_SIZE: "16", MAX_CHUNKED_FILE_SIZE: "32" });
-		const envelope = envelopeOf("chunked", { fileCount: 1 });
+		const envelope = envelopeOf({ fileCount: 1 });
 
 		const res = await postInit(
 			{ envelope: b64(envelope), ...verifiersFor(envelope), chunkCount: 3 },
@@ -1597,11 +1821,11 @@ describe("the OpenAPI document, for format 1", () => {
 
 		const [format1, format0] = schema.anyOf ?? [];
 		expect(format1?.required).toEqual(["envelope", "linkVerifier", field]);
-		// 34 bytes, or 58 with a password, in base64.
+		// 33 bytes, or 57 with a password, in base64.
 		expect(format1?.properties?.["envelope"]).toMatchObject({
 			type: "string",
-			minLength: 48,
-			maxLength: 80,
+			minLength: 44,
+			maxLength: 76,
 		});
 		expect(format1?.properties?.["envelope"]?.description).toContain("envelope");
 		for (const verifier of ["linkVerifier", "passwordVerifier"]) {

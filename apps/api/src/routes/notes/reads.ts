@@ -11,7 +11,7 @@ import { rawResponse, streamResponse } from "./responses.js";
 
 /**
  * What reads a note: its state, its ciphertext in one piece or as a stream in
- * format 0, and either kind in format 1, once its proofs check out.
+ * format 0, and its messages in format 1, once its proofs check out.
  */
 export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void {
 	// Hono answers a HEAD with the GET route and drops the body: on the reads
@@ -75,9 +75,9 @@ export function registerReadRoutes(app: OpenAPIHono, notes: NotesService): void 
 
 	// A POST: it changes the note (a read spent, or a wrong password counted),
 	// and its proofs travel in the body, out of the URLs that logs and caches
-	// keep. It answers as /raw or /stream do, by the note's kind.
+	// keep. It answers as /stream does, whether the note went up whole or in a
+	// session.
 	app.openapi(readWithProofsRoute, async (c) => {
-		const read = await notes.readWithProofs(c.req.valid("param").id, c.req.valid("json"));
-		return read.kind === "chunked" ? streamResponse(read) : rawResponse(read);
+		return streamResponse(await notes.readWithProofs(c.req.valid("param").id, c.req.valid("json")));
 	});
 }

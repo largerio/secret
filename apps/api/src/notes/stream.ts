@@ -79,3 +79,13 @@ export function chunkStream(source: {
 		{ highWaterMark: 0 },
 	);
 }
+
+/** A stream of one chunk, loaded already: a format 1 note sent whole, as its one message. */
+export function oneChunkStream(chunk: Buffer): ReadableStream<Uint8Array> {
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(new Uint8Array(chunk));
+			controller.close();
+		},
+	});
+}

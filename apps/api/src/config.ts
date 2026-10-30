@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto/client";
 import {
 	CLEANUP_INTERVAL_MS,
 	DEFAULT_CAP_CHALLENGE_COUNT,
@@ -8,6 +9,7 @@ import {
 	MAX_EXPIRY_SECONDS,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
+	MAX_MESSAGE_LENGTH,
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
@@ -83,6 +85,9 @@ function readSecretFile(name: string, path: string): string {
 	}
 	return secret;
 }
+
+/** The largest chunk whose message, 17 bytes longer, a read can frame. */
+const MAX_CHUNK_SIZE = MAX_MESSAGE_LENGTH - SECRETSTREAM_ABYTES;
 
 /** The longest delay setInterval honors; a longer one is clamped to 1 ms. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -367,6 +372,13 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 
 	if (chunkSize > maxChunkedFileSize) {
 		throw new ConfigError("CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE");
+	}
+
+	// A read frames each message, the chunk and its 17-byte tag, with a 4-byte length.
+	if (chunkSize > MAX_CHUNK_SIZE) {
+		throw new ConfigError(
+			`CHUNK_SIZE cannot exceed ${String(MAX_CHUNK_SIZE)} (a message's length must fit in 4 bytes)`,
+		);
 	}
 
 	if (!(rateLimitMultiplier > 0) || rateLimitMultiplier > 100) {

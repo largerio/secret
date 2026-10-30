@@ -1,6 +1,7 @@
 import type {
 	ChunkedOpening,
 	CreatedNote,
+	Format0Opening,
 	NoteMeta,
 	NoteRead,
 	NoteStream,
@@ -16,10 +17,10 @@ export function createdBody(created: CreatedNote) {
 }
 
 /**
- * A single-shot note's ciphertext as a binary body, its metadata in headers:
- * the answer of `GET /notes/{id}/raw`, and of a format 1 read of such a note.
+ * A format 0 single-shot note's ciphertext as a binary body, its metadata in
+ * headers: the answer of `GET /notes/{id}/raw`.
  */
-export function rawResponse({ meta, ciphertext }: NoteRead): Response {
+export function rawResponse({ meta, ciphertext }: NoteRead<Format0Opening>): Response {
 	return new Response(new Uint8Array(ciphertext) as BodyInit, {
 		status: 200,
 		headers: rawHeaders(meta, ciphertext.length),
@@ -27,14 +28,17 @@ export function rawResponse({ meta, ciphertext }: NoteRead): Response {
 }
 
 /**
- * A chunked note's chunks, length-prefixed, its metadata in headers: the
- * answer of `GET /notes/{id}/stream`, and of a format 1 read of such a note.
+ * A note's messages, length-prefixed, its metadata in headers: the answer of
+ * `GET /notes/{id}/stream`, and of every format 1 read.
  */
-export function streamResponse({ meta, chunkCount, chunks }: NoteStream): Response {
-	return new Response(lengthPrefixed(chunks) as BodyInit, {
-		status: 200,
-		headers: streamHeaders(meta, chunkCount),
-	});
+export function streamResponse({ meta, chunkCount, chunks, byteLength }: NoteStream): Response {
+	const headers = streamHeaders(meta, chunkCount);
+	// Known for a note sent whole, so a reader can show its progress: the
+	// messages, each with the 4 bytes of its length.
+	if (byteLength !== undefined) {
+		headers["Content-Length"] = String(byteLength + 4 * chunkCount);
+	}
+	return new Response(lengthPrefixed(chunks) as BodyInit, { status: 200, headers });
 }
 
 /** Strip CRLF and null bytes to prevent HTTP header injection */
@@ -42,17 +46,18 @@ function sanitizeHeaderValue(value: string): string {
 	return value.replace(/[\r\n\0]/g, "");
 }
 
-/** The headers of a single-shot note's ciphertext, `length` bytes. */
-function rawHeaders(meta: NoteMeta, length: number): Record<string, string> {
+/** The headers of a format 0 single-shot note's ciphertext, `length` bytes. */
+function rawHeaders(meta: NoteMeta<Format0Opening>, length: number): Record<string, string> {
 	const headers = buildNoteHeaders(meta);
 	headers["Content-Length"] = String(length);
-	if (meta.opening.format === 0) {
-		headers["X-Client-Nonce"] = sanitizeHeaderValue(meta.opening.clientNonce);
-	}
+	headers["X-Client-Nonce"] = sanitizeHeaderValue(meta.opening.clientNonce);
 	return headers;
 }
 
-/** The headers of a chunked note's stream. */
+/**
+ * The headers of a note's messages: their count, and for format 0 the stream
+ * header, which format 1 holds in its envelope.
+ */
 function streamHeaders(meta: NoteMeta<ChunkedOpening>, chunkCount: number): Record<string, string> {
 	const headers = buildNoteHeaders(meta);
 	headers["X-Chunk-Count"] = String(chunkCount);
@@ -95,8 +100,8 @@ function buildNoteHeaders(meta: NoteMeta): Record<string, string> {
 }
 
 /**
- * The framing of a chunked note's stream: each chunk preceded by its length,
- * 4 bytes big-endian (PROTOCOL.md). It pulls from the source a chunk at a time,
+ * The framing of a note's messages: each preceded by its length, 4 bytes
+ * big-endian (PROTOCOL.md). It pulls from the source a message at a time,
  * as the client reads; a cancel waits for the source's own, which runs the
  * purge of a burned note.
  */
