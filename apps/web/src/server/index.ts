@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import process from "node:process";
+import { lingerOnClose } from "@largerio/secret-shared/linger";
 import { parseAddressConfig } from "./clientAddress.js";
 import { ORIGIN_ADAPTER_ENV, parseOrigin } from "./origin.js";
 import { createRequestListener, parseApiTarget, type SvelteKitHandler } from "./server.js";
@@ -29,6 +30,10 @@ const server = createServer(
 const host = process.env["HOST"] ?? "0.0.0.0";
 const port = Number.parseInt(process.env["PORT"] ?? "3000", 10);
 const shutdownTimeout = Number.parseInt(process.env["SHUTDOWN_TIMEOUT"] ?? "30", 10);
+
+// A refusal sent before a body was read must reach the browser before the
+// connection closes.
+lingerOnClose(server);
 
 server.listen(port, host, () => {
 	console.log(`Listening on http://${host}:${port}`);

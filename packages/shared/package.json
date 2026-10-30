@@ -28,7 +28,8 @@
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": "./src/index.ts",
-		"./auth": "./src/auth.ts"
+		"./auth": "./src/auth.ts",
+		"./linger": "./src/linger.ts"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",

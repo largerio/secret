@@ -1,4 +1,5 @@
 // @vitest-environment node
+
 import {
 	createServer,
 	type IncomingHttpHeaders,
@@ -8,6 +9,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { lingerOnClose } from "@largerio/secret-shared/linger";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressConfig } from "../clientAddress.js";
 import { ORIGIN_HOST_HEADER, ORIGIN_PROTOCOL_HEADER } from "../origin.js";
@@ -68,7 +70,12 @@ async function readBody(req: IncomingMessage): Promise<string> {
 /** node:http rather than fetch: no Origin, no decompression, raw bytes back. */
 function rawRequest(
 	base: string,
-	options: { method?: string; path: string; headers?: Record<string, string>; body?: string },
+	options: {
+		method?: string;
+		path: string;
+		headers?: Record<string, string>;
+		body?: string | Buffer;
+	},
 ): Promise<RawResponse> {
 	return new Promise((resolve, reject) => {
 		const req = request(
@@ -106,6 +113,8 @@ async function startWeb(
 	origin: URL | undefined = undefined,
 ): Promise<string> {
 	const web = createServer(createRequestListener({ handler, apiTarget: target, address, origin }));
+	// As index.ts runs it.
+	lingerOnClose(web);
 	servers.push(web);
 
 	return listen(web);
@@ -330,6 +339,29 @@ describe("API requests", () => {
 
 		expect(res.status).toBe(401);
 		expect(res.headers.connection).toBe("keep-alive");
+	});
+
+	// The API closes a connection after refusing a request whose body it did
+	// not read. Closed outright, the bytes the proxy was still sending drew a
+	// reset that could lose the refusal: about one upload in two answered 502.
+	it("pass on every refusal the API sends before reading the body", async () => {
+		const refusing = createServer((_req, res) => {
+			res.writeHead(401, { "content-type": "application/problem+json", connection: "close" });
+			res.end(JSON.stringify({ code: "unauthorized" }));
+		});
+		lingerOnClose(refusing);
+		servers.push(refusing);
+		const web = await startWeb(undefined, await listen(refusing));
+		const body = Buffer.alloc(4 * 1024 * 1024);
+
+		const statuses: number[] = [];
+		for (let i = 0; i < 20; i++) {
+			statuses.push(
+				(await rawRequest(web, { method: "PUT", path: "/api/v1/notes/x", body })).status,
+			);
+		}
+
+		expect(statuses).toEqual(Array(20).fill(401));
 	});
 
 	it("answer 502 when the API is unreachable", async () => {
