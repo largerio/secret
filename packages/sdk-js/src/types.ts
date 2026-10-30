@@ -17,6 +17,20 @@ export interface NoteFile {
 	readonly data: Uint8Array;
 }
 
+/**
+ * A file's bytes as a writer gives them: in memory, or in a Blob (a browser's
+ * `File`, Node's `fs.openAsBlob()`), which is read a slice at a time as the
+ * note is encrypted.
+ */
+export type FileBytes = Uint8Array | Blob;
+
+/** A file of a note, without its bytes: what a streamed read reports. */
+export interface NoteFileInfo {
+	readonly name: string;
+	readonly type: string;
+	readonly size: number;
+}
+
 /** The decrypted contents of a note. */
 export interface NotePayload {
 	readonly text?: string;
@@ -69,10 +83,15 @@ export interface RequestOptions {
 export interface CreateNoteOptions extends RequestOptions {
 	readonly text?: string;
 	readonly contentMode?: ContentMode;
+	/**
+	 * A Blob's bytes are read a slice at a time as they are encrypted: a note
+	 * that goes up in an upload session is never held whole in memory, in
+	 * format 1.
+	 */
 	readonly files?: ReadonlyArray<{
 		readonly name: string;
 		readonly type: string;
-		readonly data: Uint8Array;
+		readonly data: FileBytes;
 	}>;
 	readonly password?: string;
 	/** Expiration in seconds. Default: 86400 (24h). */
@@ -124,6 +143,29 @@ export interface ReadNoteOptions extends RequestOptions {
 
 export interface ReadNoteResult {
 	readonly payload: NotePayload;
+	readonly createdAt: string;
+	readonly expiresAt: string;
+	readonly fileCount: number;
+}
+
+export interface ReadNoteIntoOptions extends ReadNoteOptions {
+	/**
+	 * Opens the stream a file's bytes are written to, once the download reaches
+	 * the file. The stream is closed once the whole note is read and checked,
+	 * and aborted if it is not: until it is closed, what it holds is not the
+	 * file, and must not be shown.
+	 */
+	readonly openFile: (
+		file: NoteFileInfo,
+		index: number,
+	) => WritableStream<Uint8Array> | Promise<WritableStream<Uint8Array>>;
+}
+
+export interface ReadNoteIntoResult {
+	readonly text?: string;
+	readonly contentMode?: ContentMode;
+	/** Each file the note holds, in order, its bytes written to the stream opened for it. */
+	readonly files: ReadonlyArray<NoteFileInfo>;
 	readonly createdAt: string;
 	readonly expiresAt: string;
 	readonly fileCount: number;

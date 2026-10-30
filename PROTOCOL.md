@@ -766,7 +766,9 @@ Content-Type: application/json
 
 (with `passwordVerifier` too for a password note). The messages and
 `/complete` are sent as in format 0, so a message holds at most `chunkSize`
-bytes of the body.
+bytes of the body. Everything `/init` takes is known before the first message
+is encrypted: the reference SDK opens the session first, so that a refused
+session costs no encryption, then encrypts each message as it goes up.
 
 The server checks the lengths it sees against the body's rules: it refuses
 (`400`) a note whose body, the messages' length less 17 bytes each, is not a
@@ -870,7 +872,11 @@ A key present with the value `nil` is not absent: `text: nil` is refused. A
 not know. It need not check the length of each
 message: the server does, and the tags and the body's length are enough. It
 MUST NOT show any part of the payload before it has opened the last message
-and checked the body: only then does it know the note is whole.
+and checked the body: only then does it know the note is whole. A reader that
+writes the files out as the messages open, so as not to hold a large note in
+memory, keeps what it writes where nothing shows it, and discards it unless
+the body checks out: the reference SDK closes the stream it writes each file
+to once the body checks out, and aborts it otherwise.
 
 A writer writes each key of a map once, as a `str`, strings in valid UTF-8
 (a lone surrogate written as U+FFFD), and `size` as an `int`, each value in

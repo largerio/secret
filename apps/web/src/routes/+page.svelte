@@ -9,9 +9,9 @@ import Callout from "#lib/components/ui/Callout.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
-import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
+import { createNote } from "#lib/notes/notes.js";
 import { defaultExpiration } from "#lib/server-config.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { solveCap } from "#lib/utils/cap.js";
@@ -113,29 +113,25 @@ async function handleSubmit(): Promise<void> {
 
 	try {
 		const capToken = await solveCap();
-		const client = await getClient();
-		const noteFiles = await Promise.all(
-			files.map(async (file) => ({
-				name: file.name,
-				type: file.type,
-				data: new Uint8Array(await file.arrayBuffer()),
-			})),
-		);
+		// The files as they were picked: each is read from disk as it is encrypted.
+		const noteFiles = files.map((file) => ({ name: file.name, type: file.type, data: file }));
 
-		const created = await client.createNote({
-			...(text ? { text, contentMode } : {}),
-			...(noteFiles.length > 0 ? { files: noteFiles } : {}),
-			...(sentPassword ? { password: sentPassword } : {}),
-			expiresIn,
-			maxReads,
-			capToken,
-			// The instance's CHUNK_SIZE: the API refuses any chunk larger than it,
-			// and the SDK knows only its own 4 MiB default.
-			chunkSize: config.chunkSize,
-			onProgress: (info) => {
+		const created = await createNote(
+			{
+				...(text ? { text, contentMode } : {}),
+				...(noteFiles.length > 0 ? { files: noteFiles } : {}),
+				...(sentPassword ? { password: sentPassword } : {}),
+				expiresIn,
+				maxReads,
+				capToken,
+				// The instance's CHUNK_SIZE: the API refuses any chunk larger than it,
+				// and the SDK knows only its own 4 MiB default.
+				chunkSize: config.chunkSize,
+			},
+			(info) => {
 				progress = sendProgress(info);
 			},
-		});
+		);
 
 		const origin = window.location.origin;
 		result = {

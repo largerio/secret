@@ -43,6 +43,9 @@ export default defineConfig({
 			},
 		}),
 	],
+	// The worker that encrypts and decrypts notes is a module worker
+	// (lib/notes/notes.worker.ts), split like the app.
+	worker: { format: "es" },
 	build: {
 		// Vite inlines any asset under 4 KB as a data: URI, and some Fontsource
 		// subsets are that small (JetBrains Mono's cyrillic-ext is 2 KB). font-src

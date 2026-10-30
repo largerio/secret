@@ -46,6 +46,9 @@ export default defineConfig({
 				// outside the `*.ts` include above.)
 				"apps/web/src/routes/**",
 				"apps/web/src/lib/server/**",
+				// The worker's entry point, which wires `lib/notes/worker.ts` to the
+				// worker's messages; the e2e suite runs it.
+				"apps/web/src/lib/notes/notes.worker.ts",
 				"**/storage/interface.ts",
 			],
 			thresholds: {

@@ -54,14 +54,14 @@ Monorepo with pnpm workspaces:
   - Server env vars: declared in `src/env.ts` (`defineEnvVars`), read from `$app/env/private` — undeclared variables are invisible to the app
   - Create page: `src/routes/+page.svelte`
   - View page: `src/routes/note/[id]/+page.svelte`
-  - SDK client singleton: `src/lib/client.ts` — lazy-initialized `SecretClient`
+  - Notes in a worker: `src/lib/notes/` — the SDK runs only in a module worker (`notes.worker.ts`, its entry; `worker.ts` answers the page's requests), so Argon2id and the ciphers stay off the page's thread and no page loads libsodium. Pages call `notes.ts` (`createNote`, `readNote`, `checkNote`, `deleteNote`); `protocol.ts` carries requests, progress and errors (re-created of their SDK class on the page). A read decrypts its files into the origin private file system (`staging.ts`, a directory per read, memory where that is missing or short of room), held by a Web Lock while the page shows the note: closing the note deletes them, and `sweepStaged` (on every page's mount) deletes what pages gone left behind
   - i18n: `src/lib/i18n/index.svelte.ts` — uses `$state` rune for reactive locale
   - Runtime config: `src/lib/config.svelte.ts` — uses `$state` rune, injected via SSR (`+layout.server.ts`)
   - Production server: `src/server/` (compiled by `tsconfig.server.json` to `dist/server/`, started by `entrypoint.sh`) — a Node server in front of SvelteKit. `/api/*`, `/robots.txt` and `/sitemap.xml` stream straight to the API (`apiProxy.ts`, with `X-Forwarded-For` rewritten from `ADDRESS_HEADER`/`XFF_DEPTH` in `clientAddress.ts`); everything else goes to adapter-node's `build/handler.js`, with the public origin fixed from `ORIGIN` (`origin.ts`; `entrypoint.sh` sets it from `APP_URL`) since adapter-node 6 dropped that variable. API requests never cross SvelteKit, so its form CSRF check keeps guarding the app without blocking API clients that send no `Origin` (the SDK from Node). In dev, Vite's `server.proxy` plays this role
 
 - **`packages/sdk-js`** (`@largerio/secret-sdk`) — JS/TS SDK; the **only published npm package**
   - `SecretClient` class: create, read, check, delete notes
-  - Handles full encrypt→send and receive→decrypt flows
+  - Handles full encrypt→send and receive→decrypt flows. Format 1 streams: a file may be a `Blob`, read a slice at a time as it is encrypted, a session is opened before encrypting, and `readNoteInto` writes each file to a `WritableStream` of the caller's, closed once the note is checked and aborted otherwise (`sealNoteFormat1`, `streamNoteFormat1` in `format1.ts`)
   - Progress callbacks for uploads (XHR in browser) and downloads (streaming fetch)
   - Optional API key support (`Authorization: Bearer <key>`)
   - Re-exports types from `@largerio/secret-shared`
@@ -143,7 +143,7 @@ Monorepo with pnpm workspaces:
 
 The coverage gate (`vitest.config.ts`) only measures `.ts` sources (this also covers `*.svelte.ts` rune modules; `.svelte`/`.css` files are outside the parser). Files explicitly excluded from the gate: `**/*.d.ts`, the package barrels (`packages/*/src/index.ts`, `packages/crypto/src/client.ts`), the entry points (`apps/api/src/index.ts`, `apps/api/src/backup.ts`, `apps/web/src/server/index.ts`), `**/*.test.ts` + `**/__tests__/**`, `**/types.ts` (type-only), `**/storage/interface.ts` (pure interface), and the frontend's `apps/web/src/routes/**` (loaders) + `apps/web/src/lib/server/**` (`$app/env`/SSR SDK) — these need a render/SvelteKit harness to exercise. So "100%" means 100% of the gated `.ts` logic, not literally every file.
 
-Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/client.ts`, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$app/env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
+Coverage scope for `apps/web/src`: logic modules and utils are gated (e.g. `lib/notes/*` — its worker's `notes.worker.ts` entry excepted —, `lib/*.svelte.ts` rune stores, `lib/i18n/index.svelte.ts`, `lib/utils/*`, `hooks.server.ts`, and the production server in `server/*` — its `index.ts` bootstrap excepted). Excluded from the gate (need a render/SvelteKit harness): `.svelte` components, `routes/**` loaders, and `lib/server/**` (`$app/env`/SSR SDK). End-to-end flows are covered separately by Playwright in `apps/e2e` (`pnpm test:e2e`).
 
 Run `pnpm test` before committing. New features must include tests.
 

@@ -4,12 +4,20 @@
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "../app.css";
+import { onMount } from "svelte";
 import SiteFooter from "#lib/components/SiteFooter.svelte";
 import Aura from "#lib/components/ui/Aura.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { getLocale, t } from "#lib/i18n/index.svelte.js";
+import { sweepStaged } from "#lib/notes/staging.js";
 
 const { children } = $props();
+
+// The files a note's read decrypted to disk are deleted once its page is
+// gone: a page that crashed or was closed first leaves them to the next.
+onMount(() => {
+	sweepStaged().catch(() => undefined);
+});
 
 const localeToOg: Record<string, string> = {
 	en: "en_US",

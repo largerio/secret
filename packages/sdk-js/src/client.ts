@@ -21,20 +21,28 @@ import {
 	closeFormat1Read,
 	encryptNoteFormat1,
 	type Format1Body,
+	type Format1Head,
 	type Format1Read,
 	type Format1Settings,
 	format1BodyOf,
 	formatOfFragment,
+	type NoteSource,
+	OutsideFailure,
 	openNoteFormat1,
 	prepareFormat1Read,
+	sealNoteFormat1,
+	streamNoteFormat1,
 } from "./format1.js";
-import type { HttpClientConfig, NoteReadResponse } from "./http.js";
+import type { HttpClientConfig } from "./http.js";
 import * as http from "./http.js";
 import type {
 	CreateNoteOptions,
 	CreateNoteResult,
+	NoteFile,
 	NoteInfo,
 	NotePayload,
+	ReadNoteIntoOptions,
+	ReadNoteIntoResult,
 	ReadNoteOptions,
 	ReadNoteResult,
 	RequestOptions,
@@ -90,6 +98,21 @@ function uniformDecryptionError(err: unknown): Error {
 	return new SecretDecryptionError();
 }
 
+/**
+ * Sends a read's proofs. A wrong link or a wrong password, which the server
+ * tells by its proofs, is the same error as a key that fails to decrypt.
+ */
+async function sendingProofs<T>(send: () => Promise<T>): Promise<T> {
+	try {
+		return await send();
+	} catch (err) {
+		if (err instanceof SecretApiError && isRefusedProof(err)) {
+			throw new SecretDecryptionError();
+		}
+		throw err;
+	}
+}
+
 /** The settings a note declares besides its ciphertext, defaults applied. */
 function noteSettings(options: CreateNoteOptions, fileCount: number): Format1Settings {
 	return {
@@ -97,6 +120,56 @@ function noteSettings(options: CreateNoteOptions, fileCount: number): Format1Set
 		maxReads: options.maxReads ?? 1,
 		expiresIn: options.expiresIn ?? DEFAULT_EXPIRY_SECONDS,
 	};
+}
+
+/**
+ * A note about to be encrypted: format 1's body, laid out, or format 0's
+ * payload, its files read into memory.
+ */
+type Writing = { readonly body: Format1Body } | { readonly payload: NotePayload };
+
+/** The note a writer gives, as the options hold it. */
+function sourceOf(options: CreateNoteOptions): NoteSource {
+	return {
+		...(options.text !== undefined ? { text: options.text } : {}),
+		...(options.contentMode ? { contentMode: options.contentMode } : {}),
+		...(options.files && options.files.length > 0 ? { files: options.files } : {}),
+	};
+}
+
+/** A format 0 note's payload: format 0 is encrypted in memory, a Blob read whole first. */
+async function payloadOf(source: NoteSource): Promise<NotePayload> {
+	const files: NoteFile[] = [];
+	for (const file of source.files ?? []) {
+		const data =
+			file.data instanceof Uint8Array ? file.data : new Uint8Array(await file.data.arrayBuffer());
+		files.push({ name: file.name, type: file.type, size: data.length, data });
+	}
+	return {
+		...(source.text !== undefined ? { text: source.text } : {}),
+		...(source.contentMode ? { contentMode: source.contentMode } : {}),
+		...(files.length > 0 ? { files } : {}),
+	};
+}
+
+/**
+ * Writes a note's files, read whole already, to the caller's streams, each
+ * closed once written.
+ */
+async function writeFiles(
+	files: ReadonlyArray<NoteFile>,
+	openFile: ReadNoteIntoOptions["openFile"],
+): Promise<void> {
+	for (const [index, { name, type, size, data }] of files.entries()) {
+		const writer = (await openFile({ name, type, size }, index)).getWriter();
+		try {
+			await writer.write(data);
+			await writer.close();
+		} catch (err) {
+			await writer.abort(err).catch(() => undefined);
+			throw err;
+		}
+	}
 }
 
 /** A single-shot note, encrypted, and the fields its format sends beside the ciphertext. */
@@ -112,13 +185,13 @@ interface SealedNote {
  * goes as one message.
  */
 async function sealNote(
-	payload: NotePayload,
+	writing: Writing,
 	fileCount: number,
 	options: CreateNoteOptions,
-	body: Format1Body | undefined,
 ): Promise<SealedNote> {
 	const settings = noteSettings(options, fileCount);
-	if (body) {
+	if ("body" in writing) {
+		const { body } = writing;
 		const sealed = await encryptNoteFormat1(body, body.length, settings, options.password);
 		const [message] = sealed.messages as [Uint8Array];
 		return {
@@ -128,7 +201,7 @@ async function sealNote(
 			fields: { envelope: sealed.envelope, ...sealed.verifiers },
 		};
 	}
-	const sealed = await encryptNote(payload, options.password);
+	const sealed = await encryptNote(writing.payload, options.password);
 	return {
 		...sealed,
 		fields: {
@@ -237,20 +310,9 @@ export class SecretClient {
 			throw new SecretValidationError("Unsupported note format");
 		}
 
-		const payload: NotePayload = {
-			...(options.text !== undefined ? { text: options.text } : {}),
-			...(options.contentMode ? { contentMode: options.contentMode } : {}),
-			...(options.files && options.files.length > 0
-				? {
-						files: options.files.map((f) => ({
-							name: f.name,
-							type: f.type,
-							size: f.data.length,
-							data: f.data,
-						})),
-					}
-				: {}),
-		};
+		const source = sourceOf(options);
+		const writing: Writing =
+			options.format === 0 ? { payload: await payloadOf(source) } : { body: format1BodyOf(source) };
 
 		// The payload's size decides between one request and an upload session:
 		// a format 1 note's padded body, laid out first, or format 0's estimate.
@@ -258,17 +320,17 @@ export class SecretClient {
 		// MAX_TEXT_SIZE allows: format 0 would put all of it in its first chunk,
 		// which an instance refuses beyond its chunk size, and the instance keeps
 		// a note sent whole in its database.
-		const body = options.format === 0 ? undefined : format1BodyOf(payload);
-		const size = body ? body.length : this.estimatePayloadSize(payload);
+		const size =
+			"body" in writing ? writing.body.length : this.estimatePayloadSize(writing.payload);
 		const useChunked = options.chunked === true || (fileCount > 0 && size > chunkSize);
 
 		if (useChunked) {
-			return this.createNoteChunked(payload, fileCount, chunkSize, options, body);
+			return this.createNoteChunked(writing, fileCount, chunkSize, options);
 		}
 
 		options.signal?.throwIfAborted();
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
-		const sealed = await sealNote(payload, fileCount, options, body);
+		const sealed = await sealNote(writing, fileCount, options);
 		options.onProgress?.({
 			phase: "encrypting",
 			phaseProgress: 1,
@@ -332,41 +394,66 @@ export class SecretClient {
 		};
 	}
 
+	/**
+	 * Sends a note in an upload session. A format 1 note's keys are derived and
+	 * the session opened before its body is encrypted, a message at a time as
+	 * each goes up: a refused session costs no encryption, and only the message
+	 * going up is held. Format 0 is encrypted whole first.
+	 */
 	private async createNoteChunked(
-		payload: NotePayload,
+		writing: Writing,
 		fileCount: number,
 		chunkSize: number,
 		options: CreateNoteOptions,
-		body: Format1Body | undefined,
 	): Promise<CreateNoteResult> {
 		options.signal?.throwIfAborted();
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const settings = noteSettings(options, fileCount);
-		let encrypted: { readonly chunks: Uint8Array[]; readonly keyFragment: string };
-		let fields: Record<string, unknown>;
-		if (body) {
-			const sealed = await encryptNoteFormat1(body, chunkSize, settings, options.password);
-			encrypted = { chunks: sealed.messages, keyFragment: sealed.keyFragment };
-			fields = { envelope: sealed.envelope, ...sealed.verifiers };
-		} else {
-			const sealed = await encryptNoteChunked(payload, chunkSize, options.password);
-			encrypted = sealed;
-			fields = {
+		if ("payload" in writing) {
+			const sealed = await encryptNoteChunked(writing.payload, chunkSize, options.password);
+			const fields = {
 				streamHeader: sealed.header,
 				clientNonce: sealed.clientNonce,
 				hasPassword: !!options.password,
 				...settings,
 				...(sealed.salt ? { salt: sealed.salt } : {}),
 			};
+			return this.sendInSession(
+				fields,
+				sealed.chunks,
+				sealed.chunks.length,
+				sealed.keyFragment,
+				options,
+			);
 		}
-		const totalChunks = encrypted.chunks.length;
+		const sealing = await sealNoteFormat1(writing.body, chunkSize, settings, options.password);
+		try {
+			const fields = { envelope: sealing.envelope, ...sealing.verifiers };
+			return await this.sendInSession(
+				fields,
+				sealing.messages,
+				sealing.messageCount,
+				sealing.keyFragment,
+				options,
+			);
+		} finally {
+			sealing.close();
+		}
+	}
+
+	/** Opens an upload session, sends the messages one by one as they come, and completes it. */
+	private async sendInSession(
+		fields: Record<string, unknown>,
+		messages: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
+		totalChunks: number,
+		keyFragment: string,
+		options: CreateNoteOptions,
+	): Promise<CreateNoteResult> {
 		options.onProgress?.({
 			phase: "encrypting",
 			phaseProgress: 1,
 			overallProgress: PROGRESS.chunkedEncrypted,
 		});
-
-		// Init chunked upload session
 		options.onProgress?.({
 			phase: "uploading",
 			phaseProgress: 0,
@@ -381,26 +468,22 @@ export class SecretClient {
 			options.capToken,
 		);
 
-		// Upload each chunk
-		for (let i = 0; i < totalChunks; i++) {
-			const chunk = encrypted.chunks[i];
-			/* v8 ignore next */
-			if (!chunk) break;
-			const hash = sha256Hex(chunk);
-			await http.uploadChunk(this.configFor(options), uploadId, i, chunk, hash);
+		let sent = 0;
+		for await (const chunk of messages) {
+			await http.uploadChunk(this.configFor(options), uploadId, sent, chunk, sha256Hex(chunk));
+			sent++;
 
-			const chunkProgress = (i + 1) / totalChunks;
+			const chunkProgress = sent / totalChunks;
 			options.onUploadProgress?.(chunkProgress);
 			options.onProgress?.({
 				phase: "uploading",
 				phaseProgress: chunkProgress,
 				overallProgress: PROGRESS.chunkedEncrypted + chunkProgress * PROGRESS.chunkedUploadSpan,
-				currentChunk: i + 1,
+				currentChunk: sent,
 				totalChunks,
 			});
 		}
 
-		// Complete chunked upload
 		const response = await http.completeChunkedUpload(
 			this.configFor(options),
 			uploadId,
@@ -413,7 +496,7 @@ export class SecretClient {
 			id: response.id,
 			expiresAt: response.expiresAt,
 			deleteToken: response.deleteToken,
-			keyFragment: encrypted.keyFragment,
+			keyFragment,
 		};
 	}
 
@@ -650,50 +733,128 @@ export class SecretClient {
 	}
 
 	/**
-	 * Reads a format 1 note: its envelope from `/exists`, the proofs derived
-	 * from it with the link and the password, then the note, which the server
-	 * serves only once the proofs check out.
+	 * What reading a format 1 note takes: its envelope from `/exists`, then the
+	 * proofs and the key derived from it with the link and the password.
+	 */
+	private async prepareRead(
+		id: string,
+		keyFragment: string,
+		options?: ReadNoteOptions,
+	): Promise<Format1Read> {
+		const info = await http.checkNote(this.configFor(options), id);
+		if (!info.exists) {
+			throw new SecretApiError("Note not found", 404);
+		}
+		try {
+			return await prepareFormat1Read(info.envelope, keyFragment, options?.password);
+		} catch (err) {
+			throw uniformDecryptionError(err);
+		}
+	}
+
+	/**
+	 * Reads a format 1 note: the proofs derived from its envelope, then the
+	 * note, which the server serves only once the proofs check out.
 	 */
 	private async readNoteFormat1(
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const info = await http.checkNote(this.configFor(options), id);
-		if (!info.exists) {
-			throw new SecretApiError("Note not found", 404);
-		}
-
-		let read: Format1Read;
+		const read = await this.prepareRead(id, keyFragment, options);
 		try {
-			read = await prepareFormat1Read(info.envelope, keyFragment, options?.password);
-		} catch (err) {
-			throw uniformDecryptionError(err);
-		}
-
-		try {
-			let response: NoteReadResponse;
-			try {
-				response = await http.postNoteRead(
-					this.configFor(options),
-					id,
-					read.proofs,
-					this.downloadProgress(options),
-				);
-			} catch (err) {
-				// A wrong link or a wrong password, which the server tells by its
-				// proofs: the same error as a key that fails to decrypt.
-				if (err instanceof SecretApiError && isRefusedProof(err)) {
-					throw new SecretDecryptionError();
-				}
-				throw err;
-			}
+			const response = await sendingProofs(() =>
+				http.postNoteRead(this.configFor(options), id, read.proofs, this.downloadProgress(options)),
+			);
 			const payload = await this.decrypting(() => openNoteFormat1(read, response.chunks), options);
 			return {
 				payload,
 				createdAt: response.createdAt,
 				expiresAt: response.expiresAt,
 				// The envelope's, which the ciphertext authenticates, not the header's.
+				fileCount: read.envelope.fileCount,
+			};
+		} finally {
+			closeFormat1Read(read);
+		}
+	}
+
+	/**
+	 * Download a note and decrypt it into streams of the caller's, a file at a
+	 * time as the download reaches it: a format 1 note is never held whole in
+	 * memory, only the message being read. The text comes back in the result.
+	 *
+	 * **This consumes a read**, as {@link readNote} does, and takes the same
+	 * link, password and options. Each file's stream is opened as the download
+	 * reaches it, closed once the whole note is read and checked, and aborted
+	 * on any failure: a reader shows nothing of a note before it knows the
+	 * note whole (PROTOCOL.md), so until its stream is closed, what it holds is
+	 * not the file. A file system's writable stream fits: written to a copy,
+	 * committed on `close()`, dropped on `abort()`.
+	 *
+	 * A format 0 note is read whole, as {@link readNote} reads it, then written
+	 * out.
+	 *
+	 * @throws What {@link readNote} throws; an error of a stream of the
+	 * caller's is thrown as it is.
+	 *
+	 * @example
+	 * ```ts
+	 * const note = await client.readNoteInto(id, keyFragment, {
+	 *   openFile: (file) => Writable.toWeb(createWriteStream(`/tmp/${file.name}.part`)),
+	 * });
+	 * ```
+	 */
+	async readNoteInto(
+		id: string,
+		keyFragment: string,
+		options: ReadNoteIntoOptions,
+	): Promise<ReadNoteIntoResult> {
+		if (formatOfFragment(keyFragment) === 0) {
+			const { payload, createdAt, expiresAt, fileCount } = await this.readNote(
+				id,
+				keyFragment,
+				options,
+			);
+			const files = payload.files ?? [];
+			await writeFiles(files, options.openFile);
+			return {
+				...(payload.text !== undefined ? { text: payload.text } : {}),
+				...(payload.contentMode ? { contentMode: payload.contentMode } : {}),
+				files: files.map(({ name, type, size }) => ({ name, type, size })),
+				createdAt,
+				expiresAt,
+				fileCount,
+			};
+		}
+
+		assertFormat1Fragment(keyFragment);
+		options.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
+		const read = await this.prepareRead(id, keyFragment, options);
+		try {
+			const response = await sendingProofs(() =>
+				http.postNoteReadStream(
+					this.configFor(options),
+					id,
+					read.proofs,
+					this.downloadProgress(options),
+				),
+			);
+			let head: Format1Head;
+			try {
+				head = await streamNoteFormat1(read, response.messages, options.openFile);
+			} catch (err) {
+				// The download's failure, or a stream's of the caller, is not the note's.
+				if (err instanceof OutsideFailure) {
+					throw err.cause;
+				}
+				throw uniformDecryptionError(err);
+			}
+			options.onProgress?.({ phase: "decrypting", phaseProgress: 1, overallProgress: 1 });
+			return {
+				...head,
+				createdAt: response.createdAt,
+				expiresAt: response.expiresAt,
 				fileCount: read.envelope.fileCount,
 			};
 		} finally {
