@@ -55,7 +55,18 @@ export interface SecretClientConfig {
 	readonly retryBackoffMs?: (attempt: number) => number;
 }
 
-export interface CreateNoteOptions {
+/** What any call of the client takes. */
+export interface RequestOptions {
+	/**
+	 * Cancels the call, which then rejects with the signal's reason (an
+	 * `AbortError` unless the caller gave another). What was done stays done: a
+	 * read the server has started serving is spent, and an upload session cut
+	 * short is left to expire.
+	 */
+	readonly signal?: AbortSignal;
+}
+
+export interface CreateNoteOptions extends RequestOptions {
 	readonly text?: string;
 	readonly contentMode?: ContentMode;
 	readonly files?: ReadonlyArray<{
@@ -97,7 +108,7 @@ export interface CreateNoteResult {
 	readonly keyFragment: string;
 }
 
-export interface ReadNoteOptions {
+export interface ReadNoteOptions extends RequestOptions {
 	readonly password?: string;
 	/** Download progress callback (0 to 1). */
 	readonly onDownloadProgress?: (progress: number) => void;

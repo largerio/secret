@@ -37,6 +37,7 @@ import type {
 	NotePayload,
 	ReadNoteOptions,
 	ReadNoteResult,
+	RequestOptions,
 	SecretClientConfig,
 } from "./types.js";
 
@@ -161,7 +162,13 @@ export class SecretClient {
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 			...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
 			...(config.retryBackoffMs ? { retryBackoffMs: config.retryBackoffMs } : {}),
+			xhrUploads: config.fetch === undefined,
 		};
+	}
+
+	/** The HTTP configuration of one call: the client's, with the call's signal. */
+	private configFor(options?: RequestOptions): http.HttpClientConfig {
+		return options?.signal ? { ...this.httpConfig, signal: options.signal } : this.httpConfig;
 	}
 
 	/**
@@ -259,6 +266,7 @@ export class SecretClient {
 			return this.createNoteChunked(payload, fileCount, chunkSize, options, body);
 		}
 
+		options.signal?.throwIfAborted();
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const sealed = await sealNote(payload, fileCount, options, body);
 		options.onProgress?.({
@@ -299,7 +307,7 @@ export class SecretClient {
 					: undefined;
 
 			response = await http.postFormData(
-				this.httpConfig,
+				this.configFor(options),
 				"/notes/upload",
 				formData,
 				onUpload,
@@ -307,7 +315,7 @@ export class SecretClient {
 			);
 		} else {
 			response = await http.postJson(
-				this.httpConfig,
+				this.configFor(options),
 				"/notes",
 				{ encryptedData: sealed.encryptedData, ...sealed.fields },
 				options.capToken,
@@ -331,6 +339,7 @@ export class SecretClient {
 		options: CreateNoteOptions,
 		body: Format1Body | undefined,
 	): Promise<CreateNoteResult> {
+		options.signal?.throwIfAborted();
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const settings = noteSettings(options, fileCount);
 		let encrypted: { readonly chunks: Uint8Array[]; readonly keyFragment: string };
@@ -367,7 +376,7 @@ export class SecretClient {
 		});
 
 		const { uploadId } = await http.initChunkedUpload(
-			this.httpConfig,
+			this.configFor(options),
 			{ ...fields, chunkCount: totalChunks },
 			options.capToken,
 		);
@@ -378,7 +387,7 @@ export class SecretClient {
 			/* v8 ignore next */
 			if (!chunk) break;
 			const hash = sha256Hex(chunk);
-			await http.uploadChunk(this.httpConfig, uploadId, i, chunk, hash);
+			await http.uploadChunk(this.configFor(options), uploadId, i, chunk, hash);
 
 			const chunkProgress = (i + 1) / totalChunks;
 			options.onUploadProgress?.(chunkProgress);
@@ -392,7 +401,11 @@ export class SecretClient {
 		}
 
 		// Complete chunked upload
-		const response = await http.completeChunkedUpload(this.httpConfig, uploadId, options.capToken);
+		const response = await http.completeChunkedUpload(
+			this.configFor(options),
+			uploadId,
+			options.capToken,
+		);
 
 		options.onProgress?.({ phase: "processing", phaseProgress: 1, overallProgress: 1 });
 
@@ -427,8 +440,8 @@ export class SecretClient {
 	 * @throws {SecretApiError} on a server error (including 429).
 	 * @throws {SecretNetworkError} if the request never reached the server.
 	 */
-	async checkNote(id: string): Promise<NoteInfo> {
-		return http.checkNote(this.httpConfig, id);
+	async checkNote(id: string, options?: RequestOptions): Promise<NoteInfo> {
+		return http.checkNote(this.configFor(options), id);
 	}
 
 	/**
@@ -534,6 +547,7 @@ export class SecretClient {
 		open: () => Promise<NotePayload> | NotePayload,
 		options?: ReadNoteOptions,
 	): Promise<NotePayload> {
+		options?.signal?.throwIfAborted();
 		options?.onProgress?.({
 			phase: "decrypting",
 			phaseProgress: 0,
@@ -554,7 +568,11 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNoteRaw(this.httpConfig, id, this.downloadProgress(options));
+		const response = await http.getNoteRaw(
+			this.configFor(options),
+			id,
+			this.downloadProgress(options),
+		);
 		const payload = await this.decrypting(
 			() =>
 				decryptNoteBytes(
@@ -579,7 +597,7 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNote(this.httpConfig, id, options?.onDownloadProgress);
+		const response = await http.getNote(this.configFor(options), id, options?.onDownloadProgress);
 
 		let payload: NotePayload;
 		try {
@@ -607,7 +625,11 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const response = await http.getNoteStream(this.httpConfig, id, this.downloadProgress(options));
+		const response = await http.getNoteStream(
+			this.configFor(options),
+			id,
+			this.downloadProgress(options),
+		);
 		const payload = await this.decrypting(
 			() =>
 				decryptNoteChunked(
@@ -637,7 +659,7 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const info = await http.checkNote(this.httpConfig, id);
+		const info = await http.checkNote(this.configFor(options), id);
 		if (!info.exists) {
 			throw new SecretApiError("Note not found", 404);
 		}
@@ -653,7 +675,7 @@ export class SecretClient {
 			let response: NoteReadResponse;
 			try {
 				response = await http.postNoteRead(
-					this.httpConfig,
+					this.configFor(options),
 					id,
 					read.proofs,
 					this.downloadProgress(options),
@@ -687,8 +709,13 @@ export class SecretClient {
 	 * @throws {SecretApiError} 403 for a wrong token, 404 if the note is already gone.
 	 * @throws {SecretNetworkError} if the request never reached the server.
 	 */
-	async deleteNote(id: string, deleteToken: string, capToken?: string): Promise<void> {
-		return http.deleteNote(this.httpConfig, id, deleteToken, capToken);
+	async deleteNote(
+		id: string,
+		deleteToken: string,
+		capToken?: string,
+		options?: RequestOptions,
+	): Promise<void> {
+		return http.deleteNote(this.configFor(options), id, deleteToken, capToken);
 	}
 
 	/**
