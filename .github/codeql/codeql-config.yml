@@ -1,0 +1,12 @@
+# Read by .github/workflows/codeql.yml. The default queries, less one.
+name: Secret
+
+query-filters:
+  # js/insufficient-password-hash takes any value named like a password for
+  # one. The protocol's passwordProof and passwordVerifier are not passwords:
+  # a proof is HKDF output over Argon2id's, a verifier its SHA-256, which the
+  # server seals with HMAC (PROTOCOL.md, "Proof of reading"). The one password
+  # the code handles is stretched with Argon2id, in the client; were that to
+  # change, the test vectors and their OpenSSL check would fail.
+  - exclude:
+      id: js/insufficient-password-hash
