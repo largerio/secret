@@ -7,6 +7,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-30
+
 ### Added
 
 - Large files no longer need to fit in the browser's memory. The web app reads a file from disk as it encrypts it, a chunk at a time, after opening the upload session, so a refused upload costs no encryption. On read, it decrypts a note's files to the browser's private storage for the site, previews and downloads them from there, and deletes them once the page lets go of the note; where that storage is missing (a private window, an instance served over plain HTTP), files stay in memory as before. ([SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#known-limitations)) (#266)
@@ -444,7 +446,8 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/largerio/secret/releases/tag/v1.7.0
 [1.6.0]: https://github.com/largerio/secret/releases/tag/v1.6.0
 [1.5.0]: https://github.com/largerio/secret/releases/tag/v1.5.0
 [1.4.1]: https://github.com/largerio/secret/releases/tag/v1.4.1
