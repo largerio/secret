@@ -7,6 +7,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-30
+
 ### Added
 
 - [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md) specifies format 0, the encryption format of every release before this one: the keys and the password derivation, the payload, single-shot and chunked notes, the API flows, what the server learns and the limits of this format. With the test vectors, it is enough to write a client in another language. (#249)
@@ -420,7 +422,8 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/largerio/secret/releases/tag/v1.6.0
 [1.5.0]: https://github.com/largerio/secret/releases/tag/v1.5.0
 [1.4.1]: https://github.com/largerio/secret/releases/tag/v1.4.1
 [1.4.0]: https://github.com/largerio/secret/releases/tag/v1.4.0
