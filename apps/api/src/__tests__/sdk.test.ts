@@ -125,10 +125,14 @@ function bytes(size: number): Uint8Array {
 	return new Uint8Array(randomBytes(size));
 }
 
-describe("the SDK against the application", () => {
+describe("format 0, through the SDK and the application", () => {
 	it("round-trips a text note, then finds it burned", async () => {
 		const client = await connect();
-		const { id, keyFragment } = await client.createNote({ text: "hello, server", maxReads: 1 });
+		const { id, keyFragment } = await client.createNote({
+			format: 0,
+			text: "hello, server",
+			maxReads: 1,
+		});
 
 		const info = await client.checkNote(id);
 		expect(info).toMatchObject({ exists: true, hasPassword: false, chunked: false, fileCount: 0 });
@@ -155,6 +159,7 @@ describe("the SDK against the application", () => {
 		const client = await connect();
 		const data = bytes(20 * 1024);
 		const { id, keyFragment } = await client.createNote({
+			format: 0,
 			text: "two attachments",
 			files: [
 				{ name: "a.bin", type: "application/octet-stream", data },
@@ -190,6 +195,7 @@ describe("the SDK against the application", () => {
 		const data = bytes(5 * CHUNK_SIZE + 123);
 		const progress: number[] = [];
 		const { id, keyFragment } = await client.createNote({
+			format: 0,
 			files: [{ name: "big.bin", type: "application/octet-stream", data }],
 			chunkSize: CHUNK_SIZE,
 			maxReads: 2,
@@ -228,6 +234,7 @@ describe("the SDK against the application", () => {
 
 		// The SDK's 4 MiB default would send the whole file in one chunk.
 		const attempt = client.createNote({
+			format: 0,
 			files: [{ name: "big.bin", type: "application/octet-stream", data }],
 			chunked: true,
 		});
@@ -241,6 +248,7 @@ describe("the SDK against the application", () => {
 		async () => {
 			const client = await connect();
 			const { id, keyFragment } = await client.createNote({
+				format: 0,
 				text: "behind a password",
 				password: "correct horse battery staple",
 				maxReads: 3,
@@ -267,6 +275,7 @@ describe("the SDK against the application", () => {
 			const client = await connect();
 			const data = bytes(2 * CHUNK_SIZE);
 			const { id, keyFragment } = await client.createNote({
+				format: 0,
 				files: [{ name: "big.bin", type: "application/octet-stream", data }],
 				password: "pw",
 				chunkSize: CHUNK_SIZE,
@@ -284,7 +293,10 @@ describe("the SDK against the application", () => {
 
 	it("deletes a note with its delete token, and only with it", async () => {
 		const client = await connect();
-		const { id, keyFragment, deleteToken } = await client.createNote({ text: "to delete" });
+		const { id, keyFragment, deleteToken } = await client.createNote({
+			format: 0,
+			text: "to delete",
+		});
 
 		await expect(client.deleteNote(id, "x".repeat(deleteToken.length))).rejects.toMatchObject({
 			status: 403,
@@ -297,18 +309,24 @@ describe("the SDK against the application", () => {
 
 	it("reads without a key, but writes only with one", async () => {
 		const writer = await connect();
-		const { id, keyFragment } = await writer.createNote({ text: "public read", maxReads: 2 });
+		const { id, keyFragment } = await writer.createNote({
+			format: 0,
+			text: "public read",
+			maxReads: 2,
+		});
 
 		const reader = await connect(null);
 		const { payload } = await reader.readNote(id, keyFragment);
 		expect(payload.text).toBe("public read");
 
-		await expect(reader.createNote({ text: "no key" })).rejects.toMatchObject({ status: 401 });
+		await expect(reader.createNote({ format: 0, text: "no key" })).rejects.toMatchObject({
+			status: 401,
+		});
 	});
 
 	it("reads a note from the share URL it builds", async () => {
 		const client = await connect();
-		const { id, keyFragment } = await client.createNote({ text: "by URL" });
+		const { id, keyFragment } = await client.createNote({ format: 0, text: "by URL" });
 
 		const url = client.buildShareUrl(id, keyFragment);
 		expect(url).toBe(`${baseUrl}/note/${id}#${keyFragment}`);
@@ -319,13 +337,9 @@ describe("the SDK against the application", () => {
 });
 
 describe("format 1, through the SDK and the application", () => {
-	it("round-trips a text note, read with its proof once /exists served its envelope", async () => {
+	it("writes format 1 by default, read with its proof once /exists served its envelope", async () => {
 		const client = await connect();
-		const { id, keyFragment } = await client.createNote({
-			text: "hello, format 1",
-			format: 1,
-			maxReads: 2,
-		});
+		const { id, keyFragment } = await client.createNote({ text: "hello, format 1", maxReads: 2 });
 		expect(keyFragment).toMatch(/^1\.[A-Za-z0-9_-]{43}$/);
 
 		expect(await client.checkNote(id)).toMatchObject({
@@ -502,8 +516,8 @@ describe("format 1, through the SDK and the application", () => {
 		const data = bytes(2 * CHUNK_SIZE);
 		const files = [{ name: "big.bin", type: "application/octet-stream", data }];
 		const notes = [
-			await client.createNote({ text: "format 0", maxReads: 1 }),
-			await client.createNote({ files, chunkSize: CHUNK_SIZE, maxReads: 1 }),
+			await client.createNote({ text: "format 0", format: 0, maxReads: 1 }),
+			await client.createNote({ files, chunkSize: CHUNK_SIZE, format: 0, maxReads: 1 }),
 			await client.createNote({ text: "format 1", format: 1, maxReads: 1 }),
 			await client.createNote({ files, chunkSize: CHUNK_SIZE, format: 1, maxReads: 1 }),
 		];
