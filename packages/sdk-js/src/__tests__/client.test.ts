@@ -358,7 +358,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.createNote({ text: "Hello world", contentMode: "text" });
+		const result = await client.createNote({ format: 0, text: "Hello world", contentMode: "text" });
 
 		expect(result.id).toBe("note123456ab");
 		expect(result.expiresAt).toBe("2099-01-01T00:00:00Z");
@@ -384,7 +384,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.createNote({ text: "test", expiresIn: 3600, maxReads: 5 });
+		await client.createNote({ format: 0, text: "test", expiresIn: 3600, maxReads: 5 });
 
 		const body = http.postJson.mock.calls[0]?.[2] as Record<string, unknown>;
 		expect(body["expiresIn"]).toBe(3600);
@@ -408,7 +408,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.createNote({ text: "secret", password: "pass123" });
+		await client.createNote({ format: 0, text: "secret", password: "pass123" });
 
 		const body = http.postJson.mock.calls[0]?.[2] as Record<string, unknown>;
 		expect(body["hasPassword"]).toBe(true);
@@ -435,6 +435,7 @@ describe("SecretClient", () => {
 		const onUploadProgress = vi.fn();
 
 		const result = await client.createNote({
+			format: 0,
 			text: "Note with file",
 			files: [{ name: "test.txt", type: "text/plain", data: fileData }],
 			onUploadProgress,
@@ -480,6 +481,7 @@ describe("SecretClient", () => {
 		const onProgress = vi.fn();
 
 		await client.createNote({
+			format: 0,
 			text: "Note with file",
 			files: [{ name: "t.txt", type: "text/plain", data: new TextEncoder().encode("x") }],
 			onProgress,
@@ -512,6 +514,7 @@ describe("SecretClient", () => {
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({
+			format: 0,
 			text: "Note with file",
 			files: [{ name: "t.txt", type: "text/plain", data: new TextEncoder().encode("x") }],
 		});
@@ -539,6 +542,7 @@ describe("SecretClient", () => {
 		const fileData = new TextEncoder().encode("data");
 
 		await client.createNote({
+			format: 0,
 			files: [{ name: "f.bin", type: "application/octet-stream", data: fileData }],
 			password: "secret",
 		});
@@ -830,7 +834,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.createNote({ text: "chunked text", chunked: true });
+		const result = await client.createNote({ format: 0, text: "chunked text", chunked: true });
 
 		expect(result.id).toBe("chunkedNote123");
 		expect(result.deleteToken).toBe("del-chunked");
@@ -866,6 +870,7 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		// Use a very small chunkSize so the file exceeds it
 		const result = await client.createNote({
+			format: 0,
 			files: [{ name: "a.bin", type: "application/octet-stream", data: new Uint8Array(100) }],
 			chunkSize: 10,
 		});
@@ -886,7 +891,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.createNote({ text: "x".repeat(100), chunkSize: 10 });
+		const result = await client.createNote({ format: 0, text: "x".repeat(100), chunkSize: 10 });
 
 		expect(result.id).toBe("longText1234");
 		expect(http.postJson).toHaveBeenCalledOnce();
@@ -915,7 +920,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.createNote({ text: "secret", password: "pass", chunked: true });
+		await client.createNote({ format: 0, text: "secret", password: "pass", chunked: true });
 
 		const initMeta = http.initChunkedUpload.mock.calls[0]?.[1] as Record<string, unknown>;
 		expect(initMeta["salt"]).toBe("chunkedSalt");
@@ -938,6 +943,7 @@ describe("SecretClient", () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		const fileData = new Uint8Array([1, 2, 3]);
 		await client.createNote({
+			format: 0,
 			files: [{ name: "f.bin", type: "application/octet-stream", data: fileData }],
 			chunked: true,
 		});
@@ -964,6 +970,7 @@ describe("SecretClient", () => {
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({
+			format: 0,
 			text: "progress test",
 			chunked: true,
 			onProgress,
@@ -1004,6 +1011,7 @@ describe("SecretClient", () => {
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({
+			format: 0,
 			text: "cap test",
 			chunked: true,
 			capToken: "my-cap-token",
@@ -1030,6 +1038,7 @@ describe("SecretClient", () => {
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 		await client.createNote({
+			format: 0,
 			text: "opts test",
 			chunked: true,
 			expiresIn: 7200,
@@ -1386,12 +1395,12 @@ describe("SecretClient in format 1", () => {
 		format1.openNoteFormat1.mockReturnValue({ text: "format 1" });
 	});
 
-	test("createNote sends a text note as one message, with its envelope and verifiers", async () => {
+	test("createNote writes format 1 by default: a text note as one message, with its envelope and verifiers", async () => {
 		const http = await getHttpMocks();
 		const format1 = await getFormat1Mocks();
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
-		const result = await client.createNote({ text: "hi", format: 1, maxReads: 3, password: "pw" });
+		const result = await client.createNote({ text: "hi", maxReads: 3, password: "pw" });
 
 		expect(format1.format1BodyOf).toHaveBeenCalledWith({ text: "hi" });
 		expect(format1.encryptNoteFormat1).toHaveBeenCalledWith(

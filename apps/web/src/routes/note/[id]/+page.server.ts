@@ -11,6 +11,10 @@ interface NoteInfo {
 	fileCount: number;
 	expiresAt: string;
 	chunked: boolean;
+	/** 1 for a note with an envelope, read with a proof of the link and the password. */
+	format: 0 | 1;
+	/** A format 1 password note's wrong passwords left; null for any other note. */
+	passwordAttemptsLeft: number | null;
 }
 
 interface NoteLoad {
@@ -37,6 +41,8 @@ export const load: PageServerLoad = async ({ params, getClientAddress }): Promis
 				fileCount: info.fileCount,
 				expiresAt: info.expiresAt,
 				chunked: info.chunked,
+				format: info.envelope === undefined ? 0 : 1,
+				passwordAttemptsLeft: info.passwordAttemptsLeft ?? null,
 			},
 			unavailable: false,
 			rateLimited: false,

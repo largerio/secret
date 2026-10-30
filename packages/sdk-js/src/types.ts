@@ -79,11 +79,10 @@ export interface CreateNoteOptions {
 	/** Chunk size in bytes for chunked upload. Default: 4MB (DEFAULT_CHUNK_SIZE). */
 	readonly chunkSize?: number;
 	/**
-	 * The encryption format to write (PROTOCOL.md): 0 or 1. Default: 0. Reads
-	 * take either, from the link.
-	 *
-	 * @experimental Format 1 is a draft until the protocol calls it final: its
-	 * bytes may still change, so do not write it outside tests yet.
+	 * The encryption format to write (PROTOCOL.md): 0 or 1. Default: 1, which
+	 * pads the note and is read with a proof of the link and the password. Pass
+	 * 0 for an instance older than 1.6.0, which refuses format 1, or for readers
+	 * on an SDK older than 1.3.0. Reads take either, from the link.
 	 */
 	readonly format?: 0 | 1;
 }
@@ -106,8 +105,8 @@ export interface ReadNoteOptions {
 	readonly onProgress?: (info: ProgressInfo) => void;
 	/**
 	 * Hint from checkNote for a format 0 note: true = chunked (stream), false =
-	 * standard (raw). Skips trial-and-error. A format 1 read ignores it: the
-	 * note's envelope says its kind.
+	 * standard (raw). Skips trial-and-error. A format 1 read ignores it: every
+	 * format 1 note is read the same way.
 	 */
 	readonly chunked?: boolean;
 }

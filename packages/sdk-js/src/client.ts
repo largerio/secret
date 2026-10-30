@@ -168,6 +168,10 @@ export class SecretClient {
 	 * Writes require authentication unless the instance is open: pass `apiKey`
 	 * to the client, or a `capToken` obtained from a Proof-of-Work challenge.
 	 *
+	 * The note is written in format 1 (PROTOCOL.md) unless `format: 0` is
+	 * passed. An instance older than 1.6.0 refuses format 1 with a 400, and an
+	 * SDK older than 1.3.0 cannot read it.
+	 *
 	 * @returns The note id, the key fragment, and the delete token that allows
 	 * revoking the note later.
 	 * @throws {SecretValidationError} if the payload exceeds a protocol limit
@@ -225,7 +229,7 @@ export class SecretClient {
 		// MAX_TEXT_SIZE allows: format 0 would put all of it in its first chunk,
 		// which an instance refuses beyond its chunk size, and the instance keeps
 		// a note sent whole in its database.
-		const body = options.format === 1 ? format1BodyOf(payload) : undefined;
+		const body = options.format === 0 ? undefined : format1BodyOf(payload);
 		const size = body ? body.length : this.estimatePayloadSize(payload);
 		const useChunked = options.chunked === true || (fileCount > 0 && size > chunkSize);
 

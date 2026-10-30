@@ -83,7 +83,7 @@ Monorepo with pnpm workspaces:
 
 ## Key Design Decisions
 
-- **The protocol is specified in `PROTOCOL.md`** (format 0, the one every release writes: keys, payload, single-shot and chunked notes, the API flows; and format 1, its draft successor: its envelope, one secretstream whose body is padded to a size class, proof of reading; format numbers are not app versions). A change to the format, the payload, a read or upload endpoint, or a limit a client must respect goes there in the same PR, with new test vectors when the bytes change.
+- **The protocol is specified in `PROTOCOL.md`** (format 0, the one the app wrote up to 1.5 and the SDK up to 1.2, still read and accepted: keys, payload, single-shot and chunked notes, the API flows; and format 1, its successor, which the web app and the SDK write by default: its envelope, one secretstream whose body is padded to a size class, proof of reading; format numbers are not app versions). A change to the format, the payload, a read or upload endpoint, or a limit a client must respect goes there in the same PR, with new test vectors when the bytes change.
 - **Double encryption**: Client encrypts with XChaCha20-Poly1305, server re-encrypts with AES-256-GCM. Removing either layer is a security model change.
 - **URL fragment for keys**: The `#key` part of URLs is never sent to the server. This is the foundation of zero-knowledge.
 - **Storage abstraction**: `StorageBackend` interface with `LocalStorage` and `S3Storage` implementations. Routes never import storage directly — they use the interface from Hono context.

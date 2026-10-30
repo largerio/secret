@@ -59,7 +59,8 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Zero-knowledge encryption** — XChaCha20-Poly1305 in the browser, plus an AES-256-GCM layer at rest on the server
 - **Text & files** — Notes, documents, images, any file type. Up to 10 files per note, drag & drop.
 - **Burn after read** — Destroyed after the first view
-- **Password protection** — Optional, Argon2id key derivation
+- **Password protection** — Optional, Argon2id key derivation. The server checks a proof of the password before serving anything: a wrong one spends no read, the fifth destroys the note
+- **Padding** — A note is padded to a size class, 4 KiB at least, so the server does not learn its length
 - **Auto-expiry** — 5 minutes to 30 days
 - **Read limits** — Auto-delete after N reads
 - **Delete token** — Manually delete a note at any time
@@ -378,6 +379,8 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
 | Server encryption | AES-256-GCM at rest, bound to the note ID. Guards a leaked database or bucket; keep `SERVER_ENCRYPTION_KEY` off the data volume to guard a stolen volume too |
 | Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
+| Read proof | A note is served only to a reader who proves the link, and the password of a password note; five wrong passwords delete it |
+| Padding | Padmé size classes, 4 KiB at least: at most 6.25% over the content |
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
 | Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |

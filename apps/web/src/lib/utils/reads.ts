@@ -1,3 +1,5 @@
+import { MAX_PASSWORD_ATTEMPTS } from "@largerio/secret-shared";
+
 /**
  * Reads a note has left, or null when that cannot be told: the note has no
  * read limit (`maxReads` 0), or the instance does not report `readCount`.
@@ -53,4 +55,20 @@ export function readsAfter(maxReads: number, after: NoteAfterRead | null): Reads
 	const left = after ? readsLeft(maxReads, after.readCount) : null;
 	if (left === null) return { kind: "limited" };
 	return left === 0 ? { kind: "gone" } : { kind: "left", count: left };
+}
+
+/** What the page says of a format 1 password note's wrong passwords left. */
+export type AttemptsLeft =
+	| { readonly kind: "last" }
+	| { readonly kind: "left"; readonly count: number }
+	| { readonly kind: "none" };
+
+/**
+ * @param left The attempts the server reported, null when it could not be
+ *   asked. Nothing is said while all of them are left: a wrong password spends
+ *   no read, and the reader need not hear of a limit until it draws near.
+ */
+export function attemptsLeft(left: number | null): AttemptsLeft {
+	if (left === null || left >= MAX_PASSWORD_ATTEMPTS) return { kind: "none" };
+	return left <= 1 ? { kind: "last" } : { kind: "left", count: left };
 }

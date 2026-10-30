@@ -21,8 +21,8 @@ import { isPreviewable } from "#lib/utils/fileType.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
 import { type ProgressView, readProgress } from "#lib/utils/progress.js";
 import {
+	attemptsLeft,
 	isLastRead,
-	type NoteAfterRead,
 	type ReadsAfter,
 	readsAfter,
 	readsBefore,
@@ -34,6 +34,15 @@ import type { PageData } from "./$types";
 type NoteInfo = NonNullable<PageData["noteInfo"]>;
 
 type Notice = "not_found" | "link_incomplete" | "unavailable" | "rate_limited";
+
+/** Where the note stands, as the server reports it now. */
+type NoteNow =
+	| { readonly exists: false }
+	| {
+			readonly exists: true;
+			readonly readCount: number | null;
+			readonly passwordAttemptsLeft: number | null;
+	  };
 
 type NoteStatus =
 	| { state: "notice"; notice: Notice }
@@ -167,19 +176,35 @@ function readsText(info: NoteInfo): string {
  * other readers may have spent reads since the page loaded. Null when the
  * server cannot be asked.
  */
-async function recheck(id: string): Promise<NoteAfterRead | null> {
+async function recheck(id: string): Promise<NoteNow | null> {
 	try {
 		const info = await (await getClient()).checkNote(id);
-		return info.exists ? { exists: true, readCount: info.readCount ?? null } : { exists: false };
+		return info.exists
+			? {
+					exists: true,
+					readCount: info.readCount ?? null,
+					passwordAttemptsLeft: info.passwordAttemptsLeft ?? null,
+				}
+			: { exists: false };
 	} catch {
 		return null;
 	}
 }
 
+function attemptsText(left: number | null): string {
+	const attempts = attemptsLeft(left);
+	if (attempts.kind === "none") return "";
+	return attempts.kind === "last" ? t("un_pw_attempt_last") : tn("un_pw_attempts", attempts.count);
+}
+
 async function failPassword(id: string, current: NoteInfo): Promise<void> {
-	// The server cannot check the password (it never sees the key), so the
-	// read was spent the moment the ciphertext was served. Offering a retry on
-	// a burn-after-read note would be a lie: it is already gone.
+	if (current.format === 1) {
+		await failProof(id, current);
+		return;
+	}
+	// The server cannot check a format 0 note's password (it never sees the
+	// key), so the read was spent the moment the ciphertext was served.
+	// Offering a retry on a burn-after-read note would be a lie: it is already gone.
 	if (isBurn) {
 		status = { state: "error", message: t("error_burned_wrong_password") };
 		return;
@@ -196,6 +221,38 @@ async function failPassword(id: string, current: NoteInfo): Promise<void> {
 	wrongMessage = left === null ? t("error_wrong_password") : tn("error_wrong_password_left", left);
 	passwordProblem = "wrong";
 	status = { state: "ready", info };
+	await tick();
+	passwordField?.focus();
+}
+
+/**
+ * A format 1 note's server checked a proof of the password before serving
+ * anything: no read was spent, an attempt was, and the last one deletes it.
+ */
+async function failProof(id: string, current: NoteInfo): Promise<void> {
+	const fresh = await recheck(id);
+	if (fresh?.exists === false) {
+		status = { state: "error", message: t("error_wrong_password_exhausted") };
+		return;
+	}
+
+	const left = fresh ? fresh.passwordAttemptsLeft : null;
+	const attempts = attemptsLeft(left);
+	wrongMessage =
+		attempts.kind === "none"
+			? t("error_wrong_password_proof")
+			: attempts.kind === "last"
+				? t("error_wrong_password_attempt_last")
+				: tn("error_wrong_password_attempts", attempts.count);
+	passwordProblem = "wrong";
+	status = {
+		state: "ready",
+		info: {
+			...current,
+			readCount: fresh ? fresh.readCount : current.readCount,
+			passwordAttemptsLeft: left,
+		},
+	};
 	await tick();
 	passwordField?.focus();
 }
@@ -270,6 +327,7 @@ async function handleOpen(): Promise<void> {
 	{@const info = status.info}
 	{@const lastRead = isLastRead(info.maxReads, info.readCount)}
 	{@const reads = isBurn ? "" : readsText(info)}
+	{@const attempts = info.format === 1 ? attemptsText(info.passwordAttemptsLeft) : ""}
 	<PageHero title={t("un_title")} sub={t("un_sub")} />
 
 	<form
@@ -285,7 +343,7 @@ async function handleOpen(): Promise<void> {
 			<div class="px-3 pt-3">
 				<Callout tone="warn" icon="flame" title={isBurn ? t("un_burn_title") : t("un_last_title")}>
 					{t("un_burn_body")}
-					{#if info.hasPassword}
+					{#if info.hasPassword && info.format === 0}
 						<span class="mt-0.5 block font-medium text-warn">{t("burn_password_warning")}</span>
 					{/if}
 				</Callout>
@@ -321,7 +379,11 @@ async function handleOpen(): Promise<void> {
 					bind:value={password}
 					placeholder={t("un_pw_placeholder")}
 					invalid={passwordProblem !== ""}
-					describedby={passwordProblem ? "decrypt-password-error" : undefined}
+					describedby={passwordProblem
+						? "decrypt-password-error"
+						: attempts
+							? "decrypt-password-attempts"
+							: undefined}
 				/>
 				{#if passwordProblem}
 					<p
@@ -332,6 +394,8 @@ async function handleOpen(): Promise<void> {
 						<Icon name="alert" size={15} class="mt-0.5 shrink-0" />
 						{passwordProblem === "empty" ? t("un_pw_empty") : wrongMessage}
 					</p>
+				{:else if attempts}
+					<p id="decrypt-password-attempts" class="m-0 mt-0.5 text-[13px] text-warn">{attempts}</p>
 				{/if}
 			</div>
 		{/if}

@@ -31,7 +31,7 @@ const { id, keyFragment, deleteToken } = await client.createNote({
 
 // The fragment is the key. It is not stored server-side and cannot be recovered.
 console.log(client.buildShareUrl(id, keyFragment));
-// → https://secret.example.com/note/aBcDeFgHiJkL#K7pQ...
+// → https://secret.example.com/note/aBcDeFgHiJkL#1.K7pQ...
 
 const { payload } = await client.readNote(id, keyFragment);
 console.log(payload.text); // "the launch code is 0000"
@@ -71,9 +71,20 @@ await client.createNote({ text: "hi", capToken });
 
 The token comes from the [Cap](https://capjs.js.org) widget solving a challenge against the instance's own `/api/cap/` endpoints — a browser path, same-origin by construction. Anything server-side: use an API key.
 
+## Formats
+
+Notes are written in [format 1](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-1): the note is padded, so the instance learns its size class, not its length, and the server serves it only to a reader who proves they hold the link, and the password of a password note. Its links name the format: `#1.<key>`.
+
+- An instance older than **1.6.0** refuses format 1 with a `400`. Pass `format: 0` to write to one.
+- An SDK older than **1.3.0** cannot read a format 1 note: the instance refuses its read with a `400`, without spending one.
+
+`readNote` takes either format, from the link: notes written in format 0, by older apps and SDKs, keep reading as before.
+
 ## Reading safely
 
-`readNote` **consumes a read**. On a burn-after-read note the server destroys it the moment the ciphertext is served — before decryption is attempted — so a wrong password still spends the only read.
+`readNote` **consumes a read**, once the note is served.
+
+A wrong password spends no read of a format 1 note: the server checks a proof of the password before it serves anything. It deletes the note at the fifth wrong password; `checkNote` reports the attempts left as `passwordAttemptsLeft`. A format 0 note cannot be checked that way: the server serves it before decryption is attempted, so a wrong password spends a read, and the only read of a burn-after-read note.
 
 Check first, then collect the password, then read once:
 
@@ -91,7 +102,7 @@ const { payload } = await client.readNote(id, keyFragment, { password });
 
 `NoteInfo` is a discriminated union: narrow on `exists` before touching any other field.
 
-`maxReads` is the limit the note was created with (`0` means unlimited); `readCount` is how many of those reads are already spent, wrong passwords included, since the server cannot tell them apart:
+`maxReads` is the limit the note was created with (`0` means unlimited); `readCount` is how many of those reads are already spent, wrong passwords included on a format 0 note, since the server cannot tell them apart there:
 
 ```ts
 if (info.maxReads > 0 && info.readCount !== undefined) {
@@ -126,7 +137,7 @@ const { id, keyFragment } = await client.createNote({
 In the browser, turn a picked `File` into that shape with
 `{ name: file.name, type: file.type, data: new Uint8Array(await file.arrayBuffer()) }`.
 
-Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`.
+Large payloads switch to a chunked upload automatically; `onProgress` reports `currentChunk` / `totalChunks` while it does. Chunks are 4 MiB by default. An instance that sets `CHUNK_SIZE` refuses larger chunks with a 413: pass the same value as `chunkSize`. A note's size counts its padding: up to 6.25% more than its content, and 4 KiB at least.
 
 ## Errors
 
@@ -137,7 +148,7 @@ Every failure path is typed, so you can branch on the cause:
 | `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work |
 | `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout). A missing or wrong `apiKey` on a write surfaces here as `401` |
 | `SecretNetworkError` | The request failed in transit | DNS, offline, connection reset, CORS, or a connection lost mid-download. `.cause` holds the original error |
-| `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle |
+| `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle. On a format 1 note, the server refuses a wrong link or password before serving anything; that refusal surfaces here too |
 
 ```ts
 import { SecretApiError, SecretDecryptionError, SecretNetworkError } from "@largerio/secret-sdk";
@@ -189,7 +200,7 @@ Node.js ≥ 18, or any browser with WebAssembly and `crypto.getRandomValues`.
 
 ## Security model
 
-The threat model, guarantees and known limitations are documented in [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md). In short: the server stores ciphertext it cannot read, but it does see note size, timing and expiry metadata.
+The threat model, guarantees and known limitations are documented in [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md). In short: the server stores ciphertext it cannot read, but it does see timing and expiry metadata, and a note's size: its size class for a format 1 note, its exact size for a format 0 one.
 
 ## License
 
