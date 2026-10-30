@@ -29,7 +29,7 @@ Secret uses a double-encryption model:
 
 The decryption key is stored in the URL fragment (`#key`), which browsers never send to the server. The server never has access to plaintext content.
 
-[PROTOCOL.md](PROTOCOL.md) specifies the format: the keys, both note formats, what the server learns, and the limits of the current format.
+[PROTOCOL.md](PROTOCOL.md) specifies the format: the keys, both note formats, what the server learns, and the limits of format 0.
 
 ## What the Server Can See
 
@@ -40,9 +40,9 @@ or anyone holding the server's database and storage, can and cannot learn:
 |------|-----------------------|
 | Text, file contents, file names and types | No — encrypted in the browser before upload |
 | Decryption key and password | No — the key stays in the URL fragment, the password never leaves the browser |
-| Size | Yes — ciphertext is not padded, so it gives the size of the content to within a few bytes. Chunked uploads also reveal each file's size, since every file starts on a new chunk |
+| Size | Its size class only, for a [format 1](PROTOCOL.md#format-1) note: the content is padded to at least 4 KiB, and above that to at most 6.25% over its size (3.125% from 64 KiB), so every note up to 4 KiB has the same size. A format 0 note, written by the app up to 1.5 or the SDK up to 1.2, is not padded: it gives the size of the content to within a few bytes, and a chunked upload each file's size |
 | Number of files, password set or not, read limit and reads so far, expiry, creation time | Yes — stored in clear to enforce them |
-| For a [format 1](PROTOCOL.md#format-1) note (a draft): its envelope, and how many wrong passwords were tried | Yes — the envelope holds nothing derived from the key or the password; what checks a reader's proofs is kept under `SERVER_ENCRYPTION_KEY` |
+| For a [format 1](PROTOCOL.md#format-1) note: its envelope, and how many wrong passwords were tried | Yes — the envelope holds nothing derived from the key or the password; what checks a reader's proofs is kept under `SERVER_ENCRYPTION_KEY` |
 | When a note is created, read and deleted | Yes |
 | IP addresses | Seen for rate limiting and kept in memory for about a minute; never written to the app's logs. Your reverse proxy may log them |
 | Note IDs | Never written to the app's logs |
@@ -81,7 +81,10 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   Assumptions), traffic is encrypted in transit; the fragment is never sent on the
   wire at all.
 - **Automated write abuse.** Browser writes require a proof-of-work token (Cap);
-  SDK writes require an API key. Reads are intentionally open.
+  SDK writes require an API key. Reads need no account, but a format 1 note is
+  served only to a reader who proves they hold the link, and the password of a
+  password note: the note's ID alone neither reads it nor burns it, a wrong
+  password spends no read, and the fifth deletes the note.
 - **Tampering / forgery.** Both encryption layers are authenticated (AEAD), so any
   modification of stored ciphertext is detected on decryption and surfaced as a
   single, cause-hiding error (no decryption oracle).

@@ -3,8 +3,9 @@
 This document specifies how a Secret client encrypts a note, what it sends to
 an instance, and how it reads one back: enough to write a compatible client,
 in any language, without reading the SDK. It describes **format 0**, the
-format every release so far writes and reads, then [format 1](#format-1),
-its successor, still a draft.
+format the app wrote up to 1.5 and the SDK up to 1.2, then
+[format 1](#format-1), its successor, which the app writes from 1.6 and the
+SDK from 1.3. Instances read and accept both.
 
 The reference implementation is [`packages/crypto`](packages/crypto/src) and
 [`packages/sdk-js`](packages/sdk-js/src). The [test vectors](#test-vectors)
@@ -485,11 +486,12 @@ same writes, so a database that refuses writes tells a reader nothing.
 
 ## Format 1
 
-**Draft.** Instances accept and serve format 1, and the reference SDK reads it,
-but writes it only when asked to (`format: 1`). Its bytes may still change
-until it is marked final: do not write it outside tests yet. Instances keep reading and accepting format 0
-throughout the app's 1.x releases, so links already shared and clients that
-only speak format 0 keep working.
+**Final.** The web app writes format 1 from release 1.6.0, and the reference
+SDK from 1.3.0, unless asked for format 0 (`format: 0`). Instances accept and
+serve it from 1.6.0; an older one refuses it with `400`, so a client that
+must write to one writes format 0. Instances keep reading and accepting
+format 0 throughout the app's 1.x releases, so links already shared and
+clients that only speak format 0 keep working.
 
 What changes from format 0:
 
