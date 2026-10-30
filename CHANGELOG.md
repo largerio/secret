@@ -17,8 +17,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ### Fixed
 
-- Through the web server, a request the API refused before reading its body (a `401` for a missing token, a `404` for an unknown upload, a `413`) often answered `502`, or nothing at all. The API, then the web server, closed the connection while the body was still arriving, and the reset that drew could make the refusal be thrown away unread. Both now keep reading for up to 2 seconds before closing.
-- With the default `CHUNK_SIZE`, files between 496 and 500 MB were refused once the browser had encrypted them, since their padding counted against `MAX_CHUNKED_FILE_SIZE`. The limit now bounds the files, and a note may take the room its padding needs on top: 0.8% at 500 MB.
+- Through the web server, a request the API refused before reading its body (a `401` for a missing token, a `404` for an unknown upload, a `413`) often answered `502`, or nothing at all. The API, then the web server, closed the connection while the body was still arriving, and the reset that drew could make the refusal be thrown away unread. Both now keep reading for up to 2 seconds before closing. (#265)
+- With the default `CHUNK_SIZE`, files between 496 and 500 MB were refused once the browser had encrypted them, since their padding counted against `MAX_CHUNKED_FILE_SIZE`. The limit now bounds the files, and a note may take the room its padding needs on top: 0.8% at 500 MB. (#265)
 - A `403` from a firewall or a proxy in front of the instance was taken for a wrong password when opening a note, and for a wrong token on the deletion page. The web app now says that something on the way blocked the request; with the SDK, it is an API error without a code. (#263)
 
 ### Upgrade notes
