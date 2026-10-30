@@ -1,5 +1,5 @@
 import type { CreateNoteResponse } from "@largerio/secret-shared";
-import { SecretApiError, SecretNetworkError } from "./errors.js";
+import { apiErrorOf, SecretApiError, SecretNetworkError } from "./errors.js";
 
 // A hand-written guard rather than shared's `createNoteResponseSchema`: that
 // one import pulled all of zod into the published bundle (~94% of it).
@@ -40,27 +40,29 @@ export function postFormDataXhr(
 		});
 
 		xhr.addEventListener("load", () => {
-			let data: Record<string, unknown>;
+			// Undefined when not JSON: a proxy's page, say, which names no code.
+			let data: unknown;
 			try {
-				data = JSON.parse(xhr.responseText) as Record<string, unknown>;
+				data = JSON.parse(xhr.responseText);
 			} catch {
+				data = undefined;
+			}
+
+			if (xhr.status < 200 || xhr.status >= 300) {
+				reject(apiErrorOf(data, xhr.status, xhr.getResponseHeader("retry-after")));
+				return;
+			}
+			if (data === undefined) {
 				reject(new SecretApiError("Invalid JSON response", xhr.status));
 				return;
 			}
-
-			if (xhr.status >= 200 && xhr.status < 300) {
-				// Validate the success shape at runtime rather than trusting the cast —
-				// a malformed 2xx body should fail loudly instead of propagating.
-				if (!isCreateNoteResponse(data)) {
-					reject(new SecretApiError("Invalid response", xhr.status));
-					return;
-				}
-				resolve(data);
-			} else {
-				const error =
-					typeof data["error"] === "string" ? data["error"] : `HTTP ${String(xhr.status)}`;
-				reject(new SecretApiError(error, xhr.status));
+			// Validate the success shape at runtime rather than trusting the cast —
+			// a malformed 2xx body should fail loudly instead of propagating.
+			if (!isCreateNoteResponse(data)) {
+				reject(new SecretApiError("Invalid response", xhr.status));
+				return;
 			}
+			resolve(data);
 		});
 
 		// Same contract as the fetch path: a request that never got a response is a

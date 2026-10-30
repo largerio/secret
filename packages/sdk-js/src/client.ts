@@ -62,6 +62,28 @@ const PROGRESS = {
  * note, typically a proxy stripping X-Salt) is not a decryption failure and
  * keeps its own type, so the caller can report what actually went wrong.
  */
+/** The codes of a refused proof (PROTOCOL.md, "Proof of reading"). */
+const REFUSED_PROOFS: ReadonlySet<string> = new Set(["wrong_link_proof", "wrong_password"]);
+/** What instances up to 1.6, which name no code, answer a refused proof. */
+const REFUSED_PROOFS_BEFORE_CODES: ReadonlySet<string> = new Set([
+	"Invalid link proof",
+	"Wrong password",
+]);
+
+/**
+ * Whether a read's refusal is the instance's of a proof. A `403` the instance
+ * did not answer, a proxy's or a firewall's, is not: reporting it as a wrong
+ * password would have the reader spend attempts on a password that was right.
+ */
+function isRefusedProof(err: SecretApiError): boolean {
+	if (err.status !== 403) {
+		return false;
+	}
+	return err.code === undefined
+		? REFUSED_PROOFS_BEFORE_CODES.has(err.message)
+		: REFUSED_PROOFS.has(err.code);
+}
+
 function uniformDecryptionError(err: unknown): Error {
 	if (err instanceof SecretValidationError) return err;
 	return new SecretDecryptionError();
@@ -639,7 +661,7 @@ export class SecretClient {
 			} catch (err) {
 				// A wrong link or a wrong password, which the server tells by its
 				// proofs: the same error as a key that fails to decrypt.
-				if (err instanceof SecretApiError && err.status === 403) {
+				if (err instanceof SecretApiError && isRefusedProof(err)) {
 					throw new SecretDecryptionError();
 				}
 				throw err;

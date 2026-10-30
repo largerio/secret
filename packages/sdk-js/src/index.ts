@@ -1,6 +1,7 @@
 export { SecretClient } from "./client.js";
 export {
 	SecretApiError,
+	type SecretApiErrorDetails,
 	SecretDecryptionError,
 	SecretNetworkError,
 	SecretValidationError,

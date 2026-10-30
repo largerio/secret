@@ -146,7 +146,7 @@ Every failure path is typed, so you can branch on the cause:
 | Class | When | Notable |
 |---|---|---|
 | `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work |
-| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout). A missing or wrong `apiKey` on a write surfaces here as `401` |
+| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout), `.code` the instance's name for the error (`note_not_found`, `rate_limited`…, see [Errors](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors)), and `.retryAfter` a `429`'s wait in seconds. A missing or wrong `apiKey` on a write surfaces here as `401`. An error without a `.code` came from something in front of the instance (a proxy, a firewall), or from an instance older than 1.7.0 |
 | `SecretNetworkError` | The request failed in transit | DNS, offline, connection reset, CORS, or a connection lost mid-download. `.cause` holds the original error |
 | `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle. On a format 1 note, the server refuses a wrong link or password before serving anything; that refusal surfaces here too |
 
@@ -158,7 +158,8 @@ try {
 } catch (err) {
   if (err instanceof SecretDecryptionError) return showWrongPassword();
   if (err instanceof SecretNetworkError) return showOffline();   // checkNote before retrying: a dropped download may have spent the read
-  if (err instanceof SecretApiError && err.status === 404) return showGone();
+  if (err instanceof SecretApiError && err.code === "note_not_found") return showGone();
+  if (err instanceof SecretApiError && err.code === "rate_limited") return retryIn(err.retryAfter);
   throw err;
 }
 ```

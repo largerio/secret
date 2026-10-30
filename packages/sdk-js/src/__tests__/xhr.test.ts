@@ -8,6 +8,7 @@ function createMockXhr() {
 		open: vi.fn(),
 		send: vi.fn(),
 		setRequestHeader: vi.fn(),
+		getResponseHeader: vi.fn((_name: string): string | null => null),
 		status: 200,
 		responseText: "",
 		upload: {
@@ -153,6 +154,43 @@ describe("postFormDataXhr", () => {
 		triggerEvent("load");
 
 		await expect(promise).rejects.toThrow("HTTP 500");
+	});
+
+	test("rejects with the instance's code and Retry-After", async () => {
+		const { xhr, triggerEvent } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+
+		xhr.status = 429;
+		xhr.responseText = JSON.stringify({ code: "rate_limited", error: "Too many requests" });
+		xhr.getResponseHeader.mockImplementation((name) => (name === "retry-after" ? "12" : null));
+
+		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
+		triggerEvent("load");
+
+		await expect(promise).rejects.toMatchObject({
+			message: "Too many requests",
+			status: 429,
+			code: "rate_limited",
+			retryAfter: 12,
+		});
+	});
+
+	test("rejects a refusal that is not JSON by its status, without a code", async () => {
+		const { xhr, triggerEvent } = createMockXhr();
+		installXhr(xhr);
+		const { postFormDataXhr } = await import("../xhr.js");
+
+		// A firewall's page in front of the instance.
+		xhr.status = 403;
+		xhr.responseText = "<html>Blocked</html>";
+
+		const promise = postFormDataXhr("https://example.com/upload", {}, new FormData(), vi.fn());
+		triggerEvent("load");
+
+		const error = await promise.catch((e: unknown) => e);
+		expect(error).toMatchObject({ message: "HTTP 403", status: 403 });
+		expect((error as { code?: string }).code).toBeUndefined();
 	});
 
 	test("rejects with Invalid JSON when response is not parseable", async () => {

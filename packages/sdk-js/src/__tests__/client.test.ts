@@ -1634,16 +1634,36 @@ describe("SecretClient in format 1", () => {
 		await expect(client.readNote("noteId123456", "1.key")).rejects.toThrow(SecretValidationError);
 	});
 
-	test("readNote surfaces a refused proof as a failed decryption, and wipes the keys", async () => {
+	test.each([
+		["a wrong password", new SecretApiError("Wrong password", 403, { code: "wrong_password" })],
+		["a wrong link", new SecretApiError("Invalid link proof", 403, { code: "wrong_link_proof" })],
+		// Instances up to 1.6 name no code: their messages say it.
+		["a wrong password, before codes", new SecretApiError("Wrong password", 403)],
+		["a wrong link, before codes", new SecretApiError("Invalid link proof", 403)],
+	])("readNote surfaces %s as a failed decryption, and wipes the keys", async (_, refusal) => {
 		const http = await getHttpMocks();
 		const format1 = await getFormat1Mocks();
-		http.postNoteRead.mockRejectedValue(new SecretApiError("Wrong password", 403));
+		http.postNoteRead.mockRejectedValue(refusal);
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
 
 		await expect(client.readNote("noteId123456", "1.key", { password: "pW" })).rejects.toThrow(
 			new SecretDecryptionError(UNIFORM_DECRYPTION_MESSAGE),
 		);
 		expect(format1.closeFormat1Read).toHaveBeenCalledWith(read);
+	});
+
+	test.each([
+		// A firewall's page in front of the instance: no code, and not its message.
+		["a 403 the instance did not answer", new SecretApiError("HTTP 403", 403)],
+		["a 403 of another code", new SecretApiError("Nope", 403, { code: "forbidden" })],
+	])("readNote passes %s on, not as a wrong password", async (_, refusal) => {
+		const http = await getHttpMocks();
+		http.postNoteRead.mockRejectedValue(refusal);
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		const err = await client.readNote("noteId123456", "1.key", { password: "pW" }).catch((e) => e);
+
+		expect(err).toBe(refusal);
 	});
 
 	test("readNote passes any other refusal on as it is", async () => {
