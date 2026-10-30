@@ -102,3 +102,54 @@ test("a large file uploads in the instance's chunk size and downloads intact", a
 
 	expect(readFileSync(await download.path()).equals(contents)).toBe(true);
 });
+
+test("a note's files are on disk while it is shown, and deleted once it is left", async ({
+	page,
+	context,
+}) => {
+	const filePath = writeFixture("staged.txt", `staged ${Date.now()}`);
+	const shareUrl = await createNote(page, { text: "staged", files: [filePath], maxReads: 3 });
+
+	const reader = await context.newPage();
+	await revealNote(reader, shareUrl);
+	await expect(reader.getByRole("button", { name: /Download\s+staged\.txt/ })).toBeVisible({
+		timeout: 15_000,
+	});
+
+	// The files a read decrypted, in the origin's private file system.
+	const staged = () =>
+		reader.evaluate(async () => {
+			const root = await navigator.storage.getDirectory();
+			const reads = await root.getDirectoryHandle("reads").catch(() => undefined);
+			const files: string[] = [];
+			for await (const read of reads?.keys() ?? []) {
+				const directory = await reads?.getDirectoryHandle(read);
+				for await (const name of directory?.keys() ?? []) files.push(name);
+			}
+			return files;
+		});
+	expect(await staged()).toEqual(["0"]);
+
+	await reader.getByRole("link", { name: "Create my own note" }).click();
+	await expect.poll(staged).toEqual([]);
+});
+
+test("an image is previewed from the file decrypted to disk", async ({ page, context }) => {
+	// A 1×1 PNG.
+	const png = Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+		"base64",
+	);
+	const filePath = path.join(fixtureDir, "dot.png");
+	writeFileSync(filePath, png);
+	const shareUrl = await createNote(page, { text: "an image", files: [filePath], maxReads: 3 });
+
+	const reader = await context.newPage();
+	await revealNote(reader, shareUrl);
+
+	const preview = reader.getByRole("img", { name: "dot.png" });
+	await expect(preview).toBeVisible({ timeout: 15_000 });
+	await expect
+		.poll(() => preview.evaluate((image: HTMLImageElement) => image.naturalWidth))
+		.toBe(1);
+});

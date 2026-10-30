@@ -1080,7 +1080,7 @@ describe("a format 1 note read as a stream", () => {
 			...args: Parameters<typeof pull>
 		) => {
 			const result = pull(...args);
-			decrypted.push(result.message);
+			if (result) decrypted.push(result.message as unknown as Uint8Array);
 			return result;
 		}) as typeof pull);
 		try {

@@ -68,7 +68,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **Password generator** — Inserts a strong password where you type, or shares one on its own
 - **Light & dark themes** — Follows the system, switchable from the footer
 - **File previews** — Images, video, audio rendered in-browser after decryption
-- **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking (up to 500 MB; the browser holds the whole file in memory, so the largest ones need a desktop)
+- **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking, up to 500 MB. The browser reads a file from disk as it encrypts it, and decrypts a note's files to disk on read: a large file is never held in memory
 - **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
@@ -384,6 +384,7 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
 | Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
+| Reader's device | A note's files are decrypted to the browser's private storage for the site while the note is shown, and deleted once the page lets go of it ([details](SECURITY.md#known-limitations)) |
 | Privacy | No analytics, no IP addresses or note content in logs. Two first-party preference cookies (language, theme). |
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |

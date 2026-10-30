@@ -609,8 +609,12 @@ describe("streams, through the SDK and the application", () => {
 		const { id, keyFragment } = await client.createNote({
 			text: "streamed",
 			files: [
-				{ name: "big.bin", type: "application/octet-stream", data: new Blob([big]) },
-				{ name: "small.bin", type: "application/octet-stream", data: new Blob([small]) },
+				{ name: "big.bin", type: "application/octet-stream", data: new Blob([big] as BlobPart[]) },
+				{
+					name: "small.bin",
+					type: "application/octet-stream",
+					data: new Blob([small] as BlobPart[]),
+				},
 			],
 			chunkSize: CHUNK_SIZE,
 		});
@@ -679,7 +683,13 @@ describe("streams, through the SDK and the application", () => {
 		const client = await connect();
 		const data = bytes(2 * CHUNK_SIZE);
 		const { id, keyFragment } = await client.createNote({
-			files: [{ name: "zero.bin", type: "application/octet-stream", data: new Blob([data]) }],
+			files: [
+				{
+					name: "zero.bin",
+					type: "application/octet-stream",
+					data: new Blob([data] as BlobPart[]),
+				},
+			],
 			chunkSize: CHUNK_SIZE,
 			format: 0,
 		});

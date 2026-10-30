@@ -115,6 +115,16 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
 
 ## Known Limitations
 
+- **Decrypted files on the reader's device.** So that a large note never has to
+  fit in memory, the web app decrypts a note's files into the browser's private
+  storage for the site (the origin private file system), which only the
+  instance's own pages can reach, and previews and downloads them from there.
+  They are deleted when the page lets go of the note: when the reader leaves
+  it or closes it, or, after a tab that crashed or was closed before it could,
+  when the next page of the instance opens in that browser. Until then they are
+  on the device's disk, in the browser's profile, as a downloaded file would
+  be. Where that storage is missing (a private window, an instance served over
+  plain HTTP) or short of room, a file stays in memory instead.
 - **Metadata enumeration via `GET /api/v1/notes/:id/exists`.** This endpoint reveals
   whether a note ID exists and exposes coarse metadata (`hasPassword`, `fileCount`,
   `chunked`, expiry, the configured read limit and the reads already spent against

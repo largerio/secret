@@ -1,6 +1,5 @@
 <script lang="ts">
 import { SecretApiError, SecretDecryptionError } from "@largerio/secret-sdk";
-import type { NotePayload } from "@largerio/secret-shared";
 import { flushSync, onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon, { type IconName } from "#lib/components/Icon.svelte";
@@ -12,12 +11,11 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
-import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { formatDateTime, type MessageKey, t, tn } from "#lib/i18n/index.svelte.js";
+import { checkNote, type OpenedNote, readNote } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { isUnreachable, requestErrorMessage } from "#lib/utils/errors.js";
-import { isPreviewable } from "#lib/utils/fileType.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
 import { type ProgressView, readProgress } from "#lib/utils/progress.js";
 import {
@@ -48,7 +46,7 @@ type NoteStatus =
 	| { state: "notice"; notice: Notice }
 	| { state: "ready"; info: NoteInfo }
 	| { state: "opening"; progress: ProgressView }
-	| { state: "revealed"; payload: NotePayload; previewUrls: string[]; after: ReadsAfter }
+	| { state: "revealed"; note: OpenedNote; urls: string[]; after: ReadsAfter }
 	| { state: "error"; message: string };
 
 const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconName }> = {
@@ -81,6 +79,8 @@ let passwordProblem = $state<"" | "empty" | "wrong">("");
 let wrongMessage = $state("");
 let passwordField: PasswordField | undefined = $state();
 let renderedMarkdown = $state("");
+// Left before a read ended, the page lets go of the note it gets.
+let destroyed = false;
 
 // From the loader, not from `status`: a failed read is handled once `status`
 // has moved on, and that path must still know the note was single-read —
@@ -97,18 +97,18 @@ const revealedSub = $derived.by(() => {
 	if (status.state !== "revealed") return "";
 	const { after } = status;
 	if (after.kind === "gone") {
-		return status.payload.contentMode === "secret" ? t("rv_sub_secret_gone") : t("rv_sub_gone");
+		return status.note.contentMode === "secret" ? t("rv_sub_secret_gone") : t("rv_sub_gone");
 	}
 	if (after.kind === "left") return tn("rv_sub_left", after.count);
 	return after.kind === "limited" ? t("rv_sub_limited") : "";
 });
 
 $effect(() => {
-	if (status.state !== "revealed" || status.payload.contentMode !== "markdown") {
+	if (status.state !== "revealed" || status.note.contentMode !== "markdown") {
 		renderedMarkdown = "";
 		return;
 	}
-	const source = status.payload.text ?? "";
+	const source = status.note.text ?? "";
 	let cancelled = false;
 	renderMarkdown(source).then((html) => {
 		if (!cancelled) renderedMarkdown = html;
@@ -146,7 +146,7 @@ onMount(() => {
 	const stopCaching = onBackForwardCache(
 		() =>
 			flushSync(() => {
-				forgetPreviews();
+				forgetNote();
 				status = initialStatus();
 				password = "";
 			}),
@@ -154,15 +154,18 @@ onMount(() => {
 	);
 
 	return () => {
+		destroyed = true;
 		window.removeEventListener("hashchange", onHashChange);
 		stopCaching();
-		forgetPreviews();
+		forgetNote();
 	};
 });
 
-function forgetPreviews(): void {
+/** Lets go of a note read: its files' URLs, then the files, on disk or in memory. */
+function forgetNote(): void {
 	if (status.state !== "revealed") return;
-	for (const url of status.previewUrls) URL.revokeObjectURL(url);
+	for (const url of status.urls) URL.revokeObjectURL(url);
+	void status.note.close();
 }
 
 function readsText(info: NoteInfo): string {
@@ -178,7 +181,7 @@ function readsText(info: NoteInfo): string {
  */
 async function recheck(id: string): Promise<NoteNow | null> {
 	try {
-		const info = await (await getClient()).checkNote(id);
+		const info = await checkNote(id);
 		return info.exists
 			? {
 					exists: true,
@@ -273,8 +276,7 @@ async function handleOpen(): Promise<void> {
 	status = { state: "opening", progress: { step: 0, percent: 0, chunk: null } };
 
 	try {
-		const client = await getClient();
-		const { payload } = await client.readNote(id, keyFragment, {
+		const note = await readNote(id, keyFragment, {
 			...(password ? { password } : {}),
 			chunked: current.chunked,
 			onProgress: (info) => {
@@ -282,14 +284,15 @@ async function handleOpen(): Promise<void> {
 			},
 		});
 
-		const previewUrls = (payload.files ?? []).map((file) =>
-			isPreviewable(file.type)
-				? URL.createObjectURL(new Blob([file.data] as BlobPart[], { type: file.type }))
-				: "",
-		);
+		if (destroyed) {
+			void note.close();
+			return;
+		}
+		// One URL per file, for its preview and its download, until the page lets go of the note.
+		const urls = note.files.map((file) => URL.createObjectURL(file.data));
 		// A single-read note is gone without asking.
 		const after = readsAfter(current.maxReads, isBurn ? null : await recheck(id));
-		status = { state: "revealed", payload, previewUrls, after };
+		status = { state: "revealed", note, urls, after };
 	} catch (e) {
 		if (e instanceof SecretApiError && e.status === 404) {
 			// Someone else spent the last read in the meantime.
@@ -419,16 +422,16 @@ async function handleOpen(): Promise<void> {
 	/>
 	<TrustLine />
 {:else if status.state === "revealed"}
-	{@const payload = status.payload}
-	{@const files = payload.files ?? []}
+	{@const note = status.note}
+	{@const files = note.files}
 	<PageHero
-		title={payload.contentMode === "secret" ? t("rv_title_secret") : t("rv_title")}
+		title={note.contentMode === "secret" ? t("rv_title_secret") : t("rv_title")}
 		sub={revealedSub || undefined}
 		afterAction
 	/>
 
-	{#if payload.text}
-		<NoteContent text={payload.text} mode={payload.contentMode ?? "text"} html={renderedMarkdown} />
+	{#if note.text}
+		<NoteContent text={note.text} mode={note.contentMode ?? "text"} html={renderedMarkdown} />
 	{/if}
 
 	{#if files.length > 0}
@@ -438,13 +441,7 @@ async function handleOpen(): Promise<void> {
 			</p>
 			<ul class="m-0 flex list-none flex-col gap-2 p-0">
 				{#each files as file, index (file.name + index)}
-					<FileRow
-						name={file.name}
-						type={file.type}
-						size={file.size}
-						data={file.data}
-						previewUrl={status.previewUrls[index] ?? ""}
-					/>
+					<FileRow name={file.name} type={file.type} size={file.size} url={status.urls[index] ?? ""} />
 				{/each}
 			</ul>
 		</section>

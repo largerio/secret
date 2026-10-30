@@ -6,9 +6,9 @@ import Icon from "#lib/components/Icon.svelte";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
-import { getClient } from "#lib/client.js";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
+import { deleteNote } from "#lib/notes/notes.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { requestErrorMessage } from "#lib/utils/errors.js";
 import type { PageData } from "./$types";
@@ -48,8 +48,7 @@ async function handleDelete(): Promise<void> {
 	error = "";
 	try {
 		const capToken = await solveCap();
-		const client = await getClient();
-		await client.deleteNote(id, deleteToken, capToken);
+		await deleteNote(id, deleteToken, capToken);
 		isDeleted = true;
 	} catch (e) {
 		if (e instanceof SecretApiError && e.status === 404) gone = true;

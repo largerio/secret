@@ -1,29 +1,29 @@
 <script lang="ts">
 import Icon from "#lib/components/Icon.svelte";
 import { getLocale, t } from "#lib/i18n/index.svelte.js";
-import { getFileCategory } from "#lib/utils/fileType.js";
+import { getFileCategory, isPreviewable } from "#lib/utils/fileType.js";
 import { formatSize } from "#lib/utils/format.js";
 
 interface Props {
 	name: string;
 	type: string;
 	size: number;
-	data: Uint8Array;
-	/** An object URL for the inline preview, empty when the type has none. */
-	previewUrl: string;
+	/** An object URL of the file, for its preview and its download: the page revokes it. */
+	url: string;
 }
 
-const { name, type, size, data, previewUrl }: Props = $props();
+const { name, type, size, url }: Props = $props();
 
 const category = $derived(getFileCategory(type));
+const previewUrl = $derived(isPreviewable(type) ? url : "");
 
 function download(): void {
-	const url = URL.createObjectURL(new Blob([data] as BlobPart[], { type }));
+	// The URL stays the page's: revoked on the spot, a download that has not
+	// started reading it yet would fail.
 	const link = document.createElement("a");
 	link.href = url;
 	link.download = name;
 	link.click();
-	URL.revokeObjectURL(url);
 }
 </script>
 
