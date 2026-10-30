@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { problemOf } from "./problems.js";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
@@ -384,7 +385,7 @@ describe("GET /api/metrics", () => {
 		const res = await scrape(app);
 
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Not found" });
+		expect(await res.json()).toEqual(problemOf(404, "not_found", "Not found"));
 	});
 
 	it("refuses a scrape without the token or with another one", async () => {
@@ -402,7 +403,7 @@ describe("GET /api/metrics", () => {
 			const res = await scrape(app, authorization);
 			expect(res.status).toBe(401);
 			expect(res.headers.get("www-authenticate")).toBe('Bearer realm="metrics"');
-			expect(await res.json()).toEqual({ error: "Unauthorized" });
+			expect(await res.json()).toEqual(problemOf(401, "unauthorized", "Unauthorized"));
 		}
 	});
 

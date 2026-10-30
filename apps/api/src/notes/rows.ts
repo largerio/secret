@@ -160,6 +160,14 @@ export function singleShotPlacement(fileCount: number): "database" | "file" {
 }
 
 /**
+ * A time as the database keeps it, to the second: what a write answers is then
+ * what every later read answers (PROTOCOL.md, `.000Z`).
+ */
+export function toTheSecond(date: Date): Date {
+	return new Date(Math.floor(date.getTime() / 1000) * 1000);
+}
+
+/**
  * The row of a new note: the one place a note row is built. Its verifiers are
  * the sealed ones: a writer's never reach a row.
  */
@@ -168,8 +176,9 @@ export function newNoteRow(
 	settings: StoredSettings,
 	placement: Placement,
 	deleteToken: string,
-	now: Date,
+	at: Date,
 ): typeof notes.$inferInsert {
+	const now = toTheSecond(at);
 	const common = {
 		id,
 		...openingColumns(settings.opening),

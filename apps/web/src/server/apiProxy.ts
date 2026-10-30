@@ -54,6 +54,15 @@ export function endToEndHeaders(headers: IncomingHttpHeaders): OutgoingHttpHeade
 	return forwarded;
 }
 
+const BAD_GATEWAY = {
+	type: "about:blank",
+	title: "Bad Gateway",
+	status: 502,
+	code: "bad_gateway",
+	detail: "Bad Gateway",
+	error: "Bad Gateway",
+};
+
 /**
  * The API could not be reached, or the request to it broke.
  *
@@ -74,8 +83,9 @@ export function handleUpstreamError(res: ServerResponse, error: Error): void {
 			detail: error.message,
 		}),
 	);
-	res.writeHead(502, { "content-type": "application/json" });
-	res.end(JSON.stringify({ error: "Bad Gateway" }));
+	// Problem details, as the API's errors (PROTOCOL.md, "Errors").
+	res.writeHead(502, { "content-type": "application/problem+json" });
+	res.end(JSON.stringify(BAD_GATEWAY));
 }
 
 export interface ProxyTarget {

@@ -1,5 +1,5 @@
 import type { CreateNoteResponse, ReadNoteResponse } from "@largerio/secret-shared";
-import { SecretApiError, SecretNetworkError } from "./errors.js";
+import { apiErrorOf, SecretApiError, SecretNetworkError } from "./errors.js";
 import type { ReadProofs } from "./format1.js";
 import type { NoteInfo } from "./types.js";
 import { isXhrAvailable, postFormDataXhr } from "./xhr.js";
@@ -27,12 +27,9 @@ async function readBody<T>(read: () => Promise<T>): Promise<T> {
 	}
 }
 
-function extractErrorMessage(body: unknown, status: number): string {
-	if (typeof body === "object" && body !== null && "error" in body) {
-		const error = (body as Record<string, unknown>)["error"];
-		if (typeof error === "string") return error;
-	}
-	return `HTTP ${String(status)}`;
+async function apiError(res: Response): Promise<SecretApiError> {
+	const body: unknown = await res.json().catch(() => undefined);
+	return apiErrorOf(body, res.status, res.headers.get("retry-after"));
 }
 
 function getRequiredHeader(headers: Headers, name: string): string {
@@ -146,8 +143,7 @@ function authHeaders(apiKey?: string, capToken?: string): Record<string, string>
 
 async function handleResponse<T>(res: Response): Promise<T> {
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 
 	return res.json() as Promise<T>;
@@ -214,8 +210,7 @@ export async function getJson<T>(
 	);
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 
 	if (onProgress && res.body) {
@@ -345,8 +340,7 @@ async function readChunks(
 
 async function throwUnlessOk(res: Response): Promise<void> {
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 }
 
@@ -391,8 +385,7 @@ export async function checkNote(config: HttpClientConfig, id: string): Promise<N
 	);
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 
 	// The API answers 200 `{exists:false}` for a missing note — never 404 — so
@@ -446,8 +439,7 @@ export async function deleteNote(
 	);
 
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 }
 
@@ -498,8 +490,7 @@ export async function uploadChunk(
 		true,
 	);
 	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new SecretApiError(extractErrorMessage(body, res.status), res.status);
+		throw await apiError(res);
 	}
 }
 

@@ -1,5 +1,6 @@
-import { HTTPException } from "hono/http-exception";
+import type { HTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { ProblemException } from "../../middleware/problem.js";
 import { NoteError, type NoteErrorCode } from "../../notes/errors.js";
 
 /** The one place a refusal of the notes service becomes an HTTP status. */
@@ -32,14 +33,15 @@ const NOTE_ERROR_STATUS: Readonly<Record<NoteErrorCode, ContentfulStatusCode>> =
 };
 
 /**
- * A NoteError as the HTTP error it answers, for the app's error handler, which
- * then treats it like any HTTPException. Anything else is not ours: undefined.
+ * A NoteError as the HTTP error it answers, its code the client's to read
+ * (PROTOCOL.md, "Errors"), for the app's error handler, which then treats it
+ * like any HTTPException. Anything else is not ours: undefined.
  */
 export function noteErrorToHttp(err: Error): HTTPException | undefined {
 	if (!(err instanceof NoteError)) {
 		return undefined;
 	}
-	return new HTTPException(NOTE_ERROR_STATUS[err.code], {
+	return new ProblemException(NOTE_ERROR_STATUS[err.code], err.code, {
 		message: err.message,
 		...(err.cause !== undefined ? { cause: err.cause } : {}),
 	});

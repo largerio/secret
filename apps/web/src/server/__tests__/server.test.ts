@@ -339,7 +339,8 @@ describe("API requests", () => {
 		const res = await rawRequest(web, { path: "/api/health" });
 
 		expect(res.status).toBe(502);
-		expect(JSON.parse(res.body.toString())).toEqual({ error: "Bad Gateway" });
+		expect(res.headers["content-type"]).toBe("application/problem+json");
+		expect(JSON.parse(res.body.toString())).toMatchObject({ code: "bad_gateway", status: 502 });
 		log.mockRestore();
 	});
 });

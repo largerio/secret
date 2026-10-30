@@ -6,6 +6,7 @@ import {
 	createRateLimit,
 	ipv6Prefix64,
 } from "../middleware/rateLimit.js";
+import { problemOf } from "./problems.js";
 
 function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: string } } } {
 	return { incoming: { socket: { remoteAddress } } };
@@ -291,7 +292,7 @@ describe("createRateLimit", () => {
 		const res = await app.request("/test", {}, mockEnv("1.1.1.1"));
 		expect(res.status).toBe(429);
 		const json = await res.json();
-		expect(json).toEqual({ error: "Too many requests" });
+		expect(json).toEqual(problemOf(429, "rate_limited", "Too many requests"));
 
 		rl.cleanup();
 	});

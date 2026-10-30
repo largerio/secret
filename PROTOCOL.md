@@ -179,8 +179,8 @@ the note is created and nobody can read it.
 Both answer `201` with `{"id", "expiresAt", "deleteToken"}`. A note declared
 with `fileCount` 0 is limited to 524,288 bytes of ciphertext, and any request
 to the instance's `maxFileSize × maxFilesPerNote` plus 1 MiB. The server keeps
-the expiry to the second: `expiresAt` comes back with milliseconds here, and
-without them everywhere else.
+the expiry to the second: every `expiresAt`, and `X-Expires-At`, has its
+milliseconds at zero (`.000Z`).
 
 ### Reading
 
@@ -280,7 +280,7 @@ server checks the length of neither the stream header nor the salt.
    first sending has answered: while a message is being written, sending it
    again answers `409`.
 
-3. Close the session:
+3. Close the session, with an empty body:
 
    ```
    POST /api/v1/notes/upload/{uploadId}/complete
@@ -315,8 +315,8 @@ This section reads a format 0 note; a format 1 note is read
 GET /api/v1/notes/{id}/exists
 ```
 
-answers `{"exists": false}` for a note that does not exist or has expired,
-and otherwise:
+answers `200` whether the note exists or not: `{"exists": false}` for a note
+that does not exist or has expired, and otherwise:
 
 ```json
 {
@@ -347,7 +347,8 @@ that never existed, has expired, was burned or was deleted answers `404`, the
 same way.
 
 A client MUST NOT retry a read on its own: the retry could spend a second
-read, or meet a `404` in place of the real error.
+read, or meet a `404` in place of the real error. The reads answer `405` to
+`HEAD`, which would spend a read and deliver nothing.
 
 ## Deletion
 
@@ -370,8 +371,8 @@ that it holds the link instead. Creating and deleting a note need one of:
   instance's challenge endpoints under `/api/cap/`, as the web app gets one.
 
 Message uploads and `/complete` need neither: the upload id stands for the
-authentication given to `/init`. A refusal answers `401` with
-`{"error": "Unauthorized"}`, whatever failed.
+authentication given to `/init`. A refusal answers `401` (`unauthorized`),
+whatever failed.
 
 ## Instance limits
 
@@ -391,21 +392,71 @@ answers the limits a client should respect before uploading:
 
 ## Errors
 
-Errors answer JSON, `{"error": "<message>"}`. The message is meant for a
-developer: tell errors apart by their status.
+An error answers a [problem details](https://www.rfc-editor.org/rfc/rfc9457)
+object, as `application/problem+json`:
 
-| Status | Meaning |
-|--------|---------|
-| 400 | Invalid request, the wrong read endpoint or format, a password note's read without its password proof, or a format 1 note whose message lengths do not fit a [padded body](#upload-2) |
-| 401 | Write authentication missing or refused |
-| 403 | Wrong delete token, or a wrong read proof |
-| 404 | The note, or the upload session, does not exist |
-| 409 | A message sent again while it is still being written, `/complete` while any message of its session is, or a message sent while its upload session was being completed |
-| 413 | Too large |
-| 415 | A body that is not JSON, or not multipart for `/notes/upload` |
-| 429 | Rate limited |
-| 500 | Server error, such as a note the server cannot decrypt |
-| 507 | The instance's storage quota is full |
+```json
+{
+  "type": "about:blank",
+  "title": "Forbidden",
+  "status": 403,
+  "code": "wrong_password",
+  "detail": "Wrong password",
+  "error": "Wrong password"
+}
+```
+
+`code` names the error and does not change from one release to the next:
+tell errors apart by it. `detail` is meant for a developer and may change;
+`error` repeats it for clients written before codes. A `500` also carries
+`errorId`, which the instance logs with the error. Instances up to 1.6 answer
+`{"error": "<message>"}` alone, as `application/json`.
+
+An answer without a `code` comes from something in front of the instance, a
+reverse proxy, a firewall or a CDN, not from the instance: a `403` without one
+is not a wrong proof. A client that meets a code it does not know goes by the
+status.
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `invalid_request` | 400 | A request that does not match its endpoint, a note id that is not 12 characters of the alphabet above included |
+| `note_format_mismatch` | 400 | A read of another format than the note's, which spends nothing |
+| `note_is_chunked` | 400 | `/raw` or the JSON endpoint asked for a chunked note |
+| `note_is_single_shot` | 400 | `/stream` asked for a single-shot note |
+| `password_proof_missing` | 400 | A password note's read without its password proof |
+| `note_not_padded` | 400 | A format 1 note whose message lengths do not fit a [padded body](#upload-2) |
+| `expiry_above_limit` | 400 | `expiresIn` above the instance's `maxExpiry` |
+| `too_many_files` | 400 | `fileCount` above the instance's `maxFilesPerNote` |
+| `too_many_chunks` | 400 | A `chunkCount` above what the instance's `maxChunkedFileSize` allows |
+| `upload_incomplete` | 400 | `/complete` while a message is missing |
+| `chunk_out_of_range` | 400 | A message index outside the session's `chunkCount` |
+| `chunk_empty` | 400 | A message without a byte |
+| `chunk_hash_mismatch` | 400 | A message whose `X-Chunk-Hash` is missing, upper-case, or not its hash |
+| `unauthorized` | 401 | Write authentication missing or refused |
+| `wrong_link_proof` | 403 | A format 1 read whose link proof is wrong, which counts nothing |
+| `wrong_password` | 403 | A format 1 read whose password proof is wrong, which counts a failed attempt |
+| `wrong_delete_token` | 403 | A deletion with the wrong token |
+| `not_found` | 404 | No such endpoint |
+| `note_not_found` | 404 | The note does not exist, has expired, or was burned or deleted |
+| `upload_not_found` | 404 | The upload session does not exist, has expired, or was completed |
+| `method_not_allowed` | 405 | `HEAD` on a read |
+| `upload_already_completed` | 409 | A message sent while its session was being completed |
+| `chunk_in_flight` | 409 | A message sent again, or `/complete`, while a message of the session is still being written |
+| `payload_too_large` | 413 | A request body above the instance's limits |
+| `note_too_large` | 413 | A note without files above 524,288 bytes of ciphertext, or a format 1 message too long for a read to frame |
+| `chunk_too_large` | 413 | A message above the instance's `chunkSize` |
+| `unsupported_media_type` | 415 | A body that is not JSON, or not multipart for `/notes/upload` |
+| `rate_limited` | 429 | Too many requests from this address |
+| `internal_error` | 500 | A server error |
+| `note_corrupted` | 500 | A note the server cannot open |
+| `upload_corrupted` | 500 | An upload session the server cannot read |
+| `bad_gateway` | 502 | The instance's web server could not reach its API |
+| `storage_quota_exceeded` | 507 | The instance's storage quota is full |
+
+A `429` carries `Retry-After`, in seconds. Requests are counted per address
+and per kind (creates, reads, `/exists`, messages), writes with an API key
+included. A refused request spends nothing: a message refused in the middle
+of an upload session can be sent again once the wait is over.
 
 ## What the server learns
 
@@ -700,8 +751,8 @@ or as `multipart/form-data` to `POST /api/v1/notes/upload`, with `metadata`
 set to the same object without `encryptedData`, and the message as `data`.
 `passwordVerifier` is sent for a password note only: the server refuses
 (`400`) a format 1 write without a link verifier, without a password verifier
-for a password note, or with one for a note without a password. A verifier is
-32 bytes. The answer, and the limits on its size, are format 0's.
+for a password note, or with one for a note without a password, `null`
+included: a key counts as sent whatever its value. A verifier is 32 bytes. The answer, and the limits on its size, are format 0's.
 
 In an upload session, `/init` takes the envelope, the verifiers and the
 number of messages:
@@ -759,9 +810,10 @@ anything:
 
 Failed attempts are counted on the note over its whole life: a read that
 succeeds does not reset them, and wrong passwords sent at once each count. The **fifth** deletes the note, as a burn
-would, and answers `403` like the others. Both refusals answer `403`, a wrong
-link and a wrong password alike, and their message is meant for a developer;
-the answer does not say whether the note is gone: `/exists` does, with
+would, and answers `403` like the others. Both refusals answer `403`, told
+apart by their [code](#errors), `wrong_link_proof` or `wrong_password`; a
+`403` without a code is not a refused proof. The answer does not say whether
+the note is gone: `/exists` does, with
 `passwordAttemptsLeft`, or `{"exists": false}` once the note is deleted.
 
 Once the proofs check out, the server serves the note, and spends a read as

@@ -14,6 +14,7 @@ describe("requestErrorMessage", () => {
 		[new SecretNetworkError("Network request failed"), "error_network"],
 		[api(0), "error_network"],
 		[api(401), "error_check_failed"],
+		[api(403), "error_blocked"],
 		[api(413), "error_too_large"],
 		[api(429), "error_rate_limited"],
 		[api(507), "error_storage_full"],

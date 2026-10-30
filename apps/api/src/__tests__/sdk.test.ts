@@ -300,6 +300,7 @@ describe("format 0, through the SDK and the application", () => {
 
 		await expect(client.deleteNote(id, "x".repeat(deleteToken.length))).rejects.toMatchObject({
 			status: 403,
+			code: "wrong_delete_token",
 		});
 		await client.deleteNote(id, deleteToken);
 

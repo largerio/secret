@@ -105,6 +105,52 @@ describe("postJson", () => {
 		await expect(postJson(config, "/notes", {})).rejects.toThrow("Validation failed");
 	});
 
+	test("carries the instance's code, and a 429's Retry-After, from its problem details", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						type: "about:blank",
+						title: "Too Many Requests",
+						status: 429,
+						code: "rate_limited",
+						detail: "Too many requests",
+						error: "Too many requests",
+					}),
+					{
+						status: 429,
+						headers: { "Content-Type": "application/problem+json", "Retry-After": "30" },
+					},
+				),
+			),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(postJson(config, "/notes", {}));
+		expect(err).toMatchObject({
+			message: "Too many requests",
+			status: 429,
+			code: "rate_limited",
+			retryAfter: 30,
+		});
+	});
+
+	test("reads no Retry-After that is not a number of seconds", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() =>
+			Promise.resolve(
+				new Response(JSON.stringify({ error: "Too many requests" }), {
+					status: 429,
+					headers: { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" },
+				}),
+			),
+		);
+		const config = createConfig(fetchMock);
+
+		const err = await catchApiError(postJson(config, "/notes", {}));
+		expect(err.retryAfter).toBeUndefined();
+		expect(err.code).toBeUndefined();
+	});
+
 	test("throws SecretApiError with HTTP status fallback when no error field", async () => {
 		const fetchMock = vi.fn<typeof fetch>(() =>
 			Promise.resolve(errorResponse(500, { message: "unexpected" })),

@@ -18,7 +18,7 @@ import { NoteError } from "./errors.js";
 import { sessionSettingsOf } from "./formats.js";
 import { assertStorageAvailable, assertWithinLimits, type NotesLimits } from "./limits.js";
 import { assertPadded } from "./padding.js";
-import { newDeleteToken, newNoteId, newNoteRow, noteExists } from "./rows.js";
+import { newDeleteToken, newNoteId, newNoteRow, noteExists, toTheSecond } from "./rows.js";
 import { SEALED_CHUNK_OVERHEAD, type ServerLayer } from "./serverLayer.js";
 import type {
 	CreatedNote,
@@ -160,7 +160,7 @@ export function createUploads(deps: UploadsDeps): Uploads {
 				opening.format === 1 && settings.verifiers
 					? serverLayer.sealVerifiers(noteId, opening.envelope, settings.verifiers)
 					: undefined;
-			const now = new Date();
+			const now = toTheSecond(new Date());
 			const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL * 1000);
 
 			db.insert(uploads)

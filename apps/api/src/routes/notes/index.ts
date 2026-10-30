@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { MiddlewareHandler } from "hono";
+import { problem } from "../../middleware/problem.js";
 import type { NotesService } from "../../notes/service.js";
 import { registerReadRoutes } from "./reads.js";
 import { registerWriteRoutes } from "./writes.js";
@@ -17,7 +18,7 @@ export function createNotesRoutes(
 	const app = new OpenAPIHono({
 		defaultHook: (result, c) => {
 			if (!result.success) {
-				return c.json({ error: "Invalid request" }, 400);
+				return problem(c, 400, "invalid_request", "Invalid request");
 			}
 		},
 	});

@@ -68,6 +68,6 @@ export function registerWriteRoutes(
 
 	app.openapi({ ...deleteNoteRoute, middleware: writeAuth }, async (c) => {
 		await notes.delete(c.req.valid("param").id, c.req.valid("header")["x-delete-token"]);
-		return c.json({ deleted: true as const });
+		return c.json({ deleted: true as const }, 200);
 	});
 }

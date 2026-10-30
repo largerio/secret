@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createErrorHandler, sanitizeError } from "../middleware/errorHandler.js";
+import { ProblemException } from "../middleware/problem.js";
 import { createRequestId } from "../middleware/requestContext.js";
+import { problemOf } from "./problems.js";
 
 describe("sanitizeError", () => {
 	it("returns only the error name for Error instances", () => {
@@ -50,8 +52,28 @@ describe("createErrorHandler", () => {
 
 		const res = await app.request("/x");
 		expect(res.status).toBe(418);
-		expect(await res.json()).toEqual({ error: "teapot" });
+		expect(res.headers.get("content-type")).toBe("application/problem+json");
+		// A status no code names: a client's error, by default.
+		expect(await res.json()).toEqual(problemOf(418, "invalid_request", "teapot"));
 		expect(consoleSpy).not.toHaveBeenCalled();
+	});
+
+	it("answers a ProblemException with its code, and a server error by its status", async () => {
+		const app = new Hono();
+		app.onError(createErrorHandler({ debug: false }));
+		app.get("/coded", () => {
+			throw new ProblemException(403, "wrong_password", { message: "Wrong password" });
+		});
+		app.get("/unavailable", () => {
+			throw new HTTPException(503, { message: "Down" });
+		});
+
+		const coded = await app.request("/coded");
+		expect(coded.headers.get("content-type")).toBe("application/problem+json");
+		expect(await coded.json()).toEqual(problemOf(403, "wrong_password", "Wrong password"));
+		expect(await (await app.request("/unavailable")).json()).toEqual(
+			problemOf(503, "internal_error", "Down"),
+		);
 	});
 
 	it("answers an error its toHttpException option turns into an HTTPException like one", async () => {
@@ -73,7 +95,7 @@ describe("createErrorHandler", () => {
 
 		const refused = await app.request("/refused");
 		expect(refused.status).toBe(409);
-		expect(await refused.json()).toEqual({ error: "already done" });
+		expect(await refused.json()).toEqual(problemOf(409, "invalid_request", "already done"));
 		expect(consoleSpy).not.toHaveBeenCalled();
 
 		const broken = await app.request("/broken");
@@ -91,10 +113,9 @@ describe("createErrorHandler", () => {
 
 		const res = await app.request("/x");
 		expect(res.status).toBe(500);
-		expect(await res.json()).toEqual({
-			error: "Failed to decrypt note",
-			errorId: expect.any(String),
-		});
+		expect(await res.json()).toEqual(
+			problemOf(500, "internal_error", "Failed to decrypt note", { errorId: expect.any(String) }),
+		);
 
 		const entry = lastLogEntry();
 		expect(entry["msg"]).toBe("http exception");
@@ -111,7 +132,7 @@ describe("createErrorHandler", () => {
 		});
 
 		const res = await app.request("/x");
-		expect(await res.json()).toEqual({ error: "Note not found" });
+		expect(await res.json()).toEqual(problemOf(404, "not_found", "Note not found"));
 		expect(lastLogEntry()).toMatchObject({ msg: "http exception", status: 404 });
 	});
 

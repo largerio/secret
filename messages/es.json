@@ -14,6 +14,7 @@
 	"error_server": "El servidor ha tenido un problema. Inténtalo de nuevo en un momento.",
 	"error_rate_limited": "Demasiadas solicitudes desde tu red. Espera un minuto y vuelve a intentarlo.",
 	"error_check_failed": "Se ha rechazado la verificación antispam. Vuelve a intentarlo.",
+	"error_blocked": "Algo entre usted y el servidor rechazó la solicitud: un cortafuegos o un proxy, no la nota. Inténtelo desde otra red.",
 	"error_too_large": "La nota supera el tamaño que acepta este servidor.",
 	"error_storage_full": "El servidor no tiene espacio para esta nota. Inténtalo de nuevo más tarde.",
 	"error_clipboard": "Error al copiar al portapapeles",

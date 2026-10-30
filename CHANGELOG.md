@@ -7,6 +7,22 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Added
+
+- Every API error answers [problem details](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors) (RFC 9457, `application/problem+json`) with a stable `code`, such as `note_not_found`, `wrong_password` or `rate_limited`, for clients to tell errors apart by; `error` still carries the message for older ones. The API reference documents them, and PROTOCOL.md lists every code, with what a `429` and its `Retry-After`, a `HEAD` on a read, a missing note's `/exists` and an empty `/complete` answer. (#263)
+
+### Changed
+
+- A create and the start of an upload session answer the expiry the instance keeps, to the second, as every read does (`.000Z`): they used to add milliseconds that no later read answered. (#263)
+
+### Fixed
+
+- A `403` from a firewall or a proxy in front of the instance was taken for a wrong password when opening a note, and for a wrong token on the deletion page. The web app now says that something on the way blocked the request; with the SDK, it is an API error without a code. (#263)
+
+### Upgrade notes
+
+- Errors answer `application/problem+json` instead of `application/json`: a client that checks the type of an error's body should accept both. The body keeps `error`.
+
 ## [1.6.0] - 2026-10-30
 
 ### Added

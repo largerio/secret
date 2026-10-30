@@ -10,6 +10,7 @@ import { type AppConfig, parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { DEFAULT_BODY_LIMIT } from "../middleware/bodyLimit.js";
 import { LocalStorage } from "../storage/local.js";
+import { problemOf } from "./problems.js";
 
 // Avoid initializing the real Cap PoW subsystem; app assembly only needs the
 // route factory to exist. Auth is covered separately in auth.test.ts.
@@ -225,7 +226,7 @@ describe("createApp — unversioned routes", () => {
 	it("returns a JSON 404 for unknown routes", async () => {
 		const res = await makeApp().request("/does-not-exist");
 		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: "Not found" });
+		expect(await res.json()).toEqual(problemOf(404, "not_found", "Not found"));
 	});
 });
 
@@ -288,6 +289,26 @@ describe("createApp — versioned API", () => {
 		expect(doc.info.version).toBe("1.4.1");
 	});
 
+	it("documents every route's errors as problem details", async () => {
+		const res = await makeApp().request("/api/v1/openapi.json");
+		const doc = (await res.json()) as {
+			paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+			components: { schemas: Record<string, unknown> };
+		};
+
+		expect(doc.components.schemas["Problem"]).toBeDefined();
+		for (const [path, operations] of Object.entries(doc.paths)) {
+			for (const [method, operation] of Object.entries(operations)) {
+				expect(operation.responses["default"], `${method} ${path}`).toEqual({
+					content: {
+						"application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } },
+					},
+					description: "An error, named by its `code` (PROTOCOL.md, Errors)",
+				});
+			}
+		}
+	});
+
 	it("documents readCount on the exists response", async () => {
 		const res = await makeApp().request("/api/v1/openapi.json");
 		const doc = (await res.json()) as {
@@ -331,7 +352,7 @@ describe("createApp — body limits", () => {
 			body: oversized,
 		});
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Payload too large" });
+		expect(await res.json()).toEqual(problemOf(413, "payload_too_large", "Payload too large"));
 	});
 
 	it("rejects an oversized multipart upload with 413", async () => {
@@ -340,7 +361,7 @@ describe("createApp — body limits", () => {
 			body: oversized,
 		});
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Payload too large" });
+		expect(await res.json()).toEqual(problemOf(413, "payload_too_large", "Payload too large"));
 	});
 
 	it("rejects an oversized upload init with 413", async () => {
@@ -350,7 +371,7 @@ describe("createApp — body limits", () => {
 			body: "x".repeat(DEFAULT_BODY_LIMIT + 1),
 		});
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Payload too large" });
+		expect(await res.json()).toEqual(problemOf(413, "payload_too_large", "Payload too large"));
 	});
 
 	it("rejects an oversized Cap request before reading it", async () => {
@@ -371,7 +392,7 @@ describe("createApp — body limits", () => {
 			body: "x".repeat(4096), // > chunkSize + 1024
 		});
 		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "Chunk too large" });
+		expect(await res.json()).toEqual(problemOf(413, "chunk_too_large", "Chunk too large"));
 	});
 });
 
