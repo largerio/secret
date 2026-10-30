@@ -1,6 +1,6 @@
 {
 	"name": "@largerio/secret-sdk",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"description": "JavaScript/TypeScript SDK for Secret — create, read, and delete zero-knowledge, end-to-end encrypted notes and files on any Secret instance.",
 	"keywords": [
 		"encryption",
