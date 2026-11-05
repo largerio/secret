@@ -293,7 +293,7 @@ describe("secret read", () => {
 			client.readNoteInto.mockRejectedValue(new SecretDecryptionError());
 			expect(await run("read", FORMAT_0_LINK)).toBe(EXIT.refused);
 			expect(stderr.text).toBe(
-				"secret: wrong password, or the link is wrong or damaged: the read is spent all the same, a note of format 0 cannot be checked first\n",
+				"secret: wrong password, or the link is wrong or damaged: this is an older note, whose read is spent all the same\n",
 			);
 		});
 
@@ -366,14 +366,35 @@ describe("secret read", () => {
 			expect(client.readNoteInto).not.toHaveBeenCalled();
 		});
 
+		it("tells the attempts left before the first password once some are spent", async () => {
+			const terminal = fakeTerminal(["hunter2"]);
+			const { run, client } = reading({ terminal });
+			client.checkNote.mockResolvedValue({ ...PASSWORD_NOTE, passwordAttemptsLeft: 4 });
+			expect(await run("read", LINK)).toBe(EXIT.ok);
+			expect(terminal.write.mock.calls).toEqual([["4 attempts left.\n"]]);
+		});
+
 		it("warns before the last attempt", async () => {
 			const terminal = fakeTerminal(["hunter2"]);
 			const { run, client } = reading({ terminal });
 			client.checkNote.mockResolvedValue({ ...PASSWORD_NOTE, passwordAttemptsLeft: 1 });
 			expect(await run("read", LINK)).toBe(EXIT.ok);
-			expect(terminal.write).toHaveBeenCalledWith(
-				"The note takes one more wrong password: the next one deletes it.\n",
-			);
+			expect(terminal.write.mock.calls).toEqual([
+				["1 attempt left.\n"],
+				["The note takes one more wrong password: the next one deletes it.\n"],
+			]);
+		});
+
+		it("tells nothing of attempts an instance counts beyond the protocol's", async () => {
+			const terminal = fakeTerminal(["wrong", "right"]);
+			const { run, client } = reading({ terminal });
+			client.checkNote
+				.mockResolvedValueOnce({ ...PASSWORD_NOTE, passwordAttemptsLeft: 7 })
+				.mockResolvedValueOnce({ ...PASSWORD_NOTE, passwordAttemptsLeft: 6 });
+			client.readNoteInto.mockRejectedValueOnce(new SecretDecryptionError());
+			expect(await run("read", LINK)).toBe(EXIT.ok);
+			expect(terminal.write).not.toHaveBeenCalled();
+			expect(terminal.readHidden).toHaveBeenCalledTimes(2);
 		});
 
 		it("warns that a wrong password spends a read of a note of format 0", async () => {
@@ -381,9 +402,9 @@ describe("secret read", () => {
 			const { run, client } = reading({ terminal });
 			client.checkNote.mockResolvedValue({ ...FORMAT_0_NOTE, hasPassword: true });
 			expect(await run("read", FORMAT_0_LINK)).toBe(EXIT.ok);
-			expect(terminal.write).toHaveBeenCalledWith(
-				"A wrong password spends a read of this note: its format cannot check it first.\n",
-			);
+			expect(terminal.write.mock.calls).toEqual([
+				["This is an older note: a wrong password spends one of its reads.\n"],
+			]);
 		});
 
 		it("asks again while the note takes attempts", async () => {

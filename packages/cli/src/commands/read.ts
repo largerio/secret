@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
 	type ExistingNoteInfo,
+	MAX_PASSWORD_ATTEMPTS,
 	type ReadNoteIntoResult,
 	SecretDecryptionError,
 } from "@largerio/secret-sdk";
@@ -35,7 +36,7 @@ const OPTIONS = {
  * A note of format 0 is served before its key is checked: a failure to
  * decrypt it spent a read all the same.
  */
-const FORMAT_0_REFUSED = `${WRONG_PASSWORD_OR_LINK}: the read is spent all the same, a note of format 0 cannot be checked first`;
+const FORMAT_0_REFUSED = `${WRONG_PASSWORD_OR_LINK}: this is an older note, whose read is spent all the same`;
 
 /**
  * The link to read: the argument, else the first line of stdin when it is
@@ -89,14 +90,24 @@ function askReadPassword(io: Io, notices: ReadonlyArray<string>): Promise<string
 	});
 }
 
-/** What the reader should know before typing a password. */
-function noticesOf(format1: boolean, attemptsLeft: number | undefined): string[] {
+/**
+ * What the reader should know before typing a password, after a wrong one if
+ * `wrong`: what a wrong password costs, and the attempts left once some are
+ * spent.
+ */
+function noticesOf(format1: boolean, attemptsLeft: number | undefined, wrong: boolean): string[] {
 	if (!format1) {
-		return ["A wrong password spends a read of this note: its format cannot check it first."];
+		return ["This is an older note: a wrong password spends one of its reads."];
 	}
-	return attemptsLeft === 1
-		? ["The note takes one more wrong password: the next one deletes it."]
-		: [];
+	if (attemptsLeft === undefined || attemptsLeft >= MAX_PASSWORD_ATTEMPTS) {
+		return [];
+	}
+	const left = `${attempts(attemptsLeft)} left.`;
+	const notices = [wrong ? `Wrong password: ${left}` : left];
+	if (attemptsLeft === 1) {
+		notices.push("The note takes one more wrong password: the next one deletes it.");
+	}
+	return notices;
 }
 
 function attempts(count: number): string {
@@ -125,7 +136,7 @@ async function readInto(
 	let attemptsLeft = info.passwordAttemptsLeft;
 	const given = info.hasPassword ? await givenPassword(io, options.passwordFile) : undefined;
 	const asks = info.hasPassword && given === undefined;
-	let password = asks ? await askReadPassword(io, noticesOf(format1, attemptsLeft)) : given;
+	let password = asks ? await askReadPassword(io, noticesOf(format1, attemptsLeft, false)) : given;
 
 	for (;;) {
 		const out = (io.createOutputDirectory ?? createOutputDirectory)(options.dir);
@@ -175,10 +186,7 @@ async function readInto(
 			}
 			attemptsLeft = left;
 			screen.done();
-			password = await askReadPassword(io, [
-				`Wrong password: ${attempts(left)} left.`,
-				...noticesOf(format1, left),
-			]);
+			password = await askReadPassword(io, noticesOf(format1, left, true));
 		}
 	}
 }
