@@ -1,5 +1,18 @@
 # @largerio/secret-sdk
 
+## 1.5.0
+
+### Minor Changes
+
+- f5dc50b: The protocol's limits are exported, so that a client can check what it is given before the SDK refuses it: `MAX_TEXT_SIZE`, the characters of a note's text; `MAX_FILES_PER_NOTE`; `MAX_READS`; `MIN_EXPIRY_SECONDS`, `MAX_EXPIRY_SECONDS` and `DEFAULT_EXPIRY_SECONDS`, the one `createNote` takes when none is given; `MAX_PASSWORD_ATTEMPTS`, the wrong passwords a format 1 note takes; `DEFAULT_CHUNK_SIZE`; and `NOTE_ID_LENGTH`, the characters of a note's id. An instance may set lower limits of its own, which it announces at `GET /api/v1/config`.
+
+### Patch Changes
+
+- f5dc50b: A malformed link is refused before any request, so it no longer spends a read:
+  
+  - `checkNote`, `readNote`, `readNoteInto`, `deleteNote` and `buildShareUrl` refuse with a `SecretValidationError` an id the server cannot have given (12 characters of `A-Z a-z 0-9 _ -`), and `parseShareUrl` a link that holds one. Such an id took the request to another endpoint: checking `…/note/aBcDeFgHiJkL%3F#…` sent `GET /notes/{id}`, the format 0 read that spends the note, instead of asking for its metadata. Ids are also encoded in every request's path.
+  - `readNote` and `readNoteInto` refuse with a `SecretValidationError` a format 0 key that is not 43 base64url characters decoding to 32 bytes, as they already did for format 1. A key cut short, or the delete token of a management link (`/note/<id>/manage#<token>`) read as a note's link, was refused only once the note had been served: its read was spent, and a note read once was gone.
+
 ## 1.4.0
 
 ### Minor Changes
