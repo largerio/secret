@@ -8,7 +8,7 @@ The payload is encrypted **in your process** with XChaCha20-Poly1305 before anyt
 npm install @largerio/secret-sdk
 ```
 
-Works in Node.js and in the browser. Ships as ESM with TypeScript types.
+Works in Node.js and in the browser. Ships as ESM with TypeScript types. From a terminal or a shell script, use the command line built on it, [`@largerio/secret-cli`](https://www.npmjs.com/package/@largerio/secret-cli): `secret send`, `secret read`.
 
 > **Reads are open on every instance. Writes are not.** `createNote` and `deleteNote` need an API key — a string the instance operator sets in their own environment. There is no sign-up: point the SDK at an instance you run, or at one that issued you a key. See [Instances and access](#instances-and-access).
 
@@ -189,7 +189,7 @@ Every failure path is typed, so you can branch on the cause:
 
 | Class | When | Notable |
 |---|---|---|
-| `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work |
+| `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work. A note id that is not one (12 characters of `A-Z a-z 0-9 _ -`) is refused so by every method that takes one, and so is a key that is not 32 bytes in base64url, of either format: a link mistyped or cut short spends no read |
 | `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout), `.code` the instance's name for the error (`note_not_found`, `rate_limited`…, see [Errors](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors)), and `.retryAfter` a `429`'s wait in seconds. A missing or wrong `apiKey` on a write surfaces here as `401`. An error without a `.code` came from something in front of the instance (a proxy, a firewall), or from an instance older than 1.7.0 |
 | `SecretNetworkError` | The request failed in transit | DNS, offline, connection reset, CORS, or a connection lost mid-download. `.cause` holds the original error |
 | `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle. On a format 1 note, the server refuses a wrong link or password before serving anything; that refusal surfaces here too |
@@ -251,6 +251,8 @@ Note creation, deletion and `readNote` are deliberately never retried: a retried
 | `deleteNote(id, deleteToken, capToken?)` | Revoke before expiry |
 | `buildShareUrl(id, keyFragment)` | Assemble the share URL |
 | `SecretClient.parseShareUrl(url)` | Split one back into `{ id, keyFragment }` |
+
+The protocol's limits are exported too, to check a note before it is sent: `MAX_TEXT_SIZE` (102,400 characters of text), `MAX_FILES_PER_NOTE` (10), `MAX_READS` (1000), `MIN_EXPIRY_SECONDS` (300) and `MAX_EXPIRY_SECONDS` (2,592,000, 30 days), `DEFAULT_EXPIRY_SECONDS` (86,400, `createNote`'s when `expiresIn` is not given), `DEFAULT_CHUNK_SIZE` (4 MiB, its `chunkSize`) and `NOTE_ID_LENGTH` (12). An instance may set lower limits of its own: `GET /api/v1/config` gives them ([Instance limits](https://github.com/largerio/secret/blob/main/PROTOCOL.md#instance-limits)).
 
 ## Requirements
 
