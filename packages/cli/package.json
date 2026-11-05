@@ -26,7 +26,8 @@
 		"secret": "./dist/bin.js"
 	},
 	"exports": {
-		".": "./src/run.ts"
+		".": "./src/run.ts",
+		"./pow": "./src/pow.ts"
 	},
 	"files": [
 		"dist",
