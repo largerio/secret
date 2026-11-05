@@ -45,6 +45,10 @@ jobs:
       - name: Verify the publishable SDK artifact
         run: pnpm --filter @largerio/secret-sdk verify-package
 
+      # The command line, run from its tarball and the SDK's.
+      - name: Verify the publishable CLI artifact
+        run: pnpm --filter @largerio/secret-cli verify-package
+
   # A workflow file GitHub cannot parse runs nothing and reports no failure.
   workflows:
     runs-on: ubuntu-latest
