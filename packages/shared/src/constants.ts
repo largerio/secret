@@ -37,5 +37,5 @@ export const MAX_MESSAGE_LENGTH = 4_294_967_295;
 // CAP_DIFFICULTY and CAP_CHALLENGE_COUNT env vars.
 export const DEFAULT_CAP_DIFFICULTY = 4;
 export const DEFAULT_CAP_CHALLENGE_COUNT = 50;
-export const CAP_CHALLENGE_SIZE = 32; // bytes per challenge salt
+export const CAP_CHALLENGE_SIZE = 32; // hex characters per challenge salt
 export const CAP_CHALLENGE_EXPIRES_MS = 600_000; // 10 minutes to solve

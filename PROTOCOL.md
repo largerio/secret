@@ -84,7 +84,9 @@ password.
   `A-Z a-z 0-9 _ -`.
 - `key`: the base key in base64url without padding, 43 characters. They
   hold 258 bits for 256, so the last character's two low bits are zero. A
-  reader MUST reject a key encoded any other way, as libsodium does. The web
+  reader MUST reject a key encoded any other way, as libsodium does, and
+  before reading the note: a format 0 read spends a read whatever the key, so
+  a key cut short in transit would otherwise burn the note unread. The web
   app also refuses any other shape (`^[A-Za-z0-9_-]{43}$`).
 
 The web app also gives the writer a management link,
@@ -498,7 +500,7 @@ answers the limits a client should respect before uploading:
 | `maxFileSize` | Sizes the limit on a single-shot upload: `maxFileSize × maxFilesPerNote` plus 1 MiB. |
 | `maxFilesPerNote` | The largest `fileCount`. |
 | `maxExpiry` | The largest `expiresIn`, in seconds. |
-| `chunkSize` | The largest message plaintext of a chunked note, in bytes. |
+| `chunkSize` | The largest message plaintext of a chunked note, in bytes: a positive integer, no larger than `maxChunkedFileSize` nor than 4,294,967,278 (a message's length, its 17-byte tag included, fits in 4 bytes). |
 | `maxChunkedFileSize` | The most file bytes a chunked note carries. It bounds the files, not what the format adds to them: an upload session may announce as many messages as that many bytes of files take in its format, a format 0 note's head message and a message started per file, or a format 1 body padded to its size class, with 524,288 bytes of room for its head. |
 
 ## Errors
