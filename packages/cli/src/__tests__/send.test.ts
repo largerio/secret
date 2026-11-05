@@ -81,6 +81,24 @@ describe("secret send", () => {
 		expect(client.createNote.mock.calls[0]?.[0]).not.toHaveProperty("capToken");
 	});
 
+	it("sends no API key over http to another machine, unless --allow-http", async () => {
+		const env = { SECRET_INSTANCE: "http://secret.example", SECRET_API_KEY: "the-key" };
+		const refused = sending({ env });
+		expect(await refused.run("send")).toBe(EXIT.usage);
+		expect(refused.stderr.text).toBe(
+			"secret: the API key would go to http://secret.example in the clear: use https, or pass --allow-http\n",
+		);
+		expect(refused.io.fetch).not.toHaveBeenCalled();
+
+		const allowed = sending({ env });
+		expect(await allowed.run("send", "--allow-http", "-q")).toBe(EXIT.ok);
+		expect(allowed.configs[0]).toMatchObject({ apiKey: "the-key" });
+
+		const proved = sending({ env: { SECRET_INSTANCE: "http://secret.example" } });
+		expect(await proved.run("send", "-q")).toBe(EXIT.ok);
+		expect(proved.pow).toHaveBeenCalledOnce();
+	});
+
 	it("takes --instance over SECRET_INSTANCE", async () => {
 		const { run, configs, fetch } = sending();
 		expect(await run("send", "--instance", "https://other.example/secret/")).toBe(EXIT.ok);

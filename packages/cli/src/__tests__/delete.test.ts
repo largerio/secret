@@ -26,6 +26,23 @@ describe("secret delete", () => {
 		});
 	});
 
+	it("sends no API key over http to another machine, unless --allow-http", async () => {
+		const link = `http://secret.example/note/${NOTE_ID}`;
+		const env = { SECRET_API_KEY: "the-key" };
+		const refused = harness({ env });
+		expect(await refused.run("delete", link, `--token=${DELETE_TOKEN}`)).toBe(EXIT.usage);
+		expect(refused.stderr.text).toBe(
+			"secret: the API key would go to http://secret.example in the clear: use https, or pass --allow-http\n",
+		);
+		expect(refused.configs).toEqual([]);
+
+		const allowed = harness({ env });
+		expect(await allowed.run("delete", link, `--token=${DELETE_TOKEN}`, "--allow-http")).toBe(
+			EXIT.ok,
+		);
+		expect(allowed.client.deleteNote).toHaveBeenCalledOnce();
+	});
+
 	it("prints its answer with --json, and nothing with --quiet", async () => {
 		const json = harness();
 		expect(await json.run("delete", LINK, `--token=${DELETE_TOKEN}`, "--json")).toBe(EXIT.ok);

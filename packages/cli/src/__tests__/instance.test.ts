@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CliError, EXIT } from "../errors.js";
 import {
+	assertKeyStaysPrivate,
 	connect,
 	fetchLimits,
 	formatOfLink,
@@ -181,6 +182,38 @@ describe("fetchLimits", () => {
 		const { io } = harness({ fetch: vi.fn(async () => response) });
 		const error = await cliErrorOf(() => fetchLimits(io, instance));
 		expect(error.message).toBe(`${ORIGIN} gave no limits (${detail}): is it a Secret instance?`);
+	});
+});
+
+describe("assertKeyStaysPrivate", () => {
+	it.each([
+		"https://secret.example",
+		"http://localhost:3000",
+		"http://app.localhost",
+		"http://127.0.0.1:8080",
+		"http://127.1",
+		"http://127.255.0.9",
+		"http://[::1]:3000",
+	])("lets a key go to %s", (url) => {
+		expect(() => assertKeyStaysPrivate(instanceOf(url), false)).not.toThrow();
+	});
+
+	it.each([
+		"http://secret.example",
+		"http://10.0.0.1",
+		"http://localhost.evil.example",
+		"http://127.0.0.1.evil.example",
+		"http://[::ffff:127.0.0.1]",
+		"http://[::2]",
+	])("keeps a key from going to %s in the clear", (url) => {
+		const instance = instanceOf(url);
+		expect(() => assertKeyStaysPrivate(instance, false)).toThrow(
+			expect.objectContaining({
+				message: `the API key would go to ${instance.origin} in the clear: use https, or pass --allow-http`,
+				exitCode: EXIT.usage,
+			}),
+		);
+		expect(() => assertKeyStaysPrivate(instance, true)).not.toThrow();
 	});
 });
 

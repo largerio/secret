@@ -35,7 +35,9 @@ Environment:
   SECRET_INSTANCE         The instance send writes to, when --instance is not given
   SECRET_API_KEY          An API key, for send and delete; SECRET_API_KEY_FILE
                           names a file that holds one. Without a key, the
-                          instance's proof of work is solved instead
+                          instance's proof of work is solved instead. Over
+                          http, a key goes to this machine only, unless
+                          --allow-http
   SECRET_PASSWORD         The password of a note, instead of asking for it
   SECRET_DEBUG=1          Show the stack of an unexpected error
 
@@ -69,6 +71,8 @@ Options:
   --mode <mode>           How the text is shown: text, markdown or secret
   --format <0|1>          The note's format (default: 1); 0 for an instance
                           older than 1.6.0
+  --allow-http            Send the API key over http to another machine,
+                          where anyone on the way can read it
   --json                  Print {link, id, expiresAt, deleteToken, maxReads}
   -q, --quiet             Print neither progress nor the delete token
 
@@ -117,6 +121,8 @@ link may be given without its key, the part after #.
 Options:
   --token=<deleteToken>   The note's delete token, after an =: a token may
                           start with a dash
+  --allow-http            Send the API key over http to another machine,
+                          where anyone on the way can read it
   --json                  Print {deleted: true}
   -q, --quiet             Print nothing once the note is deleted
 `;

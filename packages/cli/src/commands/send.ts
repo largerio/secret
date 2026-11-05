@@ -13,6 +13,7 @@ import { passwordOfNewNote, readApiKey } from "../credentials.js";
 import { CliError, EXIT, errnoOf, reasonOf } from "../errors.js";
 import { translateError } from "../failures.js";
 import {
+	assertKeyStaysPrivate,
 	connect,
 	fetchLimits,
 	type Instance,
@@ -37,6 +38,7 @@ const OPTIONS = {
 	format: { type: "string" },
 	password: { type: "boolean" },
 	"password-file": { type: "string" },
+	"allow-http": { type: "boolean" },
 } as const;
 
 interface SendOptions {
@@ -48,6 +50,7 @@ interface SendOptions {
 	readonly format: 0 | 1 | undefined;
 	readonly password: boolean;
 	readonly passwordFile: string | undefined;
+	readonly allowHttp: boolean;
 	readonly json: boolean;
 	readonly quiet: boolean;
 }
@@ -74,6 +77,7 @@ function optionsOf(args: ReadonlyArray<string>, io: Io): SendOptions {
 		// A password file says the note has one.
 		password: values.password === true || values["password-file"] !== undefined,
 		passwordFile: values["password-file"],
+		allowHttp: values["allow-http"] === true,
 		json: values.json === true,
 		quiet: values.quiet === true,
 	};
@@ -178,6 +182,9 @@ export async function send(args: ReadonlyArray<string>, io: Io): Promise<void> {
 	const { instance } = options;
 	const screen = createScreen(io.stderr, options.quiet);
 	const apiKey = await readApiKey(io);
+	if (apiKey !== undefined) {
+		assertKeyStaysPrivate(instance, options.allowHttp);
+	}
 	try {
 		const files = await openFiles(options.paths, io.cwd);
 		const limits = await fetchLimits(io, instance);

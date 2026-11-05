@@ -53,6 +53,36 @@ export function instanceOf(value: string): Instance {
 	return { baseUrl: url.origin + withoutTrailingSlashes(url.pathname), origin: url.origin };
 }
 
+/**
+ * Refuses to send an API key in the clear: over http to another machine,
+ * whoever is on the way could read it, then write with it. Over http to this
+ * one, as an instance runs in development, the key stays here; and
+ * `--allow-http` takes the risk elsewhere.
+ */
+export function assertKeyStaysPrivate(instance: Instance, allowHttp: boolean): void {
+	const url = new URL(instance.origin);
+	if (url.protocol === "https:" || allowHttp) {
+		return;
+	}
+	if (isLoopback(url.hostname)) {
+		return;
+	}
+	throw new CliError(
+		`the API key would go to ${instance.origin} in the clear: use https, or pass --allow-http`,
+		EXIT.usage,
+	);
+}
+
+/** This machine: `localhost` and the names under it, 127.0.0.0/8 and ::1, as a URL writes them. */
+function isLoopback(hostname: string): boolean {
+	return (
+		hostname === "localhost" ||
+		hostname.endsWith(".localhost") ||
+		hostname === "[::1]" ||
+		/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+	);
+}
+
 function urlOf(link: string): URL {
 	let url: URL;
 	try {

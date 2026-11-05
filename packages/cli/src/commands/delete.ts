@@ -2,12 +2,16 @@ import { parseArgs } from "node:util";
 import { readApiKey } from "../credentials.js";
 import { CliError, EXIT } from "../errors.js";
 import { notFound, translateError } from "../failures.js";
-import { connect, noteOf, proofOfWork } from "../instance.js";
+import { assertKeyStaysPrivate, connect, noteOf, proofOfWork } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
 import { createScreen, writeJson } from "../terminal.js";
 import type { Io } from "../types.js";
 
-const OPTIONS = { ...COMMON_OPTIONS, token: { type: "string" } } as const;
+const OPTIONS = {
+	...COMMON_OPTIONS,
+	token: { type: "string" },
+	"allow-http": { type: "boolean" },
+} as const;
 
 /** Deletes a note with its delete token: a write, let in by an API key or a proof of work. */
 export async function deleteNote(args: ReadonlyArray<string>, io: Io): Promise<void> {
@@ -24,6 +28,9 @@ export async function deleteNote(args: ReadonlyArray<string>, io: Io): Promise<v
 	}
 	const screen = createScreen(io.stderr, values.quiet === true);
 	const apiKey = await readApiKey(io);
+	if (apiKey !== undefined) {
+		assertKeyStaysPrivate(note, values["allow-http"] === true);
+	}
 	try {
 		const client = await connect(io, note, apiKey);
 		// No proof of work for a note that is gone.
