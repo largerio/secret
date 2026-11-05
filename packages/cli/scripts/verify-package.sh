@@ -141,9 +141,9 @@ fi
 grep -qE "$SPECIFIER@largerio/secret-sdk['\"]" "$CLI"/dist/*.js ||
 	fail "dist does not import @largerio/secret-sdk: the SDK was inlined, or is not used"
 
-# A placeholder until the first release: twice the size of the bundle then,
-# room to grow that still trips on a dependency inlined by mistake.
-MAX_BUNDLE_BYTES=131072
+# Twice the 62 KB of the first release: room to grow that still trips on a
+# dependency inlined by mistake (the SDK alone is 75 KB, libsodium megabytes).
+MAX_BUNDLE_BYTES=126976
 echo "→ checking the bundle stays under $MAX_BUNDLE_BYTES bytes"
 BUNDLE_BYTES=$(cat "$CLI"/dist/*.js | wc -c | tr -d ' ')
 if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
