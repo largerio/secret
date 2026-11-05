@@ -4,6 +4,7 @@ import { CliError, EXIT } from "./errors.js";
 import { solveProofOfWork } from "./pow.js";
 import type { Screen } from "./terminal.js";
 import type { Io, NotesClient } from "./types.js";
+import { withoutTrailingSlashes } from "./url.js";
 
 /** An instance, as the command talks to it and names it. */
 export interface Instance {
@@ -27,14 +28,6 @@ export interface NoteLink extends NoteAddress {
 const NOTE_ID = new RegExp(`^[A-Za-z0-9_-]{${NOTE_ID_LENGTH}}$`);
 /** What a format 1 link's fragment starts with, before the key. */
 const FORMAT_1_PREFIX = "1.";
-
-function withoutTrailingSlashes(path: string): string {
-	let end = path.length;
-	while (end > 0 && path[end - 1] === "/") {
-		end--;
-	}
-	return path.slice(0, end);
-}
 
 function isHttp(url: URL): boolean {
 	return url.protocol === "http:" || url.protocol === "https:";

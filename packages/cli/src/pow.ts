@@ -2,6 +2,7 @@ import { hash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { parseJson, problemCodeOf, rateLimited, readBodyAtMost, recordOf } from "./answers.js";
 import { CliError, EXIT } from "./errors.js";
+import { withoutTrailingSlashes } from "./url.js";
 
 /*
  * The proof of work is Cap's (PROTOCOL.md, "Proof of work"), as the instance
@@ -63,7 +64,7 @@ export async function solveProofOfWork(
 	baseUrl: string,
 	options: ProofOfWorkOptions,
 ): Promise<string> {
-	const base = baseUrl.replace(/\/+$/, "");
+	const base = withoutTrailingSlashes(baseUrl);
 	const instance: CapInstance = {
 		base,
 		origin: new URL(base).origin,

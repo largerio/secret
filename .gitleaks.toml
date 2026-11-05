@@ -12,3 +12,8 @@ paths = [
   '''\.env\.example$''',
   '''pnpm-lock\.yaml$''',
 ]
+# The worked example of the proof of work in PROTOCOL.md: a challenge token
+# made of hex digits in order, not a secret.
+regexes = [
+  '''^0123456789abcdef0123456789abcdef0123456789abcdef01$''',
+]
