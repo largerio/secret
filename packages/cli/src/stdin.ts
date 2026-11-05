@@ -4,6 +4,9 @@ import type { InputStream } from "./types.js";
 
 /** The most UTF-8 bytes the longest text takes, its UTF-16 code units 3 bytes each at most. */
 const MAX_TEXT_BYTES = 3 * MAX_TEXT_SIZE;
+/** The longest line taken for a link: an instance's URL and a note's, with room to spare. */
+export const MAX_LINK_BYTES = 4096;
+const LINE_FEED = 0x0a;
 
 function tooLong(): CliError {
 	return new CliError(
@@ -18,7 +21,7 @@ function tooLong(): CliError {
  * without being loaded.
  */
 export async function readText(stdin: InputStream, signal: AbortSignal): Promise<string> {
-	const bytes = await readAtMost(stdin, MAX_TEXT_BYTES, signal);
+	const bytes = await readAtMost(stdin, MAX_TEXT_BYTES, signal, false);
 	if (bytes === undefined) {
 		throw tooLong();
 	}
@@ -35,13 +38,31 @@ export async function readText(stdin: InputStream, signal: AbortSignal): Promise
 }
 
 /**
- * The bytes of `source` to its end, or undefined past `limit`. An abort
- * rejects at once, with the signal's reason, even while a read waits.
+ * The link on stdin: its first line, without the spaces around it. Reading
+ * stops at the line's end, or past what a link can take.
+ */
+export async function readLink(stdin: InputStream, signal: AbortSignal): Promise<string> {
+	const bytes = await readAtMost(stdin, MAX_LINK_BYTES, signal, true);
+	if (bytes === undefined) {
+		throw new CliError("the first line of stdin is longer than a link", EXIT.usage);
+	}
+	const link = new TextDecoder().decode(bytes).trim();
+	if (link === "") {
+		throw new CliError("no link on stdin: pipe it in, or give it: secret read <link>", EXIT.usage);
+	}
+	return link;
+}
+
+/**
+ * The bytes of `source` to its end, or to its first line feed, left out, if
+ * `toLineFeed`; undefined past `limit`. An abort rejects at once, with the
+ * signal's reason, even while a read waits.
  */
 async function readAtMost(
 	source: InputStream,
 	limit: number,
 	signal: AbortSignal,
+	toLineFeed: boolean,
 ): Promise<Uint8Array | undefined> {
 	signal.throwIfAborted();
 	const iterator = source[Symbol.asyncIterator]();
@@ -59,11 +80,16 @@ async function readAtMost(
 			if (result.done === true) {
 				return Buffer.concat(chunks);
 			}
-			size += result.value.length;
+			const end = toLineFeed ? result.value.indexOf(LINE_FEED) : -1;
+			const chunk = end === -1 ? result.value : result.value.subarray(0, end);
+			size += chunk.length;
 			if (size > limit) {
 				return undefined;
 			}
-			chunks.push(result.value);
+			chunks.push(chunk);
+			if (end !== -1) {
+				return Buffer.concat(chunks);
+			}
 		}
 	} finally {
 		signal.removeEventListener("abort", onAbort);

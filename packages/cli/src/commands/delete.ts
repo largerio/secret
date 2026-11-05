@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { readApiKey } from "../credentials.js";
 import { CliError, EXIT } from "../errors.js";
 import { notFound, translateError } from "../failures.js";
-import { connect, linkOf, proofOfWork } from "../instance.js";
+import { connect, noteOf, proofOfWork } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
 import { createScreen, writeJson } from "../terminal.js";
 import type { Io } from "../types.js";
@@ -14,25 +14,25 @@ export async function deleteNote(args: ReadonlyArray<string>, io: Io): Promise<v
 	const { values, positionals } = parsing("delete", () =>
 		parseArgs({ args: [...args], options: OPTIONS, allowPositionals: true }),
 	);
-	const link = linkOf(linkArgument(positionals, "delete"));
+	const note = noteOf(linkArgument(positionals, "delete"));
 	const token = values.token?.trim();
 	if (!token) {
 		throw new CliError(
-			"give the note's delete token: secret delete <link> --token <deleteToken>",
+			"give the note's delete token: secret delete <link> --token=<deleteToken>",
 			EXIT.usage,
 		);
 	}
 	const screen = createScreen(io.stderr, values.quiet === true);
 	const apiKey = await readApiKey(io);
 	try {
-		const client = await connect(io, link, apiKey);
+		const client = await connect(io, note, apiKey);
 		// No proof of work for a note that is gone.
-		const info = await client.checkNote(link.id, { signal: io.signal });
+		const info = await client.checkNote(note.id, { signal: io.signal });
 		if (!info.exists) {
 			throw notFound();
 		}
-		const capToken = apiKey === undefined ? await proofOfWork(io, link, screen) : undefined;
-		await client.deleteNote(link.id, token, capToken, { signal: io.signal });
+		const capToken = apiKey === undefined ? await proofOfWork(io, note, screen) : undefined;
+		await client.deleteNote(note.id, token, capToken, { signal: io.signal });
 		if (values.json === true) {
 			writeJson(io.stdout, { deleted: true });
 			return;
@@ -40,7 +40,7 @@ export async function deleteNote(args: ReadonlyArray<string>, io: Io): Promise<v
 		screen.info("The note is deleted.");
 	} catch (err) {
 		throw translateError(err, {
-			instance: link,
+			instance: note,
 			write: { apiKey: apiKey !== undefined },
 			namesNote: true,
 		});

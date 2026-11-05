@@ -1,7 +1,16 @@
 import { SecretNetworkError } from "@largerio/secret-sdk";
 import { describe, expect, it } from "vitest";
 import { EXIT } from "../errors.js";
-import { EXPIRES_AT, existingNote, harness, LINK, NOTE_ID, ORIGIN, without } from "./harness.js";
+import {
+	EXPIRES_AT,
+	existingNote,
+	harness,
+	KEY,
+	LINK,
+	NOTE_ID,
+	ORIGIN,
+	without,
+} from "./harness.js";
 
 const UNCOUNTED = without(existingNote({ maxReads: 3 }), "readCount");
 const FORMAT_0 = without(existingNote({ hasPassword: true }), "passwordAttemptsLeft", "envelope");
@@ -12,7 +21,7 @@ describe("secret check", () => {
 		client.checkNote.mockResolvedValue(
 			existingNote({ hasPassword: true, passwordAttemptsLeft: 4, fileCount: 2, maxReads: 3 }),
 		);
-		expect(await run("check", LINK, "--instance", "https://ignored.example")).toBe(EXIT.ok);
+		expect(await run("check", LINK)).toBe(EXIT.ok);
 		expect(stdout.text).toBe(
 			[
 				"Password: yes, 4 wrong ones before the note is deleted",
@@ -85,9 +94,28 @@ describe("secret check", () => {
 		expect(stderr.text).toBe(`secret: could not reach ${ORIGIN}\n`);
 	});
 
-	it("refuses an unknown option", async () => {
+	it("takes the link without its key, or with one it does not use", async () => {
+		const bare = harness();
+		expect(await bare.run("check", `${ORIGIN}/note/${NOTE_ID}`)).toBe(EXIT.ok);
+		expect(bare.client.checkNote).toHaveBeenCalledWith(NOTE_ID, expect.anything());
+
+		const damaged = harness();
+		expect(await damaged.run("check", `${ORIGIN}/note/${NOTE_ID}#2.cut`)).toBe(EXIT.ok);
+	});
+
+	it("refuses a link whose id is no note's, before any request", async () => {
+		const { run, stderr, configs } = harness();
+		expect(await run("check", `${ORIGIN}/note/${NOTE_ID}%3F#${KEY}`)).toBe(EXIT.usage);
+		expect(stderr.text).toBe("secret: this is not the link of a note\n");
+		expect(configs).toEqual([]);
+	});
+
+	it.each([
+		[["--token", "x"], "--token"],
+		[["--instance", ORIGIN], "--instance"],
+	])("refuses an unknown option: %j", async (args, option) => {
 		const { run, stderr } = harness();
-		expect(await run("check", LINK, "--token", "x")).toBe(EXIT.usage);
-		expect(stderr.text).toBe("secret: unknown option '--token': see secret check --help\n");
+		expect(await run("check", LINK, ...args)).toBe(EXIT.usage);
+		expect(stderr.text).toBe(`secret: unknown option '${option}': see secret check --help\n`);
 	});
 });

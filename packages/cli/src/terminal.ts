@@ -229,7 +229,7 @@ export function terminalOver(
 }
 
 function nothingTyped(): CliError {
-	return new CliError("no password was typed", EXIT.usage);
+	return new CliError("nothing was typed", EXIT.usage);
 }
 
 /**

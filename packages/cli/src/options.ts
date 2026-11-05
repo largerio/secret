@@ -3,15 +3,11 @@ import { CliError, EXIT } from "./errors.js";
 import type { CommandName } from "./help.js";
 import { formatDuration, parseDuration } from "./units.js";
 
-/**
- * The options every command takes. `--instance` is the one of `send`: a link
- * names its own instance, so the other commands take it and ignore it.
- */
+/** The options every command takes. */
 export const COMMON_OPTIONS = {
 	help: { type: "boolean", short: "h" },
 	json: { type: "boolean" },
 	quiet: { type: "boolean", short: "q" },
-	instance: { type: "string" },
 } as const satisfies ParseArgsOptionsConfig;
 
 /** Whether the arguments ask for the command's help, `--` ending the options. */
@@ -51,14 +47,23 @@ export function lowerFirst(text: string): string {
 	return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
-/** The one link a command takes, never repeated in a message: it holds a key. */
-export function linkArgument(positionals: ReadonlyArray<string>, command: CommandName): string {
+/** The link a command is given, if any, never repeated in a message: it holds a key. */
+export function optionalLink(
+	positionals: ReadonlyArray<string>,
+	command: CommandName,
+): string | undefined {
 	const [link, ...rest] = positionals;
-	if (link === undefined) {
-		throw new CliError(`give the link of the note: secret ${command} <link>`, EXIT.usage);
-	}
 	if (rest.length > 0) {
 		throw new CliError(`give one link: secret ${command} <link>`, EXIT.usage);
+	}
+	return link;
+}
+
+/** The one link a command takes. */
+export function linkArgument(positionals: ReadonlyArray<string>, command: CommandName): string {
+	const link = optionalLink(positionals, command);
+	if (link === undefined) {
+		throw new CliError(`give the link of the note: secret ${command} <link>`, EXIT.usage);
 	}
 	return link;
 }

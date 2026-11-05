@@ -11,8 +11,9 @@ import { askPassword, givenPassword, withTerminal } from "../credentials.js";
 import { CliError, EXIT, reasonOf } from "../errors.js";
 import { notFound, translateError, WRONG_PASSWORD_OR_LINK } from "../failures.js";
 import { createOutputDirectory, type WrittenFile } from "../files.js";
-import { connect, linkOf, type NoteLink } from "../instance.js";
-import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
+import { connect, formatOfLink, linkOf, type NoteLink } from "../instance.js";
+import { COMMON_OPTIONS, optionalLink, parsing } from "../options.js";
+import { readLink } from "../stdin.js";
 import {
 	createScreen,
 	describeProgress,
@@ -35,6 +36,30 @@ const OPTIONS = {
  * decrypt it spent a read all the same.
  */
 const FORMAT_0_REFUSED = `${WRONG_PASSWORD_OR_LINK}: the read is spent all the same, a note of format 0 cannot be checked first`;
+
+/**
+ * The link to read: the argument, else the first line of stdin when it is
+ * piped in, else typed on the terminal without being shown. An argument stays
+ * in the shell's history and shows in `ps`; the other two leave no trace.
+ */
+async function linkToRead(positionals: ReadonlyArray<string>, io: Io): Promise<NoteLink> {
+	const given = optionalLink(positionals, "read");
+	if (given !== undefined) {
+		return linkOf(given);
+	}
+	if (!io.stdin.isTTY) {
+		return linkOf(await readLink(io.stdin, io.signal));
+	}
+	const typed = await withTerminal(
+		io,
+		(terminal) => terminal.readHidden("Link: ", io.signal),
+		"no terminal to ask the link on: pipe it on stdin, or give it: secret read <link>",
+	);
+	if (typed.trim() === "") {
+		throw new CliError("no link was typed", EXIT.usage);
+	}
+	return linkOf(typed.trim());
+}
 
 /**
  * Checks, before a read is spent, that the files have somewhere to go: a
@@ -127,8 +152,8 @@ async function readInto(
 				throw err;
 			}
 			if (!format1) {
-				// A numbered link to a note of format 0 is refused before it is read.
-				throw link.keyFragment.includes(".") ? err : new CliError(FORMAT_0_REFUSED, EXIT.refused);
+				// A format 1 link to a note of format 0 is refused before it is read.
+				throw formatOfLink(link) === 1 ? err : new CliError(FORMAT_0_REFUSED, EXIT.refused);
 			}
 			if (!asks) {
 				throw err;
@@ -170,7 +195,7 @@ export async function read(args: ReadonlyArray<string>, io: Io): Promise<void> {
 	const { values, positionals } = parsing("read", () =>
 		parseArgs({ args: [...args], options: OPTIONS, allowPositionals: true }),
 	);
-	const link = linkOf(linkArgument(positionals, "read"));
+	const link = await linkToRead(positionals, io);
 	const json = values.json === true;
 	const screen = createScreen(io.stderr, values.quiet === true);
 	const dir = resolve(io.cwd, values.out ?? ".");

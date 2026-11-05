@@ -1,7 +1,7 @@
 import { MAX_TEXT_SIZE } from "@largerio/secret-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { EXIT } from "../errors.js";
-import { readText } from "../stdin.js";
+import { MAX_LINK_BYTES, readLink, readText } from "../stdin.js";
 import type { InputStream } from "../types.js";
 import { input } from "./harness.js";
 
@@ -89,4 +89,51 @@ describe("readText", () => {
 		};
 		await expect(readText(failing, signal)).rejects.toThrow("EIO");
 	});
+});
+
+describe("readLink", () => {
+	it("reads the first line, without the spaces around it, and nothing after it", async () => {
+		const read = vi.fn();
+		const stdin: InputStream = {
+			isTTY: false,
+			async *[Symbol.asyncIterator]() {
+				yield new TextEncoder().encode("  https://secret.exa");
+				yield new TextEncoder().encode("mple/note/x\r\nsecond line");
+				read();
+				yield new TextEncoder().encode("never read");
+			},
+		};
+		expect(await readLink(stdin, signal)).toBe("https://secret.example/note/x");
+		expect(read).not.toHaveBeenCalled();
+	});
+
+	it("reads a link without a line feed to the end of stdin", async () => {
+		expect(await readLink(input(["https://secret.example/note/x"]), signal)).toBe(
+			"https://secret.example/note/x",
+		);
+	});
+
+	it("takes a line as long as a link may be", async () => {
+		const longest = "a".repeat(MAX_LINK_BYTES);
+		expect(await readLink(input([`${longest}\n`]), signal)).toBe(longest);
+	});
+
+	it("refuses a longer line", async () => {
+		await expect(
+			readLink(input(["a".repeat(MAX_LINK_BYTES), "a\n"]), signal),
+		).rejects.toMatchObject({
+			message: "the first line of stdin is longer than a link",
+			exitCode: EXIT.usage,
+		});
+	});
+
+	it.each([[[]], [["\n", "https://secret.example/note/x"]], [[" \r\n"]]])(
+		"refuses a first line without a link: %j",
+		async (chunks) => {
+			await expect(readLink(input(chunks), signal)).rejects.toMatchObject({
+				message: "no link on stdin: pipe it in, or give it: secret read <link>",
+				exitCode: EXIT.usage,
+			});
+		},
+	);
 });

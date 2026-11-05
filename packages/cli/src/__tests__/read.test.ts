@@ -17,6 +17,7 @@ import {
 	fakeDirectory,
 	fakeTerminal,
 	harness,
+	input,
 	KEY,
 	LINK,
 	NOTE_ID,
@@ -471,9 +472,75 @@ describe("secret read", () => {
 		);
 	});
 
-	it("needs the link", async () => {
-		const { run, stderr } = reading();
-		expect(await run("read")).toBe(EXIT.usage);
-		expect(stderr.text).toBe("secret: give the link of the note: secret read <link>\n");
+	describe("the link", () => {
+		it("is the first line of stdin when it is piped in", async () => {
+			const { run, client, openTerminal } = reading({ stdin: input([` ${LINK}\r\n`, "more"]) });
+			expect(await run("read")).toBe(EXIT.ok);
+			expect(client.readNoteInto).toHaveBeenCalledWith(NOTE_ID, KEY, expect.anything());
+			expect(openTerminal).not.toHaveBeenCalled();
+		});
+
+		it("is asked on the terminal, and not shown, when stdin is one", async () => {
+			const terminal = fakeTerminal([` ${LINK} `]);
+			const { run, client } = reading({ stdin: input([], true), terminal });
+			expect(await run("read")).toBe(EXIT.ok);
+			expect(terminal.readHidden).toHaveBeenCalledWith("Link: ", expect.any(AbortSignal));
+			expect(terminal.close).toHaveBeenCalledOnce();
+			expect(client.readNoteInto).toHaveBeenCalledWith(NOTE_ID, KEY, expect.anything());
+		});
+
+		it.each([
+			[
+				"nothing on stdin",
+				{ stdin: input([]) },
+				"no link on stdin: pipe it in, or give it: secret read <link>",
+			],
+			[
+				"no terminal to ask it on",
+				{ stdin: input([], true) },
+				"no terminal to ask the link on: pipe it on stdin, or give it: secret read <link>",
+			],
+			[
+				"nothing typed",
+				{ stdin: input([], true), terminal: fakeTerminal([" "]) },
+				"no link was typed",
+			],
+		])("is needed: %s", async (_name, setup, message) => {
+			const { run, stderr, configs } = reading(setup);
+			expect(await run("read")).toBe(EXIT.usage);
+			expect(stderr.text).toBe(`secret: ${message}\n`);
+			expect(configs).toEqual([]);
+		});
+
+		it("is one", async () => {
+			const { run, stderr } = reading();
+			expect(await run("read", LINK, LINK)).toBe(EXIT.usage);
+			expect(stderr.text).toBe("secret: give one link: secret read <link>\n");
+			expect(stderr.text).not.toContain(KEY);
+		});
+
+		it.each([["#1.cut-short"], [`#2.${KEY.slice(2)}`]])(
+			"is refused wrong or damaged before any request: %s",
+			async (fragment) => {
+				const { run, stderr, configs } = reading();
+				expect(await run("read", `${ORIGIN}/note/${NOTE_ID}${fragment}`)).toBe(EXIT.refused);
+				expect(stderr.text).toBe("secret: the link is wrong or damaged\n");
+				expect(configs).toEqual([]);
+			},
+		);
+
+		it("is refused without its key", async () => {
+			const { run, stderr } = reading();
+			expect(await run("read", `${ORIGIN}/note/${NOTE_ID}`)).toBe(EXIT.usage);
+			expect(stderr.text).toBe(
+				"secret: the link has no key: give the whole of it, quoted, the part after # included\n",
+			);
+		});
+
+		it("is refused with an unknown option", async () => {
+			const { run, stderr } = reading();
+			expect(await run("read", LINK, "--instance", ORIGIN)).toBe(EXIT.usage);
+			expect(stderr.text).toBe("secret: unknown option '--instance': see secret read --help\n");
+		});
 	});
 });

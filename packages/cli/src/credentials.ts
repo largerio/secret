@@ -61,14 +61,18 @@ export async function givenPassword(io: Io, file: string | undefined): Promise<s
 	return password;
 }
 
-/** Runs `use` on the controlling terminal, closed afterwards; refused without one. */
-export async function withTerminal<T>(io: Io, use: (terminal: Terminal) => Promise<T>): Promise<T> {
+/**
+ * Runs `use` on the controlling terminal, closed afterwards; without one,
+ * refused with `noTerminal`, which says how else to give what it asks.
+ */
+export async function withTerminal<T>(
+	io: Io,
+	use: (terminal: Terminal) => Promise<T>,
+	noTerminal = "no terminal to ask the password on: set SECRET_PASSWORD, or pass --password-file",
+): Promise<T> {
 	const terminal = io.openTerminal?.();
 	if (terminal === undefined) {
-		throw new CliError(
-			"no terminal to ask the password on: set SECRET_PASSWORD, or pass --password-file",
-			EXIT.usage,
-		);
+		throw new CliError(noTerminal, EXIT.usage);
 	}
 	try {
 		return await use(terminal);

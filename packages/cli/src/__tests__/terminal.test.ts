@@ -247,7 +247,7 @@ describe("terminalOver", () => {
 		const { input, terminal: tty } = terminal();
 		const answer = tty.readHidden("> ", new AbortController().signal);
 		input.emit("end");
-		await expect(answer).rejects.toThrow("no password was typed");
+		await expect(answer).rejects.toThrow("nothing was typed");
 	});
 
 	it("stops at an abort, with its reason", async () => {

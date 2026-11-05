@@ -1,10 +1,5 @@
-import {
-	SecretClient,
-	type SecretClientConfig,
-	type SecretValidationError,
-} from "@largerio/secret-sdk";
+import { NOTE_ID_LENGTH, SecretClient, type SecretClientConfig } from "@largerio/secret-sdk";
 import { CliError, EXIT } from "./errors.js";
-import { lowerFirst } from "./options.js";
 import { solveProofOfWork } from "./pow.js";
 import type { Screen } from "./terminal.js";
 import type { Io, NotesClient } from "./types.js";
@@ -17,11 +12,20 @@ export interface Instance {
 	readonly origin: string;
 }
 
-/** A note's link, split. */
-export interface NoteLink extends Instance {
+/** A note, as its link names it: its instance and its id. */
+export interface NoteAddress extends Instance {
 	readonly id: string;
+}
+
+/** A note's link, split: where the note is, and its key. */
+export interface NoteLink extends NoteAddress {
 	readonly keyFragment: string;
 }
+
+/** A note's id (PROTOCOL.md, "The link"), which goes into the paths of the requests. */
+const NOTE_ID = new RegExp(`^[A-Za-z0-9_-]{${NOTE_ID_LENGTH}}$`);
+/** What a format 1 link's fragment starts with, before the key. */
+const FORMAT_1_PREFIX = "1.";
 
 function withoutTrailingSlashes(path: string): string {
 	let end = path.length;
@@ -49,11 +53,7 @@ export function instanceOf(value: string): Instance {
 	return { baseUrl: url.origin + withoutTrailingSlashes(url.pathname), origin: url.origin };
 }
 
-/**
- * A note's link: its instance (the origin and the path before `/note/`), the
- * note's id and its key. No message repeats the link.
- */
-export function linkOf(link: string): NoteLink {
+function urlOf(link: string): URL {
 	let url: URL;
 	try {
 		url = new URL(link);
@@ -63,18 +63,79 @@ export function linkOf(link: string): NoteLink {
 	if (!isHttp(url)) {
 		throw new CliError("the link must be an http or https URL", EXIT.usage);
 	}
-	let note: { id: string; keyFragment: string };
-	try {
-		note = SecretClient.parseShareUrl(link);
-	} catch (err) {
-		// A SecretValidationError, whose message names what is missing, not the link.
-		const message = lowerFirst((err as SecretValidationError).message);
-		throw new CliError(`this is not the link of a note: ${message}`, EXIT.usage);
-	}
-	// The same split as parseShareUrl's, which found a note in it.
+	return url;
+}
+
+/**
+ * Where a link's note is: its instance, the origin and the path before
+ * `/note/`, and its id, which must be one before any request names it: a
+ * forged one could make a request another endpoint's, the read that spends.
+ * The key, if the link holds one, is left alone. No message repeats the link.
+ */
+export function noteOf(link: string): NoteAddress {
+	return addressOf(urlOf(link));
+}
+
+function addressOf(url: URL): NoteAddress {
+	// Split as the SDK's parseShareUrl splits it, an id left encoded refused.
 	const parts = url.pathname.split("/");
-	const prefix = parts.slice(0, parts.indexOf("note")).join("/");
-	return { baseUrl: url.origin + prefix, origin: url.origin, ...note };
+	const index = parts.indexOf("note");
+	const id = index === -1 ? undefined : parts[index + 1];
+	if (id === undefined || !NOTE_ID.test(id)) {
+		throw new CliError("this is not the link of a note", EXIT.usage);
+	}
+	return { baseUrl: url.origin + parts.slice(0, index).join("/"), origin: url.origin, id };
+}
+
+/**
+ * A note's link, with its key, which must be one before the note is read: a
+ * key cut short, or of a format this version does not know, could only spend
+ * a read for nothing.
+ */
+export function linkOf(link: string): NoteLink {
+	const url = urlOf(link);
+	const note = addressOf(url);
+	const fragment = url.hash.slice(1);
+	if (fragment === "") {
+		throw new CliError(
+			"the link has no key: give the whole of it, quoted, the part after # included",
+			EXIT.usage,
+		);
+	}
+	let keyFragment: string;
+	try {
+		keyFragment = decodeURIComponent(fragment);
+	} catch {
+		throw damagedLink();
+	}
+	const key = keyFragment.startsWith(FORMAT_1_PREFIX)
+		? keyFragment.slice(FORMAT_1_PREFIX.length)
+		: keyFragment;
+	if (!isKey(key)) {
+		throw damagedLink();
+	}
+	return { ...note, keyFragment };
+}
+
+/** The format a link's key is in, as `linkOf` checked it: 1 after `1.`, 0 for a bare key. */
+export function formatOfLink(link: NoteLink): 0 | 1 {
+	return link.keyFragment.startsWith(FORMAT_1_PREFIX) ? 1 : 0;
+}
+
+/**
+ * Whether `text` is a key as PROTOCOL.md writes it ("The link"): 32 bytes in
+ * 43 base64url characters, the last one's two spare bits zero. Anything else
+ * after `1.`, or another number before the dot, is no key.
+ */
+function isKey(text: string): boolean {
+	return (
+		/^[A-Za-z0-9_-]{43}$/.test(text) &&
+		Buffer.from(text, "base64url").toString("base64url") === text
+	);
+}
+
+function damagedLink(): CliError {
+	return new CliError("the link is wrong or damaged", EXIT.refused);
 }
 
 /** What an instance announces at `GET /api/v1/config` (PROTOCOL.md, "Instance limits"). */

@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { CliError, EXIT } from "../errors.js";
-import { connect, fetchLimits, instanceOf, linkOf, proofOfWork } from "../instance.js";
+import {
+	connect,
+	fetchLimits,
+	formatOfLink,
+	instanceOf,
+	linkOf,
+	noteOf,
+	proofOfWork,
+} from "../instance.js";
 import { createScreen } from "../terminal.js";
 import {
 	cliErrorOf,
@@ -46,6 +54,49 @@ describe("instanceOf", () => {
 	);
 });
 
+/** A format 0 key: 43 base64url characters, the last one's two spare bits zero. */
+const FORMAT_0_KEY = KEY.slice(2);
+
+describe("noteOf", () => {
+	it("splits a link into its instance and its note, without its key", () => {
+		expect(noteOf(`${ORIGIN}/note/${NOTE_ID}`)).toEqual({
+			baseUrl: ORIGIN,
+			origin: ORIGIN,
+			id: NOTE_ID,
+		});
+	});
+
+	it("keeps the path an instance is served under", () => {
+		expect(noteOf(`${ORIGIN}/apps/secret/note/${NOTE_ID}`)).toEqual({
+			baseUrl: `${ORIGIN}/apps/secret`,
+			origin: ORIGIN,
+			id: NOTE_ID,
+		});
+	});
+
+	it("leaves the key alone, whatever it is", () => {
+		for (const fragment of ["", "#", `#${KEY}`, "#2.cut", "#%E0%A4%A"]) {
+			expect(noteOf(`${LINK.split("#")[0]}${fragment}`)).toMatchObject({ id: NOTE_ID });
+		}
+	});
+
+	it.each([
+		[`/note/${NOTE_ID}`, "this is not a link: give the whole of it, https:// included"],
+		[`javascript:alert(1)//note/${NOTE_ID}`, "the link must be an http or https URL"],
+		[`${ORIGIN}/notes/${NOTE_ID}`, "this is not the link of a note"],
+		[`${ORIGIN}/note`, "this is not the link of a note"],
+		[`${ORIGIN}/note/`, "this is not the link of a note"],
+		// Decoded, the id would end the path there, and the request would be another's.
+		[`${ORIGIN}/note/${NOTE_ID}%3F`, "this is not the link of a note"],
+		[`${ORIGIN}/note/${NOTE_ID.slice(1)}`, "this is not the link of a note"],
+		[`${ORIGIN}/note/${NOTE_ID}x`, "this is not the link of a note"],
+		[`${ORIGIN}/note/${NOTE_ID.slice(1)}.`, "this is not the link of a note"],
+		[`${ORIGIN}/note/%41${NOTE_ID.slice(1)}`, "this is not the link of a note"],
+	])("refuses %s without repeating it", (link, message) => {
+		expect(() => noteOf(link)).toThrow(expect.objectContaining({ message, exitCode: EXIT.usage }));
+	});
+});
+
 describe("linkOf", () => {
 	it("splits a link into its instance, its note and its key", () => {
 		expect(linkOf(LINK)).toEqual({
@@ -56,28 +107,50 @@ describe("linkOf", () => {
 		});
 	});
 
-	it("keeps the path an instance is served under", () => {
-		expect(linkOf(`${ORIGIN}/apps/secret/note/${NOTE_ID}#${KEY}`)).toMatchObject({
-			baseUrl: `${ORIGIN}/apps/secret`,
-			origin: ORIGIN,
-			id: NOTE_ID,
+	it("takes the key of either format, decoded", () => {
+		expect(linkOf(`${ORIGIN}/note/${NOTE_ID}#${FORMAT_0_KEY}`)).toMatchObject({
+			keyFragment: FORMAT_0_KEY,
+		});
+		expect(linkOf(`${ORIGIN}/note/${NOTE_ID}#1%2E${FORMAT_0_KEY}`)).toMatchObject({
+			keyFragment: KEY,
 		});
 	});
 
+	it("refuses a link without a key", () => {
+		expect(() => linkOf(`${ORIGIN}/note/${NOTE_ID}#`)).toThrow(
+			expect.objectContaining({
+				message: "the link has no key: give the whole of it, quoted, the part after # included",
+				exitCode: EXIT.usage,
+			}),
+		);
+	});
+
+	it("refuses an id before its key", () => {
+		expect(() => linkOf(`${ORIGIN}/note/${NOTE_ID}%3F#${KEY}`)).toThrow(
+			expect.objectContaining({ message: "this is not the link of a note" }),
+		);
+	});
+
 	it.each([
-		[`/note/${NOTE_ID}#${KEY}`, "this is not a link: give the whole of it, https:// included"],
-		[`javascript:alert(1)//note/${NOTE_ID}#${KEY}`, "the link must be an http or https URL"],
-		[
-			`${ORIGIN}/note/${NOTE_ID}`,
-			"this is not the link of a note: invalid share URL: missing key fragment",
-		],
-		[
-			`${ORIGIN}/notes/${NOTE_ID}#${KEY}`,
-			"this is not the link of a note: invalid share URL: missing note ID",
-		],
-		[`${ORIGIN}/note/${NOTE_ID}#%E0%A4%A`, "this is not the link of a note: invalid share URL"],
-	])("refuses %s without repeating it", (link, message) => {
-		expect(() => linkOf(link)).toThrow(expect.objectContaining({ message, exitCode: EXIT.usage }));
+		["a format 1 key cut short", `1.${FORMAT_0_KEY.slice(1)}`],
+		["a format 0 key cut short", FORMAT_0_KEY.slice(1)],
+		["a key too long", `${FORMAT_0_KEY}A`],
+		["a key whose last character carries stray bits", `${FORMAT_0_KEY.slice(0, -1)}B`],
+		["a key out of the alphabet", `${FORMAT_0_KEY.slice(0, -1)}=`],
+		["a format this version does not know", `2.${FORMAT_0_KEY}`],
+		["a format written with a leading zero", `01.${FORMAT_0_KEY}`],
+		["an encoding that does not decode", "%E0%A4%A"],
+	])("refuses %s as a link wrong or damaged, without repeating it", (_name, fragment) => {
+		expect(() => linkOf(`${ORIGIN}/note/${NOTE_ID}#${fragment}`)).toThrow(
+			expect.objectContaining({ message: "the link is wrong or damaged", exitCode: EXIT.refused }),
+		);
+	});
+});
+
+describe("formatOfLink", () => {
+	it("tells the format by the key's prefix", () => {
+		expect(formatOfLink(linkOf(LINK))).toBe(1);
+		expect(formatOfLink(linkOf(`${ORIGIN}/note/${NOTE_ID}#${FORMAT_0_KEY}`))).toBe(0);
 	});
 });
 

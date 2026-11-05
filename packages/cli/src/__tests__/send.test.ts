@@ -53,7 +53,7 @@ describe("secret send", () => {
 			[
 				`Expires ${EXPIRES_AT}, in 1d; it is deleted once read.`,
 				`Delete token: ${DELETE_TOKEN}`,
-				`To delete it sooner: secret delete <link> --token ${DELETE_TOKEN}`,
+				`To delete it sooner: secret delete ${ORIGIN}/note/${NOTE_ID} --token=${DELETE_TOKEN}`,
 				"",
 			].join("\n"),
 		);

@@ -29,6 +29,8 @@ import { formatDuration, formatSize } from "../units.js";
 
 const OPTIONS = {
 	...COMMON_OPTIONS,
+	// The other commands take a link, which names its instance.
+	instance: { type: "string" },
 	"max-reads": { type: "string" },
 	expires: { type: "string" },
 	mode: { type: "string" },
@@ -222,7 +224,11 @@ export async function send(args: ReadonlyArray<string>, io: Io): Promise<void> {
 			`Expires ${note.expiresAt}, in ${formatDuration(expiresIn)}; ${describeReadLimit(options.maxReads)}.`,
 		);
 		screen.info(`Delete token: ${note.deleteToken}`);
-		screen.info(`To delete it sooner: secret delete <link> --token ${note.deleteToken}`);
+		// The link without its key, which only stdout shows; the token after =, as
+		// one that starts with a dash would read as an option.
+		const address = new URL(link);
+		address.hash = "";
+		screen.info(`To delete it sooner: secret delete ${address.href} --token=${note.deleteToken}`);
 	} catch (err) {
 		throw translateError(err, {
 			instance,

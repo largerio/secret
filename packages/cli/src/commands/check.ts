@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import type { ExistingNoteInfo } from "@largerio/secret-sdk";
 import { notFound, translateError } from "../failures.js";
-import { connect, linkOf } from "../instance.js";
+import { connect, noteOf } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
 import { writeJson, writeLine } from "../terminal.js";
 import type { Io } from "../types.js";
@@ -33,10 +33,10 @@ export async function check(args: ReadonlyArray<string>, io: Io): Promise<void> 
 	const { values, positionals } = parsing("check", () =>
 		parseArgs({ args: [...args], options: COMMON_OPTIONS, allowPositionals: true }),
 	);
-	const link = linkOf(linkArgument(positionals, "check"));
+	const note = noteOf(linkArgument(positionals, "check"));
 	try {
-		const client = await connect(io, link);
-		const info = await client.checkNote(link.id, { signal: io.signal });
+		const client = await connect(io, note);
+		const info = await client.checkNote(note.id, { signal: io.signal });
 		if (values.json === true) {
 			writeJson(io.stdout, info);
 		}
@@ -56,6 +56,6 @@ export async function check(args: ReadonlyArray<string>, io: Io): Promise<void> 
 			writeLine(io.stdout, line);
 		}
 	} catch (err) {
-		throw translateError(err, { instance: link, namesNote: true });
+		throw translateError(err, { instance: note, namesNote: true });
 	}
 }
