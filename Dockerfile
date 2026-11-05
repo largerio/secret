@@ -2,7 +2,7 @@
 # The base is pinned by digest, the same in both stages: CI refuses a mix
 # (.github/scripts/base-image.sh). Dependabot bumps it on main, and
 # rebuild-release.yml rebuilds the latest release on a newer one.
-FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS builder
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS builder
 
 # Install corepack (not bundled in node:26-alpine) and enable it; the pnpm
 # version is resolved from package.json "packageManager", so Dependabot's npm
@@ -44,7 +44,7 @@ RUN node -e " \
   }"
 
 # Stage 2: Production
-FROM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS production
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS production
 
 RUN adduser -D -u 1001 appuser
 
