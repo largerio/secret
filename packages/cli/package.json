@@ -1,6 +1,6 @@
 {
 	"name": "@largerio/secret-cli",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Command line for Secret — send and read zero-knowledge, end-to-end encrypted notes and files on any Secret instance, from a terminal or a script.",
 	"keywords": [
 		"encryption",
