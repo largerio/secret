@@ -175,6 +175,21 @@ secret no-such-command > "$WORK/stdout" 2> "$WORK/stderr" || status=$?
 [ "$status" -eq 2 ] || fail "an unknown command exited with $status, not 2 (usage)"
 [ -s "$WORK/stderr" ] || fail "an unknown command said nothing on stderr"
 [ ! -s "$WORK/stdout" ] || fail "an unknown command wrote to stdout"
-echo "  secret $VERSION: --version, --help and an unknown command ok"
+
+# The commands above run the help's chunk alone: none of them loads the SDK.
+# This one loads it and libsodium, whose WASM module the client waits for,
+# then fails to reach an address where nothing listens, without a network: a
+# dependency missing from the install, or one that does not load, ends it
+# otherwise. Its link has a fragment, which check ignores.
+UNREACHABLE=http://127.0.0.1:9
+status=0
+secret check "$UNREACHABLE/note/aBcDeFgHiJkL#1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+	> "$WORK/stdout" 2> "$WORK/stderr" || status=$?
+[ "$status" -eq 1 ] ||
+	fail "secret check of an unreachable instance exited with $status, not 1: $(cat "$WORK/stderr")"
+grep -qF "could not reach $UNREACHABLE" "$WORK/stderr" ||
+	fail "secret check of an unreachable instance said: $(cat "$WORK/stderr")"
+[ ! -s "$WORK/stdout" ] || fail "secret check of an unreachable instance wrote to stdout"
+echo "  secret $VERSION: --version, --help, an unknown command and the SDK ok"
 
 echo "package verification passed"
