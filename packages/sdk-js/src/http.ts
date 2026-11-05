@@ -34,6 +34,20 @@ async function apiError(res: Response): Promise<SecretApiError> {
 	return apiErrorOf(body, res.status, res.headers.get("retry-after"));
 }
 
+/**
+ * A note's path, its id encoded: a `/`, `?` or `#` in it stays in its path
+ * segment. The client refuses first any id the server cannot have given,
+ * `..` among them, which no encoding keeps in place.
+ */
+function notePath(id: string): string {
+	return `/notes/${encodeURIComponent(id)}`;
+}
+
+/** An upload session's path, its id encoded as a note's is. */
+function uploadPath(uploadId: string): string {
+	return `/notes/upload/${encodeURIComponent(uploadId)}`;
+}
+
 function getRequiredHeader(headers: Headers, name: string): string {
 	const value = headers.get(name);
 	if (!value) {
@@ -431,7 +445,7 @@ export async function getNoteRaw(
 ): Promise<RawNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/raw`,
+		`${config.baseUrl}${notePath(id)}/raw`,
 		{ headers: authHeaders(config.apiKey) },
 		CONSUMING_READ,
 	);
@@ -451,13 +465,13 @@ export async function getNote(
 	id: string,
 	onProgress?: (progress: number) => void,
 ): Promise<ReadNoteResponse> {
-	return getJson<ReadNoteResponse>(config, `/notes/${id}`, onProgress, CONSUMING_READ);
+	return getJson<ReadNoteResponse>(config, notePath(id), onProgress, CONSUMING_READ);
 }
 
 export async function checkNote(config: HttpClientConfig, id: string): Promise<NoteInfo> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/exists`,
+		`${config.baseUrl}${notePath(id)}/exists`,
 		{ headers: authHeaders(config.apiKey) },
 		true,
 	);
@@ -508,7 +522,7 @@ export async function deleteNote(
 ): Promise<void> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}`,
+		`${config.baseUrl}${notePath(id)}`,
 		{
 			method: "DELETE",
 			headers: { "X-Delete-Token": deleteToken, ...authHeaders(config.apiKey, capToken) },
@@ -555,7 +569,7 @@ export async function uploadChunk(
 ): Promise<void> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/upload/${uploadId}/chunks/${String(index)}`,
+		`${config.baseUrl}${uploadPath(uploadId)}/chunks/${String(index)}`,
 		{
 			method: "PUT",
 			headers: {
@@ -579,7 +593,7 @@ export async function completeChunkedUpload(
 ): Promise<CreateNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/upload/${uploadId}/complete`,
+		`${config.baseUrl}${uploadPath(uploadId)}/complete`,
 		{ method: "POST", headers: authHeaders(config.apiKey, capToken) },
 		false,
 	);
@@ -602,7 +616,7 @@ export async function getNoteStream(
 ): Promise<StreamNoteResponse> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/stream`,
+		`${config.baseUrl}${notePath(id)}/stream`,
 		{ headers: authHeaders(config.apiKey) },
 		CONSUMING_READ,
 	);
@@ -661,7 +675,7 @@ async function requestNoteRead(
 ): Promise<Response> {
 	const res = await requestWithPolicy(
 		config,
-		`${config.baseUrl}/notes/${id}/reads`,
+		`${config.baseUrl}${notePath(id)}/reads`,
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json", ...authHeaders(config.apiKey) },

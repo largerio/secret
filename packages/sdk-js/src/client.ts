@@ -3,6 +3,7 @@ import {
 	DEFAULT_EXPIRY_SECONDS,
 	MAX_FILES_PER_NOTE,
 	MAX_TEXT_SIZE,
+	NOTE_ID_LENGTH,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
 import {
@@ -211,6 +212,27 @@ async function sealNote(
 			...(sealed.salt ? { salt: sealed.salt } : {}),
 		},
 	};
+}
+
+/**
+ * A note id as the server assigns it: the rule of `isValidNoteId` in the
+ * shared package, whose module would bring zod into the bundle.
+ */
+const NOTE_ID_RE = new RegExp(`^[A-Za-z0-9_-]{${String(NOTE_ID_LENGTH)}}$`);
+
+function isNoteId(id: unknown): id is string {
+	return typeof id === "string" && NOTE_ID_RE.test(id);
+}
+
+/**
+ * Refuses, before any request, an id the server cannot have given. Put in a
+ * path, a `?`, a `#` or a `../` would take the request elsewhere: to
+ * `GET /notes/{id}`, a format 0 read that spends the note, or out of the API.
+ */
+function assertNoteId(id: string): void {
+	if (!isNoteId(id)) {
+		throw new SecretValidationError("Invalid note ID");
+	}
 }
 
 /** decodeURIComponent, with a malformed escape reported as an invalid share URL. */
@@ -520,10 +542,13 @@ export class SecretClient {
 	 * note is indistinguishable from one that never existed — deliberately, so
 	 * the endpoint cannot be used as an existence oracle.
 	 *
+	 * @throws {SecretValidationError} for an id the server cannot have given,
+	 * before any request.
 	 * @throws {SecretApiError} on a server error (including 429).
 	 * @throws {SecretNetworkError} if the request never reached the server.
 	 */
 	async checkNote(id: string, options?: RequestOptions): Promise<NoteInfo> {
+		assertNoteId(id);
 		return http.checkNote(this.configFor(options), id);
 	}
 
@@ -543,8 +568,9 @@ export class SecretClient {
 	 *
 	 * @param keyFragment The key from the share URL fragment. It names the
 	 * note's format: `1.` then the key for format 1, the bare key for format 0.
-	 * @throws {SecretValidationError} for a malformed format 1 link, or a link of
-	 * a format this SDK does not know: refused before anything is read.
+	 * @throws {SecretValidationError} for an id the server cannot have given, a
+	 * malformed format 1 link, or a link of a format this SDK does not know:
+	 * refused before anything is read.
 	 * @throws {SecretDecryptionError} for a wrong password, a wrong key, or
 	 * tampered ciphertext — deliberately indistinguishable, to avoid an oracle.
 	 * For a format 1 note, also for a password note read without its password,
@@ -560,6 +586,7 @@ export class SecretClient {
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
+		assertNoteId(id);
 		// The link names its format, so a malformed format 1 link spends no read,
 		// and the server serves a note only in the format the read asks for.
 		const format = formatOfFragment(keyFragment);
@@ -810,6 +837,7 @@ export class SecretClient {
 		keyFragment: string,
 		options: ReadNoteIntoOptions,
 	): Promise<ReadNoteIntoResult> {
+		assertNoteId(id);
 		if (formatOfFragment(keyFragment) === 0) {
 			const { payload, createdAt, expiresAt, fileCount } = await this.readNote(
 				id,
@@ -867,6 +895,8 @@ export class SecretClient {
 	 * {@link createNote}. Idempotent from the caller's perspective only in that a
 	 * second call reports 404.
 	 *
+	 * @throws {SecretValidationError} for an id the server cannot have given,
+	 * before any request.
 	 * @throws {SecretApiError} 403 for a wrong token, 404 if the note is already gone.
 	 * @throws {SecretNetworkError} if the request never reached the server.
 	 */
@@ -876,6 +906,7 @@ export class SecretClient {
 		capToken?: string,
 		options?: RequestOptions,
 	): Promise<void> {
+		assertNoteId(id);
 		return http.deleteNote(this.configFor(options), id, deleteToken, capToken);
 	}
 
@@ -886,8 +917,11 @@ export class SecretClient {
 	 *
 	 * With the default relative `baseUrl` the result is relative too
 	 * (`/note/<id>#<key>`); prepend an origin before sending it to anyone.
+	 *
+	 * @throws {SecretValidationError} for an id the server cannot have given.
 	 */
 	buildShareUrl(id: string, keyFragment: string): string {
+		assertNoteId(id);
 		const base = this.httpConfig.baseUrl.replace("/api/v1", "");
 		return `${base}/note/${encodeURIComponent(id)}#${encodeURIComponent(keyFragment)}`;
 	}
@@ -897,8 +931,10 @@ export class SecretClient {
 	 * and relative URLs, so it round-trips the output of {@link buildShareUrl}
 	 * under the default (relative) configuration.
 	 *
-	 * @throws {SecretValidationError} if the URL is malformed, names no note, or
-	 * carries no key fragment — the usual sign of a link truncated in transit.
+	 * @throws {SecretValidationError} if the URL is malformed, names no note or
+	 * an id the server cannot have given, or carries no key fragment — the
+	 * usual sign of a link truncated in transit. The key itself is checked by
+	 * the read.
 	 */
 	static parseShareUrl(url: string): { id: string; keyFragment: string } {
 		let parsed: URL;
@@ -913,9 +949,14 @@ export class SecretClient {
 		const pathParts = parsed.pathname.split("/");
 		const noteIndex = pathParts.indexOf("note");
 
-		const id = noteIndex !== -1 ? pathParts[noteIndex + 1] : undefined;
-		if (!id) {
+		const encodedId = noteIndex !== -1 ? pathParts[noteIndex + 1] : undefined;
+		if (!encodedId) {
 			throw new SecretValidationError("Invalid share URL: missing note ID");
+		}
+		// Decoded, `%3F` or `%2F` would make a path of the id that leads elsewhere.
+		const id = decodeUrlPart(encodedId);
+		if (!isNoteId(id)) {
+			throw new SecretValidationError("Invalid share URL: invalid note ID");
 		}
 
 		const keyFragment = decodeUrlPart(parsed.hash.slice(1));
@@ -923,6 +964,6 @@ export class SecretClient {
 			throw new SecretValidationError("Invalid share URL: missing key fragment");
 		}
 
-		return { id: decodeUrlPart(id), keyFragment };
+		return { id, keyFragment };
 	}
 }
