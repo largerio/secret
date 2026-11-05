@@ -252,7 +252,7 @@ Note creation, deletion and `readNote` are deliberately never retried: a retried
 | `buildShareUrl(id, keyFragment)` | Assemble the share URL |
 | `SecretClient.parseShareUrl(url)` | Split one back into `{ id, keyFragment }` |
 
-The protocol's limits are exported too, to check a note before it is sent: `MAX_TEXT_SIZE` (102,400 characters of text), `MAX_FILES_PER_NOTE` (10), `MAX_READS` (1000), `MIN_EXPIRY_SECONDS` (300) and `MAX_EXPIRY_SECONDS` (2,592,000, 30 days), `DEFAULT_EXPIRY_SECONDS` (86,400, `createNote`'s when `expiresIn` is not given), `DEFAULT_CHUNK_SIZE` (4 MiB, its `chunkSize`) and `NOTE_ID_LENGTH` (12). An instance may set lower limits of its own: `GET /api/v1/config` gives them ([Instance limits](https://github.com/largerio/secret/blob/main/PROTOCOL.md#instance-limits)).
+The protocol's limits are exported too, to check a note before it is sent: `MAX_TEXT_SIZE` (102,400 characters of text), `MAX_FILES_PER_NOTE` (10), `MAX_READS` (1000), `MIN_EXPIRY_SECONDS` (300) and `MAX_EXPIRY_SECONDS` (2,592,000, 30 days), `DEFAULT_EXPIRY_SECONDS` (86,400, `createNote`'s when `expiresIn` is not given), `DEFAULT_CHUNK_SIZE` (4 MiB, its `chunkSize`), `NOTE_ID_LENGTH` (12) and `MAX_PASSWORD_ATTEMPTS` (5, the wrong passwords that delete a format 1 note). An instance may set lower limits of its own: `GET /api/v1/config` gives them ([Instance limits](https://github.com/largerio/secret/blob/main/PROTOCOL.md#instance-limits)).
 
 ## Requirements
 
