@@ -8,34 +8,43 @@ const LINE_FEED = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
 const TAB = 0x09;
 const DEL = 0x7f;
-const LAST_C1 = 0x9f;
 /** U+2400, SYMBOL FOR NULL: the C0 controls have pictures from there on. */
 const CONTROL_PICTURES = 0x2400;
 
 /**
+ * A format character, invisible, but the zero-width joiners (ZWNJ, ZWJ),
+ * which scripts and emoji need. The bidirectional ones among them reorder how
+ * a text reads: `invoice\u202Efdp.exe` shows as `invoiceexe.pdf`. A pattern,
+ * for the regular expressions of what a terminal or a file name may not hold.
+ */
+export const FORMAT_CHARACTER = String.raw`(?![\u200C\u200D])\p{Cf}`;
+
+/** What a terminal would run or hide rather than show: the controls, and the format characters. */
+const UNSAFE_ON_TERMINAL = new RegExp(String.raw`\p{Cc}|${FORMAT_CHARACTER}`, "gu");
+/** What JSON writes as it is, but a terminal would run or hide: DEL, C1, and the format characters. */
+const UNSAFE_IN_JSON = new RegExp(String.raw`[\u007F-\u009F]|${FORMAT_CHARACTER}`, "gu");
+
+/**
  * Makes text safe to show on a terminal, so that a note, a file name or an
- * instance's answer cannot drive it: the C0 controls but line feed and tab
- * become their pictures (ESC is ␛), DEL becomes ␡, the C1 controls U+FFFD.
- * A carriage return before a line feed, a Windows line ending, is dropped.
+ * instance's answer cannot drive it, nor read otherwise than it is: the C0
+ * controls but line feed and tab become their pictures (ESC is ␛), DEL
+ * becomes ␡, the C1 controls and the format characters U+FFFD. A carriage
+ * return before a line feed, a Windows line ending, is dropped.
  */
 export function sanitize(text: string): string {
-	let safe = "";
-	for (let i = 0; i < text.length; i++) {
-		const code = text.charCodeAt(i);
-		if (code === CARRIAGE_RETURN && text.charCodeAt(i + 1) === LINE_FEED) {
-			continue;
+	return text.replace(UNSAFE_ON_TERMINAL, (char: string, offset: number) => {
+		const code = char.charCodeAt(0);
+		if (code === LINE_FEED || code === TAB) {
+			return char;
 		}
-		if (code === LINE_FEED || code === TAB || (code >= 0x20 && code < DEL) || code > LAST_C1) {
-			safe += text.charAt(i);
-		} else if (code < 0x20) {
-			safe += String.fromCharCode(CONTROL_PICTURES + code);
-		} else if (code === DEL) {
-			safe += "␡";
-		} else {
-			safe += "�";
+		if (code === CARRIAGE_RETURN && text.charCodeAt(offset + 1) === LINE_FEED) {
+			return "";
 		}
-	}
-	return safe;
+		if (code < 0x20) {
+			return String.fromCharCode(CONTROL_PICTURES + code);
+		}
+		return code === DEL ? "\u2421" : "\uFFFD";
+	});
 }
 
 /** Writes a line, made safe first when the stream is a terminal. */
@@ -57,9 +66,9 @@ export function writeText(stream: OutputStream, text: string): void {
 }
 
 /**
- * Writes one JSON value on a line. JSON escapes the C0 controls but leaves DEL
- * and C1 as they are: on a terminal, they are escaped too, which keeps the
- * same value.
+ * Writes one JSON value on a line. JSON escapes the C0 controls but leaves
+ * DEL, C1 and the format characters as they are: on a terminal, they are
+ * escaped too, which keeps the same value.
  */
 export function writeJson(stream: OutputStream, value: unknown): void {
 	const json = JSON.stringify(value);
@@ -67,11 +76,13 @@ export function writeJson(stream: OutputStream, value: unknown): void {
 		stream.write(`${json}\n`);
 		return;
 	}
-	let escaped = "";
-	for (const char of json) {
-		const code = char.charCodeAt(0);
-		escaped += code >= DEL && code <= LAST_C1 ? `\\u${code.toString(16).padStart(4, "0")}` : char;
-	}
+	// Each UTF-16 unit, a character beyond the BMP as its two surrogates.
+	const escaped = json.replace(UNSAFE_IN_JSON, (char: string) =>
+		Array.from(
+			{ length: char.length },
+			(_, i) => `\\u${char.charCodeAt(i).toString(16).padStart(4, "0")}`,
+		).join(""),
+	);
 	stream.write(`${escaped}\n`);
 }
 

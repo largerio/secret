@@ -3,6 +3,7 @@ import { lstat, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { NoteFileInfo } from "@largerio/secret-sdk";
 import { CliError, EXIT, errnoOf, reasonOf } from "./errors.js";
+import { FORMAT_CHARACTER } from "./terminal.js";
 
 /** A file of a note, once written whole and verified. */
 export interface WrittenFile {
@@ -45,11 +46,9 @@ const MAX_SUFFIX = 10_000;
 /**
  * What a name may not hold: controls (C0, DEL, C1, among them the escape
  * that drives a terminal), lone surrogates, line and paragraph separators,
- * and format characters, invisible, the bidirectional ones among them
- * reordering how a name reads (`invoice\u202Efdp.exe` shows as
- * `invoiceexe.pdf`). The zero-width joiners stay: scripts and emoji need them.
+ * and the format characters a terminal may not show either.
  */
-const UNSAFE = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]|(?![\u200C\u200D])\p{Cf}/gu;
+const UNSAFE = new RegExp(String.raw`[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]|${FORMAT_CHARACTER}`, "gu");
 /**
  * What Windows refuses in a name. `:` would name a drive or an alternate data
  * stream there (`a.txt:x` writes into `a.txt`), and shows as `/` in Finder.

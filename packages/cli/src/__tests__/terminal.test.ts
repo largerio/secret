@@ -28,6 +28,17 @@ describe("sanitize", () => {
 
 	it("drops the carriage return of a Windows line ending, not a lone one", () => {
 		expect(sanitize("one\r\ntwo\rthree")).toBe("one\ntwo␍three");
+		expect(sanitize("\r")).toBe("␍");
+	});
+
+	it("shows the format characters, bidirectional ones included, as U+FFFD", () => {
+		expect(sanitize("invoice‮fdp.exe")).toBe("invoice�fdp.exe");
+		expect(sanitize("a⁦b⁩c​d‎e﻿f\u{E0001}g­h")).toBe("a�b�c�d�e�f�g�h");
+	});
+
+	it("keeps the zero-width joiners, which scripts and emoji need", () => {
+		const text = "family 👨‍👩‍👧, م‌ن";
+		expect(sanitize(text)).toBe(text);
 	});
 });
 
@@ -83,6 +94,14 @@ describe("writeJson", () => {
 		writeJson(stream, value);
 		expect(stream.text).toBe('{"text":"a\\u001bb\\u007fc\\u009bd🎉"}\n');
 		expect(JSON.parse(stream.text)).toEqual(value);
+	});
+
+	it("escapes the format characters on a terminal, but the joiners", () => {
+		const formatted = { name: "invoice‮fdp.exe\u{E0001}", family: "👨‍👩" };
+		const stream = new Output(true);
+		writeJson(stream, formatted);
+		expect(stream.text).toBe('{"name":"invoice\\u202efdp.exe\\udb40\\udc01","family":"👨‍👩"}\n');
+		expect(JSON.parse(stream.text)).toEqual(formatted);
 	});
 });
 
