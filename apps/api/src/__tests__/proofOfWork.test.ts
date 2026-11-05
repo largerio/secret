@@ -217,7 +217,7 @@ describe("the instance's proof of work, as the command line solves it", () => {
 			name: "CliError",
 			exitCode: 1,
 			message: expect.stringMatching(
-				/^http:\/\/127\.0\.0\.1:\d+ is rate limiting this address: try again in \d+ s$/,
+				/^http:\/\/127\.0\.0\.1:\d+ takes no more requests from this address for now: try again in \d+[dhms](?: \d+[dhms])?$/,
 			),
 		});
 	});

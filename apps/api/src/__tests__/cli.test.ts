@@ -427,7 +427,7 @@ describe("secret send and secret read, against the application", () => {
 				code: 4,
 				stdout: "",
 				stderr:
-					"secret: wrong password, or the link is wrong or damaged: the read is spent all the same, a note of format 0 cannot be checked first\n",
+					"secret: wrong password, or the link is wrong or damaged: this is an older note, whose read is spent all the same\n",
 			});
 			expect(await readdir(to)).toEqual([]);
 			expect(await infoOf(link)).toMatchObject({ exists: true, readCount: 1 });
@@ -526,7 +526,11 @@ describe("secret send and secret read, against the application", () => {
 			lines: [
 				expect.stringMatching(/^Expires \S+, in 1d; it is deleted once read\.$/),
 				expect.stringMatching(/^Delete token: [A-Za-z0-9_-]{32}$/),
-				expect.stringMatching(/^To delete it sooner: secret delete <link> --token \S{32}$/),
+				// The link without its key, and the token joined to its option: a token
+				// may start with a dash.
+				expect.stringMatching(
+					/^To delete it sooner: secret delete http:\/\/127\.0\.0\.1:\d+\/note\/[A-Za-z0-9_-]{12} --token=[A-Za-z0-9_-]{32}$/,
+				),
 			],
 			current: "",
 		});
@@ -743,7 +747,7 @@ describe("refusals, against the application", () => {
 			const typed = await secret(["read", link, "--out", to], { terminal });
 			expect(typed).toMatchObject({ code: 0, stdout: "five tries" });
 			expect(terminal.prompts).toEqual(["Password: ", "Password: "]);
-			expect(terminal.written).toBe("Wrong password: 3 attempts left.\n");
+			expect(terminal.written).toBe("4 attempts left.\nWrong password: 3 attempts left.\n");
 			expect(await readFile(join(to, "attached.txt"), "utf8")).toBe("attached");
 			expect(await secret(["check", link])).toMatchObject({ code: 3 });
 		},
@@ -780,7 +784,7 @@ describe("refusals, against the application", () => {
 			});
 			expect(terminal.prompts).toEqual(["Password: ", "Password: "]);
 			expect(terminal.written).toBe(
-				"Wrong password: 1 attempt left.\nThe note takes one more wrong password: the next one deletes it.\n",
+				"2 attempts left.\nWrong password: 1 attempt left.\nThe note takes one more wrong password: the next one deletes it.\n",
 			);
 			expect(await infoOf(link)).toEqual({ exists: false });
 		},
@@ -881,7 +885,7 @@ describe("refusals, against the application", () => {
 		expect(missing).toMatchObject({
 			code: 2,
 			stdout: "",
-			stderr: "secret: cannot write the note's files to missing (ENOENT)\n",
+			stderr: "secret: cannot write the note's files to missing: no such file or directory\n",
 		});
 		const file = await secret(["read", link, "--out", "not-a-directory"], { cwd: from });
 		expect(file).toMatchObject({
@@ -953,8 +957,8 @@ describe("refusals, against the application", () => {
 			{
 				why: "a key cut short",
 				argv: ["read", `${base}#1.cut-short`],
-				code: 2,
-				stderr: "secret: invalid key fragment\n",
+				code: 4,
+				stderr: "secret: the link is wrong or damaged\n",
 			},
 			{
 				why: "an argument after the link",
@@ -967,7 +971,7 @@ describe("refusals, against the application", () => {
 				argv: ["delete", link],
 				code: 2,
 				stderr:
-					"secret: give the note's delete token: secret delete <link> --token <deleteToken>\n",
+					"secret: give the note's delete token: secret delete <link> --token=<deleteToken>\n",
 			},
 			{
 				why: "the link where the command goes",
