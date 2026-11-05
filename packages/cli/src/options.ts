@@ -79,12 +79,13 @@ export function countOption(
 	return Number(value);
 }
 
-/** What the protocol allows a note's expiry to be (PROTOCOL.md, "Upload"). */
-export const MIN_EXPIRY = 300;
-export const MAX_EXPIRY = 2_592_000;
-
-/** An expiry in seconds, within what the protocol allows; undefined when not given. */
-export function durationOption(value: string | undefined, name: string): number | undefined {
+/** A duration in seconds, from `min` to `max`; undefined when the option is not given. */
+export function durationOption(
+	value: string | undefined,
+	name: string,
+	min: number,
+	max: number,
+): number | undefined {
 	if (value === undefined) {
 		return undefined;
 	}
@@ -92,9 +93,9 @@ export function durationOption(value: string | undefined, name: string): number 
 	if (seconds === undefined) {
 		throw new CliError(`${name} takes a duration: 30m, 1h, 7d, 2w, or seconds`, EXIT.usage);
 	}
-	if (seconds < MIN_EXPIRY || seconds > MAX_EXPIRY) {
+	if (seconds < min || seconds > max) {
 		throw new CliError(
-			`${name} takes a duration from ${formatDuration(MIN_EXPIRY)} to ${formatDuration(MAX_EXPIRY)}`,
+			`${name} takes a duration from ${formatDuration(min)} to ${formatDuration(max)}`,
 			EXIT.usage,
 		);
 	}

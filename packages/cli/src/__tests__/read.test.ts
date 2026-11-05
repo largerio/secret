@@ -9,6 +9,7 @@ import {
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CliError, EXIT } from "../errors.js";
 import { run as runCli } from "../run.js";
+import { denied } from "./deniedAccess.js";
 import {
 	CREATED_AT,
 	EXPIRES_AT,
@@ -21,22 +22,12 @@ import {
 	NOTE_ID,
 	ORIGIN,
 	type Setup,
+	without,
 } from "./harness.js";
 
-// A directory the command may not write to, though the tests run as root.
-const denied = vi.hoisted(() => new Set<string>());
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	return {
-		...actual,
-		access: async (path: string, mode?: number) => {
-			if (denied.has(path)) {
-				throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-			}
-			return actual.access(path, mode);
-		},
-	};
-});
+vi.mock("node:fs/promises", async (importOriginal) =>
+	(await import("./deniedAccess.js")).withDeniedAccess(importOriginal),
+);
 
 // The output directory by default, when the io gives none.
 const files = vi.hoisted(() => ({ createOutputDirectory: vi.fn() }));
@@ -50,8 +41,8 @@ afterAll(() => rmSync(cwd, { recursive: true, force: true }));
 beforeEach(() => denied.clear());
 
 const PASSWORD_NOTE = existingNote({ hasPassword: true, passwordAttemptsLeft: 5 });
-const { passwordAttemptsLeft: _uncounted, ...UNCOUNTED_PASSWORD_NOTE } = PASSWORD_NOTE;
-const { envelope: _envelope, ...FORMAT_0_NOTE } = existingNote();
+const UNCOUNTED_PASSWORD_NOTE = without(PASSWORD_NOTE, "passwordAttemptsLeft");
+const FORMAT_0_NOTE = without(existingNote(), "envelope");
 const FORMAT_0_LINK = `${ORIGIN}/note/${NOTE_ID}#${"K".repeat(42)}A`;
 
 function reading(setup: Setup = {}) {
@@ -137,7 +128,7 @@ describe("secret read", () => {
 		["reads, the count unknown", 3, null, false],
 	])("tells whether this was the last read: %s", async (_name, maxReads, readCount, last) => {
 		const { run, stderr, client } = reading();
-		const { readCount: _, ...uncounted } = existingNote({ maxReads });
+		const uncounted = without(existingNote({ maxReads }), "readCount");
 		client.checkNote.mockResolvedValue(
 			readCount === null ? uncounted : { ...uncounted, readCount },
 		);
@@ -207,9 +198,13 @@ describe("secret read", () => {
 		});
 
 		it.each([
-			[["--out", "missing"], 0, "cannot write the note's files to missing (ENOENT)"],
+			[
+				["--out", "missing"],
+				0,
+				"cannot write the note's files to missing: no such file or directory",
+			],
 			[["--out", "a-file"], 0, "cannot write the note's files to a-file: not a directory"],
-			[[], 1, "cannot write the note's files to the current directory (EACCES)"],
+			[[], 1, "cannot write the note's files to the current directory: permission denied"],
 		])(
 			"refuses a directory it cannot write to, before the read is spent: %j",
 			async (args, fileCount, message) => {
@@ -232,10 +227,9 @@ describe("secret read", () => {
 			const directory = fakeDirectory(cwd);
 			files.createOutputDirectory.mockReturnValue(directory);
 			const { io, client } = reading();
-			const { createOutputDirectory: _, ...withoutDirectory } = io;
 			client.checkNote.mockResolvedValue(existingNote({ fileCount: 1 }));
 			client.readNoteInto.mockImplementation(readWithFiles({ "a.txt": "one" }));
-			expect(await runCli(["read", LINK], withoutDirectory)).toBe(EXIT.ok);
+			expect(await runCli(["read", LINK], without(io, "createOutputDirectory"))).toBe(EXIT.ok);
 			expect(files.createOutputDirectory).toHaveBeenCalledWith(cwd);
 			expect(directory.written).toHaveLength(1);
 		});

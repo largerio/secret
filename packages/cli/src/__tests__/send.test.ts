@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { SecretApiError } from "@largerio/secret-sdk";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT } from "../errors.js";
+import { denied } from "./deniedAccess.js";
 import {
 	CAP_TOKEN,
 	DELETE_TOKEN,
@@ -14,25 +15,15 @@ import {
 	instanceFetch,
 	KEY,
 	LIMITS,
+	LINK,
 	NOTE_ID,
 	ORIGIN,
 	type Setup,
 } from "./harness.js";
 
-// A file the command may not read, though the tests run as root.
-const denied = vi.hoisted(() => new Set<string>());
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	return {
-		...actual,
-		access: async (path: string, mode?: number) => {
-			if (denied.has(path)) {
-				throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-			}
-			return actual.access(path, mode);
-		},
-	};
-});
+vi.mock("node:fs/promises", async (importOriginal) =>
+	(await import("./deniedAccess.js")).withDeniedAccess(importOriginal),
+);
 
 const dir = mkdtempSync(join(tmpdir(), "secret-cli-send-"));
 writeFileSync(join(dir, "report.pdf"), "%PDF-1.7");
@@ -42,8 +33,6 @@ mkdirSync(join(dir, "folder"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 beforeEach(() => denied.clear());
-
-const LINK = `${ORIGIN}/note/${NOTE_ID}#${KEY}`;
 
 function sending(setup: Setup = {}) {
 	return harness({
@@ -258,7 +247,7 @@ describe("secret send", () => {
 		it.each([
 			[["folder"], "folder is a directory: send an archive of it"],
 			[["/dev/null"], "/dev/null is not a regular file"],
-			[["bad\u0000path"], "cannot read bad\u0000path (ERR_INVALID_ARG_VALUE)"],
+			[["bad\u0000path"], "cannot read bad\u0000path: ERR_INVALID_ARG_VALUE"],
 		])("refuses %j", async (args, message) => {
 			const { run, stderr } = sending();
 			expect(await run("send", ...args)).toBe(EXIT.usage);
@@ -269,7 +258,7 @@ describe("secret send", () => {
 			denied.add(join(dir, "notes.txt"));
 			const { run, stderr } = sending();
 			expect(await run("send", "notes.txt")).toBe(EXIT.usage);
-			expect(stderr.text).toBe("secret: cannot read notes.txt (EACCES)\n");
+			expect(stderr.text).toBe("secret: cannot read notes.txt: permission denied\n");
 		});
 
 		it("refuses more files than the instance takes", async () => {

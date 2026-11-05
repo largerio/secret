@@ -6,8 +6,8 @@ import {
 } from "@largerio/secret-sdk";
 import { describe, expect, it } from "vitest";
 import { CliError, EXIT } from "../errors.js";
-import { type FailureContext, failureOf } from "../failures.js";
-import { ORIGIN } from "./harness.js";
+import { type FailureContext, translateError } from "../failures.js";
+import { cliErrorOf, ORIGIN } from "./harness.js";
 
 const instance = { baseUrl: ORIGIN, origin: ORIGIN };
 const reading: FailureContext = { instance, namesNote: true };
@@ -20,59 +20,60 @@ const sendingWithKey: FailureContext = { ...sending, write: { apiKey: true, form
 const sendingFormat0: FailureContext = { ...sending, write: { apiKey: false, format: 0 } };
 const deleting: FailureContext = { instance, write: { apiKey: false }, namesNote: true };
 
-function cliError(err: unknown, context: FailureContext): CliError {
-	const failure = failureOf(err, context);
-	expect(failure).toBeInstanceOf(CliError);
-	return failure as CliError;
+/** The CliError a failure becomes in the command's words. */
+function translated(err: unknown, context: FailureContext): Promise<CliError> {
+	return cliErrorOf(() => translateError(err, context));
 }
 
 const NOT_FOUND = "this note does not exist: it expired, was already read, or never existed";
 
-describe("failureOf", () => {
+describe("translateError", () => {
 	it("keeps the command's own failures", () => {
 		const own = new CliError("own");
-		expect(failureOf(own, reading)).toBe(own);
+		expect(translateError(own, reading)).toBe(own);
 	});
 
-	it("tells a failed decryption apart from nothing else", () => {
-		expect(cliError(new SecretDecryptionError(), reading)).toMatchObject({
+	it("tells a failed decryption apart from nothing else", async () => {
+		expect(await translated(new SecretDecryptionError(), reading)).toMatchObject({
 			message: "wrong password, or the link is wrong or damaged",
 			exitCode: EXIT.refused,
 		});
 	});
 
-	it("passes on the SDK's word for what it refused before doing anything", () => {
+	it("passes on the SDK's word for what it refused before doing anything", async () => {
 		expect(
-			cliError(new SecretValidationError("A note can include at most 10 files"), sending),
+			await translated(new SecretValidationError("A note can include at most 10 files"), sending),
 		).toMatchObject({ message: "a note can include at most 10 files", exitCode: EXIT.usage });
 	});
 
-	it("names the instance it cannot reach", () => {
-		expect(cliError(new SecretNetworkError("Network request failed"), reading)).toMatchObject({
+	it("names the instance it cannot reach", async () => {
+		expect(
+			await translated(new SecretNetworkError("Network request failed"), reading),
+		).toMatchObject({
 			message: `could not reach ${ORIGIN}`,
 			exitCode: EXIT.failure,
 		});
 	});
 
-	it("names the failed system call", () => {
+	it("names the failed system call", async () => {
 		const err = Object.assign(new Error("ENOSPC: no space left"), {
 			code: "ENOSPC",
 			syscall: "write",
 		});
-		expect(cliError(err, reading)).toMatchObject({
-			message: "write failed: ENOSPC",
+		expect(await translated(err, reading)).toMatchObject({
+			message: "write failed: the disk is full",
 			exitCode: EXIT.failure,
 		});
 	});
 
 	it("leaves an unexpected failure as it is", () => {
 		const err = new TypeError("undefined is not a function");
-		expect(failureOf(err, reading)).toBe(err);
-		expect(failureOf("thrown", reading)).toBe("thrown");
+		expect(translateError(err, reading)).toBe(err);
+		expect(translateError("thrown", reading)).toBe("thrown");
 	});
 });
 
-describe("failureOf an instance's refusal", () => {
+describe("translateError of an instance's refusal", () => {
 	const api = (status: number, code?: string, retryAfter?: number) =>
 		new SecretApiError("Something the instance says\u001b[2J", status, { code, retryAfter });
 
@@ -277,8 +278,8 @@ describe("failureOf an instance's refusal", () => {
 			`${ORIGIN} refused the request (HTTP 418)`,
 			EXIT.failure,
 		],
-	])("reads %s", (_name, err, context, message, exitCode) => {
-		const failure = cliError(err, context);
+	])("reads %s", async (_name, err, context, message, exitCode) => {
+		const failure = await translated(err, context);
 		expect(failure).toMatchObject({ message, exitCode });
 		expect(failure.message).not.toContain("Something the instance says");
 	});

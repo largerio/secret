@@ -1,5 +1,6 @@
 import { hash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { parseJson, problemCodeOf, rateLimited, readBodyAtMost, recordOf } from "./answers.js";
 import { CliError, EXIT } from "./errors.js";
 
 /*
@@ -41,7 +42,6 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 const VISIBLE = /^[!-~]{1,256}$/;
 /** What of the instance's own words a message may repeat to the terminal. */
 const PRINTABLE = /^[ -~]{1,200}$/;
-const PROBLEM_CODE = /^[a-z_]{1,64}$/;
 
 export interface ProofOfWorkOptions {
 	readonly fetch: typeof fetch;
@@ -63,7 +63,7 @@ export async function solveProofOfWork(
 	options: ProofOfWorkOptions,
 ): Promise<string> {
 	const base = baseUrl.replace(/\/+$/, "");
-	const exchange: Exchange = {
+	const instance: CapInstance = {
 		base,
 		origin: new URL(base).origin,
 		fetch: options.fetch,
@@ -71,8 +71,8 @@ export async function solveProofOfWork(
 	};
 
 	const challenge = challengeOf(
-		await post(exchange, "/api/cap/challenge", { method: "POST" }),
-		exchange.origin,
+		await post(instance, "/api/cap/challenge", { method: "POST" }),
+		instance.origin,
 	);
 
 	const solutions: number[] = [];
@@ -83,13 +83,13 @@ export async function solveProofOfWork(
 		options.onProgress?.(i, challenge.count);
 	}
 
-	const answer = await post(exchange, "/api/cap/redeem", {
+	const redeemed = await post(instance, "/api/cap/redeem", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ token: challenge.token, solutions }),
 	});
 
-	return tokenOf(answer, exchange.origin);
+	return tokenOf(redeemed, instance.origin);
 }
 
 /**
@@ -141,7 +141,8 @@ export async function findNonce(
 	throw new CliError("found no solution to the proof-of-work challenge");
 }
 
-interface Exchange {
+/** The instance whose proof of work is solved, as its requests go to it. */
+interface CapInstance {
 	/** The instance's URL, without a trailing slash. */
 	readonly base: string;
 	/** What the messages name the instance by. */
@@ -150,7 +151,8 @@ interface Exchange {
 	readonly signal: AbortSignal | undefined;
 }
 
-interface Answer {
+/** An answer of the instance, its body read whole. */
+interface CapResponse {
 	readonly status: number;
 	readonly ok: boolean;
 	readonly retryAfter: string | null;
@@ -169,8 +171,8 @@ interface Challenge {
  * One request, its whole answer read, within a timeout. The caller's signal
  * cancels it, and its abort is what the request then rejects with.
  */
-async function post(exchange: Exchange, path: string, init: RequestInit): Promise<Answer> {
-	const { fetch: request, signal } = exchange;
+async function post(instance: CapInstance, path: string, init: RequestInit): Promise<CapResponse> {
+	const { fetch: request, signal } = instance;
 	signal?.throwIfAborted();
 
 	const controller = new AbortController();
@@ -179,11 +181,16 @@ async function post(exchange: Exchange, path: string, init: RequestInit): Promis
 	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
 	try {
-		const response = await request(`${exchange.base}${path}`, {
+		const response = await request(`${instance.base}${path}`, {
 			...init,
 			signal: controller.signal,
 		});
-		const text = await readText(response, exchange.origin);
+		const text = await readBodyAtMost(response, MAX_RESPONSE_BYTES);
+		if (text === undefined) {
+			throw new CliError(
+				`${instance.origin} answered more than ${String(MAX_RESPONSE_BYTES / 1024)} KiB to a proof-of-work request`,
+			);
+		}
 
 		return {
 			status: response.status,
@@ -200,60 +207,23 @@ async function post(exchange: Exchange, path: string, init: RequestInit): Promis
 
 		if (controller.signal.aborted) {
 			throw new CliError(
-				`${exchange.origin} did not answer the proof-of-work request within ${String(REQUEST_TIMEOUT_MS / 1000)} seconds`,
+				`${instance.origin} did not answer the proof-of-work request within ${String(REQUEST_TIMEOUT_MS / 1000)} seconds`,
 			);
 		}
 
-		throw new CliError(`could not reach ${exchange.origin}`, EXIT.failure, { cause: error });
+		throw new CliError(`could not reach ${instance.origin}`, EXIT.failure, { cause: error });
 	} finally {
 		clearTimeout(timer);
 		signal?.removeEventListener("abort", cancel);
 	}
 }
 
-/** The body as text, read no further than {@link MAX_RESPONSE_BYTES}. */
-async function readText(response: Response, origin: string): Promise<string> {
-	if (response.body === null) {
-		return "";
+function challengeOf(response: CapResponse, origin: string): Challenge {
+	if (!response.ok) {
+		throw refusalOf(response, origin, "challenge request");
 	}
 
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let text = "";
-	let size = 0;
-
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) {
-			return text + decoder.decode();
-		}
-
-		size += value.byteLength;
-		if (size > MAX_RESPONSE_BYTES) {
-			await reader.cancel();
-			throw new CliError(
-				`${origin} answered more than ${String(MAX_RESPONSE_BYTES / 1024)} KiB to a proof-of-work request`,
-			);
-		}
-
-		text += decoder.decode(value, { stream: true });
-	}
-}
-
-function parseJson(text: string): unknown {
-	try {
-		return JSON.parse(text);
-	} catch {
-		return undefined;
-	}
-}
-
-function challengeOf(answer: Answer, origin: string): Challenge {
-	if (!answer.ok) {
-		throw failure(answer, origin, "challenge request");
-	}
-
-	const body = recordOf(answer.body);
+	const body = recordOf(response.body);
 	const challenge = recordOf(body?.["challenge"]);
 	const token = body?.["token"];
 	const count = challenge?.["c"];
@@ -286,19 +256,19 @@ function challengeOf(answer: Answer, origin: string): Challenge {
 	return { token, count, saltLength, difficulty };
 }
 
-function tokenOf(answer: Answer, origin: string): string {
-	const body = recordOf(answer.body);
+function tokenOf(response: CapResponse, origin: string): string {
+	const body = recordOf(response.body);
 
 	// Cap refuses a wrong, unknown or expired solution with a 400 of its own,
 	// not a problem details object.
-	if (answer.status === 400 && body?.["success"] === false) {
+	if (response.status === 400 && body?.["success"] === false) {
 		const message = body["message"];
 		const reason = typeof message === "string" && PRINTABLE.test(message) ? `: ${message}` : "";
 		throw new CliError(`${origin} refused the proof of work${reason}`);
 	}
 
-	if (!answer.ok) {
-		throw failure(answer, origin, "solution");
+	if (!response.ok) {
+		throw refusalOf(response, origin, "solution");
 	}
 
 	const token = body?.["token"];
@@ -310,26 +280,17 @@ function tokenOf(answer: Answer, origin: string): string {
 }
 
 /** The refusal of a request, in the instance's words where they can be trusted. */
-function failure(answer: Answer, origin: string, step: string): CliError {
-	if (answer.status === 429) {
-		const seconds = answer.retryAfter?.trim() ?? "";
-		const wait = /^\d{1,9}$/.test(seconds) ? `in ${seconds} s` : "later";
-		return new CliError(`${origin} is rate limiting this address: try again ${wait}`);
+function refusalOf(response: CapResponse, origin: string, step: string): CliError {
+	if (response.status === 429) {
+		const seconds = response.retryAfter?.trim() ?? "";
+		return rateLimited(origin, /^\d{1,9}$/.test(seconds) ? Number(seconds) : undefined);
 	}
 
-	const code = recordOf(answer.body)?.["code"];
-	const named = typeof code === "string" && PROBLEM_CODE.test(code) ? ` (${code})` : "";
+	const code = problemCodeOf(recordOf(response.body)?.["code"]);
+	const named = code === undefined ? "" : ` (${code})`;
 	return new CliError(
-		`${origin} answered HTTP ${String(answer.status)}${named} to the proof-of-work ${step}`,
+		`${origin} answered HTTP ${String(response.status)}${named} to the proof-of-work ${step}`,
 	);
-}
-
-function recordOf(value: unknown): Record<string, unknown> | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return undefined;
-	}
-
-	return value as Record<string, unknown>;
 }
 
 function isPositiveInteger(value: unknown): value is number {

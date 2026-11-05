@@ -1,15 +1,13 @@
+import { MAX_TEXT_SIZE } from "@largerio/secret-sdk";
 import { CliError, EXIT } from "./errors.js";
 import type { InputStream } from "./types.js";
 
-/** The longest text a note holds, in UTF-16 code units (PROTOCOL.md, "Payload"). */
-export const MAX_TEXT_LENGTH = 102_400;
-
-/** The most UTF-8 bytes that many code units take: 3 each. */
-const MAX_TEXT_BYTES = 3 * MAX_TEXT_LENGTH;
+/** The most UTF-8 bytes the longest text takes, its UTF-16 code units 3 bytes each at most. */
+const MAX_TEXT_BYTES = 3 * MAX_TEXT_SIZE;
 
 function tooLong(): CliError {
 	return new CliError(
-		`the text is longer than a note holds (${MAX_TEXT_LENGTH} characters): send it as a file`,
+		`the text is longer than a note holds (${MAX_TEXT_SIZE} characters): send it as a file`,
 		EXIT.usage,
 	);
 }
@@ -30,7 +28,7 @@ export async function readText(stdin: InputStream, signal: AbortSignal): Promise
 	} catch {
 		throw new CliError("stdin is not UTF-8 text: send it as a file", EXIT.usage);
 	}
-	if (text.length > MAX_TEXT_LENGTH) {
+	if (text.length > MAX_TEXT_SIZE) {
 		throw tooLong();
 	}
 	return text;

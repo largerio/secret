@@ -2,10 +2,16 @@ import { constants, openAsBlob, type Stats } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { ContentMode } from "@largerio/secret-sdk";
+import {
+	type ContentMode,
+	DEFAULT_EXPIRY_SECONDS,
+	MAX_EXPIRY_SECONDS,
+	MAX_READS,
+	MIN_EXPIRY_SECONDS,
+} from "@largerio/secret-sdk";
 import { passwordOfNewNote, readApiKey } from "../credentials.js";
-import { CliError, EXIT } from "../errors.js";
-import { failureOf } from "../failures.js";
+import { CliError, EXIT, errnoOf, reasonOf } from "../errors.js";
+import { translateError } from "../failures.js";
 import {
 	connect,
 	fetchLimits,
@@ -30,11 +36,6 @@ const OPTIONS = {
 	password: { type: "boolean" },
 	"password-file": { type: "string" },
 } as const;
-
-/** The protocol's limit on reads (PROTOCOL.md, "Upload"). */
-const MAX_READS = 1000;
-/** The SDK's expiry, when none is asked for and the instance keeps notes that long. */
-const DEFAULT_EXPIRY = 86_400;
 
 interface SendOptions {
 	readonly instance: Instance;
@@ -65,7 +66,7 @@ function optionsOf(args: ReadonlyArray<string>, io: Io): SendOptions {
 		instance: instanceOf(instance),
 		paths: positionals,
 		maxReads: countOption(values["max-reads"], "--max-reads", 1, MAX_READS),
-		expiresIn: durationOption(values.expires, "--expires"),
+		expiresIn: durationOption(values.expires, "--expires", MIN_EXPIRY_SECONDS, MAX_EXPIRY_SECONDS),
 		contentMode: choiceOption(values.mode, "--mode", ["text", "markdown", "secret"]),
 		format: format === undefined ? undefined : (Number(format) as 0 | 1),
 		// A password file says the note has one.
@@ -82,10 +83,6 @@ interface FileToSend {
 	readonly data: Blob;
 }
 
-function codeOf(err: unknown): string {
-	return String((err as NodeJS.ErrnoException).code);
-}
-
 /**
  * The files named, each a Blob the SDK reads a slice at a time. A path that
  * names nothing is not repeated: it may be a secret typed where the text does
@@ -99,14 +96,14 @@ async function openFiles(paths: ReadonlyArray<string>, cwd: string): Promise<Fil
 		try {
 			info = await stat(full);
 		} catch (err) {
-			const code = codeOf(err);
+			const code = errnoOf(err);
 			if (code === "ENOENT" || code === "ENOTDIR") {
 				throw new CliError(
 					`argument ${index + 1} names no file: the text of a note goes on stdin, as in secret send < note.txt`,
 					EXIT.usage,
 				);
 			}
-			throw new CliError(`cannot read ${path} (${code})`, EXIT.usage);
+			throw new CliError(`cannot read ${path}: ${reasonOf(err)}`, EXIT.usage);
 		}
 		if (info.isDirectory()) {
 			throw new CliError(`${path} is a directory: send an archive of it`, EXIT.usage);
@@ -117,7 +114,7 @@ async function openFiles(paths: ReadonlyArray<string>, cwd: string): Promise<Fil
 		try {
 			await access(full, constants.R_OK);
 		} catch (err) {
-			throw new CliError(`cannot read ${path} (${codeOf(err)})`, EXIT.usage);
+			throw new CliError(`cannot read ${path}: ${reasonOf(err)}`, EXIT.usage);
 		}
 		files.push({ name: basename(full), type: mimeTypeOf(full), data: await openAsBlob(full) });
 	}
@@ -167,7 +164,7 @@ async function textOf(io: Io, hasFiles: boolean): Promise<string | undefined> {
 	return text === "" ? undefined : text;
 }
 
-function readsOf(maxReads: number): string {
+function describeReadLimit(maxReads: number): string {
 	if (maxReads === 0) {
 		return "it can be read any number of times until then";
 	}
@@ -182,7 +179,7 @@ export async function send(args: ReadonlyArray<string>, io: Io): Promise<void> {
 	try {
 		const files = await openFiles(options.paths, io.cwd);
 		const limits = await fetchLimits(io, instance);
-		const expiresIn = options.expiresIn ?? Math.min(DEFAULT_EXPIRY, limits.maxExpiry);
+		const expiresIn = options.expiresIn ?? Math.min(DEFAULT_EXPIRY_SECONDS, limits.maxExpiry);
 		checkLimits(files, expiresIn, limits, instance);
 		const text = await textOf(io, files.length > 0);
 		if (text === undefined && files.length === 0) {
@@ -222,12 +219,12 @@ export async function send(args: ReadonlyArray<string>, io: Io): Promise<void> {
 		}
 		io.stdout.write(`${link}\n`);
 		screen.info(
-			`Expires ${note.expiresAt}, in ${formatDuration(expiresIn)}; ${readsOf(options.maxReads)}.`,
+			`Expires ${note.expiresAt}, in ${formatDuration(expiresIn)}; ${describeReadLimit(options.maxReads)}.`,
 		);
 		screen.info(`Delete token: ${note.deleteToken}`);
 		screen.info(`To delete it sooner: secret delete <link> --token ${note.deleteToken}`);
 	} catch (err) {
-		throw failureOf(err, {
+		throw translateError(err, {
 			instance,
 			write: { apiKey: apiKey !== undefined, format: options.format ?? 1 },
 			namesNote: false,

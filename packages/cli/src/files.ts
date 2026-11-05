@@ -2,16 +2,7 @@ import type { FileHandle } from "node:fs/promises";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { NoteFileInfo } from "@largerio/secret-sdk";
-import { CliError, EXIT } from "./errors.js";
-
-/*
- * The sender of a note picks its files' names, count, sizes and bytes, and
- * may mean harm, while `secret read` often runs in a home directory or a
- * repository. So a file is written only directly inside the directory, under
- * a name of its own that hides nothing and shows as what it is, never over
- * anything (a file, a directory, a link, another file of the note), and only
- * once the SDK has checked the whole note.
- */
+import { CliError, EXIT, errnoOf, reasonOf } from "./errors.js";
 
 /** A file of a note, once written whole and verified. */
 export interface WrittenFile {
@@ -76,50 +67,26 @@ const DEVICE = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout
 /** An extension, kept through a cut and a suffix: short, without dots or spaces. */
 const EXTENSION = /\.[^\s.]{1,20}$/u;
 
-/** What an error's code means, for a message the user can act on. */
-const REASONS: Record<string, string> = {
-	ENOENT: "no such file or directory",
-	ENOTDIR: "not a directory",
-	ENOSPC: "the disk is full",
-	EDQUOT: "the disk quota is exceeded",
-	EFBIG: "the file is too large for this file system",
-	EACCES: "permission denied",
-	EPERM: "permission denied",
-	EROFS: "the file system is read-only",
-	ENAMETOOLONG: "the file system refused the name as too long",
-	EIO: "an input/output error",
-	EBUSY: "the file is in use",
-};
-
 /**
- * Where `secret read` writes a note's files: `dir`, which must exist. Each
- * file is written to a `.part` file opened exclusively (`wx`, mode `0600`),
- * which is renamed once the SDK closes its stream, the note whole and
- * checked, and removed if the SDK aborts it or the read is discarded.
+ * Where `secret read` writes a note's files: `dir`, which must exist.
  *
- * A file's name is the last segment of the one sent, normalized (NFC), its
- * controls, format characters and the characters Windows refuses each
- * replaced by `_`, without leading dots, dashes or spaces nor trailing dots or
- * spaces, a Windows device name prefixed with `_`, `file-<n>` when nothing is
- * left, and cut to 255 bytes of UTF-8 between two code points, its extension
- * kept. A name taken, on disk or by another file of the note (compared as a
- * case-insensitive file system would), gets the first free suffix,
- * `name (1).ext`, `name (2).ext`…: names are given as files are opened, in the
- * note's order, so the same note in the same directory gets the same names
- * however its streams are closed.
- *
- * A name is never taken from anything: the final name is created exclusively
- * (`wx`, which refuses any entry there, a link included, and lets the file
- * system say what is the same name), then the `.part` file is renamed onto
- * that empty file, which is ours. Nothing but the name's directory entry is
- * replaced, and a link is never followed.
+ * The sender picks the files' names, count, sizes and bytes, and may mean
+ * harm, while `secret read` often runs in a home directory or a repository.
+ * So a file is written:
+ * - directly inside `dir`, under the last segment of the name it was sent
+ *   under, made safe by the rules above, or `file-<n>` when nothing is left;
+ * - never over anything there, a link included, nor over another file of the
+ *   note: a name taken gets the first free suffix, `name (1).ext`, in the
+ *   note's order, so the same note gets the same names however it is read;
+ * - only once the SDK has checked the whole note: until then, it is a `.part`
+ *   file of its owner's only (mode `0600`), removed if the read fails.
  */
 export function createOutputDirectory(dir: string): OutputDirectory {
 	return new Directory(dir);
 }
 
-/** A name split around its extension, the part a suffix goes before. */
-interface Base {
+/** A name split around its extension, the suffix going between the two. */
+interface SplitName {
 	readonly stem: string;
 	readonly extension: string;
 }
@@ -133,7 +100,7 @@ type State = "open" | "closing" | "done" | "dropped";
 interface Entry {
 	readonly index: number;
 	readonly file: NoteFileInfo;
-	readonly base: Base;
+	readonly split: SplitName;
 	/** The suffix the file's name was given when opened, and that name. */
 	readonly suffix: number;
 	readonly name: string;
@@ -195,14 +162,14 @@ class Directory implements OutputDirectory {
 	private async create(file: NoteFileInfo, index: number): Promise<Entry> {
 		const name = safeName(file.name, index);
 		const key = keyOf(name);
-		const base = baseOf(name);
+		const split = splitName(name);
 		const first = this.suffixes.get(key) ?? 0;
-		const taken = await this.firstFree(name, first, (suffix) => this.takePart(base, suffix));
+		const taken = await this.firstFree(name, first, (suffix) => this.takePart(split, suffix));
 		this.suffixes.set(key, taken.suffix + 1);
 		const entry: Entry = {
 			index,
 			file,
-			base,
+			split,
 			...taken,
 			placeholder: undefined,
 			state: "open",
@@ -215,9 +182,9 @@ class Directory implements OutputDirectory {
 	}
 
 	/** Takes `name (suffix).ext` and its `.part` file, if neither is taken. */
-	private async takePart(base: Base, suffix: number) {
-		const name = nameWith(base, suffix, MAX_NAME_BYTES);
-		const part = `${nameWith(base, suffix, MAX_NAME_BYTES - PART.length)}${PART}`;
+	private async takePart(split: SplitName, suffix: number) {
+		const name = nameWith(split, suffix, MAX_NAME_BYTES);
+		const part = `${nameWith(split, suffix, MAX_NAME_BYTES - PART.length)}${PART}`;
 		if (!this.claim(name, part) || (await this.exists(name))) {
 			return undefined;
 		}
@@ -230,7 +197,7 @@ class Directory implements OutputDirectory {
 
 	/** Takes the name a file was given, or, if something took it since, the next free one. */
 	private async takeName(entry: Entry, suffix: number): Promise<string | undefined> {
-		const name = nameWith(entry.base, suffix, MAX_NAME_BYTES);
+		const name = nameWith(entry.split, suffix, MAX_NAME_BYTES);
 		if (suffix !== entry.suffix && !this.claim(name)) {
 			return undefined;
 		}
@@ -277,10 +244,10 @@ class Directory implements OutputDirectory {
 			await lstat(path);
 			return true;
 		} catch (err) {
-			if (hasCode(err, "ENOENT")) {
+			if (errnoOf(err) === "ENOENT") {
 				return false;
 			}
-			throw failure(`could not look up ${path}`, err);
+			throw fileSystemFailure(`could not look up ${path}`, err);
 		}
 	}
 
@@ -294,10 +261,10 @@ class Directory implements OutputDirectory {
 		try {
 			return await open(path, "wx", 0o600);
 		} catch (err) {
-			if (hasCode(err, "EEXIST")) {
+			if (errnoOf(err) === "EEXIST") {
 				return undefined;
 			}
-			throw failure(`could not create ${path}`, err);
+			throw fileSystemFailure(`could not create ${path}`, err);
 		}
 	}
 
@@ -317,7 +284,7 @@ class Directory implements OutputDirectory {
 			await entry.handle.writeFile(chunk);
 		} catch (err) {
 			await this.drop(entry).catch(ignore);
-			throw failure(`could not write ${join(this.dir, entry.part)}`, err);
+			throw fileSystemFailure(`could not write ${join(this.dir, entry.part)}`, err);
 		}
 		entry.size += chunk.byteLength;
 	}
@@ -340,7 +307,7 @@ class Directory implements OutputDirectory {
 			await rename(part, path);
 		} catch (err) {
 			await this.drop(entry).catch(ignore);
-			throw failure(`could not save ${path}`, err);
+			throw fileSystemFailure(`could not save ${path}`, err);
 		}
 		entry.placeholder = undefined;
 		entry.state = "done";
@@ -392,13 +359,13 @@ function safeName(sent: string, index: number): string {
 	return DEVICE.test(name) ? `_${name}` : name;
 }
 
-function baseOf(name: string): Base {
+function splitName(name: string): SplitName {
 	const extension = EXTENSION.exec(name)?.[0] ?? "";
 	return { stem: name.slice(0, name.length - extension.length), extension };
 }
 
 /** `stem (suffix).extension`, its stem cut for the whole to hold in `bytes`. */
-function nameWith({ stem, extension }: Base, suffix: number, bytes: number): string {
+function nameWith({ stem, extension }: SplitName, suffix: number, bytes: number): string {
 	const tail = `${suffix === 0 ? "" : ` (${suffix})`}${extension}`;
 	return `${fit(stem, bytes - Buffer.byteLength(tail))}${tail}`;
 }
@@ -434,27 +401,19 @@ async function removeFile(path: string): Promise<void> {
 	try {
 		await unlink(path);
 	} catch (err) {
-		if (hasCode(err, "ENOENT")) {
+		if (errnoOf(err) === "ENOENT") {
 			return;
 		}
-		throw failure(`could not remove ${path}, which holds part of a note: delete it`, err);
+		throw fileSystemFailure(`could not remove ${path}, which holds part of a note: delete it`, err);
 	}
-}
-
-function hasCode(err: unknown, code: string): boolean {
-	return err instanceof Error && (err as NodeJS.ErrnoException).code === code;
 }
 
 /** A failure of the file system, in words the user can act on. */
-function failure(action: string, err: unknown): CliError {
+function fileSystemFailure(action: string, err: unknown): CliError {
 	if (err instanceof CliError) {
 		return err;
 	}
-	const reason =
-		err instanceof Error
-			? (REASONS[String((err as NodeJS.ErrnoException).code)] ?? err.message)
-			: String(err);
-	return new CliError(`${action}: ${reason}`, EXIT.failure, { cause: err });
+	return new CliError(`${action}: ${reasonOf(err)}`, EXIT.failure, { cause: err });
 }
 
 /** Swallows a failure another path reports: `discard` tells of a `.part` file left behind. */

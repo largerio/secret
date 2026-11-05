@@ -8,8 +8,8 @@ import {
 	SecretDecryptionError,
 } from "@largerio/secret-sdk";
 import { askPassword, givenPassword, withTerminal } from "../credentials.js";
-import { CliError, EXIT } from "../errors.js";
-import { failureOf, notFound, WRONG_PASSWORD_OR_LINK } from "../failures.js";
+import { CliError, EXIT, reasonOf } from "../errors.js";
+import { notFound, translateError, WRONG_PASSWORD_OR_LINK } from "../failures.js";
 import { createOutputDirectory, type WrittenFile } from "../files.js";
 import { connect, linkOf, type NoteLink } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
@@ -36,10 +36,6 @@ const OPTIONS = {
  */
 const FORMAT_0_REFUSED = `${WRONG_PASSWORD_OR_LINK}: the read is spent all the same, a note of format 0 cannot be checked first`;
 
-function codeOf(err: unknown): string {
-	return String((err as NodeJS.ErrnoException).code);
-}
-
 /**
  * Checks, before a read is spent, that the files have somewhere to go: a
  * note read and burned for nothing could not be read again.
@@ -51,7 +47,7 @@ async function assertWritableDirectory(dir: string, given: string | undefined): 
 		info = await stat(dir);
 		await access(dir, constants.W_OK);
 	} catch (err) {
-		throw new CliError(`cannot write the note's files to ${name} (${codeOf(err)})`, EXIT.usage);
+		throw new CliError(`cannot write the note's files to ${name}: ${reasonOf(err)}`, EXIT.usage);
 	}
 	if (!info.isDirectory()) {
 		throw new CliError(`cannot write the note's files to ${name}: not a directory`, EXIT.usage);
@@ -218,7 +214,7 @@ export async function read(args: ReadonlyArray<string>, io: Io): Promise<void> {
 			screen.info("That was the note's last read: it is deleted.");
 		}
 	} catch (err) {
-		throw failureOf(err, { instance: link, namesNote: true });
+		throw translateError(err, { instance: link, namesNote: true });
 	} finally {
 		screen.done();
 	}

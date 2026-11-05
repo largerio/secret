@@ -1,16 +1,10 @@
 import { SecretNetworkError } from "@largerio/secret-sdk";
 import { describe, expect, it } from "vitest";
 import { EXIT } from "../errors.js";
-import { EXPIRES_AT, existingNote, harness, LINK, NOTE_ID, ORIGIN } from "./harness.js";
+import { EXPIRES_AT, existingNote, harness, LINK, NOTE_ID, ORIGIN, without } from "./harness.js";
 
-const { readCount: _, ...UNCOUNTED } = existingNote({ maxReads: 3 });
-const {
-	passwordAttemptsLeft: __,
-	envelope: ___,
-	...FORMAT_0
-} = existingNote({
-	hasPassword: true,
-});
+const UNCOUNTED = without(existingNote({ maxReads: 3 }), "readCount");
+const FORMAT_0 = without(existingNote({ hasPassword: true }), "passwordAttemptsLeft", "envelope");
 
 describe("secret check", () => {
 	it("shows what is known of the note, without reading it", async () => {

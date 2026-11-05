@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { describe, expect, it } from "vitest";
-import { CliError, EXIT } from "../errors.js";
+import { EXIT } from "../errors.js";
 import {
 	asksForHelp,
 	COMMON_OPTIONS,
@@ -11,16 +11,13 @@ import {
 	lowerFirst,
 	parsing,
 } from "../options.js";
+import { cliErrorOf } from "./harness.js";
 
-function usageError(run: () => unknown): CliError {
-	try {
-		run();
-	} catch (err) {
-		expect(err).toBeInstanceOf(CliError);
-		expect((err as CliError).exitCode).toBe(EXIT.usage);
-		return err as CliError;
-	}
-	throw new Error("no error");
+/** The message of the usage error `attempt` throws. */
+async function usageMessageOf(attempt: () => unknown): Promise<string> {
+	const error = await cliErrorOf(attempt);
+	expect(error.exitCode).toBe(EXIT.usage);
+	return error.message;
 }
 
 const OPTIONS = { ...COMMON_OPTIONS, token: { type: "string" } } as const;
@@ -37,31 +34,31 @@ describe("parsing", () => {
 		});
 	});
 
-	it("names an unknown option, without the hint that follows", () => {
-		expect(usageError(() => parse(["--secret=hunter2"])).message).toBe(
+	it("names an unknown option, without the hint that follows", async () => {
+		expect(await usageMessageOf(() => parse(["--secret=hunter2"]))).toBe(
 			"unknown option '--secret': see secret delete --help",
 		);
 	});
 
-	it("keeps the first line of a refused value, never the value", () => {
-		expect(usageError(() => parse(["--token", "--json"])).message).toBe(
+	it("keeps the first line of a refused value, never the value", async () => {
+		expect(await usageMessageOf(() => parse(["--token", "--json"]))).toBe(
 			"option '--token' argument is ambiguous: see secret delete --help",
 		);
-		expect(usageError(() => parse(["--json=hunter2"])).message).toBe(
+		expect(await usageMessageOf(() => parse(["--json=hunter2"]))).toBe(
 			"option '--json' does not take an argument: see secret delete --help",
 		);
-		expect(usageError(() => parse(["--token"])).message).toBe(
+		expect(await usageMessageOf(() => parse(["--token"]))).toBe(
 			"option '--token <value>' argument missing: see secret delete --help",
 		);
 	});
 
-	it("reports what is not an Error as it is", () => {
+	it("reports what is not an Error as it is", async () => {
 		expect(
-			usageError(() =>
+			await usageMessageOf(() =>
 				parsing("check", () => {
 					throw "Broken";
 				}),
-			).message,
+			),
 		).toBe("broken: see secret check --help");
 	});
 });
@@ -83,11 +80,11 @@ describe("linkArgument", () => {
 		expect(linkArgument(["https://x/note/abc#k"], "read")).toBe("https://x/note/abc#k");
 	});
 
-	it("asks for the link, without repeating what was given", () => {
-		expect(usageError(() => linkArgument([], "read")).message).toBe(
+	it("asks for the link, without repeating what was given", async () => {
+		expect(await usageMessageOf(() => linkArgument([], "read"))).toBe(
 			"give the link of the note: secret read <link>",
 		);
-		const message = usageError(() => linkArgument(["one#key", "two#key"], "check")).message;
+		const message = await usageMessageOf(() => linkArgument(["one#key", "two#key"], "check"));
 		expect(message).toBe("give one link: secret check <link>");
 		expect(message).not.toContain("key");
 	});
@@ -100,31 +97,36 @@ describe("countOption", () => {
 		expect(countOption("1000", "--max-reads", 1, 1000)).toBe(1000);
 	});
 
-	it.each(["1001", "-1", "1.5", "two", ""])("refuses %j", (value) => {
-		expect(usageError(() => countOption(value, "--max-reads", 1, 1000)).message).toBe(
+	it.each(["1001", "-1", "1.5", "two", ""])("refuses %j", async (value) => {
+		expect(await usageMessageOf(() => countOption(value, "--max-reads", 1, 1000))).toBe(
 			"--max-reads takes a whole number from 0 to 1000",
 		);
 	});
 });
 
 describe("durationOption", () => {
-	it("takes a duration within the protocol's", () => {
-		expect(durationOption(undefined, "--expires")).toBeUndefined();
-		expect(durationOption("5m", "--expires")).toBe(300);
-		expect(durationOption("30d", "--expires")).toBe(2_592_000);
+	const expires = (value: string | undefined) => durationOption(value, "--expires", 300, 2_592_000);
+
+	it("takes a duration within its bounds", () => {
+		expect(expires(undefined)).toBeUndefined();
+		expect(expires("5m")).toBe(300);
+		expect(expires("30d")).toBe(2_592_000);
 	});
 
-	it("refuses what is no duration", () => {
-		expect(usageError(() => durationOption("soon", "--expires")).message).toBe(
+	it("refuses what is no duration", async () => {
+		expect(await usageMessageOf(() => expires("soon"))).toBe(
 			"--expires takes a duration: 30m, 1h, 7d, 2w, or seconds",
 		);
 	});
 
-	it.each(["90s", "31d", "5w"])("refuses %s, outside 5m to 30d", (value) => {
-		expect(usageError(() => durationOption(value, "--expires")).message).toBe(
-			"--expires takes a duration from 5m to 30d",
-		);
-	});
+	it.each(["90s", "299", "2592001", "31d", "5w"])(
+		"refuses %s, outside 5m to 30d",
+		async (value) => {
+			expect(await usageMessageOf(() => expires(value))).toBe(
+				"--expires takes a duration from 5m to 30d",
+			);
+		},
+	);
 });
 
 describe("choiceOption", () => {
@@ -133,8 +135,8 @@ describe("choiceOption", () => {
 		expect(choiceOption("markdown", "--mode", ["text", "markdown"])).toBe("markdown");
 	});
 
-	it("names the choices", () => {
-		expect(usageError(() => choiceOption("html", "--mode", ["text", "markdown"])).message).toBe(
+	it("names the choices", async () => {
+		expect(await usageMessageOf(() => choiceOption("html", "--mode", ["text", "markdown"]))).toBe(
 			"--mode takes text, markdown",
 		);
 	});

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CliError, EXIT } from "../errors.js";
+import { type CliError, EXIT } from "../errors.js";
 import { findNonce, prng, solveProofOfWork } from "../pow.js";
+import { cliErrorOf } from "./harness.js";
 
 const BASE = "https://secret.example";
 // The example of PROTOCOL.md, "Proof of work", computed with Cap's own code.
@@ -44,18 +45,11 @@ function challenge(c: number, s: number, d: number, token: string = TOKEN): Resp
 
 const redeemed = () => json({ success: true, token: REDEEMED, expires: Date.now() + 1_200_000 });
 
-/** Rejects with the CliError the proof of work fails with, its message checked. */
-async function failsWith(promise: Promise<unknown>, message: string | RegExp): Promise<CliError> {
-	const error = await promise.then(
-		() => expect.unreachable("the proof of work succeeded"),
-		(reason: unknown) => reason,
-	);
-	expect(error).toBeInstanceOf(CliError);
-	const cliError = error as CliError;
-	expect(cliError.exitCode).toBe(EXIT.failure);
-	if (typeof message === "string") expect(cliError.message).toBe(message);
-	else expect(cliError.message).toMatch(message);
-	return cliError;
+/** The CliError the proof of work fails with, its message checked. */
+async function failsWith(promise: Promise<unknown>, message: string): Promise<CliError> {
+	const error = await cliErrorOf(() => promise);
+	expect(error).toMatchObject({ message, exitCode: EXIT.failure });
+	return error;
 }
 
 /** A fetch that answers only once its request is aborted, with the abort's reason. */
@@ -230,7 +224,7 @@ describe("solveProofOfWork", () => {
 
 			await failsWith(
 				solveProofOfWork(BASE, { fetch }),
-				`${BASE} is rate limiting this address: try again in 17 s`,
+				`${BASE} takes no more requests from this address for now: try again in 17s`,
 			);
 		});
 
@@ -248,7 +242,7 @@ describe("solveProofOfWork", () => {
 
 			await failsWith(
 				solveProofOfWork(BASE, { fetch }),
-				`${BASE} is rate limiting this address: try again later`,
+				`${BASE} takes no more requests from this address for now: try again later`,
 			);
 		});
 
@@ -257,7 +251,7 @@ describe("solveProofOfWork", () => {
 
 			await failsWith(
 				solveProofOfWork(BASE, { fetch }),
-				`${BASE} is rate limiting this address: try again in 3 s`,
+				`${BASE} takes no more requests from this address for now: try again in 3s`,
 			);
 		});
 

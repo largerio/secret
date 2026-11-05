@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { readApiKey } from "../credentials.js";
 import { CliError, EXIT } from "../errors.js";
-import { failureOf, notFound } from "../failures.js";
+import { notFound, translateError } from "../failures.js";
 import { connect, linkOf, proofOfWork } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
 import { createScreen, writeJson } from "../terminal.js";
@@ -39,7 +39,7 @@ export async function deleteNote(args: ReadonlyArray<string>, io: Io): Promise<v
 		}
 		screen.info("The note is deleted.");
 	} catch (err) {
-		throw failureOf(err, {
+		throw translateError(err, {
 			instance: link,
 			write: { apiKey: apiKey !== undefined },
 			namesNote: true,

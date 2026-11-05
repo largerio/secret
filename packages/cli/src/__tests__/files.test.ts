@@ -586,7 +586,8 @@ describe("failures", () => {
 
 	it.each([
 		[errno("EACCES"), "permission denied"],
-		[errno("EWEIRD"), "EWEIRD: simulated"],
+		[errno("EWEIRD"), "EWEIRD"],
+		[new Error("no code"), "no code"],
 		["a failure", "a failure"],
 	])("tells why a .part file could not be created (%s)", async (error, reason) => {
 		vi.mocked(open).mockRejectedValueOnce(error);

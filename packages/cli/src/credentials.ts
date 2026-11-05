@@ -1,15 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { CliError, EXIT } from "./errors.js";
+import { CliError, EXIT, reasonOf } from "./errors.js";
 import type { Io, Terminal } from "./types.js";
 
-/** Why a file of a secret cannot be read, by its code: never what it holds. */
+/** Why a file of a secret cannot be read: never what it holds. */
 async function readSecretFile(io: Io, path: string, name: string): Promise<string> {
 	try {
 		return await readFile(resolve(io.cwd, path), "utf8");
 	} catch (err) {
-		const code = String((err as NodeJS.ErrnoException).code);
-		throw new CliError(`${name}: cannot read ${path} (${code})`, EXIT.usage);
+		throw new CliError(`${name}: cannot read ${path}: ${reasonOf(err)}`, EXIT.usage);
 	}
 }
 

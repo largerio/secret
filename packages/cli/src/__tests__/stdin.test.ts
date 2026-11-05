@@ -1,6 +1,7 @@
+import { MAX_TEXT_SIZE } from "@largerio/secret-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { EXIT } from "../errors.js";
-import { MAX_TEXT_LENGTH, readText } from "../stdin.js";
+import { readText } from "../stdin.js";
 import type { InputStream } from "../types.js";
 import { input } from "./harness.js";
 
@@ -25,12 +26,12 @@ describe("readText", () => {
 	});
 
 	it("takes the longest text a note holds", async () => {
-		const text = "a".repeat(MAX_TEXT_LENGTH);
+		const text = "a".repeat(MAX_TEXT_SIZE);
 		expect(await readText(input([text]), signal)).toBe(text);
 	});
 
 	it("refuses more characters than a note holds", async () => {
-		await expect(readText(input(["a".repeat(MAX_TEXT_LENGTH + 1)]), signal)).rejects.toMatchObject({
+		await expect(readText(input(["a".repeat(MAX_TEXT_SIZE + 1)]), signal)).rejects.toMatchObject({
 			exitCode: EXIT.usage,
 			message: expect.stringContaining("send it as a file"),
 		});

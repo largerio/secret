@@ -1,5 +1,6 @@
 import type { ExistingNoteInfo, NoteFileInfo, SecretClientConfig } from "@largerio/secret-sdk";
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
+import { CliError } from "../errors.js";
 import type { OutputDirectory, WrittenFile } from "../files.js";
 import type { ProofOfWorkOptions } from "../pow.js";
 import { run } from "../run.js";
@@ -22,6 +23,27 @@ export const LIMITS = {
 	chunkSize: 65_536,
 	maxChunkedFileSize: 1_048_576,
 };
+
+/** The CliError `attempt` returns, throws or rejects with: anything else fails the test. */
+export async function cliErrorOf(attempt: () => unknown): Promise<CliError> {
+	let outcome: unknown;
+	try {
+		outcome = await attempt();
+	} catch (err) {
+		outcome = err;
+	}
+	expect(outcome).toBeInstanceOf(CliError);
+	return outcome as CliError;
+}
+
+/** `value` without `keys`: what an older instance answers, or an io without a default. */
+export function without<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit<T, K> {
+	const dropped = new Set<PropertyKey>(keys);
+	return Object.fromEntries(Object.entries(value).filter(([key]) => !dropped.has(key))) as Omit<
+		T,
+		K
+	>;
+}
 
 /** A stream that keeps what is written to it. */
 export class Output implements OutputStream {

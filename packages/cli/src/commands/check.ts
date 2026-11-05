@@ -1,12 +1,12 @@
 import { parseArgs } from "node:util";
 import type { ExistingNoteInfo } from "@largerio/secret-sdk";
-import { failureOf, notFound } from "../failures.js";
+import { notFound, translateError } from "../failures.js";
 import { connect, linkOf } from "../instance.js";
 import { COMMON_OPTIONS, linkArgument, parsing } from "../options.js";
 import { writeJson, writeLine } from "../terminal.js";
 import type { Io } from "../types.js";
 
-function passwordOf(info: ExistingNoteInfo): string {
+function describePassword(info: ExistingNoteInfo): string {
 	if (!info.hasPassword) {
 		return "no";
 	}
@@ -18,7 +18,7 @@ function passwordOf(info: ExistingNoteInfo): string {
 		: `yes, ${info.passwordAttemptsLeft} wrong ones before the note is deleted`;
 }
 
-function readsOf(info: ExistingNoteInfo): string {
+function describeReads(info: ExistingNoteInfo): string {
 	if (info.maxReads === 0) {
 		return "no limit";
 	}
@@ -47,15 +47,15 @@ export async function check(args: ReadonlyArray<string>, io: Io): Promise<void> 
 			return;
 		}
 		for (const line of [
-			`Password: ${passwordOf(info)}`,
+			`Password: ${describePassword(info)}`,
 			`Files:    ${info.fileCount}`,
 			`Expires:  ${info.expiresAt}`,
-			`Reads:    ${readsOf(info)}`,
+			`Reads:    ${describeReads(info)}`,
 			`Format:   ${info.envelope === undefined ? 0 : 1}`,
 		]) {
 			writeLine(io.stdout, line);
 		}
 	} catch (err) {
-		throw failureOf(err, { instance: link, namesNote: true });
+		throw translateError(err, { instance: link, namesNote: true });
 	}
 }

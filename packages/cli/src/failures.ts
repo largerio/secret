@@ -4,10 +4,10 @@ import {
 	SecretNetworkError,
 	SecretValidationError,
 } from "@largerio/secret-sdk";
-import { CliError, EXIT } from "./errors.js";
+import { problemCodeOf, rateLimited } from "./answers.js";
+import { CliError, EXIT, errnoOf, reasonOf } from "./errors.js";
 import type { Instance } from "./instance.js";
 import { lowerFirst } from "./options.js";
-import { formatDuration } from "./units.js";
 
 export function notFound(): CliError {
 	return new CliError(
@@ -31,12 +31,12 @@ export interface FailureContext {
 }
 
 /**
- * A failure in the command's own words: one line that names neither the
+ * Puts a failure in the command's own words: one line that names neither the
  * link, nor a key, nor a password, and nothing the instance wrote either, a
  * code it names aside. What is no failure the command knows comes back as it
  * is, an unexpected error.
  */
-export function failureOf(err: unknown, context: FailureContext): unknown {
+export function translateError(err: unknown, context: FailureContext): unknown {
 	if (err instanceof CliError) {
 		return err;
 	}
@@ -50,21 +50,13 @@ export function failureOf(err: unknown, context: FailureContext): unknown {
 		return new CliError(`could not reach ${context.instance.origin}`, EXIT.failure, { cause: err });
 	}
 	if (err instanceof SecretApiError) {
-		return apiFailure(err, context);
+		return translateApiError(err, context);
 	}
-	if (isSystemError(err)) {
-		return new CliError(`${err.syscall} failed: ${err.code}`, EXIT.failure, { cause: err });
+	const syscall = errnoOf(err) === undefined ? undefined : (err as NodeJS.ErrnoException).syscall;
+	if (typeof syscall === "string") {
+		return new CliError(`${syscall} failed: ${reasonOf(err)}`, EXIT.failure, { cause: err });
 	}
 	return err;
-}
-
-function isSystemError(err: unknown): err is NodeJS.ErrnoException & { syscall: string } {
-	return err instanceof Error && typeof (err as NodeJS.ErrnoException).syscall === "string";
-}
-
-/** A code as the instance names it, if it looks like one: it is shown. */
-function safeCode(code: string | undefined): string | undefined {
-	return code !== undefined && /^[a-z0-9_]{1,64}$/.test(code) ? code : undefined;
 }
 
 /**
@@ -72,10 +64,10 @@ function safeCode(code: string | undefined): string | undefined {
  * status: an answer without a code came from a proxy in front of the instance,
  * or from an instance older than 1.7.0.
  */
-function apiFailure(err: SecretApiError, context: FailureContext): CliError {
+function translateApiError(err: SecretApiError, context: FailureContext): CliError {
 	const { origin } = context.instance;
 	const { write } = context;
-	const fail = (message: string, exitCode: CliError["exitCode"] = EXIT.failure) =>
+	const asCliError = (message: string, exitCode: CliError["exitCode"] = EXIT.failure) =>
 		new CliError(message, exitCode, { cause: err });
 
 	switch (err.code) {
@@ -84,59 +76,61 @@ function apiFailure(err: SecretApiError, context: FailureContext): CliError {
 		case "unauthorized":
 			return unauthorized(context, err);
 		case "rate_limited":
-			return rateLimited(origin, err);
+			return rateLimited(origin, err.retryAfter, err);
 		case "wrong_delete_token":
-			return fail("wrong delete token", EXIT.refused);
+			return asCliError("wrong delete token", EXIT.refused);
 		case "wrong_link_proof":
 		case "wrong_password":
-			return fail(WRONG_PASSWORD_OR_LINK, EXIT.refused);
+			return asCliError(WRONG_PASSWORD_OR_LINK, EXIT.refused);
 		case "note_format_mismatch":
-			return fail("the link does not fit the note: it is wrong or damaged", EXIT.refused);
+			return asCliError("the link does not fit the note: it is wrong or damaged", EXIT.refused);
 		case "expiry_above_limit":
-			return fail(`${origin} keeps notes for less time than --expires asks`, EXIT.usage);
+			return asCliError(`${origin} keeps notes for less time than --expires asks`, EXIT.usage);
 		case "too_many_files":
-			return fail(`${origin} takes fewer files in a note`, EXIT.usage);
+			return asCliError(`${origin} takes fewer files in a note`, EXIT.usage);
 		case "too_many_chunks":
 		case "payload_too_large":
 		case "note_too_large":
-			return fail(`the note is larger than ${origin} takes`);
+			return asCliError(`the note is larger than ${origin} takes`);
 		case "chunk_too_large":
-			return fail(`${origin} refused a chunk of the note as too large`);
+			return asCliError(`${origin} refused a chunk of the note as too large`);
 		case "storage_quota_exceeded":
-			return fail(`the storage of ${origin} is full`);
+			return asCliError(`the storage of ${origin} is full`);
 		case "upload_not_found":
-			return fail(`the upload expired before it was complete: send the note again`);
+			return asCliError(`the upload expired before it was complete: send the note again`);
 		case "bad_gateway":
-			return fail(`the web server of ${origin} could not reach its API`);
+			return asCliError(`the web server of ${origin} could not reach its API`);
 	}
 
 	if (err.code === undefined) {
 		if (err.status === 0) {
-			return fail(`${origin} did not answer in time`);
+			return asCliError(`${origin} did not answer in time`);
 		}
 		if (err.status === 401) {
 			return unauthorized(context, err);
 		}
 		if (err.status === 429) {
-			return rateLimited(origin, err);
+			return rateLimited(origin, err.retryAfter, err);
 		}
 		if (err.status === 404 && context.namesNote) {
 			return notFound();
 		}
 		if (err.status === 400 && write?.format === 1) {
-			return fail(`${origin} refused the note: an instance older than 1.6.0 takes --format 0 only`);
+			return asCliError(
+				`${origin} refused the note: an instance older than 1.6.0 takes --format 0 only`,
+			);
 		}
 		if (err.status === 413) {
-			return fail(`the note is larger than ${origin} takes`);
+			return asCliError(`the note is larger than ${origin} takes`);
 		}
 	}
 
-	const code = safeCode(err.code);
+	const code = problemCodeOf(err.code);
 	const answer = code === undefined ? `HTTP ${err.status}` : `HTTP ${err.status}, ${code}`;
 	if (err.status >= 500) {
-		return fail(`${origin} failed (${answer})`);
+		return asCliError(`${origin} failed (${answer})`);
 	}
-	return fail(
+	return asCliError(
 		`${origin} refused the request (${answer})`,
 		err.status === 403 ? EXIT.refused : EXIT.failure,
 	);
@@ -147,14 +141,4 @@ function unauthorized(context: FailureContext, err: SecretApiError): CliError {
 		? "the instance refused the write: check SECRET_API_KEY"
 		: "the instance refused the write: set SECRET_API_KEY, or check it";
 	return new CliError(message, EXIT.refused, { cause: err });
-}
-
-function rateLimited(origin: string, err: SecretApiError): CliError {
-	const wait =
-		err.retryAfter === undefined ? "later" : `in ${formatDuration(Math.max(1, err.retryAfter))}`;
-	return new CliError(
-		`${origin} takes no more requests from this address for now: try again ${wait}`,
-		EXIT.failure,
-		{ cause: err },
-	);
 }

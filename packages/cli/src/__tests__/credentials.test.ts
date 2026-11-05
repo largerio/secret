@@ -10,7 +10,7 @@ import {
 	withTerminal,
 } from "../credentials.js";
 import { EXIT } from "../errors.js";
-import { fakeTerminal, harness } from "./harness.js";
+import { fakeTerminal, harness, without } from "./harness.js";
 
 const dir = mkdtempSync(join(tmpdir(), "secret-cli-credentials-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -44,7 +44,7 @@ describe("readApiKey", () => {
 	it("refuses a file it cannot read, or an empty one, naming the path only", async () => {
 		const missing = harness({ cwd: dir, env: { SECRET_API_KEY_FILE: "missing" } });
 		await expect(readApiKey(missing.io)).rejects.toMatchObject({
-			message: "SECRET_API_KEY_FILE: cannot read missing (ENOENT)",
+			message: "SECRET_API_KEY_FILE: cannot read missing: no such file or directory",
 			exitCode: EXIT.usage,
 		});
 		const empty = harness({ cwd: dir, env: { SECRET_API_KEY_FILE: file("empty", " \n") } });
@@ -109,8 +109,9 @@ describe("withTerminal", () => {
 
 	it("has none when the io gives no way to open one", async () => {
 		const { io } = harness();
-		const { openTerminal: _, ...withoutTerminal } = io;
-		await expect(withTerminal(withoutTerminal, async () => "done")).rejects.toMatchObject({
+		await expect(
+			withTerminal(without(io, "openTerminal"), async () => "done"),
+		).rejects.toMatchObject({
 			exitCode: EXIT.usage,
 		});
 	});

@@ -20,3 +20,40 @@ export class CliError extends Error {
 		this.exitCode = exitCode;
 	}
 }
+
+/** The code of a failed system call or of Node's own failure, `ENOENT` say; undefined for any other. */
+export function errnoOf(err: unknown): string | undefined {
+	if (!(err instanceof Error)) {
+		return undefined;
+	}
+	const { code } = err as NodeJS.ErrnoException;
+	return typeof code === "string" ? code : undefined;
+}
+
+/** What the codes the user can act on mean. */
+const REASONS: Readonly<Record<string, string>> = {
+	ENOENT: "no such file or directory",
+	ENOTDIR: "not a directory",
+	ENOSPC: "the disk is full",
+	EDQUOT: "the disk quota is exceeded",
+	EFBIG: "the file is too large for this file system",
+	EACCES: "permission denied",
+	EPERM: "permission denied",
+	EROFS: "the file system is read-only",
+	ENAMETOOLONG: "the file system refused the name as too long",
+	EIO: "an input/output error",
+	EBUSY: "the file is in use",
+};
+
+/**
+ * Why a call to the file system failed: what its code means, else the code.
+ * Never the error's message, which names the path, and a path given as an
+ * argument may be a secret typed where the text does not go.
+ */
+export function reasonOf(err: unknown): string {
+	const code = errnoOf(err);
+	if (code !== undefined) {
+		return REASONS[code] ?? code;
+	}
+	return err instanceof Error ? err.message : String(err);
+}

@@ -2,25 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { CliError, EXIT } from "../errors.js";
 import { connect, fetchLimits, instanceOf, linkOf, proofOfWork } from "../instance.js";
 import { createScreen } from "../terminal.js";
-import { harness, instanceFetch, KEY, LIMITS, LINK, NOTE_ID, ORIGIN, Output } from "./harness.js";
+import {
+	cliErrorOf,
+	harness,
+	instanceFetch,
+	KEY,
+	LIMITS,
+	LINK,
+	NOTE_ID,
+	ORIGIN,
+	Output,
+	without,
+} from "./harness.js";
 
 // The real proof of work, replaced: the default must be the one `pow.ts` exports.
 const pow = vi.hoisted(() => ({ solveProofOfWork: vi.fn(async () => "default-token") }));
 vi.mock("../pow.js", () => pow);
 
 const instance = { baseUrl: `${ORIGIN}/secret`, origin: ORIGIN };
-
-function failure(promise: Promise<unknown>): Promise<CliError> {
-	return promise.then(
-		() => {
-			throw new Error("no failure");
-		},
-		(err: unknown) => {
-			expect(err).toBeInstanceOf(CliError);
-			return err as CliError;
-		},
-	);
-}
 
 describe("instanceOf", () => {
 	it("keeps the origin and the path, without its trailing slashes", () => {
@@ -95,7 +94,7 @@ describe("fetchLimits", () => {
 
 	it("names the instance it cannot reach", async () => {
 		const { io } = harness({ fetch: vi.fn(() => Promise.reject(new TypeError("fetch failed"))) });
-		const error = await failure(fetchLimits(io, instance));
+		const error = await cliErrorOf(() => fetchLimits(io, instance));
 		expect(error).toMatchObject({ message: `could not reach ${ORIGIN}`, exitCode: EXIT.failure });
 	});
 
@@ -107,7 +106,7 @@ describe("fetchLimits", () => {
 		[Response.json({ ...LIMITS, maxExpiry: 0 }), "not the answer of one"],
 	])("refuses what is no instance's configuration (%#)", async (response, detail) => {
 		const { io } = harness({ fetch: vi.fn(async () => response) });
-		const error = await failure(fetchLimits(io, instance));
+		const error = await cliErrorOf(() => fetchLimits(io, instance));
 		expect(error.message).toBe(`${ORIGIN} gave no limits (${detail}): is it a Secret instance?`);
 	});
 });
@@ -125,8 +124,7 @@ describe("connect", () => {
 
 	it("builds the SDK's own client by default", async () => {
 		const { io } = harness();
-		const { createClient: _, ...withoutFactory } = io;
-		const client = await connect(withoutFactory, instance);
+		const client = await connect(without(io, "createClient"), instance);
 		expect(client.buildShareUrl(NOTE_ID, KEY)).toBe(
 			`${ORIGIN}/secret/note/${NOTE_ID}#${encodeURIComponent(KEY)}`,
 		);
@@ -149,7 +147,7 @@ describe("proofOfWork", () => {
 
 	it("uses the one of pow.ts by default", async () => {
 		const { io } = harness();
-		const { solveProofOfWork: _, ...withoutSolver } = io;
+		const withoutSolver = without(io, "solveProofOfWork");
 		expect(await proofOfWork(withoutSolver, instance, createScreen(new Output(), true))).toBe(
 			"default-token",
 		);
@@ -166,7 +164,9 @@ describe("proofOfWork", () => {
 	it("tells an unexpected failure apart, with a way out", async () => {
 		const { io, pow: solve } = harness();
 		solve.mockRejectedValueOnce(new TypeError("fetch failed"));
-		const error = await failure(proofOfWork(io, instance, createScreen(new Output(), true)));
+		const error = await cliErrorOf(() =>
+			proofOfWork(io, instance, createScreen(new Output(), true)),
+		);
 		expect(error).toMatchObject({
 			message: `could not solve the proof of work of ${ORIGIN}: set SECRET_API_KEY to write with a key`,
 			exitCode: EXIT.failure,
