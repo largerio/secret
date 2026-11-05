@@ -10,8 +10,9 @@ import { z } from "zod";
 
 const cap = new Cap({ noFSState: true });
 
-// Cap's redeem payload is an internal (undocumented) contract, so the schema
-// lives here rather than in @largerio/secret-shared.
+// Cap's redeem payload is Cap's format, not this protocol's (PROTOCOL.md, "Proof
+// of work", pinned by proofOfWork.test.ts), so the schema lives here rather
+// than in @largerio/secret-shared.
 const redeemSchema = z.object({
 	token: z.string(),
 	solutions: z.array(z.number()),
