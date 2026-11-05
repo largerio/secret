@@ -611,11 +611,11 @@ describe("secret check and secret delete, against the application", () => {
 		const sent = await secret(["send", "--json"], { stdin: "to delete", env: writer() });
 		const { link, deleteToken } = JSON.parse(sent.stdout) as { link: string; deleteToken: string };
 
-		const refused = await secret(["delete", link, "--token", "x".repeat(32)], { env: writer() });
+		const refused = await secret(["delete", link, `--token=${"x".repeat(32)}`], { env: writer() });
 		expect(refused).toMatchObject({ code: 4, stdout: "", stderr: "secret: wrong delete token\n" });
 		expect(await infoOf(link)).toMatchObject({ exists: true, readCount: 0 });
 
-		const deleted = await secret(["delete", link, "--token", deleteToken, "--json"], {
+		const deleted = await secret(["delete", link, `--token=${deleteToken}`, "--json"], {
 			env: writer(),
 		});
 		expect(deleted).toMatchObject({ code: 0, stdout: '{"deleted":true}\n', stderr: "" });
@@ -625,7 +625,7 @@ describe("secret check and secret delete, against the application", () => {
 		]);
 		expect(await secret(["check", link])).toMatchObject({ code: 3, stderr: NOT_FOUND });
 
-		const again = await secret(["delete", link, "--token", deleteToken, "--json"], {
+		const again = await secret(["delete", link, `--token=${deleteToken}`, "--json"], {
 			env: writer(),
 		});
 		expect(again).toMatchObject({ code: 3, stdout: "", stderr: NOT_FOUND });
@@ -649,7 +649,7 @@ describe("writing without an API key, against the application", () => {
 		expect(await infoOf(link)).toMatchObject({ exists: true });
 
 		// A token is spent by one write: deleting the note takes another.
-		const deleted = await secret(["delete", link, "--token", deleteToken], {
+		const deleted = await secret(["delete", link, `--token=${deleteToken}`], {
 			env: { SECRET_INSTANCE: baseUrl },
 		});
 		expect(deleted).toMatchObject({ code: 0, stderr: "The note is deleted.\n" });
@@ -679,7 +679,7 @@ describe("writing without an API key, against the application", () => {
 			link: string;
 			deleteToken: string;
 		};
-		const deleted = await secret(["delete", link, "--token", deleteToken], {
+		const deleted = await secret(["delete", link, `--token=${deleteToken}`], {
 			env: writer(wrongKey),
 		});
 		expect(deleted).toMatchObject({
