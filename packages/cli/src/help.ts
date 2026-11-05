@@ -42,7 +42,8 @@ Environment:
   SECRET_DEBUG=1          Show the stack of an unexpected error
 
 Exit codes: 0 done, 1 failed, 2 wrong usage, 3 no such note, 4 refused (a
-wrong password, link or delete token, a refused API key), 130 interrupted.
+wrong password, link or delete token, a refused API key), 130 interrupted
+by Ctrl-C, 143 by SIGTERM, 129 by SIGHUP.
 
 A link holds the key of its note: secret read takes it on stdin, or asks for
 it, so that it stays out of the shell's history. Given as an argument, quote

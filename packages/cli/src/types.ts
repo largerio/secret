@@ -55,7 +55,7 @@ export interface Io {
 	readonly cwd: string;
 	/** Every request goes through it: the instance's configuration, the SDK's, the proof of work's. */
 	readonly fetch: typeof fetch;
-	/** Aborted on Ctrl-C: the command stops, removes partial files and exits with 130. */
+	/** Aborted on Ctrl-C, SIGTERM or SIGHUP: the command stops and removes partial files. */
 	readonly signal: AbortSignal;
 
 	/** Opens the controlling terminal, or answers undefined when there is none. Default: none. */

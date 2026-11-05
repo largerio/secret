@@ -10,6 +10,17 @@ export const EXIT = {
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
+/**
+ * The signals that stop a command as Ctrl-C does, its partial files removed,
+ * and the code it then exits with: 128 and the signal's number, as a shell
+ * tells of a command the signal killed.
+ */
+export const SIGNAL_EXIT: Readonly<Record<string, number>> = {
+	SIGINT: EXIT.interrupted,
+	SIGHUP: 129,
+	SIGTERM: 143,
+};
+
 /** A failure the command reports in its own words, then exits with `exitCode`. */
 export class CliError extends Error {
 	readonly exitCode: ExitCode;
