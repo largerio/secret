@@ -40,6 +40,9 @@ export default defineConfig({
 				// The backup command's entry point: one line handing argv to
 				// runBackupCommand (db/backup.ts), which is tested.
 				"apps/api/src/backup.ts",
+				// The command line's entry point: one line handing argv to run
+				// (packages/cli/src/run.ts), which is tested.
+				"packages/cli/src/bin.ts",
 				// Frontend: gate the logic modules + utils, but exclude route
 				// loaders and server-only modules (`$app/env`/SSR SDK) that need a
 				// SvelteKit harness to exercise. (`.svelte` components are already

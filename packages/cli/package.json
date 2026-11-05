@@ -1,0 +1,57 @@
+{
+	"name": "@largerio/secret-cli",
+	"version": "0.0.0",
+	"description": "Command line for Secret — send and read zero-knowledge, end-to-end encrypted notes and files on any Secret instance, from a terminal or a script.",
+	"keywords": [
+		"encryption",
+		"zero-knowledge",
+		"end-to-end-encryption",
+		"e2ee",
+		"secret",
+		"secure-sharing",
+		"privacy",
+		"cli"
+	],
+	"homepage": "https://github.com/largerio/secret/tree/main/packages/cli#readme",
+	"bugs": "https://github.com/largerio/secret/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/largerio/secret.git",
+		"directory": "packages/cli"
+	},
+	"license": "MIT",
+	"author": "Larger.io",
+	"type": "module",
+	"bin": {
+		"secret": "./dist/bin.js"
+	},
+	"exports": {
+		".": "./src/run.ts"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			"./package.json": "./package.json"
+		}
+	},
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit",
+		"verify-package": "sh scripts/verify-package.sh"
+	},
+	"dependencies": {
+		"@largerio/secret-sdk": "workspace:^"
+	},
+	"devDependencies": {
+		"@types/node": "^26.6.6",
+		"tsup": "^9.0.0"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}
