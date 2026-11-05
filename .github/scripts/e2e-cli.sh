@@ -5,6 +5,7 @@
 # Writes go by proof of work, as the browser's do, and by API key.
 #
 # Usage: E2E_API_KEY=<key> e2e-cli.sh <base-url>
+#   base-url: http://localhost:<port>, where an API key goes over http.
 #   E2E_API_KEY: the key e2e-image.sh started the image with.
 # Build the SDK and the CLI first:
 #   pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build
@@ -143,7 +144,13 @@ text=$WORK/text.txt
 printf 'A note from the command line.\n\tAccents, emoji, CJK: é ü 🔐 日本\nNo newline at the end' \
 	> "$text"
 
-echo "→ a text note, written with a proof of work, read back"
+# The link without its fragment, which holds the key: what check and delete
+# take, since they only need the note's id.
+without_key() {
+	printf '%s' "${1%%#*}"
+}
+
+echo "→ a text note, written with a proof of work, read back with the link on stdin"
 run secret send --instance "$BASE_URL" < "$text"
 expect 0 "secret send"
 link=$(cat "$OUT")
@@ -151,10 +158,16 @@ if [ "$(wc -l < "$OUT" | tr -d ' ')" != 1 ] || [[ $link != "$BASE_URL/note/"*"#"
 	fail "secret send printed something else than the link alone: $link"
 fi
 said "secret send" '^Delete token: '
+# The way to delete it names the note without its key, the token after `=`
+# (a token may start with `-`).
+said "secret send" "secret delete $(without_key "$link") --token=[A-Za-z0-9_-]{32}$"
 # The link holds the key: nothing but stdout ever shows it.
 ! grep -qF "$link" "$ERR" || fail "secret send showed the link on stderr"
-run secret read "$link"
-expect 0 "secret read"
+# On stdin, as the documentation recommends: an argument stays in the
+# shell's history and shows in ps.
+printf '%s\n' "$link" > "$WORK/link"
+run secret read < "$WORK/link"
+expect 0 "secret read of the link on stdin"
 cmp "$OUT" "$text" >&2 || fail "secret read printed another text than the one sent"
 ! grep -qF "$link" "$ERR" || fail "secret read showed the link on stderr"
 said "secret read of a note's last read" 'last read'
@@ -163,7 +176,7 @@ echo "→ a note read once is gone"
 run secret read "$link"
 expect 3 "secret read of a note already read"
 said "secret read of a note already read" 'does not exist'
-run secret check "$link"
+run secret check "$(without_key "$link")"
 expect 3 "secret check of a note already read"
 
 echo "→ a file of several MiB, sent in chunks to S3, read into a directory"
@@ -190,6 +203,29 @@ expect 0 "secret read --out"
 # Nothing else, such as a .part file.
 [ "$(find "$WORK/received" -type f | wc -l | tr -d ' ')" = 1 ] ||
 	fail "secret read left other files in --out: $(ls -A "$WORK/received")"
+
+echo "→ a text and a file in format 0, as an instance older than 1.6.0 takes, read back"
+# Larger than the instance's chunks, so that format 0 goes in a session too,
+# its chunks to S3 and read back by the stream of format 0.
+head -c 2500000 /dev/urandom > "$WORK/format0.bin"
+run env SECRET_INSTANCE="$BASE_URL" secret send --format 0 --json "$WORK/format0.bin" < "$text"
+expect 0 "secret send --format 0"
+link=$(json link)
+[[ ${link#*#} =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "secret send --format 0 printed a link of format 1"
+run secret check "$(without_key "$link")" --json
+expect 0 "secret check of the format 0 note"
+[ "$(json chunked)" = true ] || fail "the format 0 note of 2.5 MB did not go in chunks"
+mkdir "$WORK/received-format0"
+run secret read "$link" --out "$WORK/received-format0" --json
+expect 0 "secret read --out of the format 0 note"
+[ "$(json text)" = "$(cat "$text")" ] || fail "secret read gave another text than the one sent"
+[ "$(json files.0.name)" = format0.bin ] || fail "the file came back as $(json files.0.name)"
+[ "$(sha256 "$(json files.0.path)")" = "$(sha256 "$WORK/format0.bin")" ] ||
+	fail "the format 0 file written differs from the file sent"
+[ "$(find "$WORK/received-format0" -type f | wc -l | tr -d ' ')" = 1 ] ||
+	fail "secret read left other files in --out: $(ls -A "$WORK/received-format0")"
+run secret check "$(without_key "$link")"
+expect 3 "secret check of the format 0 note once read"
 
 echo "→ a password note: a wrong password is refused and spends no read"
 password=$(random 12)
@@ -223,29 +259,36 @@ node -e '
 		process.exit(1);
 	}
 ' "$(json expiresAt "$WORK/sent.json")" || fail "--expires 1h was not applied"
-for _ in 1 2 3; do
-	run secret check "$link" --json
+note=$(without_key "$link")
+# The fragment, given, is ignored.
+for checked in "$note" "$link" "$note"; do
+	run secret check "$checked" --json
 	expect 0 "secret check"
 	[ "$(json readCount)" = 0 ] || fail "secret check spent a read"
 done
-run secret check "$link"
+run secret check "$note"
 expect 0 "secret check, for a person"
 grep -qx 'Reads: *2 left of 2' "$OUT" || fail "secret check printed: $(cat "$OUT")"
 grep -qx 'Format: *1' "$OUT" || fail "secret check printed: $(cat "$OUT")"
+# A link names its instance: only send takes one.
+run secret check --instance "$BASE_URL" "$note"
+expect 2 "secret check --instance"
 # The same length and alphabet, so only the instance can tell it is wrong.
 wrong_token=$(printf '%s' "$token" | tr 'A-Za-z0-9' 'B-ZAb-za1-90')
-run secret delete "$link" --token "$wrong_token"
+run secret delete "$note" --token="$wrong_token"
 expect 4 "secret delete with a wrong token"
 said "secret delete with a wrong token" 'wrong delete token'
-run secret delete "$link" --token "$token"
+run secret delete "$note" --token="$token"
 expect 0 "secret delete"
-run secret check "$link" --json
+run secret check "$note" --json
 expect 3 "secret check of a deleted note"
 [ "$(json exists)" = false ] || fail "secret check --json of a deleted note printed: $(cat "$OUT")"
-run secret delete "$link" --token "$token"
+run secret delete "$note" --token="$token"
 expect 3 "secret delete of a deleted note"
 
 echo "→ writes with an API key, and no proof of work in place of a wrong one"
+# Over http, to localhost as the job runs it: a key goes there without
+# --allow-http, the loopback being no network to cross.
 # As a secret file holds it: the value, then a line break.
 printf '%s\n' "$E2E_API_KEY" > "$WORK/api-key"
 run env SECRET_API_KEY_FILE="$WORK/api-key" secret send --instance "$BASE_URL" --max-reads 2 \
@@ -256,11 +299,11 @@ link=$(json link "$WORK/sent.json")
 run secret read "$link"
 expect 0 "secret read of the note written by key"
 cmp "$OUT" "$text" >&2 || fail "secret read printed another text than the one sent"
-run env SECRET_API_KEY="$E2E_API_KEY" secret delete "$link" \
-	--token "$(json deleteToken "$WORK/sent.json")" --json
+run env SECRET_API_KEY="$E2E_API_KEY" secret delete "$(without_key "$link")" \
+	--token="$(json deleteToken "$WORK/sent.json")" --json
 expect 0 "secret delete with SECRET_API_KEY"
 [ "$(json deleted)" = true ] || fail "secret delete --json printed: $(cat "$OUT")"
-run secret check "$link"
+run secret check "$(without_key "$link")"
 expect 3 "secret check of a note deleted by key"
 wrong_key=$(random 24)
 run env SECRET_API_KEY="$wrong_key" secret send --instance "$BASE_URL" < "$text"
