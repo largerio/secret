@@ -65,6 +65,13 @@ It starts the dev servers. CI runs it against the image instead, on S3
 storage: `.github/scripts/e2e-image.sh <image>` starts both, then
 `E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them.
 
+The command line runs against the same image, installed with npm from its
+packed tarball and the SDK's, as a user installs it. Start the image with an
+API key of 32 characters at least in `E2E_API_KEY`, build the SDK and the CLI
+(`pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build`),
+then run `.github/scripts/e2e-cli.sh http://localhost:3000` with the same
+`E2E_API_KEY`. CI runs it on Node 22, the oldest the CLI supports.
+
 4. Commit with a clear message (see [Commit Messages](#commit-messages))
 5. Open a pull request
 
@@ -97,6 +104,7 @@ apps/api/           Backend (Hono, Node.js 26, SQLite)
 apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
 apps/e2e/           Playwright end-to-end tests (incl. the axe-core a11y gate)
 packages/sdk-js/    JS/TS SDK (SecretClient, encrypt/decrypt flows)
+packages/cli/       Command line (`secret`), built on the SDK
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)
 packages/shared/    Shared types, Zod schemas, constants
 messages/           i18n translations (10 languages)
@@ -178,19 +186,30 @@ Dropping a JSON file in `messages/` is not enough; register it in three places:
 
 ## Releases
 
-SDK releases are driven by [changesets](https://github.com/changesets/changesets). Add one in the
-same PR as any user-visible change to the SDK:
+Two packages are published to npm: the SDK, `@largerio/secret-sdk`, and the
+command line, `@largerio/secret-cli`, which depends on it. Their releases are
+driven by [changesets](https://github.com/changesets/changesets). Add one in
+the same PR as any user-visible change to either:
 
 ```bash
 pnpm changeset
 ```
 
-On merge to `main`, the Release SDK workflow collects pending changesets into a
-"chore: version packages" PR. Merging *that* publishes `@largerio/secret-sdk` to
-npm via OIDC trusted publishing — no token is stored. The SDK is built in a job
-with a read-only token and no secret. The job that publishes it installs only
-what changesets and pnpm need, runs no package's script, and publishes that
-build.
+On merge to `main`, the Release npm packages workflow (`release.yml`) collects
+pending changesets into a "chore: version packages" PR. Merging *that*
+publishes the versions npm does not have yet, of either package, via OIDC
+trusted publishing — no token is stored. Both packages are built in a job with
+a read-only token and no secret, and checked there as they will ship:
+`verify-package` packs each with pnpm and runs it from its tarball. The job
+that publishes them installs only what changesets and pnpm need, runs no
+package's script, and publishes that build. Each version published gets its
+git tag and GitHub release (`@largerio/secret-cli@0.1.0`), which takes the
+Latest badge: the app's release takes it back with `gh release create --latest`.
+
+The CLI depends on the SDK through `workspace:^`, which pnpm publishes as
+`^<the SDK's version>`. A release of the SDK alone does not release the CLI:
+the published CLI takes the SDK's later minors and patches. A change to the
+CLI that needs something new in the SDK takes a changeset for each.
 
 The workflow opens that PR as a GitHub App rather than with the default
 `GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions
@@ -207,6 +226,48 @@ key in the `APP_PRIVATE_KEY` secret. Each workflow scopes its token down to
 what it needs. Without the App both workflows fall back to `GITHUB_TOKEN`:
 releases still ship, but the version PR gets no CI run and Dependabot merges
 never reach the CI/CD pipeline.
+
+### A new package on npm
+
+npm attaches a trusted publisher only to a package that exists, so the
+workflow cannot publish the first version of a new one, such as
+`@largerio/secret-cli` 0.1.0. Before merging the Version Packages PR that brings it,
+a maintainer who can publish to the `@largerio` scope:
+
+1. Publishes a placeholder by hand, version `0.0.0`, from an empty directory,
+   so that the first real version still comes from the workflow, with its
+   provenance:
+
+   ```bash
+   mkdir secret-cli-placeholder && cd secret-cli-placeholder
+   cat > package.json <<'JSON'
+   {
+     "name": "@largerio/secret-cli",
+     "version": "0.0.0",
+     "description": "Placeholder: install a later version.",
+     "license": "MIT",
+     "repository": { "type": "git", "url": "git+https://github.com/largerio/secret.git" }
+   }
+   JSON
+   npm publish --access public
+   ```
+
+2. On npmjs.com, in the package's settings, adds a trusted publisher: GitHub
+   Actions, organization `largerio`, repository `secret`, workflow
+   `release.yml`, and no environment, since the job that publishes runs in
+   none. The file name is what npm checks: renaming `release.yml` stops every
+   publish until the publishers of both packages are updated.
+3. Under publishing access, requires two-factor authentication and disallows
+   tokens: the workflow needs none.
+4. Merges the Version Packages PR: the workflow publishes the first version.
+5. Deprecates the placeholder:
+   `npm deprecate @largerio/secret-cli@0.0.0 "Placeholder: install a later version."`
+
+Publishing the first version by hand instead works too, but without
+provenance, and the workflow then skips it. If the Version Packages PR is
+merged before the trusted publisher is set, the publish of the new package
+fails: set it, then re-run the failed `release` job, whose build is kept seven
+days.
 
 ### Dependencies
 
