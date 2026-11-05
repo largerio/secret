@@ -19,6 +19,9 @@ The following are in scope:
 - XSS, CSRF, header injection
 - Rate limit bypass
 - Information disclosure via error messages or timing side-channels
+- The command line (`@largerio/secret-cli`): a received file written outside its
+  directory or over another file, a note driving the terminal, a link or key
+  leaked to stderr
 
 ## Architecture Overview
 
@@ -80,8 +83,8 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
 - **A network observer.** With HTTPS terminated at the reverse proxy (see
   Assumptions), traffic is encrypted in transit; the fragment is never sent on the
   wire at all.
-- **Automated write abuse.** Browser writes require a proof-of-work token (Cap);
-  SDK writes require an API key. Reads need no account, but a format 1 note is
+- **Automated write abuse.** Browser writes require a proof-of-work token (Cap),
+  as the command line's do without a key; SDK writes require an API key. Reads need no account, but a format 1 note is
   served only to a reader who proves they hold the link, and the password of a
   password note: the note's ID alone neither reads it nor burns it, a wrong
   password spends no read, and the fifth deletes the note.
@@ -147,10 +150,42 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   changing it renders all existing notes permanently undecryptable. There is no
   re-encryption/rotation path today.
 - **Proof-of-work is best-effort.** Cap raises the cost of automated writes but does
-  not stop a determined attacker willing to spend CPU. Tune `CAP_DIFFICULTY` /
+  not stop a determined attacker willing to spend CPU: the command line solves it
+  in a few seconds at the default difficulty. Tune `CAP_DIFFICULTY` /
   `CAP_CHALLENGE_COUNT` upward under sustained abuse.
 - **No forward secrecy across a leaked link.** Because the key is the link, anyone
   who ever captured the link can decrypt the note until it expires or is deleted.
+
+## The Command Line
+
+`@largerio/secret-cli` encrypts and decrypts in its own process, with the SDK:
+an instance learns from it what it learns from the web app. Besides:
+
+- **Received files** are written only directly inside the directory the reader
+  names, under a name made safe (no path, no control or bidirectional
+  characters, no leading dot or dash, no Windows device name), never over a
+  file, directory or link already there, and only once the whole note is
+  verified. Until then they are `.part` files, created exclusively with mode
+  `0600`, and removed if the note is refused or the read interrupted. What
+  they hold is the sender's, and is not checked.
+- **The terminal.** On a terminal, a note's text, and whatever else the sender
+  or the instance wrote, has its control characters (C0 but line feed and
+  tab, DEL, C1) and invisible format characters replaced before it is shown,
+  so that a note cannot drive the terminal. Output redirected to a file or a
+  program is the text byte for byte, escape sequences included: what reads it
+  must not trust it.
+- **Secrets in arguments.** No option takes the text, an API key or a
+  password, and the link is printed on stdout only, never on stderr or in an
+  error. `read` takes the link on stdin or at a prompt without echo, and
+  `check` and `delete` need only the note's id. A link given as an argument
+  anyway stays in the shell's history and shows in `ps`: the command cannot
+  take it back. `SECRET_API_KEY` and `SECRET_PASSWORD` are visible to the
+  user's own processes, as any environment variable is; `SECRET_API_KEY_FILE`
+  and `--password-file` keep them in files instead.
+- **`http:`.** An API key is not sent over plain HTTP to a host other than the
+  loopback, unless `--allow-http` says so. A note sent or read over `http:`
+  stays end-to-end encrypted, but whoever is on the path sees the requests, a
+  format 1 read's proofs among them, and can answer in the instance's place.
 
 ## Supported Versions
 
@@ -160,4 +195,5 @@ releases. An exact tag such as `:1.3.2` never changes, so it gets neither. See
 [Pinning a version](README.md#pinning-a-version) for every tag, and
 [CHANGELOG.md](CHANGELOG.md) for what each release changes.
 
-The SDK (`@largerio/secret-sdk`) is supported in its latest 1.x version.
+The SDK (`@largerio/secret-sdk`) is supported in its latest 1.x version, and the
+command line (`@largerio/secret-cli`) in its latest version.
