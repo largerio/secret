@@ -833,16 +833,42 @@ describe("refusals, against the application", () => {
 		});
 	});
 
-	// Bug: a format 0 key that cannot be one (not 43 characters) is only refused once /raw has spent the read.
-	it.fails("refuses a format 0 link whose key is cut short before the read is spent", async () => {
-		const link = await send(["--format", "0", "--max-reads", "2"], { stdin: "read twice" });
+	it("refuses a format 0 link whose key cannot be one before the read is spent", async () => {
+		// Read once: a read spent for nothing would burn it.
+		const sent = await secret(["send", "--format", "0", "--json"], {
+			stdin: "read once",
+			env: writer(),
+		});
+		const { link, id, deleteToken } = JSON.parse(sent.stdout) as {
+			link: string;
+			id: string;
+			deleteToken: string;
+		};
 		expect(link).toMatch(FORMAT_0_LINK);
+		secrets.add(deleteToken);
+		const [base, key] = link.split("#") as [string, string];
+		// The next character sets a bit of the two the last one of a key leaves at zero.
+		const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+		const strayed = `${key.slice(0, -1)}${BASE64URL[BASE64URL.indexOf(key.slice(-1)) + 1]}`;
 
-		// As a format 1 link cut short is: a malformed link, refused before the note is read.
-		const cut = await secret(["read", link.slice(0, -1)]);
-		expect(cut).toMatchObject({ code: 2, stdout: "" });
-		expect(cut.requests).toEqual(["GET /api/v1/notes/:id/exists"]);
+		const malformed = {
+			"a key cut short": link.slice(0, -1),
+			"a key a character too long": `${link}A`,
+			"a key whose last character carries stray bits": `${base}#${strayed}`,
+			// Where a note's link holds the key, its management link holds the delete token.
+			"the management link": `${baseUrl}/note/${id}/manage#${deleteToken}`,
+		};
+		for (const [why, argv] of Object.entries(malformed)) {
+			const refused = await secret(["read", argv]);
+			// As a malformed format 1 link is: refused before the note is read.
+			expect(refused.code, why).not.toBe(0);
+			expect(refused.stdout, why).toBe("");
+			const spending = refused.requests.filter((r) => r !== "GET /api/v1/notes/:id/exists");
+			expect(spending, why).toEqual([]);
+		}
 		expect(await infoOf(link)).toMatchObject({ exists: true, readCount: 0 });
+
+		expect(await secret(["read", link])).toMatchObject({ code: 0, stdout: "read once" });
 	});
 
 	it("refuses a directory the files cannot go to before the read is spent", async () => {

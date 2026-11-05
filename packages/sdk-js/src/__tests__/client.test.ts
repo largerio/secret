@@ -50,6 +50,7 @@ vi.mock("../crypto.js", () => ({
 
 vi.mock("../format1.js", () => ({
 	formatOfFragment: vi.fn((keyFragment: string) => (keyFragment.startsWith("1.") ? 1 : 0)),
+	assertFormat0Fragment: vi.fn(),
 	assertFormat1Fragment: vi.fn(),
 	format1BodyOf: vi.fn(),
 	encryptNoteFormat1: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock("../format1.js", () => ({
 
 async function getFormat1Mocks() {
 	return (await import("../format1.js")) as typeof import("../format1.js") & {
+		assertFormat0Fragment: ReturnType<typeof vi.fn>;
 		assertFormat1Fragment: ReturnType<typeof vi.fn>;
 		formatOfFragment: ReturnType<typeof vi.fn>;
 		format1BodyOf: ReturnType<typeof vi.fn>;
@@ -145,6 +147,10 @@ describe("SecretClient", () => {
 			text: "decrypted chunked text",
 			contentMode: "text",
 		});
+
+		const format1 = await getFormat1Mocks();
+		format1.assertFormat0Fragment.mockReset();
+		format1.assertFormat1Fragment.mockReset();
 	});
 	test("creates a client with default config", async () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
@@ -1458,6 +1464,7 @@ describe("SecretClient in format 1", () => {
 
 		const format1 = await getFormat1Mocks();
 		for (const mock of [
+			format1.assertFormat0Fragment,
 			format1.assertFormat1Fragment,
 			format1.format1BodyOf,
 			format1.encryptNoteFormat1,
@@ -2213,7 +2220,7 @@ describe("SecretClient in format 1", () => {
 	});
 });
 
-describe("a note's id, checked before any request", () => {
+describe("a note's id and its link's key, checked before any request", () => {
 	/** Every call that names a note, the reads in both formats. */
 	const callsNaming = (client: SecretClient, id: string) => {
 		const openFile = () => new WritableStream<Uint8Array>();
@@ -2250,6 +2257,7 @@ describe("a note's id, checked before any request", () => {
 			(mock as ReturnType<typeof vi.fn>).mockReset();
 		}
 		const format1 = await getFormat1Mocks();
+		format1.assertFormat0Fragment.mockReset();
 		format1.assertFormat1Fragment.mockReset();
 	});
 
@@ -2319,5 +2327,52 @@ describe("a note's id, checked before any request", () => {
 		expect(() => SecretClient.parseShareUrl(url)).toThrow(
 			new SecretValidationError("Invalid share URL: invalid note ID"),
 		);
+	});
+
+	test("checks a format 0 key before a read, in either call", async () => {
+		const format1 = await getFormat1Mocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const malformed = new SecretValidationError("Invalid key fragment");
+		format1.assertFormat0Fragment.mockImplementation(() => {
+			throw malformed;
+		});
+		const openFile = () => new WritableStream<Uint8Array>();
+
+		for (const chunked of [undefined, true, false]) {
+			const options = chunked === undefined ? {} : { chunked };
+			expect(await refusalOf(() => client.readNote("noteId123456", "cut", options))).toBe(
+				malformed,
+			);
+			expect(
+				await refusalOf(() => client.readNoteInto("noteId123456", "cut", { ...options, openFile })),
+			).toBe(malformed);
+		}
+		expect(format1.assertFormat0Fragment).toHaveBeenCalledWith("cut");
+		expect(format1.assertFormat1Fragment).not.toHaveBeenCalled();
+		await expectNoRequest();
+	});
+
+	test("checks each format's key with its own rule", async () => {
+		const http = await getHttpMocks();
+		const format1 = await getFormat1Mocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-06-01",
+			expiresAt: "2099-06-01",
+		});
+		http.checkNote.mockResolvedValue({ exists: false });
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await client.readNote("noteId123456", "keyFrag", { chunked: false });
+		expect(format1.assertFormat0Fragment).toHaveBeenCalledWith("keyFrag");
+		expect(format1.assertFormat1Fragment).not.toHaveBeenCalled();
+
+		format1.assertFormat0Fragment.mockClear();
+		await expect(client.readNote("noteId123456", "1.key")).rejects.toThrow(SecretApiError);
+		expect(format1.assertFormat1Fragment).toHaveBeenCalledWith("1.key");
+		expect(format1.assertFormat0Fragment).not.toHaveBeenCalled();
 	});
 });

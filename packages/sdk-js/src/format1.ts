@@ -46,7 +46,11 @@ type StreamState = StreamEncryptState["state"];
 
 /** What a format 1 link's fragment starts with: `1.`, then the key. */
 const FRAGMENT_PREFIX = "1.";
-const FRAGMENT_RE = /^1\.[A-Za-z0-9_-]{43}$/;
+/**
+ * A link's key, of either format: 32 bytes in base64url without padding, 43
+ * characters (PROTOCOL.md, "The link").
+ */
+const LINK_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 /** A fragment that names its format: a number and a dot, which a format 0 key never holds. */
 const NUMBERED_FRAGMENT_RE = /^(\d+)\./;
 
@@ -76,24 +80,42 @@ export function formatOfFragment(keyFragment: string): NoteFormat {
 }
 
 /**
- * The key of a format 1 fragment. A malformed one is refused before anything
- * is read: it could only spend a read for nothing.
+ * The 32 bytes of a key as a link encodes it. A malformed one is refused
+ * before anything is read: it could only spend a read for nothing.
  */
-function linkKeyOf(keyFragment: string): Uint8Array {
-	if (!FRAGMENT_RE.test(keyFragment)) {
+function keyOfLink(encoded: string): Uint8Array {
+	if (!LINK_KEY_RE.test(encoded)) {
 		throw new SecretValidationError("Invalid key fragment");
 	}
 	try {
 		// libsodium refuses a key whose last character carries stray bits.
-		return keyFromBase64Url(keyFragment.slice(FRAGMENT_PREFIX.length));
+		return keyFromBase64Url(encoded);
 	} catch {
 		throw new SecretValidationError("Invalid key fragment");
 	}
 }
 
+/** The key of a format 1 fragment: `1.`, then the key. */
+function linkKeyOf(keyFragment: string): Uint8Array {
+	if (!keyFragment.startsWith(FRAGMENT_PREFIX)) {
+		throw new SecretValidationError("Invalid key fragment");
+	}
+	return keyOfLink(keyFragment.slice(FRAGMENT_PREFIX.length));
+}
+
 /** Checks a format 1 fragment before a read, so a malformed link spends none. */
 export function assertFormat1Fragment(keyFragment: string): void {
 	zeroMemory(linkKeyOf(keyFragment));
+}
+
+/**
+ * Checks a format 0 fragment, the key alone, before a read. A format 0 note
+ * is served before its key can be checked, and served spends a read: a key
+ * cut short, or a fragment that holds something else, such as the delete
+ * token of a management link, would burn a note for nothing.
+ */
+export function assertFormat0Fragment(keyFragment: string): void {
+	zeroMemory(keyOfLink(keyFragment));
 }
 
 /** Refuses, before any work, settings an envelope cannot hold. */

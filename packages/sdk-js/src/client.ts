@@ -18,6 +18,7 @@ import {
 } from "./crypto.js";
 import { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
 import {
+	assertFormat0Fragment,
 	assertFormat1Fragment,
 	closeFormat1Read,
 	encryptNoteFormat1,
@@ -27,6 +28,7 @@ import {
 	type Format1Settings,
 	format1BodyOf,
 	formatOfFragment,
+	type NoteFormat,
 	type NoteSource,
 	OutsideFailure,
 	openNoteFormat1,
@@ -233,6 +235,20 @@ function assertNoteId(id: string): void {
 	if (!isNoteId(id)) {
 		throw new SecretValidationError("Invalid note ID");
 	}
+}
+
+/**
+ * The format a link's fragment names, its key checked: a malformed link is
+ * refused before anything is read, since a read spends.
+ */
+function checkedFormatOf(keyFragment: string): NoteFormat {
+	const format = formatOfFragment(keyFragment);
+	if (format === 1) {
+		assertFormat1Fragment(keyFragment);
+	} else {
+		assertFormat0Fragment(keyFragment);
+	}
+	return format;
 }
 
 /** decodeURIComponent, with a malformed escape reported as an invalid share URL. */
@@ -569,8 +585,8 @@ export class SecretClient {
 	 * @param keyFragment The key from the share URL fragment. It names the
 	 * note's format: `1.` then the key for format 1, the bare key for format 0.
 	 * @throws {SecretValidationError} for an id the server cannot have given, a
-	 * malformed format 1 link, or a link of a format this SDK does not know:
-	 * refused before anything is read.
+	 * malformed key of either format, or a link of a format this SDK does not
+	 * know: refused before anything is read.
 	 * @throws {SecretDecryptionError} for a wrong password, a wrong key, or
 	 * tampered ciphertext — deliberately indistinguishable, to avoid an oracle.
 	 * For a format 1 note, also for a password note read without its password,
@@ -587,12 +603,10 @@ export class SecretClient {
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
 		assertNoteId(id);
-		// The link names its format, so a malformed format 1 link spends no read,
-		// and the server serves a note only in the format the read asks for.
-		const format = formatOfFragment(keyFragment);
-		if (format === 1) {
-			assertFormat1Fragment(keyFragment);
-		}
+		// The link names its format, and its key is checked first, so a
+		// malformed link spends no read; the server serves a note only in the
+		// format the read asks for.
+		const format = checkedFormatOf(keyFragment);
 		options?.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 
 		if (format === 1) {
@@ -838,7 +852,7 @@ export class SecretClient {
 		options: ReadNoteIntoOptions,
 	): Promise<ReadNoteIntoResult> {
 		assertNoteId(id);
-		if (formatOfFragment(keyFragment) === 0) {
+		if (checkedFormatOf(keyFragment) === 0) {
 			const { payload, createdAt, expiresAt, fileCount } = await this.readNote(
 				id,
 				keyFragment,
@@ -856,7 +870,6 @@ export class SecretClient {
 			};
 		}
 
-		assertFormat1Fragment(keyFragment);
 		options.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 		const read = await this.prepareRead(id, keyFragment, options);
 		try {
