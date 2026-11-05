@@ -277,6 +277,10 @@ API_KEY=<openssl rand -base64 32>   # 32 characters minimum
 Then `docker compose up -d --force-recreate`. A key authorises writes only — it
 grants no read access others don't have, and no ability to decrypt.
 
+The [command line](../packages/cli/README.md) takes the key in `SECRET_API_KEY`,
+or in the file `SECRET_API_KEY_FILE` names; without one, it solves the
+Proof-of-Work challenge as a browser does.
+
 ---
 
 ## Secrets in files
@@ -399,7 +403,8 @@ they could fill in but never send.
 Deleting a note from its delete link solves a challenge too, so it works in a
 browser that is logged in. Reading a note never does. Scripts and the SDK skip
 the login: they write with an [API key](#api-keys-for-the-sdk), which the API
-checks itself, on paths that stay open.
+checks itself, on paths that stay open. So does the command line, given a key:
+without one, it asks `/api/cap/` for a challenge, and the login stops it there.
 
 Two things keep the login from being walked around:
 

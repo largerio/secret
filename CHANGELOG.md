@@ -7,6 +7,15 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Added
+
+- A command line, `secret`, published to npm as `@largerio/secret-cli`, sends and reads notes from a terminal or a script: text on stdin, files as arguments, `--json` for scripts. It writes with an API key, or without one by solving the instance's proof of work, as the browser does, which [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md#proof-of-work) now specifies. Received files never overwrite anything and show only once the whole note is checked. (#270)
+- The SDK exports the protocol's limits (`MAX_TEXT_SIZE`, `MAX_READS`, `NOTE_ID_LENGTH`…), to check a note before it is sent. (#270)
+
+### Fixed
+
+- With the SDK, a format 0 link whose key was cut short in transit spent the note's read before the key was refused, which burned a note read once; and a malformed note id could aim a request at another endpoint of the instance, so that a check could spend a format 0 note's read. The SDK now refuses both before any request. The web app already checked a link's shape. (#270)
+
 ## [1.7.0] - 2026-10-30
 
 ### Added

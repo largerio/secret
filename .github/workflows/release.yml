@@ -1,7 +1,8 @@
-name: Release SDK
+name: Release npm packages
 
-# Publishes @largerio/secret-sdk to npm. The app image is released by
-# release-image.yml.
+# Publishes @largerio/secret-sdk and @largerio/secret-cli to npm. The app
+# image is released by release-image.yml. npm's trusted publisher names this
+# file: renaming it stops every publish (CONTRIBUTING.md).
 on:
   push:
     branches: [main]
@@ -31,19 +32,30 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: Build the SDK
-        run: pnpm --filter @largerio/secret-sdk build
+      - name: Build the SDK and the CLI
+        run: pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build
 
       - name: Verify the publishable SDK artifact
         run: pnpm --filter @largerio/secret-sdk verify-package
 
-      - name: Upload the build
+      - name: Verify the publishable CLI artifact
+        run: pnpm --filter @largerio/secret-cli verify-package
+
+      - name: Upload the SDK build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdk-dist
           path: packages/sdk-js/dist/
           if-no-files-found: error
           # Long enough to re-run a failed publish alone.
+          retention-days: 7
+
+      - name: Upload the CLI build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-dist
+          path: packages/cli/dist/
+          if-no-files-found: error
           retention-days: 7
 
   release:
@@ -81,23 +93,38 @@ jobs:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       # Only what changesets and pnpm publish need: the root, for the
-      # changesets CLI, and the SDK, whose workspace dependencies pnpm
-      # resolves when it packs. No package's script runs, and no cache is
+      # changesets CLI, and the two packages, whose workspace dependencies
+      # pnpm resolves when it packs (the CLI's `workspace:^` on the SDK
+      # becomes `^<its version>`). No package's script runs, and no cache is
       # restored: a cache entry is written by jobs that run the whole
       # lockfile.
       - uses: ./.github/actions/setup
         with:
-          install-args: --ignore-scripts --filter secret --filter @largerio/secret-sdk
+          install-args: >-
+            --ignore-scripts --filter secret --filter @largerio/secret-sdk
+            --filter @largerio/secret-cli
           cache: ""
 
-      - name: Download the build
+      - name: Download the SDK build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sdk-dist
           path: packages/sdk-js/dist/
 
+      - name: Download the CLI build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cli-dist
+          path: packages/cli/dist/
+
+      # An artifact keeps no file mode. Installs make a bin executable anyway;
+      # this publishes the tarball verify-package checked.
+      - name: Make the command executable again
+        run: chmod +x packages/cli/dist/bin.js
+
       # With changesets pending, opens or updates the Version Packages PR.
-      # Without, publishes the versions npm does not have yet.
+      # Without, publishes the versions npm does not have yet, of either
+      # package.
       - name: Open the Version Packages PR or publish
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:

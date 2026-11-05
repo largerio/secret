@@ -84,7 +84,9 @@ password.
   `A-Z a-z 0-9 _ -`.
 - `key`: the base key in base64url without padding, 43 characters. They
   hold 258 bits for 256, so the last character's two low bits are zero. A
-  reader MUST reject a key encoded any other way, as libsodium does. The web
+  reader MUST reject a key encoded any other way, as libsodium does, and
+  before reading the note: a format 0 read spends a read whatever the key, so
+  a key cut short in transit would otherwise burn the note unread. The web
   app also refuses any other shape (`^[A-Za-z0-9_-]{43}$`).
 
 The web app also gives the writer a management link,
@@ -367,12 +369,123 @@ Reads need no authentication: a format 1 read [proves](#proof-of-reading)
 that it holds the link instead. Creating and deleting a note need one of:
 
 - `Authorization: Bearer <API key>`, with a key the operator configured;
-- `X-Cap-Token: <token>`, a single-use proof-of-work token from the
-  instance's challenge endpoints under `/api/cap/`, as the web app gets one.
+- `X-Cap-Token: <token>`, a single-use token the instance gives for a
+  [proof of work](#proof-of-work), as the web app and the command line get
+  one.
 
 Message uploads and `/complete` need neither: the upload id stands for the
 authentication given to `/init`. A refusal answers `401` (`unauthorized`),
 whatever failed.
+
+### Proof of work
+
+The proof of work is [Cap](https://capjs.js.org)'s, as the instance serves it
+under `/api/cap/` with `@cap.js/server` 4. It is Cap's format, not this
+protocol's: it has no version number, its paths are not versioned, and a
+release of Cap may change it. A contract test
+([`proofOfWork.test.ts`](apps/api/src/__tests__/proofOfWork.test.ts)) runs
+the command line's solver against the instance and fails if they part.
+
+A client asks for a challenge, solves it, and redeems the solutions for a
+token:
+
+```
+POST /api/cap/challenge
+```
+
+with no body. The instance answers `200`:
+
+```json
+{
+  "challenge": { "c": 50, "s": 32, "d": 4 },
+  "token": "0123456789abcdef0123456789abcdef0123456789abcdef01",
+  "expires": 1793901021064
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `challenge.c` | The number of challenges: the instance's `CAP_CHALLENGE_COUNT`, 50 by default. |
+| `challenge.s` | The length of a salt, in hex characters: 32. |
+| `challenge.d` | The difficulty, the length of a target in hex characters: the instance's `CAP_DIFFICULTY`, 1 to 6, 4 by default. |
+| `token` | The challenge's id: 50 lowercase hex characters. |
+| `expires` | When the challenge expires, in milliseconds since the Unix epoch: 10 minutes after it was served. |
+
+Challenge `i`, for `i` from 1 to `c`, has a salt and a target:
+
+```
+salt_i   = prng(token ‖ i, s)
+target_i = prng(token ‖ i ‖ "d", d)
+```
+
+where `i` is written in decimal and `‖` joins strings. `prng(seed, n)` is
+Cap's generator, on 32-bit unsigned integers, every operation modulo 2^32:
+
+1. `h` is the FNV-1a hash of the seed's ASCII bytes: `h = 2166136261`
+   (`0x811c9dc5`), then for each byte `b`, `h = (h XOR b) × 16777619`.
+2. Until the output holds `n` characters: `h ^= h << 13`, `h ^= h >> 17`,
+   `h ^= h << 5` (xorshift32, `>>` a logical shift), then append `h` as 8
+   lowercase hex digits, zero-padded.
+3. The output is cut to its first `n` characters.
+
+A solution to challenge `i` is an integer `n_i ≥ 0` such that the SHA-256 of
+the ASCII bytes of `salt_i ‖ n_i`, with `n_i` in decimal without leading
+zeros, written in lowercase hex, starts with `target_i`. A try succeeds with
+probability 16^−d: a challenge takes 65,536 tries on average at the default,
+its 50 challenges 3.3 million, about a second on one core. Any solution is
+accepted; the web app and the command line count up from 0.
+
+The solutions are redeemed as JSON numbers, in the order of `i`:
+
+```
+POST /api/cap/redeem
+Content-Type: application/json
+
+{"token": "<the challenge's token>", "solutions": [20759, 12490, …]}
+```
+
+The instance answers `200`:
+
+```json
+{
+  "success": true,
+  "token": "a5fd561392de249f:7bc090f523cca7ae2b380e6ac8e113",
+  "expires": 1793901621064
+}
+```
+
+`token` is the write token: 16 hex characters, `:`, then 30. It expires 20
+minutes after it was given, at `expires`. A wrong solution, an unknown or
+expired challenge, or a body of another shape answers `400` with Cap's
+`{"success": false, "message": "<why>"}`, not a problem details object. A
+well-formed `/redeem` spends the challenge, right or wrong: a challenge is
+redeemed once.
+
+The write token goes in `X-Cap-Token`, for one write. The instance deletes it
+once it has checked it, before it looks at the rest of the request: a write
+refused after that, by its validation say, has spent it. A second use answers
+`401`. Challenges and tokens live in the instance's memory: a restart forgets
+them.
+
+`/api/cap/challenge` and `/api/cap/redeem` share one rate limit, counted per
+address apart from the notes' requests: 60 a minute, times the instance's
+`RATE_LIMIT_MULTIPLIER`. A write by proof of work takes two of them. Past it,
+they answer `429` (`rate_limited`) as problem details, with `Retry-After`.
+
+The instance chooses `c` and `d`, and so how long a client works. A client
+SHOULD bound what it accepts: the command line refuses a challenge with `c`
+above 1,024, `s` above 64, `d` above 6, or `c × 16^d` above 2^27
+(134,217,728), and gives up a challenge after `64 × 16^d` tries.
+
+For example, with the token above and the default `c`, `s` and `d`, the
+seed of `salt_1` is `0123456789abcdef0123456789abcdef0123456789abcdef011`.
+Its FNV-1a hash is `0x76137c29`, and the first xorshift32 output from it
+`0x2b5c4ca2`. The first two challenges, with their smallest solutions:
+
+| `i` | `salt_i` | `target_i` | `n_i` | SHA-256 of `salt_i ‖ n_i` |
+|-----|----------|------------|-------|---------------------------|
+| 1 | `2b5c4ca2fbc3e5066b0fb0573da6c475` | `b948` | 20759 | `b948954ef5a255fac7e357ec97ba8b9eca5ed9879b2e33d441fad0030dc00674` |
+| 2 | `a252484e802441830a9094a918b2adcb` | `105e` | 12490 | `105eadbd77d3dec19ca1ea80425e8fe2ef82e8e141e3847c309cd6d096060799` |
 
 ## Instance limits
 
@@ -387,7 +500,7 @@ answers the limits a client should respect before uploading:
 | `maxFileSize` | Sizes the limit on a single-shot upload: `maxFileSize × maxFilesPerNote` plus 1 MiB. |
 | `maxFilesPerNote` | The largest `fileCount`. |
 | `maxExpiry` | The largest `expiresIn`, in seconds. |
-| `chunkSize` | The largest message plaintext of a chunked note, in bytes. |
+| `chunkSize` | The largest message plaintext of a chunked note, in bytes: a positive integer, no larger than `maxChunkedFileSize` nor than 4,294,967,278 (a message's length, its 17-byte tag included, fits in 4 bytes). |
 | `maxChunkedFileSize` | The most file bytes a chunked note carries. It bounds the files, not what the format adds to them: an upload session may announce as many messages as that many bytes of files take in its format, a format 0 note's head message and a message started per file, or a format 1 body padded to its size class, with 524,288 bytes of room for its head. |
 
 ## Errors
@@ -454,9 +567,10 @@ status.
 | `storage_quota_exceeded` | 507 | The instance's storage quota is full |
 
 A `429` carries `Retry-After`, in seconds. Requests are counted per address
-and per kind (creates, reads, `/exists`, messages), writes with an API key
-included. A refused request spends nothing: a message refused in the middle
-of an upload session can be sent again once the wait is over.
+and per kind (creates, reads, `/exists`, messages, the
+[proof of work](#proof-of-work)), writes with an API key included. A refused
+request spends nothing: a message refused in the middle of an upload session
+can be sent again once the wait is over.
 
 ## What the server learns
 

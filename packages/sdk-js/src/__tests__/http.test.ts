@@ -1918,3 +1918,40 @@ describe("a connection lost mid-download", () => {
 		expect(err).toBeInstanceOf(SecretNetworkError);
 	});
 });
+
+describe("the ids in a path", () => {
+	test("are encoded, so that a `/`, `?` or `#` stays in the id's segment", async () => {
+		const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(errorResponse(404, {})));
+		const config = createConfig(fetchMock);
+		const id = "a/b?c#d";
+		const encoded = "a%2Fb%3Fc%23d";
+		const proofs = { linkProof: "lp" };
+
+		const calls = [
+			() => checkNote(config, id),
+			() => getNote(config, id),
+			() => getNoteRaw(config, id),
+			() => getNoteStream(config, id),
+			() => postNoteRead(config, id, proofs),
+			() => postNoteReadStream(config, id, proofs),
+			() => deleteNote(config, id, "token"),
+			() => uploadChunk(config, id, 0, new Uint8Array([1]), "hash"),
+			() => completeChunkedUpload(config, id),
+		];
+		for (const call of calls) {
+			await expect(call()).rejects.toBeInstanceOf(SecretApiError);
+		}
+
+		expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+			`https://api.example.com/notes/${encoded}/exists`,
+			`https://api.example.com/notes/${encoded}`,
+			`https://api.example.com/notes/${encoded}/raw`,
+			`https://api.example.com/notes/${encoded}/stream`,
+			`https://api.example.com/notes/${encoded}/reads`,
+			`https://api.example.com/notes/${encoded}/reads`,
+			`https://api.example.com/notes/${encoded}`,
+			`https://api.example.com/notes/upload/${encoded}/chunks/0`,
+			`https://api.example.com/notes/upload/${encoded}/complete`,
+		]);
+	});
+});

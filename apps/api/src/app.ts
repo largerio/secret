@@ -222,7 +222,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		);
 	});
 
-	// --- Cap (internal, not versioned, not documented) ---
+	// --- Cap: Cap's own format, not versioned, specified in PROTOCOL.md ("Proof of work") ---
 
 	app.use("/api/cap/*", capRateLimit.middleware);
 	app.route(

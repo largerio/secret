@@ -27,6 +27,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { ensureInit } from "../crypto.js";
 import { SecretValidationError } from "../errors.js";
 import {
+	assertFormat0Fragment,
 	assertFormat1Fragment,
 	closeFormat1Read,
 	encryptNoteFormat1,
@@ -317,6 +318,51 @@ describe("format 1 fragments", () => {
 				if (formatOfFragment(v.fragment) === 1) assertFormat1Fragment(v.fragment);
 			}, v.description).toThrow(SecretValidationError);
 		}
+	});
+
+	test("refuse a format 0 key, which does not start with 1.", () => {
+		expect(() => assertFormat1Fragment(keyToBase64Url(generateKey()))).toThrow(
+			new SecretValidationError("Invalid key fragment"),
+		);
+	});
+});
+
+describe("format 0 fragments", () => {
+	test("hold the key alone, as a format 0 note's writer gives it", () => {
+		expect(() => assertFormat0Fragment(keyToBase64Url(generateKey()))).not.toThrow();
+		// The last character's two low bits are zero: A, E, I, …, 8.
+		expect(() => assertFormat0Fragment(`${"_".repeat(42)}8`)).not.toThrow();
+	});
+
+	test("hold the keys of the vectors", () => {
+		const { pipeline, secretstream } = testVectors.vectors;
+		const keys = [
+			...pipeline.map((v) => Buffer.from(v.baseKey ?? v.key, "base64").toString("base64url")),
+			...secretstream.map((v) => v.keyFragment),
+		];
+		expect(keys.length).toBeGreaterThan(0);
+		for (const key of keys) {
+			expect(() => assertFormat0Fragment(key), key).not.toThrow();
+		}
+	});
+
+	// A format 0 note is served before its key can be checked: each of these
+	// would spend a read, or burn the note, for nothing.
+	test.each([
+		["cut short", "A".repeat(42)],
+		["too long", "A".repeat(44)],
+		["padded", `${"A".repeat(42)}A=`],
+		["empty", ""],
+		["outside base64url", "+".repeat(43)],
+		["with spaces around", ` ${"A".repeat(43)} `],
+		// 43 characters carry 258 bits: the last one's two low bits must be 0.
+		["with stray bits in the last character", `${"A".repeat(42)}B`],
+		["the delete token of a management link", "V1StGXR8_Z5jdHi6B-myTV1StGXR8_Z5"],
+		["a format 1 fragment", `1.${"A".repeat(43)}`],
+	])("refuse a key %s", (_, keyFragment) => {
+		expect(() => assertFormat0Fragment(keyFragment)).toThrow(
+			new SecretValidationError("Invalid key fragment"),
+		);
 	});
 });
 

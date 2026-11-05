@@ -7,12 +7,13 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
 [![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
+[![npm](https://img.shields.io/npm/v/@largerio/secret-cli?color=blue&label=%40largerio%2Fsecret-cli)](https://www.npmjs.com/package/@largerio/secret-cli)
 
 Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no analytics, and no content, keys or IP addresses in the logs.
 
 A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
 
-**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [Security](SECURITY.md)
+**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [CLI](#command-line) &nbsp;·&nbsp; [Security](SECURITY.md)
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Type a secret, encrypt it in the browser and copy the one-time link; the recipient opens it once, and the same link then finds nothing" width="100%" />
@@ -43,6 +44,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - [Comparison](#comparison)
 - [Quick Start](#quick-start)
 - [SDK](#sdk)
+- [Command line](#command-line)
 - [How It Works](#how-it-works)
 - [Configuration](#configuration)
   - [S3 Storage (optional)](#s3-storage-optional)
@@ -72,6 +74,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 - **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
 - **QR codes** — Share links easily on mobile
 - **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
+- **Command line** — `secret send` and `secret read` from a terminal or a CI job, on any instance: the link alone on stdout, received files never written over anything ([`@largerio/secret-cli`](packages/cli/README.md))
 - **Self-hostable** — Single Docker container, customizable branding
 
 ## Comparison
@@ -86,7 +89,7 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Burn after read        | Yes                 | Yes                 | Yes                 | Yes (toggleable)    |
 | Read limits (N reads)  | Yes                 | No                  | No                  | No                  |
 | Password protection    | Yes (Argon2id)      | Yes (PBKDF2)        | Yes (passphrase)    | Yes                 |
-| Official SDK           | Yes (JS/TS)         | No                  | REST API only       | CLI only            |
+| Official SDK           | Yes (JS/TS) + CLI   | No                  | REST API only       | CLI only            |
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
 
@@ -178,6 +181,20 @@ const parsed = SecretClient.parseShareUrl(shareUrl);
 const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
 console.log(payload.text); // "Hello, World!"
 ```
+
+## Command line
+
+Send and read notes from a terminal or a script, on any instance (Node.js 22 or later):
+
+```bash
+npm install -g @largerio/secret-cli
+
+echo "the launch code is 0000" | secret send --instance https://secret.example.com
+secret read          # asks for the link, without echo
+```
+
+Writes take an API key in `SECRET_API_KEY`, or solve the instance's proof of work as the
+browser does. See the [CLI README](packages/cli/README.md).
 
 ## How It Works
 
@@ -340,6 +357,7 @@ apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
 apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4)
 apps/e2e/         Playwright end-to-end tests (incl. axe-core a11y gate)
 packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
+packages/cli/     Command line (`secret`), built on the SDK
 packages/crypto/  libsodium + AES-256-GCM encryption
 packages/shared/  Zod schemas, types, constants, crypto test vectors
 messages/         i18n (10 languages)
@@ -349,28 +367,31 @@ messages/         i18n (10 languages)
 > and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
 > older version.
 
-### Publishing the SDK
+### Publishing to npm
 
-Only **`@largerio/secret-sdk`** is published to npm. Its build (tsup) bundles the
-internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages, which
-stay private — so consumers install a single self-contained package. Releases go
-through [changesets](https://github.com/changesets/changesets):
+Two packages are published to npm: **`@largerio/secret-sdk`** and
+**`@largerio/secret-cli`**, which depends on it. The SDK's build (tsup) bundles
+the internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages,
+which stay private — so consumers install a single self-contained package; the
+CLI's build bundles its own code, and installs the SDK as its one dependency.
+Releases go through [changesets](https://github.com/changesets/changesets):
 
 ```bash
 pnpm changeset                            # describe the change + pick the version bump
 pnpm version-packages                     # apply pending changesets (bump version + changelog)
-pnpm --filter @largerio/secret-sdk build  # bundle the internals into dist/
-pnpm release                              # publish the built SDK to npm
+pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build   # into dist/
+pnpm release                              # publish the built packages to npm
 ```
 
 In development everything resolves to TypeScript sources (`exports` → `./src`);
-the bundled `dist/` is produced only when the SDK is packed/published.
+the bundled `dist/` is produced only when a package is packed/published.
 
 CI publishes via **npm trusted publishing (OIDC)** — see
 [`.github/workflows/release.yml`](.github/workflows/release.yml). Merging a
 changeset to `main` opens a "Version Packages" PR; merging that PR publishes the
 new version. No `NPM_TOKEN` secret is used: GitHub authenticates to npm with a
-short-lived OIDC token against the package's configured trusted publisher.
+short-lived OIDC token against the package's configured trusted publisher. See
+[Releases](CONTRIBUTING.md#releases) for the details.
 
 ## Security
 
@@ -381,7 +402,7 @@ short-lived OIDC token against the package's configured trusted publisher.
 | Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
 | Read proof | A note is served only to a reader who proves the link, and the password of a password note; five wrong passwords delete it |
 | Padding | Padmé size classes, 4 KiB at least: at most 6.25% over the content |
-| Write auth | PoW (Cap.js SHA-256) for browser, API keys for SDK |
+| Write auth | PoW (Cap.js SHA-256) for the browser and the CLI without a key, API keys for the SDK and the CLI |
 | Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
 | Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
 | Reader's device | A note's files are decrypted to the browser's private storage for the site while the note is shown, and deleted once the page lets go of it ([details](SECURITY.md#known-limitations)) |

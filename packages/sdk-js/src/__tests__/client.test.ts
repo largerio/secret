@@ -1,3 +1,4 @@
+import { isValidNoteId } from "@largerio/secret-shared";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SecretClient } from "../client.js";
 import { SecretApiError, SecretDecryptionError, SecretValidationError } from "../errors.js";
@@ -49,6 +50,7 @@ vi.mock("../crypto.js", () => ({
 
 vi.mock("../format1.js", () => ({
 	formatOfFragment: vi.fn((keyFragment: string) => (keyFragment.startsWith("1.") ? 1 : 0)),
+	assertFormat0Fragment: vi.fn(),
 	assertFormat1Fragment: vi.fn(),
 	format1BodyOf: vi.fn(),
 	encryptNoteFormat1: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("../format1.js", () => ({
 
 async function getFormat1Mocks() {
 	return (await import("../format1.js")) as typeof import("../format1.js") & {
+		assertFormat0Fragment: ReturnType<typeof vi.fn>;
 		assertFormat1Fragment: ReturnType<typeof vi.fn>;
 		formatOfFragment: ReturnType<typeof vi.fn>;
 		format1BodyOf: ReturnType<typeof vi.fn>;
@@ -144,6 +147,10 @@ describe("SecretClient", () => {
 			text: "decrypted chunked text",
 			contentMode: "text",
 		});
+
+		const format1 = await getFormat1Mocks();
+		format1.assertFormat0Fragment.mockReset();
+		format1.assertFormat1Fragment.mockReset();
 	});
 	test("creates a client with default config", async () => {
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
@@ -331,7 +338,7 @@ describe("SecretClient", () => {
 		const started = performance.now();
 		const odd = await SecretClient.create({ baseUrl: slashes });
 		expect(performance.now() - started).toBeLessThan(500);
-		expect(odd.buildShareUrl("id", "k")).toBe(`${slashes}/note/id#k`);
+		expect(odd.buildShareUrl("aBcDeFgHiJkL", "k")).toBe(`${slashes}/note/aBcDeFgHiJkL#k`);
 	});
 
 	test("readNote lets a missing salt through instead of calling it a wrong password", async () => {
@@ -373,7 +380,7 @@ describe("SecretClient", () => {
 		expect(() => SecretClient.parseShareUrl("https://example.com/other")).toThrow(
 			"missing note ID",
 		);
-		expect(() => SecretClient.parseShareUrl("https://example.com/note/abc")).toThrow(
+		expect(() => SecretClient.parseShareUrl("https://example.com/note/aBcDeFgHiJkL")).toThrow(
 			"missing key fragment",
 		);
 	});
@@ -1138,7 +1145,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.readNote("streamNote123", "keyFrag", { chunked: true });
+		await client.readNote("streamNote12", "keyFrag", { chunked: true });
 
 		expect(http.getNoteStream).toHaveBeenCalled();
 		expect(http.getNoteRaw).not.toHaveBeenCalled();
@@ -1157,7 +1164,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.readNote("rawNote1234567", "keyFrag", { chunked: false });
+		await client.readNote("rawNote12345", "keyFrag", { chunked: false });
 
 		expect(http.getNoteStream).not.toHaveBeenCalled();
 		expect(http.getNoteRaw).toHaveBeenCalled();
@@ -1178,7 +1185,7 @@ describe("SecretClient", () => {
 		});
 
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		const result = await client.readNote("streamNote123", "keyFrag");
+		const result = await client.readNote("streamNote12", "keyFrag");
 
 		expect(result.payload.text).toBe("decrypted chunked text");
 		expect(result.createdAt).toBe("2024-06-01");
@@ -1206,7 +1213,7 @@ describe("SecretClient", () => {
 
 		const crypto = await getCryptoMocks();
 		const client = await SecretClient.create({ baseUrl: "https://example.com" });
-		await client.readNote("streamNote123", "keyFrag", { password: "myPass" });
+		await client.readNote("streamNote12", "keyFrag", { password: "myPass" });
 
 		expect(crypto.decryptNoteChunked).toHaveBeenCalledWith(
 			[new Uint8Array([1])],
@@ -1457,6 +1464,7 @@ describe("SecretClient in format 1", () => {
 
 		const format1 = await getFormat1Mocks();
 		for (const mock of [
+			format1.assertFormat0Fragment,
 			format1.assertFormat1Fragment,
 			format1.format1BodyOf,
 			format1.encryptNoteFormat1,
@@ -2209,5 +2217,162 @@ describe("SecretClient in format 1", () => {
 			).rejects.toThrow(new SecretValidationError("Unsupported note format"));
 		}
 		expect(http.postJson).not.toHaveBeenCalled();
+	});
+});
+
+describe("a note's id and its link's key, checked before any request", () => {
+	/** Every call that names a note, the reads in both formats. */
+	const callsNaming = (client: SecretClient, id: string) => {
+		const openFile = () => new WritableStream<Uint8Array>();
+		return [
+			() => client.checkNote(id),
+			() => client.readNote(id, "keyFrag"),
+			() => client.readNote(id, "1.key"),
+			() => client.readNoteInto(id, "keyFrag", { openFile }),
+			() => client.readNoteInto(id, "1.key", { openFile }),
+			() => client.deleteNote(id, "deleteToken"),
+			() => client.buildShareUrl(id, "keyFrag"),
+		];
+	};
+
+	async function refusalOf(call: () => unknown): Promise<unknown> {
+		try {
+			await call();
+		} catch (err) {
+			return err;
+		}
+		throw new Error("not refused");
+	}
+
+	async function expectNoRequest(): Promise<void> {
+		const http = await getHttpMocks();
+		for (const mock of Object.values(http)) {
+			expect(mock).not.toHaveBeenCalled();
+		}
+	}
+
+	beforeEach(async () => {
+		const http = await getHttpMocks();
+		for (const mock of Object.values(http)) {
+			(mock as ReturnType<typeof vi.fn>).mockReset();
+		}
+		const format1 = await getFormat1Mocks();
+		format1.assertFormat0Fragment.mockReset();
+		format1.assertFormat1Fragment.mockReset();
+	});
+
+	test.each([
+		// Put in a path, `GET /notes/aBcDeFgHiJkL?/exists` was `GET /notes/:id`,
+		// the format 0 read that spends the note.
+		["a query", "aBcDeFgHiJkL?"],
+		["a query, in 12 characters", "aBcDeFgHiJk?"],
+		["a fragment", "aBcDeFgHiJk#"],
+		["a slash", "aBcDeF/hiJkL"],
+		// `/notes/../../cap/challenge/exists` was `/api/cap/challenge/exists`.
+		["a path out of the notes", "../../cap/challenge"],
+		["dots only", "............"],
+		["a line feed", "aBcDeFgHiJk\n"],
+		["too few characters", "aBcDeFgHiJk"],
+		["too many characters", "aBcDeFgHiJkLm"],
+		["nothing", ""],
+	])("refuses an id with %s in every call", async (_, id) => {
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		for (const call of callsNaming(client, id)) {
+			expect(await refusalOf(call)).toEqual(new SecretValidationError("Invalid note ID"));
+		}
+		await expectNoRequest();
+	});
+
+	test("refuses an id that is no string, as JavaScript can pass", async () => {
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		for (const id of [123456789012, undefined, null]) {
+			for (const call of callsNaming(client, id as unknown as string)) {
+				expect(await refusalOf(call)).toBeInstanceOf(SecretValidationError);
+			}
+		}
+		await expectNoRequest();
+	});
+
+	test("follows the rule of the server, isValidNoteId", async () => {
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+		const candidates = [
+			...Array.from({ length: alphabet.length - 11 }, (_, i) => alphabet.slice(i, i + 12)),
+			"aBcDeFgHiJk.",
+			"aBcDeFgHiJk~",
+			"aBcDeFgHiJk%",
+			"aBcDeFgHiJké",
+			" aBcDeFgHiJk",
+			"aBcDeFgHiJkL ",
+			"aBcDeFgHiJkL\n",
+		];
+		for (const id of candidates) {
+			let accepted = true;
+			try {
+				client.buildShareUrl(id, "k");
+			} catch {
+				accepted = false;
+			}
+			expect(accepted, JSON.stringify(id)).toBe(isValidNoteId(id));
+		}
+	});
+
+	test.each([
+		["after its own escape", "https://example.com/note/aBcDeFgHiJkL%3F#key"],
+		["of a path out of the notes", "https://example.com/note/..%2F..%2Fcap%2Fchallenge#key"],
+		["too short", "https://example.com/note/abc#key"],
+	])("parseShareUrl refuses an id %s", (_, url) => {
+		expect(() => SecretClient.parseShareUrl(url)).toThrow(
+			new SecretValidationError("Invalid share URL: invalid note ID"),
+		);
+	});
+
+	test("checks a format 0 key before a read, in either call", async () => {
+		const format1 = await getFormat1Mocks();
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+		const malformed = new SecretValidationError("Invalid key fragment");
+		format1.assertFormat0Fragment.mockImplementation(() => {
+			throw malformed;
+		});
+		const openFile = () => new WritableStream<Uint8Array>();
+
+		for (const chunked of [undefined, true, false]) {
+			const options = chunked === undefined ? {} : { chunked };
+			expect(await refusalOf(() => client.readNote("noteId123456", "cut", options))).toBe(
+				malformed,
+			);
+			expect(
+				await refusalOf(() => client.readNoteInto("noteId123456", "cut", { ...options, openFile })),
+			).toBe(malformed);
+		}
+		expect(format1.assertFormat0Fragment).toHaveBeenCalledWith("cut");
+		expect(format1.assertFormat1Fragment).not.toHaveBeenCalled();
+		await expectNoRequest();
+	});
+
+	test("checks each format's key with its own rule", async () => {
+		const http = await getHttpMocks();
+		const format1 = await getFormat1Mocks();
+		http.getNoteRaw.mockResolvedValue({
+			encryptedBytes: new Uint8Array([1]),
+			nonceBytes: new Uint8Array([2]),
+			hasPassword: false,
+			fileCount: 0,
+			createdAt: "2024-06-01",
+			expiresAt: "2099-06-01",
+		});
+		http.checkNote.mockResolvedValue({ exists: false });
+		const client = await SecretClient.create({ baseUrl: "https://example.com" });
+
+		await client.readNote("noteId123456", "keyFrag", { chunked: false });
+		expect(format1.assertFormat0Fragment).toHaveBeenCalledWith("keyFrag");
+		expect(format1.assertFormat1Fragment).not.toHaveBeenCalled();
+
+		format1.assertFormat0Fragment.mockClear();
+		await expect(client.readNote("noteId123456", "1.key")).rejects.toThrow(SecretApiError);
+		expect(format1.assertFormat1Fragment).toHaveBeenCalledWith("1.key");
+		expect(format1.assertFormat0Fragment).not.toHaveBeenCalled();
 	});
 });
