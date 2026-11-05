@@ -159,7 +159,7 @@ describe("fetchLimits", () => {
 	it("reads the instance's configuration", async () => {
 		const fetch = instanceFetch();
 		const { io } = harness({ fetch });
-		expect(await fetchLimits(io, instance)).toEqual(LIMITS);
+		expect(await fetchLimits(io, instance)).toEqual(without(LIMITS, "maxFileSize"));
 		expect(fetch).toHaveBeenCalledWith(`${ORIGIN}/secret/api/v1/config`, {
 			headers: { accept: "application/json" },
 			signal: io.signal,
@@ -176,8 +176,18 @@ describe("fetchLimits", () => {
 		[new Response("no", { status: 404 }), "HTTP 404"],
 		[new Response("<html>", { status: 200 }), "not the answer of one"],
 		[Response.json(null), "not the answer of one"],
+		[Response.json([]), "not the answer of one"],
 		[Response.json({ ...LIMITS, chunkSize: "4MB" }), "not the answer of one"],
+		[Response.json({ ...LIMITS, chunkSize: 65_536.5 }), "not the answer of one"],
+		[Response.json({ ...LIMITS, chunkSize: 65_535 }), "not the answer of one"],
+		[Response.json({ ...LIMITS, chunkSize: 1 }), "not the answer of one"],
 		[Response.json({ ...LIMITS, maxExpiry: 0 }), "not the answer of one"],
+		[Response.json({ ...LIMITS, maxFilesPerNote: -1 }), "not the answer of one"],
+		[Response.json({ ...LIMITS, maxChunkedFileSize: 2 ** 53 }), "not the answer of one"],
+		[
+			new Response(JSON.stringify({ ...LIMITS, padding: "x".repeat(64 * 1024) })),
+			"not the answer of one",
+		],
 	])("refuses what is no instance's configuration (%#)", async (response, detail) => {
 		const { io } = harness({ fetch: vi.fn(async () => response) });
 		const error = await cliErrorOf(() => fetchLimits(io, instance));
@@ -214,6 +224,20 @@ describe("assertKeyStaysPrivate", () => {
 			}),
 		);
 		expect(() => assertKeyStaysPrivate(instance, true)).not.toThrow();
+	});
+});
+
+describe("the chunk size of fetchLimits", () => {
+	it.each([
+		[65_536, 65_536],
+		[4_194_304, 4_194_304],
+		[8_388_608, 8_388_608],
+		[67_108_864, 67_108_864],
+		[67_108_865, 67_108_864],
+		[Number.MAX_SAFE_INTEGER, 67_108_864],
+	])("takes %d as %d: the instance's, up to 64 MiB", async (announced, taken) => {
+		const { io } = harness({ fetch: instanceFetch({ ...LIMITS, chunkSize: announced }) });
+		expect(await fetchLimits(io, instance)).toMatchObject({ chunkSize: taken });
 	});
 });
 

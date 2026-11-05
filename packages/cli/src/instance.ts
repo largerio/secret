@@ -1,4 +1,5 @@
 import { NOTE_ID_LENGTH, SecretClient, type SecretClientConfig } from "@largerio/secret-sdk";
+import { parseJson, readBodyAtMost, recordOf } from "./answers.js";
 import { CliError, EXIT } from "./errors.js";
 import { solveProofOfWork } from "./pow.js";
 import type { Screen } from "./terminal.js";
@@ -172,27 +173,57 @@ function damagedLink(): CliError {
 export interface Limits {
 	readonly maxFilesPerNote: number;
 	readonly maxExpiry: number;
+	/** The instance's, at most {@link MAX_CHUNK_SIZE}: the size of the SDK's chunks. */
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 }
 
-const LIMITS: ReadonlyArray<keyof Limits> = [
-	"maxFilesPerNote",
-	"maxExpiry",
-	"chunkSize",
-	"maxChunkedFileSize",
-];
+/** The configuration is a few hundred bytes: anything much longer is no instance's. */
+const MAX_CONFIG_BYTES = 64 * 1024;
+/**
+ * The smallest chunk size taken: smaller, a large note would take a request
+ * for every few bytes. An instance is not trusted to ask for a sane one.
+ */
+const MIN_CHUNK_SIZE = 64 * 1024;
+/**
+ * The largest chunk size given to the SDK. A writer should take the
+ * instance's (PROTOCOL.md, "Format 1", "Upload"), so that its messages look
+ * like every other writer's there, and the command does up to this bound.
+ * Past it, it takes the bound, which the instance takes as well, a message
+ * being at most its chunk size: the SDK holds a message in memory, and sends
+ * a note that fits in one whole.
+ */
+const MAX_CHUNK_SIZE = 64 * 1024 * 1024;
 
 function limitsOf(body: unknown): Limits | undefined {
-	if (typeof body !== "object" || body === null) {
+	const fields = recordOf(body);
+	const [maxFilesPerNote, maxExpiry, chunkSize, maxChunkedFileSize] = [
+		fields?.["maxFilesPerNote"],
+		fields?.["maxExpiry"],
+		fields?.["chunkSize"],
+		fields?.["maxChunkedFileSize"],
+	];
+	if (
+		!isPositiveInteger(maxFilesPerNote) ||
+		!isPositiveInteger(maxExpiry) ||
+		!isPositiveInteger(chunkSize) ||
+		!isPositiveInteger(maxChunkedFileSize)
+	) {
 		return undefined;
 	}
-	const fields = body as Record<string, unknown>;
-	const valid = LIMITS.every((name) => {
-		const value = fields[name];
-		return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-	});
-	return valid ? (fields as unknown as Limits) : undefined;
+	if (chunkSize < MIN_CHUNK_SIZE) {
+		return undefined;
+	}
+	return {
+		maxFilesPerNote,
+		maxExpiry,
+		chunkSize: Math.min(chunkSize, MAX_CHUNK_SIZE),
+		maxChunkedFileSize,
+	};
+}
+
+function isPositiveInteger(value: unknown): value is number {
+	return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 /**
@@ -211,7 +242,8 @@ export async function fetchLimits(io: Io, instance: Instance): Promise<Limits> {
 		if (!response.ok) {
 			throw notAnInstance(`HTTP ${response.status}`);
 		}
-		body = await response.json().catch(() => undefined);
+		const text = await readBodyAtMost(response, MAX_CONFIG_BYTES);
+		body = text === undefined ? undefined : parseJson(text);
 	} catch (err) {
 		if (err instanceof CliError) {
 			throw err;
