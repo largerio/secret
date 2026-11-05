@@ -8,7 +8,12 @@
 # proof-of-work, a raised rate limit (every test comes from one address) and
 # 1 MiB chunks, so the large-file test goes chunked through S3.
 #
-# Usage: [E2E_PORT=<port>] e2e-image.sh <image-ref>   (port 3000 by default)
+# E2E_API_KEY, when set, is the instance's API key (32 characters at least),
+# for the command line's writes by key (e2e-cli.sh). The suite writes by proof
+# of work, which the key leaves as it is.
+#
+# Usage: [E2E_PORT=<port>] [E2E_API_KEY=<key>] e2e-image.sh <image-ref>
+#   (port 3000 by default)
 set -euo pipefail
 
 IMAGE=$1
@@ -50,6 +55,13 @@ for attempt in $(seq 30); do
 	sleep 2
 done
 
+# Passed by name, so the value stays off docker's command line.
+api_key=()
+if [ -n "${E2E_API_KEY:-}" ]; then
+	export API_KEY=$E2E_API_KEY
+	api_key=(-e API_KEY)
+fi
+
 docker run -d --name secret-e2e-app --network "$NETWORK" -p "127.0.0.1:$PORT:$PORT" \
 	-e PORT="$PORT" \
 	-e APP_URL="http://localhost:$PORT" \
@@ -64,6 +76,7 @@ docker run -d --name secret-e2e-app --network "$NETWORK" -p "127.0.0.1:$PORT:$PO
 	-e CAP_CHALLENGE_COUNT=1 \
 	-e RATE_LIMIT_MULTIPLIER=50 \
 	-e CHUNK_SIZE=1048576 \
+	${api_key[@]+"${api_key[@]}"} \
 	"$IMAGE" > /dev/null
 
 # Ready, not just up: the database and the bucket both answer.

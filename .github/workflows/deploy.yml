@@ -71,7 +71,8 @@ jobs:
   # The suite runs against the image this commit builds, on S3 storage
   # (RustFS), rather than the dev servers: a fault of the image, its proxy or
   # the S3 backend shows up before the merge. `pnpm test:e2e` alone still
-  # starts the dev servers.
+  # starts the dev servers. The command line runs against the same image,
+  # installed from its tarball as a user installs it.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -83,6 +84,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup
+
+      # For e2e-cli.sh, which packs them.
+      - name: Build the SDK and the CLI
+        run: pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build
 
       - name: Install the Playwright browser
         run: pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
@@ -101,13 +106,36 @@ jobs:
             REVISION=${{ github.sha }}
           cache-from: type=gha
 
+      # A throwaway key the image accepts, for the command line's writes by
+      # key. The suite writes by proof of work.
+      - name: Generate an API key for the image
+        run: |
+          key=$(openssl rand -hex 24)
+          echo "::add-mask::$key"
+          echo "E2E_API_KEY=$key" >> "$GITHUB_ENV"
+
       - name: Start the image on S3 storage
+        id: image
         run: .github/scripts/e2e-image.sh secret:e2e
 
       - name: Run the e2e suite
         env:
           E2E_BASE_URL: http://localhost:3000
         run: pnpm test:e2e
+
+      # The oldest Node the command line supports (engines, in
+      # packages/cli/package.json): the rest of CI runs Node 26.
+      - name: Switch to Node 22
+        if: ${{ !cancelled() && steps.image.outcome == 'success' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      # Even after a failure of the suite: the command line has a result of
+      # its own.
+      - name: Run the command line against the image
+        if: ${{ !cancelled() && steps.image.outcome == 'success' }}
+        run: .github/scripts/e2e-cli.sh http://localhost:3000
 
       - name: Show the logs of the image
         if: failure()
