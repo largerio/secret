@@ -61,6 +61,11 @@ expect() {
 	[ "$status" -eq "$1" ] || fail "$2 exited with $status, not $1"
 }
 
+# said <what> <pattern>: the last command said so on stderr.
+said() {
+	grep -qE "$2" "$ERR" || fail "$1 did not say: $2"
+}
+
 # json <dotted.path> [file]: a field of the JSON in the file, the last stdout
 # by default.
 json() {
@@ -145,13 +150,19 @@ link=$(cat "$OUT")
 if [ "$(wc -l < "$OUT" | tr -d ' ')" != 1 ] || [[ $link != "$BASE_URL/note/"*"#"* ]]; then
 	fail "secret send printed something else than the link alone: $link"
 fi
+said "secret send" '^Delete token: '
+# The link holds the key: nothing but stdout ever shows it.
+! grep -qF "$link" "$ERR" || fail "secret send showed the link on stderr"
 run secret read "$link"
 expect 0 "secret read"
 cmp "$OUT" "$text" >&2 || fail "secret read printed another text than the one sent"
+! grep -qF "$link" "$ERR" || fail "secret read showed the link on stderr"
+said "secret read of a note's last read" 'last read'
 
 echo "→ a note read once is gone"
 run secret read "$link"
 expect 3 "secret read of a note already read"
+said "secret read of a note already read" 'does not exist'
 run secret check "$link"
 expect 3 "secret check of a note already read"
 
@@ -188,6 +199,7 @@ expect 0 "secret send --password"
 link=$(json link)
 run env SECRET_PASSWORD="$(random 12)" secret read "$link"
 expect 4 "secret read with a wrong password"
+said "secret read with a wrong password" '^secret: wrong password'
 run secret check "$link" --json
 expect 0 "secret check after a wrong password"
 [ "$(json hasPassword)" = true ] || fail "the note has no password"
@@ -218,15 +230,18 @@ for _ in 1 2 3; do
 done
 run secret check "$link"
 expect 0 "secret check, for a person"
-[ -s "$OUT" ] || fail "secret check printed nothing"
+grep -qx 'Reads: *2 left of 2' "$OUT" || fail "secret check printed: $(cat "$OUT")"
+grep -qx 'Format: *1' "$OUT" || fail "secret check printed: $(cat "$OUT")"
 # The same length and alphabet, so only the instance can tell it is wrong.
 wrong_token=$(printf '%s' "$token" | tr 'A-Za-z0-9' 'B-ZAb-za1-90')
 run secret delete "$link" --token "$wrong_token"
 expect 4 "secret delete with a wrong token"
+said "secret delete with a wrong token" 'wrong delete token'
 run secret delete "$link" --token "$token"
 expect 0 "secret delete"
-run secret check "$link"
+run secret check "$link" --json
 expect 3 "secret check of a deleted note"
+[ "$(json exists)" = false ] || fail "secret check --json of a deleted note printed: $(cat "$OUT")"
 run secret delete "$link" --token "$token"
 expect 3 "secret delete of a deleted note"
 
@@ -242,13 +257,15 @@ run secret read "$link"
 expect 0 "secret read of the note written by key"
 cmp "$OUT" "$text" >&2 || fail "secret read printed another text than the one sent"
 run env SECRET_API_KEY="$E2E_API_KEY" secret delete "$link" \
-	--token "$(json deleteToken "$WORK/sent.json")"
+	--token "$(json deleteToken "$WORK/sent.json")" --json
 expect 0 "secret delete with SECRET_API_KEY"
+[ "$(json deleted)" = true ] || fail "secret delete --json printed: $(cat "$OUT")"
 run secret check "$link"
 expect 3 "secret check of a note deleted by key"
 wrong_key=$(random 24)
 run env SECRET_API_KEY="$wrong_key" secret send --instance "$BASE_URL" < "$text"
 expect 4 "secret send with a wrong SECRET_API_KEY"
+said "secret send with a wrong SECRET_API_KEY" 'refused the write'
 [ ! -s "$OUT" ] || fail "a refused send printed a link"
 printf '%s\n' "$wrong_key" > "$WORK/wrong-key"
 run env SECRET_API_KEY_FILE="$WORK/wrong-key" secret send --instance "$BASE_URL" < "$text"
