@@ -10,9 +10,10 @@ import { CliError, EXIT } from "./errors.js";
  * (apps/api/src/__tests__/proofOfWork.test.ts).
  *
  * The instance is not trusted to ask for a sane amount of work. Its challenge
- * is refused beyond these bounds, which leave room around what an instance
- * can be configured to serve (50 challenges of difficulty 4 by default,
- * CAP_DIFFICULTY up to 6, salts of 32 hex characters).
+ * is refused beyond these bounds, which leave room around what it serves by
+ * default: 50 challenges of difficulty 4, salts of 32 hex characters. An
+ * instance set to ask for much more, CAP_DIFFICULTY 6 with the default count
+ * say, is beyond them, and the refusal says to write to it with an API key.
  */
 
 /** The most challenges, `c`. */
@@ -160,11 +161,28 @@ interface CapResponse {
 	readonly body: unknown;
 }
 
-interface Challenge {
-	readonly token: string;
+/** The work a challenge asks for, as Cap counts it. */
+export interface Work {
+	/** The challenges, `c`. */
 	readonly count: number;
+	/** Each salt's length, `s`, in hex characters. */
 	readonly saltLength: number;
+	/** Each target's length, `d`, in hex characters. */
 	readonly difficulty: number;
+}
+
+interface Challenge extends Work {
+	readonly token: string;
+}
+
+/** Whether `work` stays within the bounds above. */
+export function isWithinBounds(work: Work): boolean {
+	return (
+		work.count <= MAX_CHALLENGES &&
+		work.saltLength <= MAX_SALT_LENGTH &&
+		work.difficulty <= MAX_DIFFICULTY &&
+		work.count * 16 ** work.difficulty <= MAX_EXPECTED_HASHES
+	);
 }
 
 /**
@@ -242,14 +260,9 @@ function challengeOf(response: CapResponse, origin: string): Challenge {
 		);
 	}
 
-	if (
-		count > MAX_CHALLENGES ||
-		saltLength > MAX_SALT_LENGTH ||
-		difficulty > MAX_DIFFICULTY ||
-		count * 16 ** difficulty > MAX_EXPECTED_HASHES
-	) {
+	if (!isWithinBounds({ count, saltLength, difficulty })) {
 		throw new CliError(
-			`${origin} asks for more proof of work than secret does (c=${String(count)}, s=${String(saltLength)}, d=${String(difficulty)}): write with an API key, in SECRET_API_KEY`,
+			`${origin} asks for more proof of work than secret solves (c=${String(count)}, s=${String(saltLength)}, d=${String(difficulty)}): such an instance is written to with an API key, set in SECRET_API_KEY`,
 		);
 	}
 

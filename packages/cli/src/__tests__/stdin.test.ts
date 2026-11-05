@@ -30,6 +30,11 @@ describe("readText", () => {
 		expect(await readText(input([text]), signal)).toBe(text);
 	});
 
+	it("takes the most bytes the longest text takes, 3 a character", async () => {
+		const text = "€".repeat(MAX_TEXT_SIZE);
+		expect(await readText(input([text]), signal)).toBe(text);
+	});
+
 	it("refuses more characters than a note holds", async () => {
 		await expect(readText(input(["a".repeat(MAX_TEXT_SIZE + 1)]), signal)).rejects.toMatchObject({
 			exitCode: EXIT.usage,

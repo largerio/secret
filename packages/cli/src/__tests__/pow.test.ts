@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CliError, EXIT } from "../errors.js";
-import { findNonce, prng, solveProofOfWork } from "../pow.js";
+import { findNonce, isWithinBounds, prng, solveProofOfWork } from "../pow.js";
 import { cliErrorOf } from "./harness.js";
 
 const BASE = "https://secret.example";
@@ -114,6 +114,29 @@ describe("findNonce", () => {
 	});
 });
 
+describe("isWithinBounds", () => {
+	it.each([
+		["the default", 50, 32, 4],
+		["the most challenges", 1024, 64, 1],
+		["the longest salt", 1, 64, 1],
+		["the highest difficulty, at the most work", 8, 64, 6],
+		["the most work at difficulty 5", 128, 32, 5],
+	])("takes %s: c=%d, s=%d, d=%d", (_name, count, saltLength, difficulty) => {
+		expect(isWithinBounds({ count, saltLength, difficulty })).toBe(true);
+	});
+
+	it.each([
+		["too many challenges", 1025, 32, 1],
+		["a salt too long", 1, 65, 1],
+		["a difficulty too high", 1, 32, 7],
+		["too much work at difficulty 6", 9, 64, 6],
+		["the default count at difficulty 6", 50, 32, 6],
+		["too much work at difficulty 5", 129, 32, 5],
+	])("refuses %s: c=%d, s=%d, d=%d", (_name, count, saltLength, difficulty) => {
+		expect(isWithinBounds({ count, saltLength, difficulty })).toBe(false);
+	});
+});
+
 describe("solveProofOfWork", () => {
 	it("solves each challenge and returns the token they redeem for", async () => {
 		const { fetch, calls } = instance(challenge(2, 32, 1), redeemed());
@@ -202,7 +225,7 @@ describe("solveProofOfWork", () => {
 
 			await failsWith(
 				solveProofOfWork(BASE, { fetch }),
-				`${BASE} asks for more proof of work than secret does (c=${String(c)}, s=${String(s)}, d=${String(d)}): write with an API key, in SECRET_API_KEY`,
+				`${BASE} asks for more proof of work than secret solves (c=${String(c)}, s=${String(s)}, d=${String(d)}): such an instance is written to with an API key, set in SECRET_API_KEY`,
 			);
 			expect(calls).toHaveLength(1);
 		});

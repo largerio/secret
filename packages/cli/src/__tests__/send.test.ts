@@ -285,6 +285,12 @@ describe("secret send", () => {
 			expect(stderr.text).toBe(`secret: ${ORIGIN} takes at most 1 files in a note\n`);
 		});
 
+		it("takes files as large as the instance takes", async () => {
+			const { run, client } = sending();
+			expect(await run("send", "big.bin")).toBe(EXIT.ok);
+			expect(client.createNote).toHaveBeenCalledOnce();
+		});
+
 		it("refuses files larger than the instance takes", async () => {
 			const { run, stderr } = sending();
 			expect(await run("send", "big.bin", "notes.txt")).toBe(EXIT.usage);

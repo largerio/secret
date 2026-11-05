@@ -372,7 +372,17 @@ describe("never overwrites", () => {
 	it("keeps apart names a case-insensitive or normalizing file system holds as one", async () => {
 		const out = createOutputDirectory(dir);
 
-		await readInto(out, ["A.txt", "a.txt", "\u00E9.txt", "e\u0301.txt", "Straße", "STRASSE"]);
+		await readInto(out, [
+			"A.txt",
+			"a.txt",
+			"\u00E9.txt",
+			"e\u0301.txt",
+			"Straße",
+			"STRASSE",
+			"\uFB01le.txt",
+			"file.txt",
+			"\uFF46ile.txt",
+		]);
 
 		expect(savedNames(out)).toEqual([
 			"A.txt",
@@ -381,6 +391,9 @@ describe("never overwrites", () => {
 			"\u00E9 (1).txt",
 			"Straße",
 			"STRASSE (1)",
+			"\uFB01le.txt",
+			"file (1).txt",
+			"\uFF46ile (2).txt",
 		]);
 	});
 
