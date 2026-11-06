@@ -1,13 +1,27 @@
+import { fileURLToPath } from "node:url";
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
+import { BUNDLE_SOURCES, sourcesDigest } from "./scripts/sources.ts";
 
 // In dev it is Vite that proxies /api to the backend, so this target must
 // follow the API port. Hardcoding it meant the e2e suite could not run the API
 // anywhere other than 3001 (ECONNREFUSED on every request that touches the
 // backend).
 const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
+
+// SvelteKit writes the app's version into the bundle (its boot script,
+// _app/version.json, the chunks that read it) and polls it to tell a new
+// deployment, and defaults it to the build's time: no two builds were alike,
+// and nobody could rebuild the bundle an instance serves to check it. A digest
+// of what the bundle is built from instead, which changes with any of it.
+// Not a commit: the image is built without the repository's history. (The
+// build script sets NODE_ENV=production: Vite builds for the NODE_ENV it is
+// given, and the dev container's, development, gave a dev-mode bundle, with
+// the paths of the files it was built from in it.)
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const VERSION = sourcesDigest(REPO_ROOT, BUNDLE_SOURCES).slice(0, 16);
 
 export default defineConfig({
 	plugins: [
@@ -27,6 +41,7 @@ export default defineConfig({
 				fallback: "index.html",
 				precompress: false,
 			}),
+			version: { name: VERSION },
 		}),
 	],
 	// The worker that encrypts and decrypts notes is a module worker

@@ -6,7 +6,8 @@ import { defineConfig } from "vitest/config";
 // `document`/`navigator`/cookie surface those modules use. `configFile: false`
 // keeps the bare Svelte compiler out of SvelteKit's `$app` virtual-module
 // machinery (which isn't available under Vitest). `#lib/*` needs no alias:
-// Vite resolves the package.json `imports` field itself.
+// Vite resolves the package.json `imports` field itself. The build's scripts
+// (`scripts/`) are tested here too, under Node.
 export default defineConfig({
 	plugins: [svelte({ configFile: false })],
 	resolve: {
@@ -16,6 +17,6 @@ export default defineConfig({
 	test: {
 		name: "web",
 		environment: "jsdom",
-		include: ["src/**/*.test.ts"],
+		include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
 	},
 });
