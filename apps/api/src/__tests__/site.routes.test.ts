@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
@@ -66,6 +67,15 @@ function makeApp(env: Record<string, string> = {}, served: Site | null = site): 
 	});
 	stops.push(created.stop);
 	return created.app;
+}
+
+/** The body as it was before its Content-Encoding. */
+async function decodedBody(res: Response): Promise<Buffer> {
+	const body = Buffer.from(await res.arrayBuffer());
+	const encoding = res.headers.get("content-encoding");
+	if (encoding === "br") return brotliDecompressSync(body);
+	if (encoding === "gzip") return gunzipSync(body);
+	return body;
 }
 
 /** The text of the shell's `<script id="secret-shell">`. */
@@ -393,21 +403,105 @@ describe("the static files", () => {
 		expect(stale.status).toBe(200);
 	});
 
-	it("compress what is worth it, its ETag weakened, and revalidate it", async () => {
-		const app = makeApp();
-		const path = "/_app/immutable/entry/app.Cd2.js";
+	describe("compressed once, at startup", () => {
+		const APP = "/_app/immutable/entry/app.Cd2.js";
+		const sha256 = createHash("sha256")
+			.update(FILES["_app/immutable/entry/app.Cd2.js"] as string)
+			.digest("hex");
 
-		const res = await app.request(path, { headers: { "Accept-Encoding": "gzip" } });
+		it.each([
+			["gzip, deflate, br, zstd", "br"],
+			["gzip", "gzip"],
+			["br;q=0, gzip", "gzip"],
+			["*", "br"],
+		])("send for %o the %s copy, with an ETag of its own", async (acceptEncoding, encoding) => {
+			const res = await makeApp().request(APP, { headers: { "Accept-Encoding": acceptEncoding } });
 
-		expect(res.headers.get("content-encoding")).toBe("gzip");
-		expect(res.headers.get("vary")).toContain("Accept-Encoding");
-		const etag = res.headers.get("etag") as string;
-		expect(etag).toBe(`W/${site.files.get(path)?.etag as string}`);
-
-		const revalidated = await app.request(path, {
-			headers: { "Accept-Encoding": "gzip", "If-None-Match": etag },
+			expect(res.status).toBe(200);
+			expect(res.headers.get("content-encoding")).toBe(encoding);
+			expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+			expect(res.headers.get("vary")).toContain("Accept-Encoding");
+			expect(res.headers.get("etag")).toBe(`"${sha256}-${encoding}"`);
+			expect((await decodedBody(res)).toString()).toBe(FILES["_app/immutable/entry/app.Cd2.js"]);
 		});
-		expect(revalidated.status).toBe(304);
+
+		it.each(["deflate", "identity", "br;q=0, gzip;q=0", "*;q=0"])(
+			"send for %o the file as it is, never compressing it per request",
+			async (acceptEncoding) => {
+				const res = await makeApp().request(APP, {
+					headers: { "Accept-Encoding": acceptEncoding },
+				});
+
+				expect(res.headers.get("content-encoding")).toBeNull();
+				expect(res.headers.get("vary")).toContain("Accept-Encoding");
+				expect(res.headers.get("etag")).toBe(`"${sha256}"`);
+				expect(await res.text()).toBe(FILES["_app/immutable/entry/app.Cd2.js"]);
+			},
+		);
+
+		it("revalidate each copy by its own ETag", async () => {
+			const app = makeApp();
+			const brotli = { "Accept-Encoding": "br" };
+
+			const held = await app.request(APP, {
+				headers: { ...brotli, "If-None-Match": `"${sha256}-br"` },
+			});
+			expect(held.status).toBe(304);
+			expect(held.headers.get("etag")).toBe(`"${sha256}-br"`);
+			expect(held.headers.get("vary")).toContain("Accept-Encoding");
+			expect(held.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+			expect(held.headers.get("content-encoding")).toBeNull();
+			expect(held.headers.get("content-type")).toBeNull();
+			expect(await held.text()).toBe("");
+
+			// The client holds the file as it is, and now accepts brotli: it gets the copy.
+			const other = await app.request(APP, {
+				headers: { ...brotli, "If-None-Match": `"${sha256}"` },
+			});
+			expect(other.status).toBe(200);
+			expect(other.headers.get("content-encoding")).toBe("br");
+		});
+
+		it("answer HEAD with the copy's headers, without a body", async () => {
+			const res = await makeApp().request(APP, {
+				method: "HEAD",
+				headers: { "Accept-Encoding": "br" },
+			});
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get("content-encoding")).toBe("br");
+			expect(res.headers.get("etag")).toBe(`"${sha256}-br"`);
+			expect(await res.text()).toBe("");
+		});
+
+		it("leave as they are the files that do not compress", async () => {
+			const res = await makeApp().request("/og.png", {
+				headers: { "Accept-Encoding": "gzip, deflate, br" },
+			});
+
+			expect(res.headers.get("content-encoding")).toBeNull();
+			expect(res.headers.get("vary") ?? "").not.toContain("Accept-Encoding");
+			expect(res.headers.get("etag")).toBe(site.files.get("/og.png")?.etag);
+		});
+
+		it("send a page compressed once too, in the coding the visitor accepts", async () => {
+			const app = makeApp();
+			const identity = await (await app.request("/")).text();
+
+			const res = await app.request("/", { headers: { "Accept-Encoding": "gzip, br" } });
+			expect(res.headers.get("content-encoding")).toBe("br");
+			expect(res.headers.get("vary")).toContain("Accept-Language, Cookie, Accept-Encoding");
+			expect((await decodedBody(res)).toString()).toBe(identity);
+
+			const gzip = await app.request("/nope", { headers: { "Accept-Encoding": "gzip" } });
+			expect(gzip.status).toBe(404);
+			expect(gzip.headers.get("content-encoding")).toBe("gzip");
+			expect((await decodedBody(gzip)).toString()).toContain("<title>404 | Secret</title>");
+
+			const deflate = await app.request("/", { headers: { "Accept-Encoding": "deflate" } });
+			expect(deflate.headers.get("content-encoding")).toBeNull();
+			expect(await deflate.text()).toBe(identity);
+		});
 	});
 
 	it("answer HEAD with the file's headers, without a body", async () => {
@@ -469,9 +563,9 @@ describe("the API beside the site", () => {
 		expect(await res.json()).toMatchObject({ bundle: fixture.digest });
 	});
 
-	it("keeps exactly the headers it had without the site", async () => {
+	it("keeps exactly the headers it had without the site, compression included", async () => {
 		const headersOf = async (app: Hono<AppEnv>, path: string) => {
-			const res = await app.request(path);
+			const res = await app.request(path, { headers: { "Accept-Encoding": "gzip" } });
 			const headers = Object.fromEntries(res.headers);
 			delete headers["x-request-id"];
 			return headers;
@@ -479,9 +573,16 @@ describe("the API beside the site", () => {
 		const withSite = makeApp();
 		const alone = makeApp({}, null);
 
-		for (const path of ["/api/v1/config", "/api/nope", "/robots.txt", "/api/v1/docs"]) {
+		for (const path of [
+			"/api/v1/config",
+			"/api/v1/openapi.json",
+			"/api/nope",
+			"/robots.txt",
+			"/api/v1/docs",
+		]) {
 			expect(await headersOf(withSite, path)).toEqual(await headersOf(alone, path));
 		}
+		expect((await headersOf(withSite, "/api/v1/openapi.json"))["content-encoding"]).toBe("gzip");
 	});
 });
 

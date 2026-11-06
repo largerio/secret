@@ -9,6 +9,7 @@ import {
 	SHELL_HTML_TAG,
 } from "@largerio/secret-shared/site";
 import { type Logger, log } from "../logger.js";
+import { compressedCopies, type EncodedBody } from "./encodings.js";
 import { cacheControlOf, contentTypeOf } from "./files.js";
 import { inlineScriptHashes } from "./scripts.js";
 
@@ -20,12 +21,19 @@ export type Catalog = Readonly<Record<string, string>>;
 
 export type Messages = Readonly<Record<Locale, Catalog>>;
 
+/** A compressed copy of a file, with an ETag of its own: caches keep it apart from the file. */
+export interface EncodedFile extends EncodedBody {
+	readonly etag: string;
+}
+
 export interface SiteFile {
 	readonly body: Uint8Array<ArrayBuffer>;
 	/** Strong, the file's SHA-256 in quotes. */
 	readonly etag: string;
 	readonly contentType: string;
 	readonly cacheControl: string;
+	/** Compressed at startup, brotli first: no request costs a compression. */
+	readonly encodings: ReadonlyArray<EncodedFile>;
 }
 
 /** The web app's build, read whole at startup: nothing is read from disk per request. */
@@ -157,14 +165,20 @@ export function loadSite(location: SiteLocation): Site {
 		}
 	}
 
+	// The copies are not the build's: the digest names the files they come from.
 	const files = new Map<string, SiteFile>();
 	for (const file of build) {
 		if (file.path === SHELL_FILE) continue;
+		const contentType = contentTypeOf(file.path);
 		files.set(`/${file.path}`, {
 			body: file.body,
 			etag: `"${file.sha256}"`,
-			contentType: contentTypeOf(file.path),
+			contentType,
 			cacheControl: cacheControlOf(file.path),
+			encodings: compressedCopies(file.body, contentType).map((copy) => ({
+				...copy,
+				etag: `"${file.sha256}-${copy.encoding}"`,
+			})),
 		});
 	}
 

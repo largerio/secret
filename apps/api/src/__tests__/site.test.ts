@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type LogLevel } from "../logger.js";
+import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
 import { cacheControlOf, contentTypeOf } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
 import { inlineScriptHashes } from "../site/scripts.js";
@@ -132,6 +134,21 @@ describe("loadSite", () => {
 		const site = loadSite({ ...fixture, logger: capture().logger });
 
 		expect(site.files.has("/link.png")).toBe(false);
+		expect(site.digest).toBe(fixture.digest);
+	});
+
+	it("compresses once what is worth it, each copy with its ETag, out of the digest", () => {
+		const fixture = useFixture();
+		const site = loadSite({ ...fixture, logger: capture().logger });
+		const app = site.files.get("/_app/immutable/entry/app.Cd2.js");
+		const etag = (app?.etag ?? "").slice(0, -1);
+
+		expect(app?.encodings.map(({ encoding, etag }) => ({ encoding, etag }))).toEqual([
+			{ encoding: "br", etag: `${etag}-br"` },
+			{ encoding: "gzip", etag: `${etag}-gzip"` },
+		]);
+		expect(site.files.get("/og.png")?.encodings).toEqual([]);
+		expect(site.files.get("/_app/immutable/assets/inter.Dx4.woff2")?.encodings).toEqual([]);
 		expect(site.digest).toBe(fixture.digest);
 	});
 
@@ -285,6 +302,58 @@ describe("inlineScriptHashes", () => {
 
 	it("hashes a script once, however often it appears", () => {
 		expect(inlineScriptHashes("<script>a()</script><script>a()</script>")).toEqual([hashOf("a()")]);
+	});
+});
+
+describe("compressedCopies", () => {
+	const text = Buffer.from(`export const app = "${"x".repeat(4096)}";\n`);
+
+	it("compresses text and WebAssembly with brotli, then gzip", () => {
+		for (const type of ["text/javascript; charset=utf-8", "application/wasm", "image/svg+xml"]) {
+			const [br, gzip, ...rest] = compressedCopies(text, type);
+
+			expect(br?.encoding).toBe("br");
+			expect(brotliDecompressSync(br?.body ?? new Uint8Array())).toEqual(text);
+			expect(gzip?.encoding).toBe("gzip");
+			expect(gunzipSync(gzip?.body ?? new Uint8Array())).toEqual(text);
+			expect(rest).toEqual([]);
+		}
+	});
+
+	it("leaves alone what comes compressed, and what would not shrink", () => {
+		expect(compressedCopies(text, "image/png")).toEqual([]);
+		expect(compressedCopies(text, "font/woff2")).toEqual([]);
+		expect(compressedCopies(text, "application/octet-stream")).toEqual([]);
+		expect(compressedCopies(Buffer.from("a"), "text/plain; charset=utf-8")).toEqual([]);
+	});
+});
+
+describe("negotiate", () => {
+	const br: EncodedBody = { encoding: "br", body: new Uint8Array() };
+	const gzip: EncodedBody = { encoding: "gzip", body: new Uint8Array() };
+	const both = [br, gzip];
+
+	it.each([
+		["gzip, deflate, br, zstd", br],
+		["GZIP, BR", br],
+		["gzip", gzip],
+		["gzip;q=0.5, br;q=0.1", br],
+		["br;q=0, gzip", gzip],
+		["br ; q=0 , gzip ; q=0.8", gzip],
+		["br;q=no, gzip", gzip],
+		["*", br],
+		["*;q=0, gzip", gzip],
+		["*;q=0", undefined],
+		["deflate", undefined],
+		["identity", undefined],
+		["", undefined],
+	])("picks for %o %o", (acceptEncoding, copy) => {
+		expect(negotiate(acceptEncoding, both)).toBe(copy);
+	});
+
+	it("sends the body itself without Accept-Encoding, or without copies", () => {
+		expect(negotiate(undefined, both)).toBeUndefined();
+		expect(negotiate("gzip, br", [])).toBeUndefined();
 	});
 });
 

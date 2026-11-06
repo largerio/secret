@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { negotiate } from "./encodings.js";
 import type { SiteFile } from "./load.js";
 
 const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
@@ -34,7 +35,7 @@ export function cacheControlOf(path: string): string {
 	return "public, max-age=3600";
 }
 
-/** If-None-Match compares weakly (RFC 9110 §13.1.2): compress() weakens the ETag it encodes. */
+/** If-None-Match compares weakly (RFC 9110 §13.1.2): a proxy that recompresses weakens the ETag. */
 function matches(ifNoneMatch: string, etag: string): boolean {
 	return ifNoneMatch
 		.split(",")
@@ -42,15 +43,28 @@ function matches(ifNoneMatch: string, etag: string): boolean {
 		.some((tag) => tag === "*" || tag.replace(/^W\//, "") === etag);
 }
 
-/** The file, or 304 when the client holds it already. */
+/**
+ * The file, in the copy Accept-Encoding asks for, or 304 when the client holds
+ * that copy already. Each copy has its ETag, so a 304 never confirms a copy
+ * other than the one the client would be sent.
+ */
 export function serveFile(c: Context, file: SiteFile): Response {
-	c.header("Content-Type", file.contentType);
+	const copy = negotiate(c.req.header("accept-encoding"), file.encodings);
+	const etag = copy?.etag ?? file.etag;
 	c.header("Cache-Control", file.cacheControl);
-	c.header("ETag", file.etag);
+	c.header("ETag", etag);
+	if (file.encodings.length > 0) {
+		c.header("Vary", "Accept-Encoding");
+	}
 
 	const ifNoneMatch = c.req.header("if-none-match");
-	if (ifNoneMatch !== undefined && matches(ifNoneMatch, file.etag)) {
+	if (ifNoneMatch !== undefined && matches(ifNoneMatch, etag)) {
 		return c.body(null, 304);
 	}
-	return c.body(file.body);
+
+	c.header("Content-Type", file.contentType);
+	if (copy) {
+		c.header("Content-Encoding", copy.encoding);
+	}
+	return c.body(copy?.body ?? file.body);
 }

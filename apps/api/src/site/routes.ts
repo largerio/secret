@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../app.js";
 import type { AppConfig } from "../config.js";
 import { createSiteSecurityHeaders } from "../middleware/security.js";
+import { negotiate } from "./encodings.js";
 import { serveFile } from "./files.js";
 import type { Site } from "./load.js";
 import { createShellRenderer, type Page, visitorOf } from "./shell.js";
@@ -34,6 +35,12 @@ export interface SiteRoutes {
 	/** The site's headers on what it answers, `api` on the API's paths. */
 	readonly securityHeaders: (api: MiddlewareHandler) => MiddlewareHandler;
 	/**
+	 * `middleware` on the API's paths alone: compress() there, since the site
+	 * sends copies it compressed once, and must never compress per request
+	 * what it answers (a client asking for deflate only gets the file as it is).
+	 */
+	readonly apiOnly: (middleware: MiddlewareHandler) => MiddlewareHandler;
+	/**
 	 * A path nothing answered: the shell with a 404, which the app renders as
 	 * its error page, for a GET outside the API; undefined for the API's 404.
 	 */
@@ -52,10 +59,15 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 	const siteHeaders = createSiteSecurityHeaders(site.scriptHashes);
 
 	function page(c: Context, which: Page, status: 200 | 404): Response {
+		const rendered = render(which, visitorOf(c));
+		const copy = negotiate(c.req.header("accept-encoding"), rendered.encodings);
 		c.header("Cache-Control", "no-cache");
-		// Rendered in the visitor's language and theme.
-		c.header("Vary", "Accept-Language, Cookie");
-		return c.body(render(which, visitorOf(c)), status, {
+		// Rendered in the visitor's language and theme, sent in the coding they accept.
+		c.header("Vary", "Accept-Language, Cookie, Accept-Encoding");
+		if (copy) {
+			c.header("Content-Encoding", copy.encoding);
+		}
+		return c.body(copy?.body ?? rendered.body, status, {
 			"Content-Type": "text/html; charset=utf-8",
 		});
 	}
@@ -75,6 +87,7 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 		routes,
 		securityHeaders: (api) => (c, next) =>
 			isApiPath(c.req.path) ? api(c, next) : siteHeaders(c, next),
+		apiOnly: (middleware) => (c, next) => (isApiPath(c.req.path) ? middleware(c, next) : next()),
 		notFound(c) {
 			// Hono answers a HEAD with its GET's headers, but the request keeps its method.
 			const method = c.req.method;

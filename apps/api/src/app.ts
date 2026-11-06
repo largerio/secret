@@ -118,7 +118,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	const apiSecurityHeaders = createSecurityHeaders({ skipPaths: ["/api/v1/docs"] });
 	app.use("*", site ? site.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
 	app.use("*", createCors([new URL(config.appUrl).origin]));
-	app.use("*", compress());
+	app.use("*", site ? site.apiOnly(compress()) : compress());
 
 	// Around the limits and the auth below, which answer before reading a body.
 	app.use("*", createCloseAfterError());

@@ -18,6 +18,7 @@ import {
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppConfig } from "../config.js";
+import { compressedCopies, type EncodedBody } from "./encodings.js";
 import type { Messages, Site } from "./load.js";
 
 /** The pages the server knows, each with its own head; `notFound` for any other path. */
@@ -168,19 +169,28 @@ function layoutHead(locale: Locale, config: ServerConfig): string[] {
 	];
 }
 
-export type ShellRenderer = (page: Page, visitor: Visitor) => string;
+/** A page as it is sent: the shell rendered, and its compressed copies. */
+export interface RenderedPage {
+	readonly body: Uint8Array<ArrayBuffer>;
+	readonly encodings: ReadonlyArray<EncodedBody>;
+}
+
+export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
+
+const HTML = "text/html; charset=utf-8";
 
 /**
  * Render the shell for a page and a visitor: their language and theme on
  * `<html>`, with the instance's accent, and in the head the page's title and
  * meta tags and the shell data the app starts from. A page depends on nothing
- * else, so each one is rendered once.
+ * else, so each one is rendered and compressed once: four pages, ten
+ * languages and three themes at most, and no request costs a compression.
  */
 export function createShellRenderer(site: Site, config: AppConfig): ShellRenderer {
 	const settings = serverConfigOf(config);
 	const accent = accentStyle(settings.primaryColor);
 	const style = accent === undefined ? "" : ` style="${escapeHtml(accent)}"`;
-	const rendered = new Map<string, string>();
+	const rendered = new Map<string, RenderedPage>();
 
 	function translator(messages: Messages, locale: Locale): (key: string) => string {
 		return (key) => messages[locale][key] ?? messages[DEFAULT_LOCALE][key] ?? key;
@@ -205,8 +215,9 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 		const cached = rendered.get(key);
 		if (cached !== undefined) return cached;
 
-		const html = render(page, visitor);
-		rendered.set(key, html);
-		return html;
+		const body = Buffer.from(render(page, visitor));
+		const sent = { body, encodings: compressedCopies(body, HTML) };
+		rendered.set(key, sent);
+		return sent;
 	};
 }
