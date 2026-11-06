@@ -118,7 +118,7 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   security-model change).
 - **The delivered web app and its dependencies are trusted.** Zero-knowledge relies
   on the integrity of the JavaScript served to the browser and the build/supply chain.
-  Anyone can check that an instance serves the web app of a release:
+  Anyone can check what an instance serves them against a release:
   [Verifying the web app](#verifying-the-web-app).
 - **`SERVER_ENCRYPTION_KEY` is kept secret** and is backed up out-of-band.
 
@@ -128,8 +128,9 @@ End-to-end encryption on the web has one weak point: the JavaScript that does
 it comes from the server. An instance that served a modified web app could read
 what a visitor types before it is encrypted, and the key of every link they
 open. A signed image does not help the visitor, who never sees the image, only
-what the instance serves. What can be checked is that an instance serves the web
-app of a release, file for file.
+what the instance serves. What can be checked is what the instance answers you:
+whether the pages and files you fetch are those of a release, and would run its
+code and no other.
 
 **The digest.** The web app is a static bundle, and its build writes
 `bundle.json` at its root: the SHA-256 of every other file in it, and a digest
@@ -156,14 +157,16 @@ pnpm install --frozen-lockfile
 pnpm --filter @largerio/web build
 cd apps/web/build
 find . -type f ! -path ./bundle.json -printf '%P\n' | LC_ALL=C sort \
-  | xargs -d '\n' sha256sum | sha256sum
+  | xargs -d '\n' sha256sum | sha256sum | sed 's/^/sha256:/; s/ .*//'
 ```
 
-The last command prints the digest's hex, which must be the one in the release
-notes, and in `bundle.json`. It needs GNU `find` and `xargs`, as on Linux.
+The last command prints the digest, `sha256:<hex>`, which must be the one in the
+release notes and in `bundle.json`. It needs GNU `find` and `xargs`, as on Linux.
+The commands below run from the same directory.
 
-**Compare what the instance serves.** Every file of the build is served at its
-path, and must hash as your own does. From the same directory:
+**Compare the files the instance serves.** Every file of the build but the
+shell is served at its path, and must hash as your own does. `INSTANCE` is the
+instance's address as it gives it, its `APP_URL`, with no slash at the end:
 
 ```bash
 INSTANCE=https://secret.example.com
@@ -174,18 +177,67 @@ find . -type f ! -path ./bundle.json ! -path ./index.html -printf '%P\n' \
     done
 ```
 
-It prints nothing when every file matches. The one file served otherwise is the
-shell, `index.html`: the instance writes into it, for each request, the
-visitor's language, theme and accent, the page's title and meta tags, and the
-instance's settings for the page to start from. Its bytes are not the build's.
-What it may run is: the page loads its scripts from the instance, the files you
-compared, and its `Content-Security-Policy` header lists by their SHA-256 the
-inline scripts it may run, those of the build's `index.html`. The browser runs
-no other.
+It prints nothing when every file matches.
 
-A check shows what the instance served you, when you checked: it could serve
-another visitor, or another day, something else. It tells an instance that runs
-a release from one that does not; the operator is still someone you trust.
+**Check the shell.** Every page is the shell, `index.html`, which the instance
+writes into for each request: the visitor's language, theme and accent, the
+page's title and meta tags, and the instance's settings for the page to start
+from. Its bytes are not the build's, so it is checked for what it may run.
+Fetch a page, `/` or a note's (`/note/<id>`, which a recipient opens):
+
+```bash
+curl -fsS -D headers.txt -o shell.html "$INSTANCE/"
+```
+
+First, every address it names, in an attribute or in its boot script, must be a
+file of the build: a script it loaded from the instance could otherwise be any
+script, as the policy below lets the page run any of the instance's. The only
+other address is the instance's own, in links that load nothing. This prints
+whatever is neither, by an exact match on the build's paths:
+
+```bash
+files=$(find . -type f -printf '/%P\n')
+tr "'" '"' < shell.html \
+  | grep -oiE '(src|href)[[:space:]]*=[[:space:]]*("[^"]*"|[^[:space:]">]+)|import\("[^"]*"\)' \
+  | sed -E 's/^[^=(]*[=(][[:space:]]*"?//; s/"?\)?$//' | sort -u \
+  | while read -r url; do
+      [ "$url" = "$INSTANCE" ] || grep -qxF -- "$url" <<< "$files" || echo "not of the build: $url"
+    done
+```
+
+Then, its `Content-Security-Policy` header must let it run the instance's files
+and the build's inline scripts, and nothing else: `script-src` must be
+`'self' 'wasm-unsafe-eval'` followed by the SHA-256 of each inline script of
+the build's `index.html`, and no other directive may be about scripts. This
+prints `ok`, or the policy the instance sent:
+
+```bash
+hashes=$(node - index.html <<'EOF'
+const { createHash } = require("node:crypto");
+const html = require("node:fs").readFileSync(process.argv[2], "utf8");
+// Every inline script but a JSON data block, which never runs.
+for (const [, attributes, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+  if (/\bsrc\s*=/i.test(attributes) || /\btype\s*=\s*["']?[^"'\s>]*json\b/i.test(attributes)) continue;
+  process.stdout.write(` 'sha256-${createHash("sha256").update(body).digest("base64")}'`);
+}
+EOF
+)
+policy=$(grep -i '^content-security-policy:' headers.txt | cut -d: -f2- | tr -d '\r' \
+  | tr ';' '\n' | sed 's/^ *//' | grep -i '^script-src')
+if [ "$policy" = "script-src 'self' 'wasm-unsafe-eval'$hashes" ]; then echo ok; else echo "$policy"; fi
+```
+
+With both, the page runs the build's boot script and the files it names, which
+you compared, and those load only files of the build. An inline script added
+to the page has no hash in the policy, and the browser does not run it.
+
+**What this proves.** That the responses you fetched, when you fetched them,
+were the release's files, and a page that runs the release's code alone. Not
+that the instance answers a browser the same, nor another visitor, nor later:
+an instance can tell its visitors apart, and serve a modified web app to some
+of them only. A check tells an instance that runs a release from one that does
+not, for whoever checks; whoever runs the instance is still someone its
+visitors trust.
 
 ## Known Limitations
 
