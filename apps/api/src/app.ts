@@ -136,10 +136,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	//
 	// rateLimitMultiplier scales every bound for deployments where many
 	// legitimate users share one apparent address (corporate NAT, VPN, or a
-	// proxy whose address is not in TRUSTED_PROXIES).
+	// proxy the instance was not told about: ADDRESS_HEADER, TRUSTED_PROXIES).
 	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
 	const limit = (max: number) =>
-		createRateLimit({ windowMs: 60_000, max: scale(max), trustedProxies: config.trustedProxies });
+		createRateLimit({
+			windowMs: 60_000,
+			max: scale(max),
+			trustedProxies: config.trustedProxies,
+			addressHeader: config.addressHeader,
+			xffDepth: config.xffDepth,
+		});
 
 	const createLimit = limit(30);
 	const readLimit = limit(60);

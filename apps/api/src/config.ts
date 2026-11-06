@@ -95,6 +95,9 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** AES-256 server layer key size. */
 const SERVER_KEY_BYTES = 32;
 
+/** A header's name (RFC 9110's token), lower-cased. */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+
 /** Roughly the length of `openssl rand -base64 32`; rejects toy keys. */
 const MIN_API_KEY_LENGTH = 32;
 
@@ -151,6 +154,14 @@ export interface AppConfig {
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
+	/**
+	 * ADDRESS_HEADER, lower-cased: the header the reverse proxy writes the
+	 * client's address in, or "" to tell clients apart by the socket peer (and
+	 * TRUSTED_PROXIES). Same variable, same meaning as adapter-node's.
+	 */
+	readonly addressHeader: string;
+	/** XFF_DEPTH: with X-Forwarded-For, the entry that many from the right. */
+	readonly xffDepth: number;
 	/** Scales every per-IP rate limit; >1 for deployments behind a shared address. */
 	readonly rateLimitMultiplier: number;
 	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
@@ -165,13 +176,12 @@ export interface AppConfig {
 /**
  * Warn when per-IP rate limiting cannot actually tell clients apart.
  *
- * Behind any proxy the peer address is the proxy's. Without TRUSTED_PROXIES the
- * API has no reason to believe the forwarded address, and correctly falls back
- * to the peer — which means *every* user shares a single bucket. The limits
- * still apply, they just apply to the whole instance at once, and nothing about
- * that is visible from the outside. The Docker image's entrypoint trusts its
- * own web app (127.0.0.1/32) unless told otherwise, so this mostly concerns
- * the API run outside the image.
+ * Behind a reverse proxy the peer address is the proxy's. Without
+ * ADDRESS_HEADER or TRUSTED_PROXIES the API has no reason to believe a
+ * forwarded address, and correctly falls back to the peer — which means
+ * *every* user shares a single bucket. The limits still apply, they just apply
+ * to the whole instance at once, and nothing about that is visible from the
+ * outside.
  *
  * Returns null when the configuration can distinguish clients (or when the API
  * is exposed directly, where the peer address is the real one).
@@ -179,19 +189,20 @@ export interface AppConfig {
  * @returns A message to log at startup, or null.
  */
 export function describeRateLimitScope(config: {
-	trustedProxies: ReadonlyArray<string>;
+	readonly trustedProxies: ReadonlyArray<string>;
+	readonly addressHeader: string;
 }): string | null {
-	if (config.trustedProxies.length > 0) return null;
+	if (config.addressHeader !== "" || config.trustedProxies.length > 0) return null;
 
 	return [
-		"WARNING: TRUSTED_PROXIES is empty, so per-IP rate limits are shared by all",
-		"users behind any proxy, including the bundled web app. If a proxy sits in",
-		"front of this API, list its address, e.g. for the web app on this host:",
-		"  TRUSTED_PROXIES=127.0.0.1/32",
-		"and, on the web app, ADDRESS_HEADER=X-Forwarded-For plus XFF_DEPTH=<number",
-		"of proxies in front of it>. See",
-		"docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
-		"Ignore this if the API is exposed directly, with no proxy in front.",
+		"WARNING: neither ADDRESS_HEADER nor TRUSTED_PROXIES is set, so per-IP rate limits",
+		"are shared by all users behind any proxy. If a reverse proxy sits in front of",
+		"this instance, name the header it writes the client address in, and how many",
+		"proxies sit in front, e.g. for a single Nginx, Traefik or Caddy:",
+		"  ADDRESS_HEADER=X-Forwarded-For",
+		"  XFF_DEPTH=1",
+		"See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
+		"Ignore this if the instance is exposed directly, with no proxy in front.",
 	].join("\n");
 }
 
@@ -255,6 +266,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		.split(",")
 		.map((v) => v.trim())
 		.filter((v) => v.length > 0);
+	const addressHeader = (env["ADDRESS_HEADER"] ?? "").trim().toLowerCase();
+	const xffDepth = readEnvNumber(env["XFF_DEPTH"], 1);
 
 	if (!serverKey) {
 		throw new ConfigError(
@@ -392,6 +405,14 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError(`TRUSTED_PROXIES contains an invalid entry: ${(err as Error).message}`);
 	}
 
+	if (addressHeader !== "" && !HEADER_NAME.test(addressHeader)) {
+		throw new ConfigError("ADDRESS_HEADER must be a header name, such as X-Forwarded-For");
+	}
+
+	if (!Number.isInteger(xffDepth) || xffDepth < 1) {
+		throw new ConfigError("XFF_DEPTH must be a positive integer");
+	}
+
 	if (storageBackend === "s3" && (!s3Bucket || !s3AccessKeyId || !s3SecretAccessKey)) {
 		throw new ConfigError(
 			"S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required when STORAGE_BACKEND=s3",
@@ -434,6 +455,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,
+		addressHeader,
+		xffDepth,
 		rateLimitMultiplier,
 		allowServerKeyChange,
 		debug,

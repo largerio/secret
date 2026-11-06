@@ -14,15 +14,28 @@ export interface RateLimitResult {
 	readonly cleanup: () => void;
 }
 
-export interface RateLimitOptions {
+/** Where the client's address comes from: see createClientAddress. */
+export interface ClientAddressOptions {
+	readonly trustedProxies?: ReadonlyArray<string>;
+	/** Lower-cased header name (ADDRESS_HEADER), or "" for none. */
+	readonly addressHeader?: string;
+	/** With X-Forwarded-For, the entry that many from the right (XFF_DEPTH). */
+	readonly xffDepth?: number;
+}
+
+export interface RateLimitOptions extends ClientAddressOptions {
 	readonly windowMs: number;
 	readonly max: number;
-	readonly trustedProxies?: ReadonlyArray<string>;
 }
 
 type IpType = "ipv4" | "ipv6";
 
-function normalizeIp(ip: string): { readonly ip: string; readonly type: IpType } | null {
+interface Address {
+	readonly ip: string;
+	readonly type: IpType;
+}
+
+function normalizeIp(ip: string): Address | null {
 	if (ip.startsWith("::ffff:")) {
 		const v4 = ip.slice(7);
 		if (isIPv4(v4)) return { ip: v4, type: "ipv4" };
@@ -54,7 +67,7 @@ export function buildTrustedBlockList(cidrs: ReadonlyArray<string>): BlockList {
 	return list;
 }
 
-function getPeerIp(c: Context): { readonly ip: string; readonly type: IpType } | null {
+function getPeerIp(c: Context): Address | null {
 	const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
 	const remote = env?.incoming?.socket?.remoteAddress;
 	if (!remote) return null;
@@ -82,12 +95,12 @@ export function ipv6Prefix64(ip: string): string | null {
 	return `${prefix.join(":")}::/64`;
 }
 
-function bucketKey(address: { readonly ip: string; readonly type: IpType }): string {
+function bucketKey(address: Address): string {
 	if (address.type === "ipv4") return address.ip;
 	return ipv6Prefix64(address.ip) ?? address.ip;
 }
 
-function resolveClientIp(c: Context, trusted: BlockList): string {
+function forwardedClientIp(c: Context, trusted: BlockList): string {
 	const peer = getPeerIp(c);
 	if (peer === null) return "unknown";
 
@@ -116,6 +129,46 @@ function resolveClientIp(c: Context, trusted: BlockList): string {
 	}
 
 	return bucketKey(peer);
+}
+
+/**
+ * The address ADDRESS_HEADER holds, read the way adapter-node reads it: with
+ * X-Forwarded-For, which a client can prefill, the entry `depth` hops from the
+ * right, the one the closest of our proxies wrote. Null when the header is
+ * missing, the list shorter than `depth`, or the entry not an address.
+ */
+function headerAddress(c: Context, header: string, depth: number): Address | null {
+	const value = c.req.header(header);
+	if (value === undefined) return null;
+	if (header !== "x-forwarded-for") return normalizeIp(value.trim());
+
+	const entries = value.split(",");
+	const entry = entries[entries.length - depth];
+	return entry === undefined ? null : normalizeIp(entry.trim());
+}
+
+/**
+ * The key a request is counted under: the client's address, or its IPv6 /64.
+ *
+ * With ADDRESS_HEADER set, the reverse proxy in front says who the client is,
+ * and TRUSTED_PROXIES is not consulted. A request that does not carry it (one
+ * that skipped the proxy, such as the container's health check) falls back to
+ * the socket peer: throwing there, as adapter-node does, once took production
+ * down. Without ADDRESS_HEADER, X-Forwarded-For and X-Real-IP count only from
+ * a peer in TRUSTED_PROXIES.
+ */
+export function createClientAddress(options: ClientAddressOptions): (c: Context) => string {
+	const header = options.addressHeader ?? "";
+	if (header === "") {
+		const trusted = buildTrustedBlockList(options.trustedProxies ?? []);
+		return (c) => forwardedClientIp(c, trusted);
+	}
+
+	const depth = options.xffDepth ?? 1;
+	return (c) => {
+		const address = headerAddress(c, header, depth) ?? getPeerIp(c);
+		return address === null ? "unknown" : bucketKey(address);
+	};
 }
 
 function tooManyRequests(c: Context, resetAt: number, now: number): Response {
@@ -147,7 +200,7 @@ export function classifyNotesPath(path: string): NotesRateClass {
 
 export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 	const store = new Map<string, RateLimitStore>();
-	const trusted = buildTrustedBlockList(options.trustedProxies ?? []);
+	const clientAddress = createClientAddress(options);
 
 	const cleanupInterval = Math.min(30_000, options.windowMs);
 	const timer = setInterval(() => {
@@ -160,7 +213,7 @@ export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 	}, cleanupInterval);
 
 	const middleware: MiddlewareHandler = async (c: Context, next) => {
-		const ip = resolveClientIp(c, trusted);
+		const ip = clientAddress(c);
 		const now = Date.now();
 		const existing = store.get(ip);
 

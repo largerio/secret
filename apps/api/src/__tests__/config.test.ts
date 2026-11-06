@@ -514,16 +514,59 @@ describe("secrets in files", () => {
 });
 
 describe("describeRateLimitScope", () => {
-	it("warns when no proxy is trusted, since every user then shares one bucket", () => {
-		const warning = describeRateLimitScope({ trustedProxies: [] });
+	it("warns when nothing says where the client is, since every user then shares one bucket", () => {
+		const warning = describeRateLimitScope({ trustedProxies: [], addressHeader: "" });
 
-		expect(warning).toContain("TRUSTED_PROXIES is empty");
-		expect(warning).toContain("ADDRESS_HEADER");
+		expect(warning).toContain("neither ADDRESS_HEADER nor TRUSTED_PROXIES is set");
+		expect(warning).toContain("ADDRESS_HEADER=X-Forwarded-For");
+		expect(warning).toContain("XFF_DEPTH=1");
 		expect(warning).toContain("docs/self-hosting.md");
 	});
 
 	it("stays quiet once a proxy is trusted", () => {
-		expect(describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"] })).toBeNull();
+		expect(
+			describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"], addressHeader: "" }),
+		).toBeNull();
+	});
+
+	it("stays quiet once the proxy's header is named", () => {
+		expect(
+			describeRateLimitScope({ trustedProxies: [], addressHeader: "x-forwarded-for" }),
+		).toBeNull();
+	});
+});
+
+describe("the client address", () => {
+	it("tells clients apart by the socket peer by default", () => {
+		const config = parseConfig(baseEnv());
+
+		expect(config.addressHeader).toBe("");
+		expect(config.xffDepth).toBe(1);
+	});
+
+	it("reads ADDRESS_HEADER whatever its case, and XFF_DEPTH", () => {
+		const config = parseConfig(baseEnv({ ADDRESS_HEADER: " X-Forwarded-For ", XFF_DEPTH: "2" }));
+
+		expect(config.addressHeader).toBe("x-forwarded-for");
+		expect(config.xffDepth).toBe(2);
+	});
+
+	it("treats blank values as unset, as compose passes them", () => {
+		const config = parseConfig(baseEnv({ ADDRESS_HEADER: "", XFF_DEPTH: "" }));
+
+		expect(config.addressHeader).toBe("");
+		expect(config.xffDepth).toBe(1);
+	});
+
+	it.each(["0", "-1", "1.5", "two"])("refuses XFF_DEPTH=%s", (depth) => {
+		expectConfigError(baseEnv({ XFF_DEPTH: depth }), "XFF_DEPTH must be a positive integer");
+	});
+
+	it.each(["X-Forwarded-For:", "X Real IP", "x-réel"])("refuses ADDRESS_HEADER=%s", (header) => {
+		expectConfigError(
+			baseEnv({ ADDRESS_HEADER: header }),
+			"ADDRESS_HEADER must be a header name, such as X-Forwarded-For",
+		);
 	});
 });
 
