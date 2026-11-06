@@ -14,5 +14,9 @@ test("burn-after-read: a single-read note is destroyed once viewed", async ({ pa
 	// Reopening the same link must now resolve to "not found": the read was consumed.
 	const second = await context.newPage();
 	await second.goto(shareUrl);
-	await expect(second.getByText(/Note not found/i)).toBeVisible({ timeout: 15_000 });
+	const gone = second.getByRole("heading", { name: /Note not found/i });
+	await expect(gone).toBeVisible({ timeout: 15_000 });
+	// It replaced the page's "Checking the link…": its title takes the focus,
+	// so that the answer is announced.
+	await expect(gone).toBeFocused();
 });

@@ -3,6 +3,7 @@ import { SecretApiError } from "@largerio/secret-sdk";
 import { onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
+import CheckingView from "#lib/components/ui/CheckingView.svelte";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
@@ -13,7 +14,10 @@ import { deleteNote } from "#lib/notes/notes.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { requestErrorMessage } from "#lib/utils/errors.js";
 
-// Whether the note is there to delete: null while the instance is asked.
+// Whether the note is there to delete: null while the instance is asked. The
+// page renders at once, and every screen after that first one replaces
+// another, so each one's title takes the focus (afterAction): the answer is
+// announced, and the keyboard starts from it.
 let exists = $state<boolean | null>(null);
 let deleteToken = $state("");
 // Deleting is final, so it takes two clicks: the first only asks for confirmation.
@@ -38,9 +42,6 @@ onMount(() => {
 		left = true;
 	};
 });
-
-// The page renders at once, its button waiting for the instance's answer.
-const ready = $derived(exists === true);
 
 async function setConfirming(next: boolean): Promise<void> {
 	confirming = next;
@@ -86,17 +87,19 @@ here so that navigating here sets it. -->
 	<div class="rise flex justify-center" style:animation-delay="0.18s">
 		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
 	</div>
-{:else if exists === false || gone}
+{:else if exists === null}
+	<CheckingView />
+{:else if !exists || gone}
 	<NoticeView
 		icon="file-x"
 		title={t("not_found_title")}
 		sub={t("not_found_description")}
-		afterAction={gone}
+		afterAction
 	/>
-{:else if ready && !deleteToken}
-	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} />
+{:else if !deleteToken}
+	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} afterAction />
 {:else}
-	<PageHero title={t("manage_title")} sub={t("manage_description")} />
+	<PageHero title={t("manage_title")} sub={t("manage_description")} afterAction />
 
 	<section
 		class="card rise flex flex-col gap-3 p-4"
@@ -136,11 +139,10 @@ here so that navigating here sets it. -->
 				type="button"
 				class="btn btn-outline btn-lg w-full"
 				bind:this={deleteButton}
-				disabled={!ready}
 				onclick={() => setConfirming(true)}
 			>
 				<Icon name="trash" size={16} />
-				{ready ? t("delete_button") : t("loading")}
+				{t("delete_button")}
 			</button>
 		{/if}
 	</section>

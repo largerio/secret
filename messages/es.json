@@ -19,6 +19,7 @@
 	"error_storage_full": "El servidor no tiene espacio para esta nota. Inténtalo de nuevo más tarde.",
 	"error_clipboard": "Error al copiar al portapapeles",
 	"loading": "Cargando",
+	"checking_link": "Comprobando el enlace…",
 	"back_home": "Volver al inicio",
 	"new_note": "Crear una nota",
 	"show_password": "Mostrar contraseña",

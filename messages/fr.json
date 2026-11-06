@@ -19,6 +19,7 @@
 	"error_storage_full": "Le serveur n'a plus de place pour cette note. Réessayez plus tard.",
 	"error_clipboard": "Échec de la copie dans le presse-papiers",
 	"loading": "Chargement",
+	"checking_link": "Vérification du lien…",
 	"back_home": "Retour à l'accueil",
 	"new_note": "Créer une note",
 	"show_password": "Afficher le mot de passe",
