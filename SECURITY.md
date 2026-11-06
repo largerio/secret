@@ -62,7 +62,10 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
 - Timing-safe token comparison (`crypto.timingSafeEqual`)
 - Key buffers zeroed after use (`sodium.memzero`) — a best effort: JavaScript
   strings and libsodium's internal WASM copies are not wiped
-- Strict Content Security Policy (CSP)
+- Strict Content Security Policy (CSP): scripts from the instance alone, its
+  inline ones allowed by their hash, and no framing
+- A reproducible web app, whose digest each release publishes and every
+  instance reports ([how to verify](#verifying-the-web-app))
 - Per-IP rate limiting on all endpoints
 - Zod validation on all inputs with max length constraints
 - `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` on file downloads
@@ -98,7 +101,8 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   this is by design. Protect the link; optionally add a password.
 - **A compromised client** (malicious browser extension, XSS in an embedding page,
   a backdoored build of the web app) can read plaintext, since decryption happens
-  in the browser. Integrity of the delivered JavaScript is assumed (see Assumptions).
+  in the browser. Integrity of the delivered JavaScript is assumed (see
+  Assumptions); [it can be checked](#verifying-the-web-app).
 - **Endpoint security of sender/recipient** (keyloggers, shoulder-surfing, clipboard
   scrapers) is the user's responsibility.
 - **Traffic-analysis / metadata correlation** at the network layer.
@@ -114,7 +118,74 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   security-model change).
 - **The delivered web app and its dependencies are trusted.** Zero-knowledge relies
   on the integrity of the JavaScript served to the browser and the build/supply chain.
+  Anyone can check that an instance serves the web app of a release:
+  [Verifying the web app](#verifying-the-web-app).
 - **`SERVER_ENCRYPTION_KEY` is kept secret** and is backed up out-of-band.
+
+## Verifying the web app
+
+End-to-end encryption on the web has one weak point: the JavaScript that does
+it comes from the server. An instance that served a modified web app could read
+what a visitor types before it is encrypted, and the key of every link they
+open. A signed image does not help the visitor, who never sees the image, only
+what the instance serves. What can be checked is that an instance serves the web
+app of a release, file for file.
+
+**The digest.** The web app is a static bundle, and its build writes
+`bundle.json` at its root: the SHA-256 of every other file in it, and a digest
+over them all, `sha256:<hex>`. The build is reproducible: the same sources give
+the same digest wherever they are built. CI checks it on every change, building
+the web app in the image (Alpine) and outside it (Ubuntu). The release workflow
+reads the digest from the image it releases, and the release notes give it.
+
+**What an instance says it serves.** `/api/health` reports
+`"bundle": "sha256:<hex>"`, the digest of the files the instance serves, which
+it computes from them when it starts. `/bundle.json` serves the manifest: every
+file, its size and its SHA-256. Both come from the instance, which could lie in
+them: they give you something to compare with the release notes, and with your
+own build.
+
+**Rebuild it.** From the release's tag, with Node 26 and pnpm
+(`corepack enable`):
+
+```bash
+TAG=vX.Y.Z   # the release to check
+git clone --depth 1 --branch "$TAG" https://github.com/largerio/secret.git
+cd secret
+pnpm install --frozen-lockfile
+pnpm --filter @largerio/web build
+cd apps/web/build
+find . -type f ! -path ./bundle.json -printf '%P\n' | LC_ALL=C sort \
+  | xargs -d '\n' sha256sum | sha256sum
+```
+
+The last command prints the digest's hex, which must be the one in the release
+notes, and in `bundle.json`. It needs GNU `find` and `xargs`, as on Linux.
+
+**Compare what the instance serves.** Every file of the build is served at its
+path, and must hash as your own does. From the same directory:
+
+```bash
+INSTANCE=https://secret.example.com
+find . -type f ! -path ./bundle.json ! -path ./index.html -printf '%P\n' \
+  | while read -r path; do
+      served=$(curl -fsS "$INSTANCE/$path" | sha256sum)
+      [ "$served" = "$(sha256sum < "$path")" ] || echo "differs: $path"
+    done
+```
+
+It prints nothing when every file matches. The one file served otherwise is the
+shell, `index.html`: the instance writes into it, for each request, the
+visitor's language, theme and accent, the page's title and meta tags, and the
+instance's settings for the page to start from. Its bytes are not the build's.
+What it may run is: the page loads its scripts from the instance, the files you
+compared, and its `Content-Security-Policy` header lists by their SHA-256 the
+inline scripts it may run, those of the build's `index.html`. The browser runs
+no other.
+
+A check shows what the instance served you, when you checked: it could serve
+another visitor, or another day, something else. It tells an instance that runs
+a release from one that does not; the operator is still someone you trust.
 
 ## Known Limitations
 

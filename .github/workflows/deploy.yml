@@ -72,7 +72,8 @@ jobs:
   # (RustFS), rather than the dev servers: a fault of the image, its proxy or
   # the S3 backend shows up before the merge. `pnpm test:e2e` alone still
   # starts the dev servers. The command line runs against the same image,
-  # installed from its tarball as a user installs it.
+  # installed from its tarball as a user installs it, and the web app in it
+  # must be the one this runner builds.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -97,6 +98,7 @@ jobs:
       # For this runner's platform, loaded rather than pushed. The layers come
       # from the cache the docker job writes on main.
       - name: Build the image
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -122,6 +124,31 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:3000
         run: pnpm test:e2e
+
+      # The digest a release publishes is only worth what a rebuild of its tag
+      # gives (SECURITY.md#verifying-the-web-app). Built here, on Ubuntu and
+      # glibc with this checkout's paths, the web app must be the image's,
+      # built on Alpine and musl. On Node 26, as in the image: before the
+      # switch below. Even after a failure of the suite, which says nothing
+      # of this.
+      - name: Build the web app on the runner
+        id: web
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @largerio/web build
+
+      - name: Check the web app builds reproducibly
+        id: reproducible
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: .github/scripts/bundle-reproducible.sh secret:e2e apps/web/build "$RUNNER_TEMP/bundles"
+
+      # Both builds, for a diff of the files the check names.
+      - name: Upload both builds of the web app
+        if: ${{ !cancelled() && steps.reproducible.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-bundles
+          path: ${{ runner.temp }}/bundles/
+          retention-days: 7
 
       # The oldest Node the command line supports (engines, in
       # packages/cli/package.json): the rest of CI runs Node 26.

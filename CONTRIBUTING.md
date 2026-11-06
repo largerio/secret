@@ -293,7 +293,9 @@ git tag v1.4.0 <commit> && git push origin v1.4.0
 Nothing is rebuilt: `release-image.yml` gives the image CI tested for that
 commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
 `main` and is not redeployed. Once that run is green, publish the release
-(`gh release create`), starting its notes from the CHANGELOG entry.
+(`gh release create`), starting its notes from the CHANGELOG entry, with the
+line the run's summary gives: the digest of the web app the image serves
+([SECURITY.md](SECURITY.md#verifying-the-web-app)).
 
 Only that commit's image reports the version: an image of any later commit
 reports it suffixed `-dev`. So `release-image.yml` refuses a tag on any other
@@ -306,7 +308,8 @@ commit's CI/CD run, then the Release image run. Once `main` has moved on, a
 re-run tags the image `sha-<commit>` but neither moves `:main` nor deploys.
 
 Every week, `rebuild-release.yml` rebuilds the latest release if its base image
-has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild. Every
+has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild, as
+long as it serves the release's web app, by digest. Every
 tag moves through `.github/actions/promote-image`: a Trivy scan, the smoke test
 (`.github/actions/check-image`) and a signature check come first. The two
 workflows that build an image run `check-image` for `linux/arm64` before, on an

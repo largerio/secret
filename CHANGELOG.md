@@ -7,14 +7,31 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+### Security
+
+- Every page's `Content-Security-Policy` lists the inline scripts the page may run by their SHA-256, taken from the build, where SvelteKit drew a nonce for each response. Scripts come from the instance alone, and pages still cannot be framed. What a page may run is the same on every instance of a release, and can be checked against it.
+- The web app is a reproducible bundle: built from the same sources, anywhere, it gives the same files, which CI checks on every change by building it on two systems. Each release publishes its digest; `/api/health` reports as `bundle` the digest of the web app the instance serves, and `/bundle.json` lists its files with their SHA-256. Anyone can check that an instance serves the web app of a release, as [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app) explains.
+
 ### Added
 
 - A command line, `secret`, published to npm as `@largerio/secret-cli`, sends and reads notes from a terminal or a script: text on stdin, files as arguments, `--json` for scripts. It writes with an API key, or without one by solving the instance's proof of work, as the browser does, which [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md#proof-of-work) now specifies. Received files never overwrite anything and show only once the whole note is checked. (#270)
 - The SDK exports the protocol's limits (`MAX_TEXT_SIZE`, `MAX_READS`, `NOTE_ID_LENGTH`…), to check a note before it is sent. (#270)
 
+### Changed
+
+- The image runs one process instead of two: the API serves the web app and the API on `PORT` (3000), without the web server that stood in front of it and proxied every API request. The web app's dependencies no longer run on the server at all.
+- The web app is a static bundle, and pages are no longer rendered on the server. For each page, the server writes into the one HTML document the visitor's language, theme and accent, the page's title and meta tags, and the instance's settings; everything else is static files, cached for good when their name carries their hash.
+- A note's page checks its note from the browser, with `/api/v1/notes/{id}/exists`, instead of while the server rendered the page.
+
 ### Fixed
 
 - With the SDK, a format 0 link whose key was cut short in transit spent the note's read before the key was refused, which burned a note read once; and a malformed note id could aim a request at another endpoint of the instance, so that a check could spend a format 0 note's read. The SDK now refuses both before any request. The web app already checked a link's shape. (#270)
+
+### Upgrade notes
+
+- Port 3001 is gone: the API no longer listens on a port of its own, inside the container, or outside it with `API_HOST=0.0.0.0`. Anything that reached it there must use the public port, `PORT`, where the API answers under `/api/` as before. `API_HOST`, `API_PORT` and `API_URL` are no longer read, and the logs warn when one is set.
+- `TRUSTED_PROXIES` no longer defaults to `127.0.0.1/32`, which trusted the web server inside the image. Behind a reverse proxy, `ADDRESS_HEADER` and `XFF_DEPTH` work as before ([Making rate limiting work behind a proxy](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy)). Without `ADDRESS_HEADER`, `TRUSTED_PROXIES` now applies to whatever connects to the container, your proxy, and no longer to a web server inside it.
+- `/__data.json` no longer exists: a login in front of note creation ([Restricting who can create notes](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#restricting-who-can-create-notes)) only needs `/` and `/api/cap/`.
 
 ## [1.7.0] - 2026-10-30
 
