@@ -56,7 +56,8 @@ export interface SiteRoutes {
  */
 export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 	const render = createShellRenderer(site, config);
-	const siteHeaders = createSiteSecurityHeaders(site.scriptHashes);
+	const siteHeaders = createSiteSecurityHeaders(site.scriptHashes, "same-origin");
+	const embeddedHeaders = createSiteSecurityHeaders(site.scriptHashes, "cross-origin");
 
 	function page(c: Context, which: Page, status: 200 | 404): Response {
 		const rendered = render(which, visitorOf(c));
@@ -85,8 +86,12 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 
 	return {
 		routes,
-		securityHeaders: (api) => (c, next) =>
-			isApiPath(c.req.path) ? api(c, next) : siteHeaders(c, next),
+		securityHeaders: (api) => (c, next) => {
+			if (isApiPath(c.req.path)) return api(c, next);
+			return site.files.get(c.req.path)?.embeddable
+				? embeddedHeaders(c, next)
+				: siteHeaders(c, next);
+		},
 		apiOnly: (middleware) => (c, next) => (isApiPath(c.req.path) ? middleware(c, next) : next()),
 		notFound(c) {
 			// Hono answers a HEAD with its GET's headers, but the request keeps its method.

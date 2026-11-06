@@ -6,7 +6,7 @@ import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type LogLevel } from "../logger.js";
 import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
-import { cacheControlOf, contentTypeOf } from "../site/files.js";
+import { cacheControlOf, contentTypeOf, isEmbeddable } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
 import { inlineScriptHashes } from "../site/scripts.js";
 import { BOOT_SCRIPT, createSiteFixture, SHELL, type SiteFixture } from "./siteFixture.js";
@@ -374,6 +374,28 @@ describe("contentTypeOf", () => {
 		["LICENSE", "application/octet-stream"],
 	])("serves %s as %s", (path, type) => {
 		expect(contentTypeOf(path)).toBe(type);
+	});
+});
+
+describe("isEmbeddable", () => {
+	it.each([
+		["og.png", "image/png", true],
+		["favicon.svg", "image/svg+xml", true],
+		["_app/immutable/assets/logo.Ab1.png", "image/png", false],
+		["bundle.json", "application/json", false],
+		["wasm/cap_wasm_bg.wasm", "application/wasm", false],
+	])("lets other sites show %s (%s): %s", (path, type, embeddable) => {
+		expect(isEmbeddable(path, type)).toBe(embeddable);
+	});
+
+	it("marks the files loadSite reads", () => {
+		const fixture = useFixture();
+		const site = loadSite({ ...fixture, logger: capture().logger });
+
+		expect([...site.files].filter(([, file]) => file.embeddable).map(([path]) => path)).toEqual(
+			expect.arrayContaining(["/og.png", "/favicon.svg"]),
+		);
+		expect([...site.files].filter(([, file]) => file.embeddable)).toHaveLength(2);
 	});
 });
 

@@ -35,6 +35,17 @@ export function cacheControlOf(path: string): string {
 	return "public, max-age=3600";
 }
 
+/**
+ * The images at the root of the build, what `static/` holds (the link
+ * preview, the icon): meant to be shown by other sites, a chat client that
+ * loads a link's preview from the browser among them. They are the same for
+ * every visitor, so Cross-Origin-Resource-Policy lets them go: cross-origin.
+ * The app's own files keep same-origin, nobody else has a use for them.
+ */
+export function isEmbeddable(path: string, contentType: string): boolean {
+	return !path.includes("/") && contentType.startsWith("image/");
+}
+
 /** If-None-Match compares weakly (RFC 9110 §13.1.2): a proxy that recompresses weakens the ETag. */
 function matches(ifNoneMatch: string, etag: string): boolean {
 	return ifNoneMatch

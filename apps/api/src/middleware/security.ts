@@ -56,8 +56,13 @@ export function createSecurityHeaders(options: SecurityHeadersOptions = {}): Mid
  * so it runs under this policy too.
  *
  * @param scriptHashes `'sha256-…'` of every inline script the shell runs.
+ * @param resourcePolicy `cross-origin` for the files other sites show (the
+ *   link preview, the icon); `same-origin` for the rest.
  */
-export function createSiteSecurityHeaders(scriptHashes: ReadonlyArray<string>): MiddlewareHandler {
+export function createSiteSecurityHeaders(
+	scriptHashes: ReadonlyArray<string>,
+	resourcePolicy: "same-origin" | "cross-origin",
+): MiddlewareHandler {
 	return secureHeaders({
 		contentSecurityPolicy: {
 			defaultSrc: ["'none'"],
@@ -85,7 +90,7 @@ export function createSiteSecurityHeaders(scriptHashes: ReadonlyArray<string>): 
 		// very first visit.
 		strictTransportSecurity: "max-age=63072000; includeSubDomains; preload",
 		crossOriginOpenerPolicy: "same-origin",
-		crossOriginResourcePolicy: "same-origin",
+		crossOriginResourcePolicy: resourcePolicy,
 		// The URL fragment is never sent in a Referer, but no-referrer also keeps
 		// the note id out of third-party logs.
 		referrerPolicy: "no-referrer",

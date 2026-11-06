@@ -10,7 +10,7 @@ import {
 } from "@largerio/secret-shared/site";
 import { type Logger, log } from "../logger.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
-import { cacheControlOf, contentTypeOf } from "./files.js";
+import { cacheControlOf, contentTypeOf, isEmbeddable } from "./files.js";
 import { inlineScriptHashes } from "./scripts.js";
 
 /** The page every path of the web app is rendered from, SvelteKit's fallback. */
@@ -32,6 +32,8 @@ export interface SiteFile {
 	readonly etag: string;
 	readonly contentType: string;
 	readonly cacheControl: string;
+	/** Shown by other sites, so served with Cross-Origin-Resource-Policy: cross-origin. */
+	readonly embeddable: boolean;
 	/** Compressed at startup, brotli first: no request costs a compression. */
 	readonly encodings: ReadonlyArray<EncodedFile>;
 }
@@ -175,6 +177,7 @@ export function loadSite(location: SiteLocation): Site {
 			etag: `"${file.sha256}"`,
 			contentType,
 			cacheControl: cacheControlOf(file.path),
+			embeddable: isEmbeddable(file.path, contentType),
 			encodings: compressedCopies(file.body, contentType).map((copy) => ({
 				...copy,
 				etag: `"${file.sha256}-${copy.encoding}"`,

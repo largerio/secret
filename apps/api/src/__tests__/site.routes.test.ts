@@ -587,35 +587,57 @@ describe("the API beside the site", () => {
 });
 
 describe("the site's security headers", () => {
-	it.each(["/", `/note/${NOTE_ID}`, "/nope", "/favicon.svg", "/_app/immutable/entry/start.Bx1.js"])(
-		"protect %s",
-		async (path) => {
-			const res = await makeApp().request(path);
+	it.each([
+		["/", "same-origin"],
+		[`/note/${NOTE_ID}`, "same-origin"],
+		["/nope", "same-origin"],
+		["/missing.png", "same-origin"],
+		["/_app/immutable/entry/start.Bx1.js", "same-origin"],
+		["/wasm/cap_wasm_bg.wasm", "same-origin"],
+		["/bundle.json", "same-origin"],
+		// Shown by other sites: a link's preview, its icon.
+		["/og.png", "cross-origin"],
+		["/favicon.svg", "cross-origin"],
+	])("protect %s, its resource policy %s", async (path, resourcePolicy) => {
+		const res = await makeApp().request(path);
 
-			expect(res.headers.get("content-security-policy")).toBe(SITE_CSP);
-			expect(res.headers.get("strict-transport-security")).toBe(
-				"max-age=63072000; includeSubDomains; preload",
-			);
-			expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-			expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-			expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
-			expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
-			expect(res.headers.get("x-frame-options")).toBe("DENY");
-			const permissions = res.headers.get("permissions-policy") ?? "";
-			for (const feature of [
-				"camera",
-				"microphone",
-				"geolocation",
-				"gyroscope",
-				"magnetometer",
-				"accelerometer",
-				"payment",
-				"usb",
-			]) {
-				expect(permissions).toContain(`${feature}=()`);
-			}
-		},
-	);
+		expect(res.headers.get("content-security-policy")).toBe(SITE_CSP);
+		expect(res.headers.get("strict-transport-security")).toBe(
+			"max-age=63072000; includeSubDomains; preload",
+		);
+		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
+		expect(res.headers.get("cross-origin-resource-policy")).toBe(resourcePolicy);
+		expect(res.headers.get("x-frame-options")).toBe("DENY");
+		const permissions = res.headers.get("permissions-policy") ?? "";
+		for (const feature of [
+			"camera",
+			"microphone",
+			"geolocation",
+			"gyroscope",
+			"magnetometer",
+			"accelerometer",
+			"payment",
+			"usb",
+		]) {
+			expect(permissions).toContain(`${feature}=()`);
+		}
+	});
+
+	it("let other sites show the link preview however it is asked for", async () => {
+		const app = makeApp();
+		const etag = site.files.get("/og.png")?.etag as string;
+
+		const requests = [
+			app.request("/og.png", { method: "HEAD" }),
+			app.request("/og.png", { headers: { "If-None-Match": etag } }),
+			app.request("/favicon.svg", { headers: { "Accept-Encoding": "br" } }),
+		];
+		for (const res of await Promise.all(requests)) {
+			expect(res.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+		}
+	});
 });
 
 describe("the site's logs and metrics", () => {
