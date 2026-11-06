@@ -44,7 +44,8 @@ function makeApp(config: AppConfig = buildConfig()) {
 	return createApp({ db, serverKey: TEST_SERVER_KEY, storage, config }).app;
 }
 
-const UNKNOWN = { version: "unknown", revision: "unknown" };
+/** What /api/health reports of a build that says nothing of itself, serving no web app. */
+const UNKNOWN = { version: "unknown", revision: "unknown", bundle: null };
 
 beforeEach(() => {
 	for (const path of [TEST_DB_PATH, `${TEST_DB_PATH}-wal`, `${TEST_DB_PATH}-shm`]) {

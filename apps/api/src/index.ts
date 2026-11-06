@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, which config.js loads first and the routes extend.
@@ -6,12 +7,18 @@ import "@hono/zod-openapi";
 import { parseServerKey } from "@largerio/secret-crypto/server";
 import { lingerOnClose } from "@largerio/secret-shared/linger";
 import { readBuildInfo } from "./buildInfo.js";
-import { ConfigError, describeRateLimitScope, parseConfig } from "./config.js";
+import {
+	ConfigError,
+	describePrimaryColor,
+	describeRateLimitScope,
+	parseConfig,
+} from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
 import { startInstance } from "./instance.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
 import { log } from "./logger.js";
+import { loadBuiltSite, type Site, SiteError } from "./site/load.js";
 import { createStorageBackend } from "./storage/index.js";
 
 function fail(message: string, hint?: string): never {
@@ -24,6 +31,22 @@ try {
 	config = parseConfig(process.env);
 } catch (err) {
 	if (err instanceof ConfigError) {
+		fail(err.message, err.hint);
+	}
+	throw err;
+}
+
+// The web app's build and messages, found from this module in development
+// (src/) as in the image (dist/).
+let site: Site | undefined;
+try {
+	site = loadBuiltSite({
+		buildDir: fileURLToPath(new URL("../../web/build/", import.meta.url)),
+		messagesDir: fileURLToPath(new URL("../../../messages/", import.meta.url)),
+		production: process.env["NODE_ENV"] === "production",
+	});
+} catch (err) {
+	if (err instanceof SiteError) {
 		fail(err.message, err.hint);
 	}
 	throw err;
@@ -59,11 +82,12 @@ const { app, rateLimiters, drain, storage, stopJobs } = startInstance({
 	config,
 	build,
 	backend: createStorageBackend(config.storage),
+	site,
 });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port });
-// A refusal sent before a body was read must reach its client (the web
-// server's proxy, mostly) before the connection closes.
+// A refusal sent before a body was read must reach its client (the reverse
+// proxy, mostly) before the connection closes.
 lingerOnClose(server as Server);
 
 // An unhandled rejection would otherwise terminate the process with no usable
@@ -97,10 +121,10 @@ function shutdown(exitCode = 0): void {
 	// Docker sends SIGKILL 10 s after SIGTERM unless told otherwise
 	// (`stop_grace_period`, which docker-compose.yml leaves at that default, or
 	// `--stop-timeout`), and entrypoint.sh relays the signal within a second.
-	// So in-flight requests get SHUTDOWN_TIMEOUT, 8 s by default, as in the web
-	// server in front: then they are cut and sqlite.close() checkpoints the WAL
-	// before the SIGKILL. A longer drain needs both raised, the timeout a couple
-	// of seconds under the grace period.
+	// So in-flight requests get SHUTDOWN_TIMEOUT, 8 s by default: then they are
+	// cut and sqlite.close() checkpoints the WAL before the SIGKILL. A longer
+	// drain needs both raised, the timeout a couple of seconds under the grace
+	// period.
 	const forceExit = setTimeout(() => {
 		log.error("shutdown timed out waiting for connections to close");
 		sqlite.close();
@@ -124,9 +148,10 @@ function shutdown(exitCode = 0): void {
 process.on("SIGTERM", () => shutdown());
 process.on("SIGINT", () => shutdown());
 
-const rateLimitWarning = describeRateLimitScope(config);
-if (rateLimitWarning) {
-	log.warn(rateLimitWarning);
+for (const warning of [describeRateLimitScope(config), describePrimaryColor(config)]) {
+	if (warning) {
+		log.warn(warning);
+	}
 }
 
 log.info("secret api listening", {
@@ -136,4 +161,5 @@ log.info("secret api listening", {
 	version: build.version,
 	revision: build.revision,
 	metrics: config.metricsToken !== "",
+	bundle: site?.digest ?? null,
 });

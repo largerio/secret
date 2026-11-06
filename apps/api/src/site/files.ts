@@ -1,3 +1,6 @@
+import type { Context } from "hono";
+import type { SiteFile } from "./load.js";
+
 const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
 	["js", "text/javascript; charset=utf-8"],
 	["mjs", "text/javascript; charset=utf-8"],
@@ -29,4 +32,25 @@ export function cacheControlOf(path: string): string {
 	if (path.startsWith("_app/immutable/")) return "public, max-age=31536000, immutable";
 	if (path === "_app/version.json" || path === "bundle.json") return "no-cache";
 	return "public, max-age=3600";
+}
+
+/** If-None-Match compares weakly (RFC 9110 §13.1.2): compress() weakens the ETag it encodes. */
+function matches(ifNoneMatch: string, etag: string): boolean {
+	return ifNoneMatch
+		.split(",")
+		.map((tag) => tag.trim())
+		.some((tag) => tag === "*" || tag.replace(/^W\//, "") === etag);
+}
+
+/** The file, or 304 when the client holds it already. */
+export function serveFile(c: Context, file: SiteFile): Response {
+	c.header("Content-Type", file.contentType);
+	c.header("Cache-Control", file.cacheControl);
+	c.header("ETag", file.etag);
+
+	const ifNoneMatch = c.req.header("if-none-match");
+	if (ifNoneMatch !== undefined && matches(ifNoneMatch, file.etag)) {
+		return c.body(null, 304);
+	}
+	return c.body(file.body);
 }

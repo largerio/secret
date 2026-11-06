@@ -5,6 +5,7 @@ import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
 import { countPurges, createMetrics } from "./metrics.js";
 import { claimStorage, startReconcileJob } from "./reconcile.js";
+import type { Site } from "./site/load.js";
 import type { StorageBackend } from "./storage/interface.js";
 
 export interface Instance extends CreatedApp {
@@ -27,11 +28,13 @@ export function startInstance(deps: {
 	readonly build: BuildInfo;
 	/** The backend config.storage describes (createStorageBackend). */
 	readonly backend: StorageBackend;
+	/** The web app (loadBuiltSite), or undefined to serve the API alone. */
+	readonly site?: Site | undefined;
 }): Instance {
-	const { db, serverKey, config, build } = deps;
+	const { db, serverKey, config, build, site } = deps;
 	const metrics = createMetrics({ db, build, quotaBytes: config.storageQuotaBytes });
 	const storage = countPurges(deps.backend, metrics);
-	const created = createApp({ db, serverKey, storage, config, metrics, build });
+	const created = createApp({ db, serverKey, storage, config, metrics, build, site });
 
 	const cleanupTimer = startCleanupJob(db, storage, config.cleanupIntervalMs, metrics);
 	// Claimed whether this instance sweeps or not, so a sweeping one sharing the

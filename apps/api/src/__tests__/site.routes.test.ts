@@ -1,0 +1,595 @@
+import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
+// Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
+// schemas, as the routes expect (the production entry point does the same).
+import "@hono/zod-openapi";
+import { accentStyle } from "@largerio/secret-shared/accent";
+import { parseShellData } from "@largerio/secret-shared/site";
+import type { Hono } from "hono";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type AppEnv, createApp } from "../app.js";
+import { parseConfig } from "../config.js";
+import { type AppDatabase, createDatabase } from "../db/index.js";
+import { createLogger } from "../logger.js";
+import { loadSite, type Site } from "../site/load.js";
+import { LocalStorage } from "../storage/local.js";
+import { problemOf } from "./problems.js";
+import { BOOT_SCRIPT, createSiteFixture, FILES, type SiteFixture } from "./siteFixture.js";
+import { createTestApp } from "./testApp.js";
+
+const TEST_DB_PATH = "./data/site-routes-test.db";
+const TEST_FILES_PATH = "./data/site-routes-test-files";
+const SERVER_KEY = randomBytes(32);
+const METRICS_TOKEN = "m".repeat(32);
+const NOTE_ID = "aBcDeFgHiJkL";
+const APP_URL = "https://secret.test";
+
+const SITE_CSP = [
+	"default-src 'none'",
+	`script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash("sha256").update(BOOT_SCRIPT).digest("base64")}'`,
+	"style-src 'self' 'unsafe-inline'",
+	"img-src 'self' data: blob:",
+	"connect-src 'self'",
+	"font-src 'self'",
+	"worker-src 'self' blob:",
+	"media-src 'self' blob:",
+	"object-src 'none'",
+	"frame-ancestors 'none'",
+	"base-uri 'self'",
+	"form-action 'none'",
+].join("; ");
+
+const silent = createLogger({ write: () => {} });
+
+let db: AppDatabase;
+let sqlite: DatabaseSync;
+let fixture: SiteFixture;
+let site: Site;
+const stops: Array<() => void> = [];
+
+function removeFiles(): void {
+	for (const path of [TEST_DB_PATH, `${TEST_DB_PATH}-wal`, `${TEST_DB_PATH}-shm`]) {
+		rmSync(path, { force: true });
+	}
+	rmSync(TEST_FILES_PATH, { recursive: true, force: true });
+}
+
+/** The app with the fixture's site, another one, or none (null). */
+function makeApp(env: Record<string, string> = {}, served: Site | null = site): Hono<AppEnv> {
+	const created = createTestApp({
+		db,
+		serverKey: SERVER_KEY,
+		storage: new LocalStorage(TEST_FILES_PATH),
+		env: { APP_URL, ...env },
+		...(served ? { site: served } : {}),
+	});
+	stops.push(created.stop);
+	return created.app;
+}
+
+/** The text of the shell's `<script id="secret-shell">`. */
+function shellDataOf(html: string) {
+	const text = /<script type="application\/json" id="secret-shell">([^<]*)<\/script>/.exec(html);
+	return parseShellData(text?.[1]);
+}
+
+beforeAll(() => {
+	fixture = createSiteFixture();
+	site = loadSite({ ...fixture, logger: silent });
+});
+
+afterAll(() => {
+	fixture.remove();
+	removeFiles();
+});
+
+beforeEach(() => {
+	removeFiles();
+	mkdirSync(TEST_FILES_PATH, { recursive: true });
+	({ db, sqlite } = createDatabase(TEST_DB_PATH));
+});
+
+afterEach(() => {
+	for (const stop of stops.splice(0)) stop();
+	sqlite.close();
+});
+
+describe("the pages", () => {
+	it("render the home page with its head, for crawlers that run no JavaScript", async () => {
+		const res = await makeApp().request("/");
+		const html = await res.text();
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+		expect(res.headers.get("cache-control")).toBe("no-cache");
+		expect(res.headers.get("vary")).toContain("Accept-Language, Cookie");
+		expect(html).toContain('<html lang="en" data-mode="system">');
+		expect(html).not.toContain("<!--secret:head-->");
+		for (const tag of [
+			"<title>Secret — Encrypted sharing</title>",
+			'<meta name="description" content="Share secrets: encrypted in your browser." />',
+			'<meta name="keywords" content="encrypted notes, secret sharing" />',
+			`<link rel="canonical" href="${APP_URL}" />`,
+			'<meta property="og:title" content="Secret — Encrypted sharing" />',
+			'<meta property="og:description" content="Share secrets: encrypted in your browser." />',
+			`<meta property="og:url" content="${APP_URL}" />`,
+			'<meta name="twitter:title" content="Secret — Encrypted sharing" />',
+			'<meta name="twitter:description" content="Share secrets: encrypted in your browser." />',
+			'<meta property="og:site_name" content="Secret" />',
+			'<meta property="og:type" content="website" />',
+			'<meta property="og:locale" content="en_US" />',
+			'<meta property="og:locale:alternate" content="fr_FR" />',
+			`<meta property="og:image" content="${APP_URL}/og.png" />`,
+			`<meta name="twitter:image" content="${APP_URL}/og.png" />`,
+			'<meta name="twitter:card" content="summary_large_image" />',
+			`<link rel="alternate" hreflang="ko" href="${APP_URL}" />`,
+			`<link rel="alternate" hreflang="x-default" href="${APP_URL}" />`,
+		]) {
+			expect(html).toContain(tag);
+		}
+		expect(html).not.toContain('<meta property="og:locale:alternate" content="en_US" />');
+		expect(html).not.toContain('name="robots"');
+		// The rest of the shell is left as the build wrote it.
+		expect(html).toContain(`<script>${BOOT_SCRIPT}</script>`);
+	});
+
+	it("describe the instance in JSON-LD", async () => {
+		const html = await (await makeApp().request("/")).text();
+		const jsonLd = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(html)?.[1];
+
+		expect(JSON.parse(jsonLd ?? "")).toEqual({
+			"@context": "https://schema.org",
+			"@type": "WebApplication",
+			name: "Secret",
+			url: APP_URL,
+			description: "Share secrets: encrypted in your browser.",
+			applicationCategory: "SecurityApplication",
+			operatingSystem: "Any",
+			offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+			featureList: [
+				"End-to-end encryption",
+				"Zero-knowledge architecture",
+				"Burn after reading",
+				"Password protection",
+				"File sharing",
+				"QR code sharing",
+				"Self-hostable",
+			],
+		});
+	});
+
+	it("hand the page the instance's settings and the visitor's choices", async () => {
+		const app = makeApp({
+			APP_NAME: "Vault",
+			APP_DESCRIPTION: "Our notes",
+			APP_FOOTER_TEXT: "Run by ACME",
+			MAX_FILE_SIZE: "1048576",
+			MAX_FILES_PER_NOTE: "3",
+			MAX_EXPIRY: "3600",
+		});
+
+		const html = await (await app.request("/")).text();
+
+		expect(shellDataOf(html)).toEqual({
+			config: {
+				appName: "Vault",
+				appDescription: "Our notes",
+				appUrl: APP_URL,
+				primaryColor: "",
+				footerText: "Run by ACME",
+				ogImageUrl: `${APP_URL}/og.png`,
+				maxFileSize: 1_048_576,
+				maxFilesPerNote: 3,
+				chunkSize: 4_194_304,
+				maxChunkedFileSize: 524_288_000,
+				maxExpiry: 3600,
+			},
+			locale: "en",
+			theme: "system",
+		});
+	});
+
+	it("speak the browser's language, English filling what a translation lacks", async () => {
+		const res = await makeApp().request("/", { headers: { "Accept-Language": "fr-FR,fr;q=0.9" } });
+		const html = await res.text();
+
+		expect(html).toContain('<html lang="fr" data-mode="system">');
+		expect(html).toContain("<title>Secret — Partage chiffré</title>");
+		expect(html).toContain('<meta name="keywords" content="encrypted notes, secret sharing" />');
+		expect(html).toContain('<meta property="og:locale" content="fr_FR" />');
+		expect(html).toContain('<meta property="og:locale:alternate" content="en_US" />');
+		expect(html).not.toContain('<meta property="og:locale:alternate" content="fr_FR" />');
+		expect(shellDataOf(html)?.locale).toBe("fr");
+	});
+
+	it("speak the language the visitor chose over their browser's", async () => {
+		const app = makeApp();
+		const request = (cookie: string) =>
+			app.request("/note/x", { headers: { Cookie: cookie, "Accept-Language": "fr" } });
+
+		const chosen = await (await request("secret_lang=de")).text();
+		expect(chosen).toContain('<html lang="de"');
+		expect(chosen).toContain("<title>Secret — Encrypted note</title>");
+
+		const unknown = await (await request("secret_lang=xx")).text();
+		expect(unknown).toContain('<html lang="fr"');
+	});
+
+	it("keep the theme the visitor chose, the system's otherwise", async () => {
+		const app = makeApp();
+		const themeOf = async (cookie: string) =>
+			shellDataOf(await (await app.request("/", { headers: { Cookie: cookie } })).text())?.theme;
+
+		expect(await themeOf("secret_theme=dark")).toBe("dark");
+		expect(await themeOf("secret_theme=light; secret_lang=en")).toBe("light");
+		expect(await themeOf("secret_theme=sepia")).toBe("system");
+
+		const html = await (
+			await app.request("/", { headers: { Cookie: "secret_theme=dark" } })
+		).text();
+		expect(html).toContain('<html lang="en" data-mode="dark">');
+	});
+
+	it("carry the instance's accent on <html>", async () => {
+		const html = await (await makeApp({ APP_PRIMARY_COLOR: "#0a7" }).request("/")).text();
+
+		expect(html).toContain(
+			`<html lang="en" data-mode="system" style="${accentStyle("#0a7") as string}">`,
+		);
+	});
+
+	it("ignore an accent that is not a hex colour", async () => {
+		const html = await (
+			await makeApp({ APP_PRIMARY_COLOR: 'red" onload="alert(1)' }).request("/")
+		).text();
+
+		expect(html).toContain('<html lang="en" data-mode="system">');
+		expect(html).not.toContain(' onload="');
+	});
+
+	it("escape every setting written into the page", async () => {
+		const name = `</title><script>alert("x")</script> & $& 'q'`;
+		const app = makeApp({ APP_NAME: name, APP_OG_IMAGE_URL: 'https://x.test/"><b>' });
+
+		const html = await (await app.request("/")).text();
+
+		expect(html).not.toContain("<script>alert");
+		expect(html).not.toContain("<b>");
+		expect(html).toContain(
+			"<title>&lt;/title&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; $&amp; &#39;q&#39; — Encrypted sharing</title>",
+		);
+		expect(html).toContain('content="https://x.test/&quot;&gt;&lt;b&gt;"');
+		expect(html).toContain('"name":"\\u003c/title\\u003e\\u003cscript\\u003ealert(\\"x\\")');
+		expect(shellDataOf(html)?.config.appName).toBe(name);
+	});
+
+	it("render a note's page without indexing it", async () => {
+		const res = await makeApp().request(`/note/${NOTE_ID}`);
+		const html = await res.text();
+
+		expect(res.status).toBe(200);
+		for (const tag of [
+			"<title>Secret — Encrypted note</title>",
+			'<meta name="robots" content="noindex, nofollow" />',
+			'<meta name="description" content="Decrypted in your browser, never on the server." />',
+			'<meta property="og:title" content="Secret — Encrypted note" />',
+			'<meta property="og:description" content="Decrypted in your browser, never on the server." />',
+			'<meta property="og:site_name" content="Secret" />',
+		]) {
+			expect(html).toContain(tag);
+		}
+		expect(html).not.toContain("canonical");
+		expect(html).not.toContain(NOTE_ID);
+	});
+
+	it("render a note's management page without indexing it", async () => {
+		const res = await makeApp().request(`/note/${NOTE_ID}/manage`);
+		const html = await res.text();
+
+		expect(res.status).toBe(200);
+		expect(html).toContain("<title>Secret — Delete the note</title>");
+		expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+		expect(html).not.toContain('name="description"');
+	});
+
+	it("answer the shell with a 404 for any other path, the client router's to render", async () => {
+		const app = makeApp();
+
+		for (const path of ["/nope", "/index.html", `/note/${NOTE_ID}/manage/more`, "/_app/x.js"]) {
+			const res = await app.request(path);
+			const html = await res.text();
+
+			expect(res.status).toBe(404);
+			expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+			expect(res.headers.get("cache-control")).toBe("no-cache");
+			expect(html).toContain("<title>404 | Secret</title>");
+			expect(html).toContain('<meta property="og:site_name" content="Secret" />');
+		}
+	});
+
+	it("answer HEAD like GET, without a body", async () => {
+		const app = makeApp();
+
+		for (const [path, status] of [
+			["/", 200],
+			["/nope", 404],
+		] as const) {
+			const res = await app.request(path, { method: "HEAD" });
+			expect(res.status).toBe(status);
+			expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+			expect(await res.text()).toBe("");
+		}
+	});
+
+	it("show a message's key when no language has it", async () => {
+		const partial = createSiteFixture();
+		try {
+			partial.write("messages/en.json", JSON.stringify({ view_title: "Encrypted note" }));
+			const app = makeApp({}, loadSite({ ...partial, logger: silent }));
+
+			const html = await (await app.request(`/note/${NOTE_ID}/manage`)).text();
+
+			expect(html).toContain("<title>Secret — manage_title</title>");
+		} finally {
+			partial.remove();
+		}
+	});
+
+	it("render each page once per language and theme", async () => {
+		const app = makeApp();
+
+		const first = await (await app.request("/")).text();
+		const second = await (await app.request("/")).text();
+
+		expect(second).toBe(first);
+	});
+});
+
+describe("the static files", () => {
+	const START = "/_app/immutable/entry/start.Bx1.js";
+
+	it("serve a file of the build, cached for good under _app/immutable", async () => {
+		const res = await makeApp().request(START);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+		expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+		expect(res.headers.get("etag")).toBe(site.files.get(START)?.etag);
+		expect(await res.text()).toBe(FILES["_app/immutable/entry/start.Bx1.js"]);
+	});
+
+	it.each([
+		["/og.png", "image/png", "public, max-age=3600"],
+		["/wasm/cap_wasm_bg.wasm", "application/wasm", "public, max-age=3600"],
+		["/_app/version.json", "application/json", "no-cache"],
+		["/bundle.json", "application/json", "no-cache"],
+		["/_app/immutable/assets/inter.Dx4.woff2", "font/woff2", "public, max-age=31536000, immutable"],
+	])("serve %s as %s, %s", async (path, type, cacheControl) => {
+		const res = await makeApp().request(path);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe(type);
+		expect(res.headers.get("cache-control")).toBe(cacheControl);
+		expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+			new Uint8Array(site.files.get(path)?.body ?? []),
+		);
+	});
+
+	it("answer 304 to a client that holds the file", async () => {
+		const app = makeApp();
+		const etag = site.files.get(START)?.etag as string;
+
+		for (const ifNoneMatch of [etag, `W/${etag}`, `"other", ${etag}`, "*"]) {
+			const res = await app.request(START, { headers: { "If-None-Match": ifNoneMatch } });
+
+			expect(res.status).toBe(304);
+			expect(res.headers.get("etag")).toBe(etag);
+			expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+			expect(await res.text()).toBe("");
+		}
+
+		const stale = await app.request(START, { headers: { "If-None-Match": '"other"' } });
+		expect(stale.status).toBe(200);
+	});
+
+	it("compress what is worth it, its ETag weakened, and revalidate it", async () => {
+		const app = makeApp();
+		const path = "/_app/immutable/entry/app.Cd2.js";
+
+		const res = await app.request(path, { headers: { "Accept-Encoding": "gzip" } });
+
+		expect(res.headers.get("content-encoding")).toBe("gzip");
+		expect(res.headers.get("vary")).toContain("Accept-Encoding");
+		const etag = res.headers.get("etag") as string;
+		expect(etag).toBe(`W/${site.files.get(path)?.etag as string}`);
+
+		const revalidated = await app.request(path, {
+			headers: { "Accept-Encoding": "gzip", "If-None-Match": etag },
+		});
+		expect(revalidated.status).toBe(304);
+	});
+
+	it("answer HEAD with the file's headers, without a body", async () => {
+		const res = await makeApp().request("/favicon.svg", { method: "HEAD" });
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("image/svg+xml");
+		expect(res.headers.get("etag")).toBe(site.files.get("/favicon.svg")?.etag);
+		expect(await res.text()).toBe("");
+	});
+
+	it("answer a file the build lacks with the 404 shell", async () => {
+		const res = await makeApp().request("/wasm/missing.wasm");
+
+		expect(res.status).toBe(404);
+		expect(await res.text()).toContain("<title>404 | Secret</title>");
+	});
+
+	it("never serve a file of the build on the API's paths", async () => {
+		const shadowing = createSiteFixture({
+			files: { ...FILES, "api/v1/leak.txt": "leak", "robots.txt": "User-agent: none\n" },
+		});
+		try {
+			const app = makeApp({}, loadSite({ ...shadowing, logger: silent }));
+
+			const leak = await app.request("/api/v1/leak.txt");
+			expect(leak.status).toBe(404);
+			expect(await leak.json()).toEqual(problemOf(404, "not_found", "Not found"));
+
+			expect(await (await app.request("/robots.txt")).text()).toContain("Disallow: /api/");
+		} finally {
+			shadowing.remove();
+		}
+	});
+});
+
+describe("the API beside the site", () => {
+	it("keeps its problem details for an unknown API path", async () => {
+		const app = makeApp();
+
+		for (const path of ["/api", "/api/nope", "/api/v1/nope"]) {
+			const res = await app.request(path);
+			expect(res.status).toBe(404);
+			expect(res.headers.get("content-type")).toBe("application/problem+json");
+			expect(await res.json()).toEqual(problemOf(404, "not_found", "Not found"));
+		}
+	});
+
+	it("answers problem details to a method the pages do not take", async () => {
+		const res = await makeApp().request("/nope", { method: "POST" });
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual(problemOf(404, "not_found", "Not found"));
+	});
+
+	it("reports the digest of the web app served", async () => {
+		const res = await makeApp().request("/api/health");
+
+		expect(await res.json()).toMatchObject({ bundle: fixture.digest });
+	});
+
+	it("keeps exactly the headers it had without the site", async () => {
+		const headersOf = async (app: Hono<AppEnv>, path: string) => {
+			const res = await app.request(path);
+			const headers = Object.fromEntries(res.headers);
+			delete headers["x-request-id"];
+			return headers;
+		};
+		const withSite = makeApp();
+		const alone = makeApp({}, null);
+
+		for (const path of ["/api/v1/config", "/api/nope", "/robots.txt", "/api/v1/docs"]) {
+			expect(await headersOf(withSite, path)).toEqual(await headersOf(alone, path));
+		}
+	});
+});
+
+describe("the site's security headers", () => {
+	it.each(["/", `/note/${NOTE_ID}`, "/nope", "/favicon.svg", "/_app/immutable/entry/start.Bx1.js"])(
+		"protect %s",
+		async (path) => {
+			const res = await makeApp().request(path);
+
+			expect(res.headers.get("content-security-policy")).toBe(SITE_CSP);
+			expect(res.headers.get("strict-transport-security")).toBe(
+				"max-age=63072000; includeSubDomains; preload",
+			);
+			expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+			expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+			expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
+			expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+			expect(res.headers.get("x-frame-options")).toBe("DENY");
+			const permissions = res.headers.get("permissions-policy") ?? "";
+			for (const feature of [
+				"camera",
+				"microphone",
+				"geolocation",
+				"gyroscope",
+				"magnetometer",
+				"accelerometer",
+				"payment",
+				"usb",
+			]) {
+				expect(permissions).toContain(`${feature}=()`);
+			}
+		},
+	);
+});
+
+describe("the site's logs and metrics", () => {
+	it("log pages and failures by route pattern, never a file served or a note id", async () => {
+		const lines: Array<Record<string, unknown>> = [];
+		const logger = createLogger({ write: (_level, line) => lines.push(JSON.parse(line)) });
+		const config = parseConfig({
+			SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
+			APP_URL,
+		} as NodeJS.ProcessEnv);
+		const created = createApp({
+			db,
+			serverKey: SERVER_KEY,
+			storage: new LocalStorage(TEST_FILES_PATH),
+			config,
+			logger,
+			site,
+		});
+		stops.push(() => {
+			for (const limiter of created.rateLimiters) limiter.cleanup();
+		});
+		const { app } = created;
+		const etag = site.files.get("/favicon.svg")?.etag as string;
+
+		await app.request("/favicon.svg");
+		await app.request("/favicon.svg", { headers: { "If-None-Match": etag } });
+		await app.request("/_app/immutable/entry/start.Bx1.js");
+		await app.request(`/note/${NOTE_ID}`);
+		await app.request("/_app/immutable/gone.js");
+		await app.request(`/nope/${NOTE_ID}`);
+
+		const requests = lines.filter((line) => line["msg"] === "request");
+		expect(requests.map(({ route, status }) => ({ route, status }))).toEqual([
+			{ route: "/note/:id", status: 200 },
+			{ route: "/_app/*", status: 404 },
+			// The wildcard middleware's pattern, as for any path nothing routes.
+			{ route: "/*", status: 404 },
+		]);
+		expect(JSON.stringify(lines)).not.toContain(NOTE_ID);
+	});
+
+	it("count by route pattern, a few for the whole build", async () => {
+		const app = makeApp({ METRICS_TOKEN });
+
+		for (const path of [
+			"/",
+			`/note/${NOTE_ID}`,
+			"/favicon.svg",
+			"/og.png",
+			"/wasm/cap_wasm_bg.wasm",
+			"/_app/immutable/entry/start.Bx1.js",
+			"/_app/immutable/entry/app.Cd2.js",
+			"/api/v1/config",
+		]) {
+			await app.request(path);
+		}
+		const scrape = await app.request("/api/metrics", {
+			headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+		});
+		const routes = new Set(
+			[...(await scrape.text()).matchAll(/secret_http_requests_total\{[^}]*route="([^"]*)"/g)].map(
+				(match) => match[1],
+			),
+		);
+
+		expect(routes).toEqual(
+			new Set([
+				"/",
+				"/note/:id",
+				"/favicon.svg",
+				"/og.png",
+				"/wasm/*",
+				"/_app/*",
+				"/api/v1/config",
+			]),
+		);
+	});
+});

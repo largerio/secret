@@ -6,6 +6,7 @@ import type { AppDatabase } from "../db/index.js";
 import { createLogger } from "../logger.js";
 import { createMetrics } from "../metrics.js";
 import { createNotesService, type NotesService } from "../notes/service.js";
+import type { Site } from "../site/load.js";
 import type { StorageBackend } from "../storage/index.js";
 
 export interface TestApp {
@@ -27,6 +28,8 @@ export function createTestApp(options: {
 	readonly serverKey: Buffer;
 	readonly storage: StorageBackend;
 	readonly env?: Record<string, string>;
+	/** The web app (loadSite), served beside the API. */
+	readonly site?: Site;
 }): TestApp {
 	const config = testConfig(options.serverKey, { RATE_LIMIT_MULTIPLIER: "100", ...options.env });
 	const created = createApp({
@@ -35,6 +38,7 @@ export function createTestApp(options: {
 		storage: options.storage,
 		config,
 		logger: createLogger({ write: () => {} }),
+		site: options.site,
 	});
 	return {
 		app: created.app,
