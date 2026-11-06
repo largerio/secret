@@ -374,7 +374,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError("STORAGE_BACKEND must be 'local' or 's3'");
 	}
 
-	if (!Number.isInteger(maxFileSize) || maxFileSize <= 0) {
+	// Byte counts, which /api/v1/config and the pages' shell data hand every
+	// client as JSON: a fraction of a byte means nothing, Infinity reaches them
+	// as null, and past 2^53 a count is no longer exact. A client refuses such
+	// a limit, and the web app its whole configuration with it.
+	if (!Number.isSafeInteger(maxFileSize) || maxFileSize <= 0) {
 		throw new ConfigError("MAX_FILE_SIZE must be a positive integer");
 	}
 
@@ -405,12 +409,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		);
 	}
 
-	if (Number.isNaN(chunkSize) || chunkSize <= 0) {
-		throw new ConfigError("CHUNK_SIZE must be a positive number");
+	if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
+		throw new ConfigError("CHUNK_SIZE must be a positive integer");
 	}
 
-	if (Number.isNaN(maxChunkedFileSize) || maxChunkedFileSize <= 0) {
-		throw new ConfigError("MAX_CHUNKED_FILE_SIZE must be a positive number");
+	if (!Number.isSafeInteger(maxChunkedFileSize) || maxChunkedFileSize <= 0) {
+		throw new ConfigError("MAX_CHUNKED_FILE_SIZE must be a positive integer");
 	}
 
 	if (chunkSize > maxChunkedFileSize) {

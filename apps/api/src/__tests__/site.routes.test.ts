@@ -5,6 +5,12 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 // Extends Zod with `.openapi()` before `@largerio/secret-shared` builds its
 // schemas, as the routes expect (the production entry point does the same).
 import "@hono/zod-openapi";
+import { SECRETSTREAM_ABYTES } from "@largerio/secret-crypto/client";
+import {
+	MAX_EXPIRY_SECONDS,
+	MAX_FILES_PER_NOTE,
+	MAX_MESSAGE_LENGTH,
+} from "@largerio/secret-shared";
 import { accentStyle } from "@largerio/secret-shared/accent";
 import { parseShellData } from "@largerio/secret-shared/site";
 import type { Hono } from "hono";
@@ -197,6 +203,26 @@ describe("the pages", () => {
 			},
 			locale: "en",
 			theme: "system",
+		});
+	});
+
+	it("hand the page every limit the instance takes, the largest ones included", async () => {
+		const largest = {
+			MAX_FILE_SIZE: String(Number.MAX_SAFE_INTEGER),
+			MAX_FILES_PER_NOTE: String(MAX_FILES_PER_NOTE),
+			CHUNK_SIZE: String(MAX_MESSAGE_LENGTH - SECRETSTREAM_ABYTES),
+			MAX_CHUNKED_FILE_SIZE: String(Number.MAX_SAFE_INTEGER),
+			MAX_EXPIRY: String(MAX_EXPIRY_SECONDS),
+		};
+
+		const data = shellDataOf(await (await makeApp(largest).request("/")).text());
+
+		expect(data?.config).toMatchObject({
+			maxFileSize: Number.MAX_SAFE_INTEGER,
+			maxFilesPerNote: MAX_FILES_PER_NOTE,
+			chunkSize: MAX_MESSAGE_LENGTH - SECRETSTREAM_ABYTES,
+			maxChunkedFileSize: Number.MAX_SAFE_INTEGER,
+			maxExpiry: MAX_EXPIRY_SECONDS,
 		});
 	});
 
