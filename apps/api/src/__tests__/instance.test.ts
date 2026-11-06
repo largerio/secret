@@ -10,7 +10,9 @@ import { parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { type Instance, startInstance } from "../instance.js";
 import { RECONCILE_FIRST_RUN_MS } from "../reconcile.js";
+import { loadSite, type Site } from "../site/load.js";
 import type { StorageBackend } from "../storage/interface.js";
+import { createSiteFixture } from "./siteFixture.js";
 import { stubStorage } from "./storageDoubles.js";
 
 vi.mock("../routes/cap.js", () => ({
@@ -63,7 +65,7 @@ afterAll(() => {
 	removeTestFiles();
 });
 
-function start(backend: StorageBackend, env: Record<string, string> = {}): Instance {
+function start(backend: StorageBackend, env: Record<string, string> = {}, site?: Site): Instance {
 	const config = parseConfig({
 		SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
 		APP_URL: "https://secret.test",
@@ -72,7 +74,7 @@ function start(backend: StorageBackend, env: Record<string, string> = {}): Insta
 		CLEANUP_INTERVAL_MS: String(CLEANUP_INTERVAL_MS),
 		...env,
 	} as NodeJS.ProcessEnv);
-	instance = startInstance({ db, serverKey: SERVER_KEY, config, build: BUILD, backend });
+	instance = startInstance({ db, serverKey: SERVER_KEY, config, build: BUILD, backend, site });
 	return instance;
 }
 
@@ -154,6 +156,20 @@ describe("startInstance", () => {
 
 		expect(noteCount()).toBe(1);
 		expect(backend.list).not.toHaveBeenCalled();
+	});
+
+	it("serves the web app it is given, beside the API", async () => {
+		const fixture = createSiteFixture();
+		try {
+			const { app } = start(stubStorage(), {}, loadSite(fixture));
+
+			expect((await app.request("/")).status).toBe(200);
+			expect(await (await app.request("/api/health")).json()).toMatchObject({
+				bundle: fixture.digest,
+			});
+		} finally {
+			fixture.remove();
+		}
 	});
 
 	it("claims the storage but never sweeps it with STORAGE_RECONCILE=false", async () => {

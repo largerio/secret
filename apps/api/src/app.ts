@@ -35,6 +35,8 @@ import { createNotesService } from "./notes/service.js";
 import { createCapRoutes } from "./routes/cap.js";
 import { noteErrorToHttp } from "./routes/notes/errorStatus.js";
 import { createNotesRoutes } from "./routes/notes/index.js";
+import type { Site } from "./site/load.js";
+import { createSiteRoutes } from "./site/routes.js";
 import type { StorageBackend } from "./storage/index.js";
 
 export interface AppEnv {
@@ -57,6 +59,8 @@ export interface CreateAppDeps {
 	readonly metrics?: AppMetrics;
 	/** Version and revision, read at startup (readBuildInfo). */
 	readonly build?: BuildInfo;
+	/** The web app (loadSite), served beside the API; without it, the API alone. */
+	readonly site?: Site | undefined;
 }
 
 export interface CreatedApp {
@@ -85,27 +89,34 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	const metrics =
 		deps.metrics ?? createMetrics({ db, build, quotaBytes: config.storageQuotaBytes, logger });
 
+	const site = deps.site ? createSiteRoutes(deps.site, config) : undefined;
+
 	const app = new Hono<AppEnv>();
 
 	app.onError(
 		createErrorHandler({ debug: config.debug, logger, toHttpException: noteErrorToHttp }),
 	);
 
-	app.notFound((c) => problem(c, 404, "not_found", "Not found"));
+	app.notFound((c) => site?.notFound(c) ?? problem(c, 404, "not_found", "Not found"));
 
 	// First so every later middleware, handler and the error handler can
 	// correlate their log lines with this request. Health probes are skipped:
 	// an orchestrator polling every few seconds would drown the log. So is a
-	// scrape, unless it fails (a wrong token, say).
+	// scrape, unless it fails (a wrong token, say), and so are the web app's
+	// files, a score of them on a page's first load.
 	app.use("*", createRequestId());
 	app.use(
 		"*",
-		createRequestLogger(logger, { skipPaths: HEALTH_PATHS, quietPaths: [METRICS_PATH] }),
+		createRequestLogger(logger, {
+			skipPaths: HEALTH_PATHS,
+			quietPaths: [METRICS_PATH, ...(site?.staticPaths ?? [])],
+		}),
 	);
 	app.use("*", createRequestMetrics(metrics));
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
-	app.use("*", createSecurityHeaders({ skipPaths: ["/api/v1/docs"] }));
+	const apiSecurityHeaders = createSecurityHeaders({ skipPaths: ["/api/v1/docs"] });
+	app.use("*", site ? site.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
 	app.use("*", createCors([new URL(config.appUrl).origin]));
 	app.use("*", compress());
 
@@ -136,10 +147,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	//
 	// rateLimitMultiplier scales every bound for deployments where many
 	// legitimate users share one apparent address (corporate NAT, VPN, or a
-	// proxy whose address is not in TRUSTED_PROXIES).
+	// proxy the instance was not told about: ADDRESS_HEADER, TRUSTED_PROXIES).
 	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
 	const limit = (max: number) =>
-		createRateLimit({ windowMs: 60_000, max: scale(max), trustedProxies: config.trustedProxies });
+		createRateLimit({
+			windowMs: 60_000,
+			max: scale(max),
+			trustedProxies: config.trustedProxies,
+			addressHeader: config.addressHeader,
+			xffDepth: config.xffDepth,
+		});
 
 	const createLimit = limit(30);
 	const readLimit = limit(60);
@@ -192,12 +209,20 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	});
 
 	// The readiness report, plus what an operator looks for. The volume stored
-	// is not public: it is in the metrics.
+	// is not public: it is in the metrics. `bundle` is the digest of the web app
+	// served, which anyone can compare with a release's (bundle.ts).
 	const quotaBytes = config.storageQuotaBytes > 0 ? config.storageQuotaBytes : null;
+	const bundle = deps.site?.digest ?? null;
 	app.get("/api/health", async (c) => {
 		const report = await readiness.check();
 		return c.json(
-			{ ...report, storage: { quotaBytes }, version: build.version, revision: build.revision },
+			{
+				...report,
+				storage: { quotaBytes },
+				version: build.version,
+				revision: build.revision,
+				bundle,
+			},
 			report.status === "ok" ? 200 : 503,
 		);
 	});
@@ -279,6 +304,12 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	);
 
 	app.route("/api/v1", v1);
+
+	// On paths of its own, the 404 aside: a route that matched every path would
+	// be the pattern every request is logged and counted under (matchedRoute).
+	if (site) {
+		app.route("/", site.routes);
+	}
 
 	return {
 		app,

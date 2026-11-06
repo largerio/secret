@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import {
 	buildTrustedBlockList,
+	type ClientAddressOptions,
 	classifyNotesPath,
+	createClientAddress,
 	createRateLimit,
 	ipv6Prefix64,
 } from "../middleware/rateLimit.js";
@@ -436,6 +438,104 @@ describe("createRateLimit", () => {
 
 		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.1"))).status).toBe(200);
 		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.2"))).status).toBe(200);
+
+		rl.cleanup();
+	});
+});
+
+describe("createClientAddress", () => {
+	/** The key a request from `peer` with `headers` is counted under. */
+	async function keyOf(
+		options: ClientAddressOptions,
+		headers: Record<string, string>,
+		peer?: string,
+	): Promise<string> {
+		const app = new Hono();
+		const clientAddress = createClientAddress(options);
+		app.get("/", (c) => c.text(clientAddress(c)));
+		const res = await app.request("/", { headers }, peer === undefined ? {} : mockEnv(peer));
+		return res.text();
+	}
+
+	const xff = { addressHeader: "x-forwarded-for" };
+
+	it("reads the last X-Forwarded-For entry, the one the proxy wrote, by default", async () => {
+		expect(await keyOf(xff, { "X-Forwarded-For": "6.6.6.6, 1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+	});
+
+	it("reads the entry XFF_DEPTH from the right", async () => {
+		const headers = { "X-Forwarded-For": "6.6.6.6, 1.1.1.1, 172.16.0.1" };
+
+		expect(await keyOf({ ...xff, xffDepth: 2 }, headers, "10.0.0.1")).toBe("1.1.1.1");
+		expect(await keyOf({ ...xff, xffDepth: 3 }, headers, "10.0.0.1")).toBe("6.6.6.6");
+	});
+
+	it("trusts the header from any peer, TRUSTED_PROXIES or not", async () => {
+		const options = { ...xff, trustedProxies: ["192.0.2.1"] };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+	});
+
+	it("reads another header whole", async () => {
+		const options = { addressHeader: "cf-connecting-ip" };
+
+		expect(await keyOf(options, { "CF-Connecting-IP": " 1.1.1.1 " }, "10.0.0.1")).toBe("1.1.1.1");
+		// X-Forwarded-For says nothing then.
+		expect(await keyOf(options, { "X-Forwarded-For": "2.2.2.2" }, "10.0.0.1")).toBe("10.0.0.1");
+	});
+
+	it("counts a forwarded IPv6 client by its /64", async () => {
+		expect(await keyOf(xff, { "X-Forwarded-For": "2001:db8:0:1::5" }, "10.0.0.1")).toBe(
+			"2001:db8:0:1::/64",
+		);
+	});
+
+	it("falls back to the peer without the header, as the health check comes", async () => {
+		expect(await keyOf(xff, {}, "10.0.0.1")).toBe("10.0.0.1");
+	});
+
+	it("falls back to the peer when the list is shorter than XFF_DEPTH", async () => {
+		const options = { ...xff, xffDepth: 3 };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1, 2.2.2.2" }, "10.0.0.1")).toBe(
+			"10.0.0.1",
+		);
+	});
+
+	it.each(["", "not-an-ip", "1.1.1.1:443", "unknown"])(
+		"falls back to the peer when the entry is %o",
+		async (entry) => {
+			expect(await keyOf(xff, { "X-Forwarded-For": entry }, "10.0.0.1")).toBe("10.0.0.1");
+			expect(await keyOf({ addressHeader: "x-real-ip" }, { "X-Real-IP": entry }, "10.0.0.1")).toBe(
+				"10.0.0.1",
+			);
+		},
+	);
+
+	it("shares the unknown bucket with neither the header nor a peer", async () => {
+		expect(await keyOf(xff, {})).toBe("unknown");
+	});
+
+	it("keeps the TRUSTED_PROXIES logic without ADDRESS_HEADER", async () => {
+		const options = { addressHeader: "", trustedProxies: ["10.0.0.0/8"] };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "192.0.2.1")).toBe("192.0.2.1");
+	});
+
+	it("limits by the header's address in createRateLimit", async () => {
+		const rl = createRateLimit({ windowMs: 60_000, max: 1, ...xff });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		const from = (client: string) =>
+			app.request("/test", { headers: { "X-Forwarded-For": client } }, mockEnv("10.0.0.1"));
+
+		expect((await from("1.1.1.1")).status).toBe(200);
+		expect((await from("2.2.2.2")).status).toBe(200);
+		// A forged prefix changes nothing: the proxy's entry is last.
+		expect((await from("9.9.9.9, 1.1.1.1")).status).toBe(429);
 
 		rl.cleanup();
 	});
