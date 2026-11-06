@@ -120,7 +120,7 @@ function shutdown(exitCode = 0): void {
 	// Hard fallback: never let a hung close() keep the process alive forever.
 	// Docker sends SIGKILL 10 s after SIGTERM unless told otherwise
 	// (`stop_grace_period`, which docker-compose.yml leaves at that default, or
-	// `--stop-timeout`), and entrypoint.sh relays the signal within a second.
+	// `--stop-timeout`), and entrypoint.sh execs this process, which gets it first.
 	// So in-flight requests get SHUTDOWN_TIMEOUT, 8 s by default: then they are
 	// cut and sqlite.close() checkpoints the WAL before the SIGKILL. A longer
 	// drain needs both raised, the timeout a couple of seconds under the grace

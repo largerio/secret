@@ -563,7 +563,7 @@ status.
 | `internal_error` | 500 | A server error |
 | `note_corrupted` | 500 | A note the server cannot open |
 | `upload_corrupted` | 500 | An upload session the server cannot read |
-| `bad_gateway` | 502 | The instance's web server could not reach its API |
+| `bad_gateway` | 502 | Up to 1.7, which ran a web server in front of its API: that server could not reach the API |
 | `storage_quota_exceeded` | 507 | The instance's storage quota is full |
 
 A `429` carries `Retry-After`, in seconds. Requests are counted per address

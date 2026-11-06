@@ -10,6 +10,7 @@ import {
 	SHELL_DATA_ID,
 	SHELL_HEAD_MARKER,
 	SHELL_HTML_TAG,
+	scriptJson,
 	serializeShellData,
 	THEME_COOKIE,
 	type ThemePreference,
@@ -59,16 +60,6 @@ export function escapeHtml(text: string): string {
 		.replaceAll(">", "&gt;")
 		.replaceAll('"', "&quot;")
 		.replaceAll("'", "&#39;");
-}
-
-/** JSON as the text of a `<script>`, escaped as serializeShellData escapes it. */
-function scriptJson(value: unknown): string {
-	return JSON.stringify(value)
-		.replaceAll("<", "\\u003c")
-		.replaceAll(">", "\\u003e")
-		.replaceAll("&", "\\u0026")
-		.replaceAll(" ", "\\u2028")
-		.replaceAll(" ", "\\u2029");
 }
 
 /** The settings the pages start from, as the web server used to hand them over. */

@@ -72,19 +72,23 @@ export function parseAcceptLanguage(header: string): Locale {
 }
 
 /**
- * The shell data as the text of its `<script type="application/json">`.
- *
- * The values come from the operator's settings, written into an HTML
- * document: `<`, `>` and `&` are escaped so that none of them can close the
- * element or start markup, and U+2028 and U+2029 for old JavaScript parsers.
+ * A value as JSON in a `<script>` data block of an HTML document: `<`, `>` and
+ * `&` escaped so that none of them can close the element or start markup, and
+ * U+2028 and U+2029 for old JavaScript parsers. The values come from the
+ * operator's settings and translators.
  */
-export function serializeShellData(data: ShellData): string {
-	return JSON.stringify(data)
+export function scriptJson(value: unknown): string {
+	return JSON.stringify(value)
 		.replaceAll("<", "\\u003c")
 		.replaceAll(">", "\\u003e")
 		.replaceAll("&", "\\u0026")
 		.replaceAll("\u2028", "\\u2028")
 		.replaceAll("\u2029", "\\u2029");
+}
+
+/** The shell data as the text of its `<script type="application/json">`. */
+export function serializeShellData(data: ShellData): string {
+	return scriptJson(data);
 }
 
 const STRING_SETTINGS = [
