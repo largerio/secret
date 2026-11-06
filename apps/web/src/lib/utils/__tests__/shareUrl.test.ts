@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isKeyFragment, splitShareUrl } from "../shareUrl.js";
+import { isKeyFragment, keyAfterHashChange, splitShareUrl } from "../shareUrl.js";
 
 // Canonical: its last character carries no stray bit.
 const KEY = "k7Qm2xLp9vT4nB8rWc3yZ1hF6sJ0dGa5eU_-Ab12Cd4";
@@ -45,5 +45,24 @@ describe("isKeyFragment", () => {
 		expect(isKeyFragment(`2.${KEY}`)).toBe(false);
 		expect(isKeyFragment(`1.${KEY.slice(0, 30)}`)).toBe(false);
 		expect(isKeyFragment(`1${KEY}`)).toBe(false);
+	});
+});
+
+describe("keyAfterHashChange", () => {
+	it("takes the key of the full link pasted into the tab", () => {
+		expect(keyAfterHashChange("", `#1.${KEY}`)).toBe(`1.${KEY}`);
+		expect(keyAfterHashChange(KEY.slice(0, 30), `#${KEY}`)).toBe(KEY);
+		expect(keyAfterHashChange("", `1.${KEY}`)).toBe(`1.${KEY}`);
+	});
+
+	it("keeps the key it holds when the fragment is no key", () => {
+		// The skip link's #main-content once made "Incomplete link" of a full link.
+		expect(keyAfterHashChange(`1.${KEY}`, "#main-content")).toBe(`1.${KEY}`);
+		expect(keyAfterHashChange(`1.${KEY}`, "")).toBe(`1.${KEY}`);
+		expect(keyAfterHashChange(`1.${KEY}`, `#1.${KEY.slice(0, 30)}`)).toBe(`1.${KEY}`);
+	});
+
+	it("keeps a fragment cut short too: the page still says the link is incomplete", () => {
+		expect(keyAfterHashChange(KEY.slice(0, 30), "#main-content")).toBe(KEY.slice(0, 30));
 	});
 });

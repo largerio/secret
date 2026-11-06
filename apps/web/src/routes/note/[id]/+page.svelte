@@ -28,7 +28,7 @@ import {
 	readsBefore,
 	readsLeft,
 } from "#lib/utils/reads.js";
-import { isKeyFragment } from "#lib/utils/shareUrl.js";
+import { isKeyFragment, keyAfterHashChange } from "#lib/utils/shareUrl.js";
 
 type Notice = CheckNotice | "link_incomplete";
 
@@ -137,9 +137,10 @@ onMount(() => {
 	void check(page.params["id"] ?? "");
 
 	// The full link pasted into the same tab only changes the fragment: the
-	// page does not reload, so pick the key up from here.
+	// page does not reload, so pick the key up from here. Only a key, though:
+	// an in-page anchor's fragment once replaced a key that worked.
 	const onHashChange = () => {
-		keyFragment = window.location.hash.slice(1);
+		keyFragment = keyAfterHashChange(keyFragment, window.location.hash);
 		const incomplete = status.state === "notice" && status.notice === "link_incomplete";
 		if (incomplete && checked && isKeyFragment(keyFragment)) {
 			status = { state: "ready", info: checked };

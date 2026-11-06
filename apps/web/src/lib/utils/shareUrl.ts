@@ -28,3 +28,14 @@ export function splitShareUrl(url: string): ShareUrlParts {
 export function isKeyFragment(fragment: string): boolean {
 	return /^(1\.)?[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(fragment);
 }
+
+/**
+ * The key a note's page holds once its fragment has changed to `hash`: the
+ * new one if it is a key (the full link pasted into the same tab), else the
+ * one held. A fragment that is no key (an in-page anchor, a link cut short)
+ * never replaces a key that works.
+ */
+export function keyAfterHashChange(held: string, hash: string): string {
+	const fragment = hash.startsWith("#") ? hash.slice(1) : hash;
+	return isKeyFragment(fragment) ? fragment : held;
+}
