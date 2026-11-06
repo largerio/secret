@@ -22,7 +22,8 @@ test.describe("management (revocation) flow", () => {
 		});
 
 		await page.goto(shareUrl);
-		await expect(page.getByText(/Note not found/i)).toBeVisible();
+		// The page asks the instance once it has started, its worker first.
+		await expect(page.getByText(/Note not found/i)).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("a management link without its token is reported as incomplete", async ({ page }) => {
@@ -30,7 +31,7 @@ test.describe("management (revocation) flow", () => {
 		const manageUrl = await getManageUrl(page);
 
 		await page.goto(manageUrl.split("#")[0] as string);
-		await expect(page.getByText(/incomplete|invalid/i)).toBeVisible();
+		await expect(page.getByText(/incomplete|invalid/i)).toBeVisible({ timeout: 15_000 });
 
 		// The note must survive a failed management attempt.
 		await revealNote(page, shareUrl);

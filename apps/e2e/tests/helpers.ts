@@ -18,13 +18,13 @@ export interface CreateNoteOptions {
 }
 
 /**
- * Navigates to the create page and blocks until SvelteKit has hydrated the form.
+ * Navigates to the create page and blocks until Svelte has mounted the form.
  *
  * The submit button is `disabled={!mounted || !canSubmit}`, so re-typing until it
- * becomes enabled proves both that `mounted` flipped (hydration ran) and that
- * `bind:value` is live. Once that holds, the rest of the form's handlers — tab
- * switches, `<select>`s and the file input — are wired up too, so subsequent
- * interactions won't be silently dropped on a pre-hydration DOM.
+ * becomes enabled proves both that `mounted` flipped and that `bind:value` is
+ * live. Once that holds, the rest of the form's handlers — tab switches,
+ * `<select>`s and the file input — are wired up too, so subsequent interactions
+ * won't be silently dropped.
  */
 export async function gotoCreate(page: Page): Promise<void> {
 	await page.goto("/");
@@ -134,8 +134,8 @@ export async function revealNote(
 	await page.goto(shareUrl);
 	const open = page.getByRole("button", { name: /Show the note|Unlock the note/i });
 
-	// The button is `disabled={!mounted}`, so waiting for it to be enabled
-	// guarantees Svelte has hydrated and the submit handler is attached.
+	// The button appears once the page has checked the note, and is
+	// `disabled={!mounted}`: enabled, the submit handler is attached.
 	await expect(open).toBeEnabled({ timeout: 30_000 });
 
 	if (options.password !== undefined) {

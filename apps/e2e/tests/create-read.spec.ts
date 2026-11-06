@@ -52,7 +52,10 @@ test("a link truncated before the # is reported as incomplete, and does not burn
 	const reader = await context.newPage();
 	await reader.goto(shareUrl.split("#")[0] as string);
 
-	await expect(reader.getByRole("heading", { name: /Incomplete link/i })).toBeVisible();
+	// Told once the page has checked the note is there.
+	await expect(reader.getByRole("heading", { name: /Incomplete link/i })).toBeVisible({
+		timeout: 15_000,
+	});
 
 	// The read must not have been consumed: the full link still works.
 	const second = await context.newPage();
