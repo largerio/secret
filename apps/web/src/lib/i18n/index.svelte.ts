@@ -1,3 +1,4 @@
+import type { Locale } from "@largerio/secret-shared/site";
 import de from "../../../../../messages/de.json";
 import en from "../../../../../messages/en.json";
 import es from "../../../../../messages/es.json";
@@ -9,7 +10,8 @@ import pt from "../../../../../messages/pt.json";
 import ru from "../../../../../messages/ru.json";
 import zh from "../../../../../messages/zh.json";
 
-export type Locale = "en" | "fr" | "es" | "de" | "pt" | "it" | "ja" | "zh" | "ru" | "ko";
+export type { Locale } from "@largerio/secret-shared/site";
+export { parseAcceptLanguage } from "@largerio/secret-shared/site";
 export type MessageKey = keyof typeof en;
 
 const messages: Record<Locale, Record<string, string>> = {
@@ -35,21 +37,6 @@ export function setLocale(locale: Locale): void {
 
 export function getLocale(): Locale {
 	return currentLocale;
-}
-
-export function parseAcceptLanguage(header: string): Locale {
-	const langs = header
-		.split(",")
-		.map((part) => {
-			const [lang = "", q] = part.trim().split(";q=");
-			return { lang: lang.slice(0, 2).toLowerCase(), q: q ? Number(q) : 1 };
-		})
-		.sort((a, b) => b.q - a.q);
-
-	for (const { lang } of langs) {
-		if (supportedLocales.has(lang)) return lang as Locale;
-	}
-	return "en";
 }
 
 export function detectLocale(): Locale {

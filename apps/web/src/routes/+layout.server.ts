@@ -1,6 +1,6 @@
 import type { ServerLoad } from "@sveltejs/kit";
 import { buildServerConfig } from "#lib/server-config.js";
-import { accentStyle } from "#lib/utils/accent.js";
+import { accentStyle } from "@largerio/secret-shared/accent";
 import * as env from "$app/env/private";
 
 export const load: ServerLoad = ({ url, locals }) => {
