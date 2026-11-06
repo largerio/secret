@@ -8,14 +8,13 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
+import { noteExists } from "#lib/notes/check.js";
 import { deleteNote } from "#lib/notes/notes.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { requestErrorMessage } from "#lib/utils/errors.js";
-import type { PageData } from "./$types";
 
-const { data }: { data: PageData } = $props();
-
-let mounted = $state(false);
+// Whether the note is there to delete: null while the instance is asked.
+let exists = $state<boolean | null>(null);
 let deleteToken = $state("");
 // Deleting is final, so it takes two clicks: the first only asks for confirmation.
 let confirming = $state(false);
@@ -31,8 +30,17 @@ let confirmButton: HTMLButtonElement | undefined = $state();
 
 onMount(() => {
 	deleteToken = window.location.hash.slice(1);
-	mounted = true;
+	let left = false;
+	noteExists(page.params.id ?? "").then((found) => {
+		if (!left) exists = found;
+	});
+	return () => {
+		left = true;
+	};
 });
+
+// The page renders at once, its button waiting for the instance's answer.
+const ready = $derived(exists === true);
 
 async function setConfirming(next: boolean): Promise<void> {
 	confirming = next;
@@ -63,9 +71,10 @@ async function handleDelete(): Promise<void> {
 }
 </script>
 
+<!-- The server renders the page's head (noindex included): the title is kept
+here so that navigating here sets it. -->
 <svelte:head>
 	<title>{getConfig().appName} — {t("manage_title")}</title>
-	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
 {#if isDeleted}
@@ -77,14 +86,14 @@ async function handleDelete(): Promise<void> {
 	<div class="rise flex justify-center" style:animation-delay="0.18s">
 		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
 	</div>
-{:else if !data.noteExists || gone}
+{:else if exists === false || gone}
 	<NoticeView
 		icon="file-x"
 		title={t("not_found_title")}
 		sub={t("not_found_description")}
 		afterAction={gone}
 	/>
-{:else if mounted && !deleteToken}
+{:else if ready && !deleteToken}
 	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} />
 {:else}
 	<PageHero title={t("manage_title")} sub={t("manage_description")} />
@@ -127,11 +136,11 @@ async function handleDelete(): Promise<void> {
 				type="button"
 				class="btn btn-outline btn-lg w-full"
 				bind:this={deleteButton}
-				disabled={!mounted}
+				disabled={!ready}
 				onclick={() => setConfirming(true)}
 			>
 				<Icon name="trash" size={16} />
-				{mounted ? t("delete_button") : t("loading")}
+				{ready ? t("delete_button") : t("loading")}
 			</button>
 		{/if}
 	</section>

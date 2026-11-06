@@ -7,7 +7,8 @@ import {
 	MAX_FILES_PER_NOTE,
 } from "@largerio/secret-shared";
 
-const DEFAULT_CONFIG: ServerConfig = {
+/** An instance's settings when it sets none, which a page the server did not render starts from. */
+export const DEFAULT_CONFIG: ServerConfig = {
 	appName: "Secret",
 	appDescription: "Zero-knowledge encrypted sharing",
 	appUrl: "",

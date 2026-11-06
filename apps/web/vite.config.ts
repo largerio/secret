@@ -1,12 +1,12 @@
-import adapter from "@sveltejs/adapter-node";
+import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
-// In dev it is Vite that proxies /api to the backend, not hooks.server.ts, so
-// this target must follow the API port. Hardcoding it meant the e2e suite could
-// not run the API anywhere other than 3001 (ECONNREFUSED on every request that
-// touches the backend). Same variable as the SSR proxy, so one setting moves both.
+// In dev it is Vite that proxies /api to the backend, so this target must
+// follow the API port. Hardcoding it meant the e2e suite could not run the API
+// anywhere other than 3001 (ECONNREFUSED on every request that touches the
+// backend).
 const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
 
 export default defineConfig({
@@ -14,33 +14,19 @@ export default defineConfig({
 		tailwindcss(),
 		// SvelteKit 3 no longer reads svelte.config.js: its configuration lives here.
 		sveltekit({
+			// A single-page app (the root layout turns SSR off): the build is static
+			// files and one HTML document, index.html, which the API fills in and
+			// serves for every page (SvelteKit names the assets of this fallback
+			// page from the root, as /note/<id>/manage needs). It sends the CSP too,
+			// with the hashes of that document's inline scripts. No precompressed
+			// copies: zlib's output may change from one version to the next, and
+			// the API compresses.
 			adapter: adapter({
-				out: "build",
+				pages: "build",
+				assets: "build",
+				fallback: "index.html",
+				precompress: false,
 			}),
-			csp: {
-				mode: "auto",
-				directives: {
-					"default-src": ["none"],
-					"script-src": ["self", "wasm-unsafe-eval"],
-					"style-src": ["self", "unsafe-inline"],
-					"img-src": ["self", "data:", "blob:"],
-					"connect-src": ["self"],
-					"font-src": ["self"],
-					"worker-src": ["self", "blob:"],
-					"media-src": ["self", "blob:"],
-					"object-src": ["none"],
-					"frame-ancestors": ["none"],
-					"base-uri": ["self"],
-					// The app never submits a form (the one <form> calls preventDefault),
-					// so 'none' costs nothing and closes the exfiltration path a note
-					// author could otherwise build with injected markup.
-					"form-action": ["none"],
-					// No upgrade-insecure-requests: it rewrites every same-origin asset
-					// to https, so an instance served over plain HTTP on a LAN address
-					// (a NAS on http://<ip>:3000) never loaded its scripts or styles.
-					// Over HTTPS the app already sends HSTS.
-				},
-			},
 		}),
 	],
 	// The worker that encrypts and decrypts notes is a module worker
@@ -48,9 +34,9 @@ export default defineConfig({
 	worker: { format: "es" },
 	build: {
 		// Vite inlines any asset under 4 KB as a data: URI, and some Fontsource
-		// subsets are that small (JetBrains Mono's cyrillic-ext is 2 KB). font-src
-		// 'self' blocks a data: font, so fonts always ship as files rather than
-		// widening the policy.
+		// subsets are that small (JetBrains Mono's cyrillic-ext is 2 KB). The
+		// CSP's font-src 'self' blocks a data: font, so fonts always ship as
+		// files rather than widening the policy.
 		assetsInlineLimit: (filePath) => (/\.woff2?$/.test(filePath) ? false : undefined),
 	},
 	server: {

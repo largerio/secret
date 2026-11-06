@@ -4,9 +4,9 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import QrCode from "#lib/components/ui/QrCode.svelte";
 import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
 import { getConfig } from "#lib/config.svelte.js";
+import { expiryLabelKey } from "#lib/expiry.js";
 import { t, tn } from "#lib/i18n/index.svelte.js";
 import { splitTemplate } from "#lib/i18n/template.js";
-import { expiryLabelKey } from "#lib/server-config.js";
 import { copyWithFeedback } from "#lib/utils/clipboard.js";
 import { splitShareUrl } from "#lib/utils/shareUrl.js";
 

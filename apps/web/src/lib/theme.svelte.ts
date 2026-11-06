@@ -1,11 +1,11 @@
+import { THEME_COOKIE, type ThemePreference } from "@largerio/secret-shared/site";
 import { setPreferenceCookie } from "./utils/cookies.js";
+
+export type { ThemePreference } from "@largerio/secret-shared/site";
 
 /** The theme on screen. */
 export type ThemeMode = "dark" | "light";
-/** What the visitor chose: "system" until they pick a theme themselves. */
-export type ThemePreference = ThemeMode | "system";
 
-const COOKIE_NAME = "secret_theme";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 let mode = $state<ThemeMode>("light");
@@ -33,7 +33,7 @@ function listenToSystem(query: MediaQueryList): void {
 	});
 }
 
-/** Sync the store with the preference the server rendered into `<html data-mode>`. */
+/** Sync the store with the preference the page started from, else `<html data-mode>`'s. */
 export function initTheme(preference?: ThemePreference): void {
 	const initial = preference ?? documentPreference();
 	if (!initial) return;
@@ -58,7 +58,7 @@ export function setMode(next: ThemeMode): void {
 	followsSystem = false;
 	if (typeof document !== "undefined") {
 		document.documentElement.dataset["mode"] = next;
-		setPreferenceCookie(COOKIE_NAME, next);
+		setPreferenceCookie(THEME_COOKIE, next);
 	}
 }
 

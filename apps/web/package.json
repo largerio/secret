@@ -18,9 +18,9 @@
 	},
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build && tsc -p tsconfig.server.json",
+		"build": "vite build",
 		"preview": "vite preview",
-		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.server.json --noEmit"
+		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
 	},
 	"dependencies": {
 		"@cap.js/wasm": "^0.0.8",
@@ -34,7 +34,7 @@
 		"qrcode": "^1.5.4"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-node": "^6.0.1",
+		"@sveltejs/adapter-static": "^4.0.1",
 		"@sveltejs/kit": "^3.1.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
