@@ -4,8 +4,9 @@ import type { Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LINGER_MS, lingerOnClose } from "../linger.js";
 
-// The connections themselves are tested where they matter, behind the web
-// server's proxy (apps/web/src/server/__tests__/server.test.ts).
+// apps/api/src/index.ts applies it to the API's server, which faces the reverse
+// proxy: the race it closes needs a proxy still sending, which a unit test
+// does not stage.
 afterEach(() => {
 	vi.useRealTimers();
 });

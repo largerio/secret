@@ -61,7 +61,8 @@ The first time you run the e2e suite:
 pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 ```
 
-It starts the dev servers. CI runs it against the image instead, on S3
+It builds the web app and starts the API serving it, as the image does. CI
+runs it against the image instead, on S3
 storage: `.github/scripts/e2e-image.sh <image>` starts both, then
 `E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them.
 
@@ -177,12 +178,16 @@ Translations live in `messages/*.json` (10 languages: en, fr, es, de, pt, it, ja
 
 ### Adding a language
 
-Dropping a JSON file in `messages/` is not enough; register it in three places:
+Dropping a JSON file in `messages/` is not enough; register it in four places:
 
-1. `apps/web/src/lib/i18n/index.svelte.ts` — import the file, add the code to the
-   `Locale` union, and add the entry to the `messages` record
-2. `apps/web/src/hooks.server.ts` — add the code to `SUPPORTED_LOCALES`
-3. `apps/web/src/lib/components/LangToggle.svelte` — add it to `LANGS`
+1. `packages/shared/src/site.ts` — add the code to `LOCALES`, which the server
+   picks a visitor's language from
+2. `apps/web/src/lib/i18n/index.svelte.ts` — import the file and add the entry to
+   the `messages` record
+3. `apps/web/src/lib/components/LangMenu.svelte` — add it to `LANGS`
+4. `apps/api/src/site/shell.ts` — add its `og:locale` to `OG_LOCALES`
+
+The API reads every language's file at startup, to write the pages' heads.
 
 ## Releases
 
