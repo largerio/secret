@@ -13,6 +13,7 @@ import {
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
+import { accentStyle } from "@largerio/secret-shared/accent";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
@@ -27,6 +28,12 @@ import type { StorageConfig, StorageType } from "./storage/index.js";
 function readEnvNumber(value: string | undefined, fallback: number): number {
 	if (value === undefined || value.trim() === "") return fallback;
 	return Number(value);
+}
+
+/** A text setting, blank meaning the default like the numbers above. */
+function readEnvString(value: string | undefined, fallback: string): string {
+	if (value === undefined || value.trim() === "") return fallback;
+	return value;
 }
 
 /**
@@ -106,7 +113,7 @@ const MIN_METRICS_TOKEN_LENGTH = 32;
 
 /**
  * Seconds a shutdown waits for in-flight requests: under the 10 s Docker leaves
- * between SIGTERM and SIGKILL. The web server in the image drains as long.
+ * between SIGTERM and SIGKILL.
  */
 const DEFAULT_SHUTDOWN_TIMEOUT = 8;
 const MAX_SHUTDOWN_TIMEOUT = 3600;
@@ -171,6 +178,14 @@ export interface AppConfig {
 	readonly metricsToken: string;
 	/** How long a shutdown waits for in-flight requests before it cuts them. */
 	readonly shutdownTimeoutMs: number;
+	/** What the pages show of the instance (APP_NAME, APP_DESCRIPTION…). */
+	readonly appName: string;
+	readonly appDescription: string;
+	/** APP_PRIMARY_COLOR as set: anything but a hex colour is ignored (see describePrimaryColor). */
+	readonly primaryColor: string;
+	readonly footerText: string;
+	/** APP_OG_IMAGE_URL, or the og.png the web app ships. */
+	readonly ogImageUrl: string;
 }
 
 /**
@@ -204,6 +219,21 @@ export function describeRateLimitScope(config: {
 		"See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
 		"Ignore this if the instance is exposed directly, with no proxy in front.",
 	].join("\n");
+}
+
+/**
+ * Warn when APP_PRIMARY_COLOR is set but is not a hex colour: the pages keep
+ * the built-in accent, as they always have, and the operator would otherwise
+ * never learn why.
+ *
+ * @returns A message to log at startup, or null.
+ */
+export function describePrimaryColor(config: { readonly primaryColor: string }): string | null {
+	if (config.primaryColor.trim() === "" || accentStyle(config.primaryColor) !== undefined) {
+		return null;
+	}
+
+	return "APP_PRIMARY_COLOR is not a hex colour (#rgb or #rrggbb): the pages keep the built-in accent.";
 }
 
 /**
@@ -286,8 +316,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		);
 	}
 
-	// A weak API key is reachable from the internet (the web app forwards the
-	// Authorization header to the API), so refuse the ones that are brute-forceable.
+	// A weak API key is reachable from the internet, so refuse the ones that
+	// are brute-forceable.
 	const weakKey = apiKeys.find((key) => key.length < MIN_API_KEY_LENGTH);
 	if (weakKey !== undefined) {
 		throw new ConfigError(
@@ -434,12 +464,14 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 				}
 			: { type: "local", localPath: filesPath };
 
+	const normalizedAppUrl = withoutTrailingSlashes(appUrl.href);
+
 	return {
 		port,
 		host,
 		databasePath,
 		filesPath,
-		appUrl: withoutTrailingSlashes(appUrl.href),
+		appUrl: normalizedAppUrl,
 		serverKey,
 		cleanupIntervalMs,
 		capDifficulty,
@@ -462,5 +494,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		debug,
 		metricsToken,
 		shutdownTimeoutMs: shutdownTimeout * 1000,
+		// The web server's variables, with its defaults: the pages are the API's now.
+		appName: readEnvString(env["APP_NAME"], "Secret"),
+		appDescription: readEnvString(env["APP_DESCRIPTION"], "Zero-knowledge encrypted sharing"),
+		primaryColor: readEnvString(env["APP_PRIMARY_COLOR"], ""),
+		footerText: readEnvString(env["APP_FOOTER_TEXT"], ""),
+		ogImageUrl: readEnvString(env["APP_OG_IMAGE_URL"], `${normalizedAppUrl}/og.png`),
 	};
 }

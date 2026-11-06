@@ -15,7 +15,13 @@ import {
 	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { afterAll, describe, expect, it } from "vitest";
-import { type AppConfig, ConfigError, describeRateLimitScope, parseConfig } from "../config.js";
+import {
+	type AppConfig,
+	ConfigError,
+	describePrimaryColor,
+	describeRateLimitScope,
+	parseConfig,
+} from "../config.js";
 
 type Env = NodeJS.ProcessEnv;
 
@@ -567,6 +573,62 @@ describe("the client address", () => {
 			baseEnv({ ADDRESS_HEADER: header }),
 			"ADDRESS_HEADER must be a header name, such as X-Forwarded-For",
 		);
+	});
+});
+
+describe("the instance's branding", () => {
+	it("keeps the web app's defaults", () => {
+		const config = parseConfig(baseEnv({ APP_URL: "https://secret.example/" }));
+
+		expect(config).toMatchObject({
+			appName: "Secret",
+			appDescription: "Zero-knowledge encrypted sharing",
+			primaryColor: "",
+			footerText: "",
+			ogImageUrl: "https://secret.example/og.png",
+		});
+	});
+
+	it("reads APP_NAME, APP_DESCRIPTION, APP_PRIMARY_COLOR, APP_FOOTER_TEXT, APP_OG_IMAGE_URL", () => {
+		const config = parseConfig(
+			baseEnv({
+				APP_NAME: "Vault",
+				APP_DESCRIPTION: "Our notes",
+				APP_PRIMARY_COLOR: "#0a7",
+				APP_FOOTER_TEXT: "Run by ACME",
+				APP_OG_IMAGE_URL: "https://cdn.example/preview.png",
+			}),
+		);
+
+		expect(config).toMatchObject({
+			appName: "Vault",
+			appDescription: "Our notes",
+			primaryColor: "#0a7",
+			footerText: "Run by ACME",
+			ogImageUrl: "https://cdn.example/preview.png",
+		});
+	});
+
+	it("treats blank values as unset", () => {
+		const config = parseConfig(
+			baseEnv({ APP_NAME: " ", APP_DESCRIPTION: "", APP_OG_IMAGE_URL: "" }),
+		);
+
+		expect(config.appName).toBe("Secret");
+		expect(config.appDescription).toBe("Zero-knowledge encrypted sharing");
+		expect(config.ogImageUrl).toBe("http://localhost:3001/og.png");
+	});
+});
+
+describe("describePrimaryColor", () => {
+	it("warns of a colour the pages ignore, without refusing to start", () => {
+		const config = parseConfig(baseEnv({ APP_PRIMARY_COLOR: "red" }));
+
+		expect(describePrimaryColor(config)).toContain("APP_PRIMARY_COLOR is not a hex colour");
+	});
+
+	it.each(["", "#4f46e5", "#0a7"])("stays quiet for %o", (primaryColor) => {
+		expect(describePrimaryColor({ primaryColor })).toBeNull();
 	});
 });
 
