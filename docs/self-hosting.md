@@ -129,6 +129,8 @@ it in one click; Render will then prompt you for the two required values
   The included `render.yaml` already declares this disk. Note that persistent
   disks require a **paid** instance type on Render (the free tier has no disks).
 - Set `APP_URL` to the platform-assigned domain.
+- The platform injects `PORT`, and routes traffic there: the app serves the
+  site and the API on that one port, from one process.
 - Set `SERVER_ENCRYPTION_KEY` yourself — it must be 32 random bytes, base64
   encoded (`openssl rand -base64 32`). A platform's generic "random value"
   generator won't match this format.
@@ -208,28 +210,34 @@ Two reminders:
 ### Making rate limiting work behind a proxy
 
 Behind a reverse proxy, **every user shares the proxy's rate-limit bucket**
-until you tell the web app where the client address is. The limits still apply;
+until you tell the app where the client address is. The limits still apply;
 they just apply to your whole instance at once, so one busy visitor can exhaust
 them for everybody.
 
-Inside the container the web app proxies `/api` to the API and passes on the
-client address it resolved. The API trusts it out of the box (`TRUSTED_PROXIES`
-defaults to `127.0.0.1/32` in the image). What the web app cannot guess is that
-a reverse proxy sits in front of it: without being told, it sees that proxy's
-address as the client's.
+The app takes the address of whatever connects to it for the client's. Behind a
+reverse proxy, that is the proxy's address, the same for every visitor: the app
+cannot guess that a proxy sits in front of it, nor where it writes the client's
+address.
 
 Two variables fix it:
 
 ```env
-# The web app: derive the client address from the header your proxy sets,
-# and say how many proxies sit in front of it (1 for a single Nginx/Traefik/
-# Caddy/Cloudflare hop, 2 if Cloudflare fronts your own proxy, and so on).
+# Derive the client address from the header your proxy sets, and say how many
+# proxies sit in front of the app (1 for a single Nginx/Traefik/Caddy/Cloudflare
+# hop, 2 if Cloudflare fronts your own proxy, and so on).
 ADDRESS_HEADER=X-Forwarded-For
 XFF_DEPTH=1
 ```
 
 Exposed directly, with no proxy in front, the instance already tells clients
 apart and needs neither.
+
+With `ADDRESS_HEADER` set, it alone decides the address, and `TRUSTED_PROXIES`
+plays no part. Without it, `TRUSTED_PROXIES` lists the proxies (addresses or
+CIDR ranges) whose `X-Forwarded-For` or `X-Real-IP` the app believes; empty, the
+default, it believes no one. Up to 1.7 the image set it to `127.0.0.1/32`, for
+the web server it ran in front of the API: the app now runs alone, and its peer
+is your proxy.
 
 `XFF_DEPTH` matters: `X-Forwarded-For` is a list a client can prefill, and only
 the last entries — the ones your own proxies appended — are trustworthy. Set it
@@ -251,11 +259,9 @@ Caddy and Traefik do it on their own.
 docker compose exec app node -e "fetch('http://localhost:3000/api/health').then(r=>console.log(r.status))"
 ```
 
-A container stuck in `health: starting` after setting `ADDRESS_HEADER` means the
-health check cannot reach the app; check that `XFF_DEPTH` matches your actual
-number of proxies. Requests that skip the proxy (like this health check) carry
-no `X-Forwarded-For`, which is expected and handled — they simply fall back to
-the shared bucket.
+Requests that skip the proxy (like this health check) carry no
+`X-Forwarded-For`, which is expected and handled — they simply fall back to the
+shared bucket.
 
 **On Synology** you can skip an external proxy and use the built-in one:
 DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
@@ -336,13 +342,11 @@ files with `-f`, like the HTTPS setup's, must list it too:
 `-f docker-compose.override.yml`.
 
 **What this protects.** A value in `.env` or under `environment:` shows in
-`docker inspect` and in the environment of the processes in the container. A
-secret file keeps it out of both: only its path shows. Inside the container the
-API reads the files; the web server gets neither the secrets nor the `_FILE`
-variables, so a dependency of the web server that dumps its environment finds
-nothing to leak. That is not isolation: both processes run as the same user, so
-code running in the web server could still read the files, as it could read the
-data volume.
+`docker inspect` and in the environment of the process in the container. A
+secret file keeps it out of both: only its path shows. That is not isolation:
+code running in the app could still read the files, as it can read the data
+volume. The container runs one process, the API, which reads them; the web
+app's code runs in browsers only.
 
 **The server key.** Without `SERVER_ENCRYPTION_KEY` or
 `SERVER_ENCRYPTION_KEY_FILE`, the image generates the key on first start and
@@ -384,20 +388,24 @@ The API refuses to create or delete a note without a Proof-of-Work token or an
 [API key](#api-keys-for-the-sdk), and a browser gets its token from
 `/api/cap/`. The chunks of a large upload carry neither, but only extend an
 upload that one of them started. Behind a login, `/api/cap/` is enough to stop
-anyone without an account from writing; the two other paths spare them a form
-they could fill in but never send.
+anyone without an account from writing; `/` spares them a form they could fill
+in but never send.
 
 | Behind the login | |
 |---|---|
 | `/api/cap/` and below | The Proof-of-Work challenge: without its token, no browser can create or delete a note |
-| `/` | The page that creates notes |
-| `/__data.json` | That page's data, fetched when a visitor moves to it from a note page. Behind the login, the visitor lands on the login page instead |
+| `/` | The page that creates notes, when a browser loads it |
+
+The web app moves between its pages in the browser: a visitor who follows a
+note page's link to the page that creates notes gets the form without a request
+the login could catch. It is `/api/cap/` that stops them, once they send it.
 
 | Left open | |
 |---|---|
 | `/note/` and below | The page a recipient opens, and the page behind a note's delete link. A login redirect would also drop the part of the link after `#`, which holds the key, or carry it along to the login pages |
 | `/api/v1/` and below | Reading notes, the checks a note page makes, `/api/v1/config` and the API docs. The writes there check their own token or key |
 | `/_app/`, `/wasm/`, `/favicon.svg`, `/og.png` | Scripts, styles and fonts, the challenge solver, the icon, and the image of link previews |
+| `/bundle.json` | The list of the web app's files and their digests, to [check what the instance serves](../SECURITY.md#verifying-the-web-app) |
 | `/api/health`, `/robots.txt`, `/sitemap.xml` | Health checks and crawlers |
 
 Deleting a note from its delete link solves a challenge too, so it works in a
@@ -409,8 +417,7 @@ without one, it asks `/api/cap/` for a challenge, and the login stops it there.
 Two things keep the login from being walked around:
 
 - The app must be reachable through the proxy alone. A published port `3000` is
-  a way in without it (`docker-compose.tls.yml` publishes Caddy's ports only),
-  and so is the API's own port: leave `API_HOST` unset.
+  a way in without it (`docker-compose.tls.yml` publishes Caddy's ports only).
 - The proxy must match the path once cleaned up, since the app reads
   `/api/v1/../cap/challenge` as `/api/cap/challenge`. Caddy and Traefik do,
   with the rules below.
@@ -434,7 +441,7 @@ secret.example.com {
 	}
 
 	# The paths that create notes: log in first.
-	@create path / /__data.json /api/cap/*
+	@create path / /api/cap/*
 	handle @create {
 		forward_auth oauth2-proxy:4180 {
 			uri /oauth2/auth
@@ -455,7 +462,7 @@ secret.example.com {
 }
 ```
 
-**Traefik.** The same three paths on a router of their own, carrying your
+**Traefik.** The same two paths on a router of their own, carrying your
 `forwardAuth` middleware (oauth2-proxy's Traefik guide has one), next to the
 router you already have and with the same entry points and TLS settings. Its
 rule is the longer one, so Traefik tries it first:
@@ -463,7 +470,7 @@ rule is the longer one, so Traefik tries it first:
 ```yaml
 labels:
   - traefik.http.routers.secret.rule=Host(`secret.example.com`)
-  - traefik.http.routers.secret-create.rule=Host(`secret.example.com`) && (Path(`/`) || Path(`/__data.json`) || PathPrefix(`/api/cap/`))
+  - traefik.http.routers.secret-create.rule=Host(`secret.example.com`) && (Path(`/`) || PathPrefix(`/api/cap/`))
   - traefik.http.routers.secret-create.middlewares=oauth2-proxy-auth  # your forwardAuth middleware
 ```
 
@@ -749,8 +756,8 @@ claim and stops: see
 High availability, then, means bringing the one instance back quickly, not
 running two:
 
-- The container stops as soon as the API or the web server inside it exits, so
-  its restart policy (`restart: unless-stopped` in `docker-compose.yml`) brings
+- The container stops as soon as the app inside it exits, so its restart
+  policy (`restart: unless-stopped` in `docker-compose.yml`) brings
   it back within seconds.
 - Docker alone does not restart a container that is only `unhealthy`. An
   orchestrator can, from the [health probes](#health-probes): a Kubernetes
@@ -769,13 +776,13 @@ Three endpoints answer on the app's port, with no token:
 
 | Path | `200` when | For |
 |---|---|---|
-| `/api/health/live` | the API process answers; nothing else is checked | a liveness probe, the image's `HEALTHCHECK` |
+| `/api/health/live` | the app's process answers; nothing else is checked | a liveness probe, the image's `HEALTHCHECK` |
 | `/api/health/ready` | the database and the storage answer, and the container is not stopping; `503` otherwise | a readiness probe, an uptime monitor, a deploy |
-| `/api/health` | as `/api/health/ready`, with the version and the quota added | a look by hand, and the checks that already call it |
+| `/api/health` | as `/api/health/ready`, with the version, the web app's digest and the quota added | a look by hand, and the checks that already call it |
 
 ```bash
 curl http://localhost:3000/api/health
-# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.5.0","revision":"<commit>"}
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.5.0","revision":"<commit>","bundle":"sha256:<digest>"}
 ```
 
 `status` is `ok`, `degraded` when a check fails (`database` is the volume,
@@ -824,6 +831,12 @@ too.
 - An image you build yourself reports the latest version in its `CHANGELOG.md`,
   whichever commit you built, and an `unknown` revision. Pass the commit to
   record it: `docker build --build-arg REVISION=$(git rev-parse HEAD) .`
+
+`bundle` is the digest of the web app the instance serves, computed from its
+files when the app starts. Each release publishes the digest of its own, and a
+build of the same commit gives it again: see
+[Verifying the web app](../SECURITY.md#verifying-the-web-app). It is `null` for
+an API run without the web app.
 
 ### Metrics
 
@@ -963,6 +976,10 @@ require the same issuer and identity before a pod starts.
 Signing starts with `1.4.0`. `1.3.2` and older were published unsigned, and an
 exact tag never changes, so theirs cannot be verified.
 
+**The web app.** The signature covers the web app the image serves along with
+the rest. Your visitors, who cannot check your image, can check the web app
+itself: [Verifying the web app](../SECURITY.md#verifying-the-web-app).
+
 ---
 
 ## Deploying from CI
@@ -990,7 +1007,7 @@ image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:1}
 starts and then fails every request is a successful `docker compose up` — the
 exit code says nothing about whether the app works. The workflow polls the
 health status, then `/api/health/ready` inside the container, since the health
-status only says the processes answer. If either does not come, it prints the
+status only says the process answers. If either does not come, it prints the
 last 50 log lines and restores the image that was running before.
 
 That is also why `docker image prune -f` is scoped: an unfiltered prune deletes
@@ -1054,6 +1071,14 @@ docker compose up -d --force-recreate
 Set a different host port in `.env` (e.g. `PORT=8080`), then
 `docker compose up -d --force-recreate`. The app will be reachable on
 `http://<host>:8080`.
+
+### Nothing answers on port 3001
+
+Up to 1.7 the API listened on a port of its own inside the container, 3001,
+behind the web server, and outside it with `API_HOST=0.0.0.0`. The app now
+serves the site and the API on `PORT` alone, from one process: point whatever
+reached the API on 3001 at that port, under `/api/`. `API_PORT`, `API_HOST` and
+`API_URL` are no longer read; the logs warn when one is set.
 
 ### "Permission denied" on `/app/data` (bind mounts)
 
