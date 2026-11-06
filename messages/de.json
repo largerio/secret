@@ -19,6 +19,7 @@
 	"error_storage_full": "Auf dem Server ist kein Platz mehr für diese Notiz. Versuchen Sie es später erneut.",
 	"error_clipboard": "Kopieren in die Zwischenablage fehlgeschlagen",
 	"loading": "Laden",
+	"checking_link": "Link wird geprüft…",
 	"back_home": "Zurück zur Startseite",
 	"new_note": "Notiz erstellen",
 	"show_password": "Passwort anzeigen",

@@ -19,6 +19,7 @@
 	"error_storage_full": "서버에 이 노트를 저장할 공간이 없습니다. 나중에 다시 시도하세요.",
 	"error_clipboard": "클립보드에 복사하지 못했습니다",
 	"loading": "로딩 중",
+	"checking_link": "링크를 확인하는 중…",
 	"back_home": "홈으로 돌아가기",
 	"new_note": "노트 만들기",
 	"show_password": "비밀번호 표시",

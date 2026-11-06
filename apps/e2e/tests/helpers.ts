@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page } from "@playwright/test";
+import { type BrowserContext, expect, type Page } from "@playwright/test";
 
 export interface CreateNoteOptions {
 	/** Plain-text body, typed into the note's textarea. */
@@ -107,6 +107,30 @@ export async function getManageUrl(page: Page): Promise<string> {
 	const url = await page.evaluate(() => navigator.clipboard.readText());
 	expect(url, "manage URL should be present").toContain("/manage#");
 	return url;
+}
+
+/**
+ * Holds every check of a note (`GET /api/v1/notes/:id/exists`, which the
+ * notes' worker makes) until `release` is called, so a test can look at a
+ * page while it waits for the instance. `asked` resolves once one is held.
+ */
+export async function holdNoteChecks(
+	context: BrowserContext,
+): Promise<{ asked: Promise<void>; release: () => void }> {
+	let release: () => void = () => undefined;
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let ask: () => void = () => undefined;
+	const asked = new Promise<void>((resolve) => {
+		ask = resolve;
+	});
+	await context.route("**/api/v1/notes/*/exists", async (route) => {
+		ask();
+		await released;
+		await route.continue();
+	});
+	return { asked, release };
 }
 
 /**

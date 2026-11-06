@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createTextNote, revealNote } from "./helpers";
+import { createNote, createTextNote, holdNoteChecks, revealNote } from "./helpers";
 
 test("create a note, share it, and decrypt the plaintext in a fresh tab", async ({
 	page,
@@ -52,13 +52,56 @@ test("a link truncated before the # is reported as incomplete, and does not burn
 	const reader = await context.newPage();
 	await reader.goto(shareUrl.split("#")[0] as string);
 
-	// Told once the page has checked the note is there.
-	await expect(reader.getByRole("heading", { name: /Incomplete link/i })).toBeVisible({
-		timeout: 15_000,
-	});
+	// Told once the page has checked the note is there; replacing "Checking the
+	// link…", its title takes the focus, so that the answer is announced.
+	const incomplete = reader.getByRole("heading", { name: /Incomplete link/i });
+	await expect(incomplete).toBeVisible({ timeout: 15_000 });
+	await expect(incomplete).toBeFocused();
 
 	// The read must not have been consumed: the full link still works.
 	const second = await context.newPage();
 	await revealNote(second, shareUrl);
 	await expect(second.getByTestId("note-text")).toHaveText(secret, { timeout: 15_000 });
+});
+
+test("the page says it is checking the link, claiming nothing, until the instance answers", async ({
+	page,
+	context,
+}) => {
+	const shareUrl = await createTextNote(page, `checking ${Date.now()}`);
+	const check = await holdNoteChecks(context);
+
+	const reader = await context.newPage();
+	await reader.goto(shareUrl.split("#")[0] as string);
+	await check.asked;
+	await expect(reader.getByRole("status")).toHaveText("Checking the link…");
+	await expect(reader.getByRole("heading")).toHaveCount(0);
+
+	check.release();
+	const incomplete = reader.getByRole("heading", { name: /Incomplete link/i });
+	await expect(incomplete).toBeFocused({ timeout: 15_000 });
+	await expect(reader.getByRole("status")).toHaveCount(0);
+});
+
+test("the skip link keeps the key in the address, and the note opens after it", async ({
+	page,
+	context,
+}) => {
+	const secret = `skip link ${Date.now()}`;
+	const shareUrl = await createNote(page, { text: secret, maxReads: 3 });
+
+	const reader = await context.newPage();
+	await reader.goto(shareUrl);
+	const open = reader.getByRole("button", { name: /Show the note/i });
+	await expect(open).toBeEnabled({ timeout: 30_000 });
+
+	// Followed as an anchor, it put #main-content where the key was: the page
+	// then read the note with that, and failed to decrypt it.
+	await reader.getByRole("link", { name: "Skip to content" }).focus();
+	await reader.keyboard.press("Enter");
+	await expect(reader.locator("#main-content")).toBeFocused();
+	expect(reader.url()).toBe(shareUrl);
+
+	await open.click();
+	await expect(reader.getByTestId("note-text")).toHaveText(secret, { timeout: 15_000 });
 });

@@ -6,6 +6,7 @@ import Icon, { type IconName } from "#lib/components/Icon.svelte";
 import FileRow from "#lib/components/note/FileRow.svelte";
 import NoteContent from "#lib/components/note/NoteContent.svelte";
 import Callout from "#lib/components/ui/Callout.svelte";
+import CheckingView from "#lib/components/ui/CheckingView.svelte";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
@@ -27,7 +28,7 @@ import {
 	readsBefore,
 	readsLeft,
 } from "#lib/utils/reads.js";
-import { isKeyFragment } from "#lib/utils/shareUrl.js";
+import { isKeyFragment, keyAfterHashChange } from "#lib/utils/shareUrl.js";
 
 type Notice = CheckNotice | "link_incomplete";
 
@@ -60,13 +61,13 @@ const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconN
 };
 
 // The page renders at once and asks the instance where the note stands; from
-// its answer on, the reader drives it.
+// its answer on, the reader drives it. Every screen after the first replaces
+// another, so each one's title takes the focus (afterAction): the answer is
+// announced, and the keyboard starts from it.
 let status = $state<NoteStatus>({ state: "checking" });
 // The note as the check found it, null until then or if it found none.
 let checked = $state<NoteSummary | null>(null);
 let mounted = $state(false);
-// Once the reader has acted, each new screen takes the focus.
-let acted = $state(false);
 let keyFragment = $state("");
 let password = $state("");
 let passwordProblem = $state<"" | "empty" | "wrong">("");
@@ -136,9 +137,10 @@ onMount(() => {
 	void check(page.params["id"] ?? "");
 
 	// The full link pasted into the same tab only changes the fragment: the
-	// page does not reload, so pick the key up from here.
+	// page does not reload, so pick the key up from here. Only a key, though:
+	// an in-page anchor's fragment once replaced a key that worked.
 	const onHashChange = () => {
-		keyFragment = window.location.hash.slice(1);
+		keyFragment = keyAfterHashChange(keyFragment, window.location.hash);
 		const incomplete = status.state === "notice" && status.notice === "link_incomplete";
 		if (incomplete && checked && isKeyFragment(keyFragment)) {
 			status = { state: "ready", info: checked };
@@ -277,7 +279,6 @@ async function handleOpen(): Promise<void> {
 	}
 
 	passwordProblem = "";
-	acted = true;
 	status = { state: "opening", progress: { step: 0, percent: 0, chunk: null } };
 
 	try {
@@ -326,99 +327,97 @@ link previews: the title is kept here so that navigating here sets it. -->
 	<title>{getConfig().appName} — {t("view_title")}</title>
 </svelte:head>
 
-{#if status.state === "checking" || status.state === "ready"}
-	<!-- Shown at once, while the instance is asked: the note's card then
-	rises in under it, as on any first view. -->
-	<PageHero title={t("un_title")} sub={t("un_sub")} />
+{#if status.state === "checking"}
+	<CheckingView />
+{:else if status.state === "ready"}
+	{@const info = status.info}
+	{@const lastRead = isLastRead(info.maxReads, info.readCount)}
+	{@const reads = isBurn ? "" : readsText(info)}
+	{@const attempts = info.format === 1 ? attemptsText(info.passwordAttemptsLeft) : ""}
+	<PageHero title={t("un_title")} sub={t("un_sub")} afterAction />
 
-	{#if status.state === "ready"}
-		{@const info = status.info}
-		{@const lastRead = isLastRead(info.maxReads, info.readCount)}
-		{@const reads = isBurn ? "" : readsText(info)}
-		{@const attempts = info.format === 1 ? attemptsText(info.passwordAttemptsLeft) : ""}
-		<form
-			class="card rise"
-			style:animation-delay="0.18s"
-			aria-label={t("un_title")}
-			onsubmit={(event) => {
-				event.preventDefault();
-				handleOpen();
-			}}
-		>
-			{#if lastRead}
-				<div class="px-3 pt-3">
-					<Callout tone="warn" icon="flame" title={isBurn ? t("un_burn_title") : t("un_last_title")}>
-						{t("un_burn_body")}
-						{#if info.hasPassword && info.format === 0}
-							<span class="mt-0.5 block font-medium text-warn">{t("burn_password_warning")}</span>
-						{/if}
-					</Callout>
-				</div>
-			{/if}
-
-			<ul class="m-0 flex list-none flex-col gap-2.5 px-[18px] py-4 text-sm text-muted">
-				{#if reads}
-					<li class="flex items-center gap-2.5">
-						<Icon name="eye" size={16} class="text-accent-text" />{reads}
-					</li>
-				{/if}
-				<li class="flex items-center gap-2.5">
-					<Icon name="clock" size={16} class="text-accent-text" />{t("un_expiry", {
-						date: formatDateTime(info.expiresAt),
-					})}
-				</li>
-				{#if info.fileCount > 0}
-					<li class="flex items-center gap-2.5">
-						<Icon name="paperclip" size={16} class="text-accent-text" />{tn("files_count", info.fileCount)}
-					</li>
-				{/if}
-			</ul>
-
-			{#if info.hasPassword}
-				<div class="flex flex-col gap-1.5 px-[18px] pb-4">
-					<label for="decrypt-password" class="text-[13px] font-medium">
-						{t("un_pw_label")} <span class="font-normal text-faint">— {t("un_pw_hint")}</span>
-					</label>
-					<PasswordField
-						bind:this={passwordField}
-						id="decrypt-password"
-						bind:value={password}
-						placeholder={t("un_pw_placeholder")}
-						invalid={passwordProblem !== ""}
-						describedby={passwordProblem
-							? "decrypt-password-error"
-							: attempts
-								? "decrypt-password-attempts"
-								: undefined}
-					/>
-					{#if passwordProblem}
-						<p
-							id="decrypt-password-error"
-							class="pop m-0 mt-0.5 flex items-start gap-2 text-[13px] text-danger"
-							role="alert"
-						>
-							<Icon name="alert" size={15} class="mt-0.5 shrink-0" />
-							{passwordProblem === "empty" ? t("un_pw_empty") : wrongMessage}
-						</p>
-					{:else if attempts}
-						<p id="decrypt-password-attempts" class="m-0 mt-0.5 text-[13px] text-warn">{attempts}</p>
+	<form
+		class="card rise"
+		style:animation-delay="0.18s"
+		aria-label={t("un_title")}
+		onsubmit={(event) => {
+			event.preventDefault();
+			handleOpen();
+		}}
+	>
+		{#if lastRead}
+			<div class="px-3 pt-3">
+				<Callout tone="warn" icon="flame" title={isBurn ? t("un_burn_title") : t("un_last_title")}>
+					{t("un_burn_body")}
+					{#if info.hasPassword && info.format === 0}
+						<span class="mt-0.5 block font-medium text-warn">{t("burn_password_warning")}</span>
 					{/if}
-				</div>
-			{/if}
-
-			<div class="border-t border-line p-3">
-				<button type="submit" class="btn btn-primary btn-lg w-full" disabled={!mounted}>
-					<Icon name="unlock" size={16} />
-					{info.hasPassword ? t("un_unlock") : t("un_show")}
-				</button>
+				</Callout>
 			</div>
-		</form>
+		{/if}
 
-		<div class="rise" style:animation-delay="0.3s"><TrustLine /></div>
-	{/if}
+		<ul class="m-0 flex list-none flex-col gap-2.5 px-[18px] py-4 text-sm text-muted">
+			{#if reads}
+				<li class="flex items-center gap-2.5">
+					<Icon name="eye" size={16} class="text-accent-text" />{reads}
+				</li>
+			{/if}
+			<li class="flex items-center gap-2.5">
+				<Icon name="clock" size={16} class="text-accent-text" />{t("un_expiry", {
+					date: formatDateTime(info.expiresAt),
+				})}
+			</li>
+			{#if info.fileCount > 0}
+				<li class="flex items-center gap-2.5">
+					<Icon name="paperclip" size={16} class="text-accent-text" />{tn("files_count", info.fileCount)}
+				</li>
+			{/if}
+		</ul>
+
+		{#if info.hasPassword}
+			<div class="flex flex-col gap-1.5 px-[18px] pb-4">
+				<label for="decrypt-password" class="text-[13px] font-medium">
+					{t("un_pw_label")} <span class="font-normal text-faint">— {t("un_pw_hint")}</span>
+				</label>
+				<PasswordField
+					bind:this={passwordField}
+					id="decrypt-password"
+					bind:value={password}
+					placeholder={t("un_pw_placeholder")}
+					invalid={passwordProblem !== ""}
+					describedby={passwordProblem
+						? "decrypt-password-error"
+						: attempts
+							? "decrypt-password-attempts"
+							: undefined}
+				/>
+				{#if passwordProblem}
+					<p
+						id="decrypt-password-error"
+						class="pop m-0 mt-0.5 flex items-start gap-2 text-[13px] text-danger"
+						role="alert"
+					>
+						<Icon name="alert" size={15} class="mt-0.5 shrink-0" />
+						{passwordProblem === "empty" ? t("un_pw_empty") : wrongMessage}
+					</p>
+				{:else if attempts}
+					<p id="decrypt-password-attempts" class="m-0 mt-0.5 text-[13px] text-warn">{attempts}</p>
+				{/if}
+			</div>
+		{/if}
+
+		<div class="border-t border-line p-3">
+			<button type="submit" class="btn btn-primary btn-lg w-full" disabled={!mounted}>
+				<Icon name="unlock" size={16} />
+				{info.hasPassword ? t("un_unlock") : t("un_show")}
+			</button>
+		</div>
+	</form>
+
+	<div class="rise" style:animation-delay="0.3s"><TrustLine /></div>
 {:else if status.state === "notice"}
 	{@const notice = NOTICES[status.notice]}
-	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction={acted} />
+	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction />
 {:else if status.state === "opening"}
 	<PageHero title={t("un_title")} sub={t("un_sub")} afterAction />
 	<ProgressPanel
