@@ -69,6 +69,16 @@ describe("detectLocale", () => {
 		vi.stubGlobal("navigator", { language: "fr-FR" });
 		expect(detectLocale()).toBe("fr");
 	});
+
+	it("takes the first of the browser's languages the app speaks", () => {
+		vi.stubGlobal("navigator", { language: "nl-NL", languages: ["nl-NL", "de-DE", "fr-FR"] });
+		expect(detectLocale()).toBe("de");
+	});
+
+	it("falls back on navigator.language when the list is empty", () => {
+		vi.stubGlobal("navigator", { language: "ja-JP", languages: [] });
+		expect(detectLocale()).toBe("ja");
+	});
 });
 
 describe("formatDateTime", () => {

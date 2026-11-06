@@ -17,13 +17,11 @@ const SANITIZE_CONFIG = {
 /**
  * Render markdown to sanitized HTML. marked and DOMPurify are lazy-imported so
  * the markdown pipeline stays out of the initial bundle — it only loads when a
- * markdown note is previewed or viewed.
+ * markdown note is previewed or viewed. DOMPurify sanitizes in the page's own
+ * DOM: the app only ever renders in the browser.
  */
 export async function renderMarkdown(text: string): Promise<string> {
-	const [{ marked }, DOMPurify] = await Promise.all([
-		import("marked"),
-		import("isomorphic-dompurify"),
-	]);
+	const [{ marked }, DOMPurify] = await Promise.all([import("marked"), import("dompurify")]);
 	const raw = marked.parse(text, { async: false }) as string;
 	return DOMPurify.default.sanitize(raw, SANITIZE_CONFIG);
 }

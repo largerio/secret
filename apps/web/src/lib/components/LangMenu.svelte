@@ -1,4 +1,5 @@
 <script lang="ts">
+import { LOCALE_COOKIE } from "@largerio/secret-shared/site";
 import Icon from "#lib/components/Icon.svelte";
 import { getLocale, type Locale, setLocale, t } from "#lib/i18n/index.svelte.js";
 import { setPreferenceCookie } from "#lib/utils/cookies.js";
@@ -25,10 +26,10 @@ function pick(code: string): void {
 	browsing = false;
 	if (code === getLocale()) return;
 	setLocale(code as Locale);
-	setPreferenceCookie("secret_lang", code);
-	// <html lang> otherwise keeps the SSR value until a full reload, so screen
-	// readers announce the new content with the previous language's voice
-	// (WCAG 3.1.1) and hyphenation/quotes stay wrong.
+	setPreferenceCookie(LOCALE_COOKIE, code);
+	// <html lang> otherwise keeps the language the page started in until a full
+	// reload, so screen readers announce the new content with the previous
+	// language's voice (WCAG 3.1.1) and hyphenation/quotes stay wrong.
 	document.documentElement.lang = code;
 }
 

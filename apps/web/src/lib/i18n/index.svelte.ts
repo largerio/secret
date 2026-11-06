@@ -1,4 +1,4 @@
-import type { Locale } from "@largerio/secret-shared/site";
+import { DEFAULT_LOCALE, type Locale, parseAcceptLanguage } from "@largerio/secret-shared/site";
 import de from "../../../../../messages/de.json";
 import en from "../../../../../messages/en.json";
 import es from "../../../../../messages/es.json";
@@ -11,7 +11,6 @@ import ru from "../../../../../messages/ru.json";
 import zh from "../../../../../messages/zh.json";
 
 export type { Locale } from "@largerio/secret-shared/site";
-export { parseAcceptLanguage } from "@largerio/secret-shared/site";
 export type MessageKey = keyof typeof en;
 
 const messages: Record<Locale, Record<string, string>> = {
@@ -27,9 +26,7 @@ const messages: Record<Locale, Record<string, string>> = {
 	ko,
 };
 
-const supportedLocales = new Set<string>(Object.keys(messages));
-
-let currentLocale = $state<Locale>("en");
+let currentLocale = $state<Locale>(DEFAULT_LOCALE);
 
 export function setLocale(locale: Locale): void {
 	currentLocale = locale;
@@ -39,10 +36,15 @@ export function getLocale(): Locale {
 	return currentLocale;
 }
 
+/**
+ * The first of the browser's languages the app speaks, English failing any:
+ * what the server reads from `Accept-Language`, which the browser builds from
+ * the same list.
+ */
 export function detectLocale(): Locale {
-	if (typeof navigator === "undefined") return "en";
-	const lang = navigator.language.slice(0, 2).toLowerCase();
-	return supportedLocales.has(lang) ? (lang as Locale) : "en";
+	if (typeof navigator === "undefined") return DEFAULT_LOCALE;
+	const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+	return parseAcceptLanguage(languages.join(","));
 }
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {

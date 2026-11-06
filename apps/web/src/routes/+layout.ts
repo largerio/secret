@@ -1,17 +1,13 @@
-import type { ServerConfig } from "@largerio/secret-shared";
-import { setConfig } from "#lib/config.svelte.js";
-import type { Locale } from "#lib/i18n/index.svelte.js";
-import { setLocale } from "#lib/i18n/index.svelte.js";
-import { initTheme, type ThemePreference } from "#lib/theme.svelte.js";
+import { startPage } from "#lib/shell.js";
+import type { LayoutLoad } from "./$types";
 
-export const load = ({
-	data,
-}: {
-	data: { config: ServerConfig; locale: Locale; theme: ThemePreference };
-}) => {
-	setConfig(data.config);
-	setLocale(data.locale);
-	initTheme(data.theme);
+// A single-page app: the server answers every page with the one shell the
+// build writes (index.html), which it fills in, and the browser renders it.
+export const ssr = false;
+export const prerender = false;
 
-	return data;
+export const load: LayoutLoad = () => {
+	// Applies the shell data at once; without any, the page renders from the
+	// defaults while the instance's limits are fetched.
+	void startPage();
 };
