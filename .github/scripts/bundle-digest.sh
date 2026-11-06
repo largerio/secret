@@ -6,7 +6,10 @@
 # from before the bundle had one (1.7 and older); fails when only some of its
 # platforms have one.
 #
-# Read from containers that never start: an image of any platform will do.
+# Each platform's image is read by its own manifest digest, from a container
+# that never starts: no emulation, and the index's reference is never pulled.
+# Pulled once per platform, it would point at the last one pulled, and the
+# classic image store refuses the second pull of a digest reference.
 #
 # Usage: bundle-digest.sh <image-ref>
 set -euo pipefail
@@ -14,40 +17,48 @@ set -euo pipefail
 IMAGE=$1
 MANIFEST=/app/apps/web/build/bundle.json
 
+# The repository, without the tag or digest: the part after the last slash
+# holds the tag, so a registry's port stays.
+repo=${IMAGE%%@*}
+if [[ ${repo##*/} == *:* ]]; then
+	repo=${repo%:*}
+fi
+
 work=$(mktemp -d)
 container=""
 trap '[ -z "$container" ] || docker rm -f "$container" > /dev/null; rm -rf "$work"' EXIT
 
-# The platforms of the index, its attestations left out. A single image has
-# none, and is read as it is.
-platforms=$(docker buildx imagetools inspect --raw "$IMAGE" | jq -r '
-	[.manifests[]?.platform | select(. != null and .os != "unknown")
-		| [.os, .architecture, .variant // empty] | join("/")] | unique | .[]')
+# `<platform> <manifest digest>` a line, the attestations left out. A single
+# image is its own manifest.
+raw=$(docker buildx imagetools inspect --raw "$IMAGE")
+images=$(jq -r '.manifests[]? | select(.platform != null and .platform.os != "unknown")
+	| "\([.platform.os, .platform.architecture, .platform.variant // empty] | join("/")) \(.digest)"' <<< "$raw")
+if [ -z "$images" ]; then
+	images="default $(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+fi
 
 found=()
 missing=()
-for platform in ${platforms:-default}; do
-	# Pulled each time: an image already there for another platform would
-	# otherwise do.
-	args=(--pull always)
+while read -r platform digest; do
+	args=()
 	if [ "$platform" != default ]; then
-		args+=(--platform "$platform")
+		args=(--platform "$platform")
 	fi
-	container=$(docker create "${args[@]}" "$IMAGE")
+	container=$(docker create ${args[@]+"${args[@]}"} "$repo@$digest" < /dev/null)
 	if docker cp "$container:$MANIFEST" "$work/bundle.json" > /dev/null 2>&1; then
-		digest=$(jq -r .digest "$work/bundle.json")
-		if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
-			echo "::error::$MANIFEST on $platform names the digest $digest" >&2
+		bundle=$(jq -r .digest "$work/bundle.json")
+		if ! [[ $bundle =~ ^sha256:[0-9a-f]{64}$ ]]; then
+			echo "::error::$MANIFEST on $platform names the digest $bundle" >&2
 			exit 1
 		fi
-		found+=("$platform $digest")
+		found+=("$platform $bundle")
 	else
 		missing+=("$platform")
 	fi
 	rm -f "$work/bundle.json"
 	docker rm "$container" > /dev/null
 	container=""
-done
+done <<< "$images"
 
 if [ "${#found[@]}" -eq 0 ]; then
 	exit 0
@@ -57,10 +68,10 @@ if [ "${#missing[@]}" -gt 0 ]; then
 	exit 1
 fi
 
-digests=$(printf '%s\n' "${found[@]}" | cut -d' ' -f2 | sort -u)
-if [ "$(wc -l <<< "$digests")" -ne 1 ]; then
+bundles=$(printf '%s\n' "${found[@]}" | cut -d' ' -f2 | sort -u)
+if [ "$(wc -l <<< "$bundles")" -ne 1 ]; then
 	joined=$(IFS=,; echo "${found[*]}")
 	echo "::error::The platforms of $IMAGE serve different web apps: ${joined//,/, }" >&2
 	exit 1
 fi
-echo "$digests"
+echo "$bundles"

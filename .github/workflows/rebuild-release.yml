@@ -4,7 +4,8 @@ name: Rebuild release image
 # its base image gets security fixes. Each week, if the base the latest
 # release is pinned to has a newer digest upstream, this rebuilds that
 # release's sources on it, scans the OS packages and smoke-tests the result
-# on both architectures, checks that it serves the release's web app, signs it
+# on both architectures with the release's own smoke test, checks that it
+# serves the release's web app, signs it
 # and moves the release line there. The exact tag (:1.3.1) never
 # moves, and production, which runs main, is not touched.
 on:
@@ -203,13 +204,21 @@ jobs:
         with:
           persist-credentials: false
 
+      # For its smoke test: the actions come from main, the smoke test from
+      # the release, as below.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+          path: release
+          persist-credentials: false
+
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # vuln-type os, as promote below explains.
+      # vuln-type os, and the release's smoke test, as promote below explains.
       - name: Scan and smoke-test the arm64 image
         uses: ./.github/actions/check-image
         with:
@@ -218,6 +227,7 @@ jobs:
           platform: linux/arm64
           version: ${{ needs.check.outputs.version }}
           vuln-type: os
+          smoke-test: release/.github/actions/check-image/smoke-test.sh
 
   promote:
     needs: [check, rebuild, rebuild-arm64]
@@ -232,6 +242,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+          path: release
           persist-credentials: false
 
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -268,6 +284,10 @@ jobs:
           # replaced, which the daily scan already reports. Failing on them
           # would hold back the base fixes until the next release.
           vuln-type: os
+          # The release's own smoke test: the rebuild is the release's sources,
+          # and main's checks what main serves since, which an older release
+          # may not (1.7 ran two processes).
+          smoke-test: release/.github/actions/check-image/smoke-test.sh
           tags: |
             ghcr.io/largerio/secret:${{ needs.check.outputs.major }}
             ghcr.io/largerio/secret:${{ needs.check.outputs.major }}.${{ needs.check.outputs.minor }}

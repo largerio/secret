@@ -213,7 +213,7 @@ The encryption key lives in the URL fragment (`#key`), which browsers never send
 
 The code that encrypts comes from the server, though: the web app is a static bundle that builds
 reproducibly, and each release publishes its digest, which every instance reports, so anyone can
-[check](SECURITY.md#verifying-the-web-app) that an instance serves a release's code.
+[check](SECURITY.md#verifying-the-web-app) what an instance serves them against a release.
 
 [PROTOCOL.md](PROTOCOL.md) specifies the format and the API flows, with test vectors, for anyone writing a
 client in another language.

@@ -380,6 +380,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The e2e job checks the amd64 web app against a build on its runner;
+      # the arm64 one, built under QEMU, must be the same. A difference shows
+      # here, before any tag, rather than at the release, which reads the
+      # digest the same way (release-image.yml).
+      - name: Check both platforms serve the same web app
+        env:
+          IMAGE: ghcr.io/largerio/secret@${{ needs.docker.outputs.digest }}
+        run: |
+          bundle=$(.github/scripts/bundle-digest.sh "$IMAGE")
+          if [ -z "$bundle" ]; then
+            echo "::error::$IMAGE has no bundle.json."
+            exit 1
+          fi
+          echo "::notice title=Web app::$bundle"
+
       - name: Scan, smoke-test, sign and tag the image
         uses: ./.github/actions/promote-image
         with:

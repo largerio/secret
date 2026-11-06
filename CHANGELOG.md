@@ -10,7 +10,7 @@ image. Each version links to its GitHub release. The SDK has
 ### Security
 
 - Every page's `Content-Security-Policy` lists the inline scripts the page may run by their SHA-256, taken from the build, where SvelteKit drew a nonce for each response. Scripts come from the instance alone, and pages still cannot be framed. What a page may run is the same on every instance of a release, and can be checked against it.
-- The web app is a reproducible bundle: built from the same sources, anywhere, it gives the same files, which CI checks on every change by building it on two systems. Each release publishes its digest; `/api/health` reports as `bundle` the digest of the web app the instance serves, and `/bundle.json` lists its files with their SHA-256. Anyone can check that an instance serves the web app of a release, as [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app) explains.
+- The web app is a reproducible bundle: built from the same sources, anywhere, it gives the same files, which CI checks on every change by building it on two systems. Each release publishes its digest; `/api/health` reports as `bundle` the digest of the web app the instance serves, and `/bundle.json` lists its files with their SHA-256. Anyone can check what an instance serves them against a release, its pages and their policy included, as [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app) explains.
 
 ### Added
 
@@ -31,6 +31,7 @@ image. Each version links to its GitHub release. The SDK has
 
 - Port 3001 is gone: the API no longer listens on a port of its own, inside the container, or outside it with `API_HOST=0.0.0.0`. Anything that reached it there must use the public port, `PORT`, where the API answers under `/api/` as before. `API_HOST`, `API_PORT` and `API_URL` are no longer read, and the logs warn when one is set.
 - `TRUSTED_PROXIES` no longer defaults to `127.0.0.1/32`, which trusted the web server inside the image. Behind a reverse proxy, `ADDRESS_HEADER` and `XFF_DEPTH` work as before ([Making rate limiting work behind a proxy](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy)). Without `ADDRESS_HEADER`, `TRUSTED_PROXIES` now applies to whatever connects to the container, your proxy, and no longer to a web server inside it.
+- The app checks `ADDRESS_HEADER` and `XFF_DEPTH` at startup, and refuses to start on an invalid one: `ADDRESS_HEADER` must be a header name, and `XFF_DEPTH` a whole number from 1, even with `ADDRESS_HEADER` unset; blank still means 1. Up to 1.7 the web server took them as they came: `XFF_DEPTH=0`, junk or a header name with a space gave every visitor the one shared bucket, and `2x` counted as 2. Check both before upgrading.
 - `/__data.json` no longer exists: a login in front of note creation ([Restricting who can create notes](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#restricting-who-can-create-notes)) only needs `/` and `/api/cap/`.
 
 ## [1.7.0] - 2026-10-30
