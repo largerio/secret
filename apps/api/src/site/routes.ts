@@ -73,10 +73,23 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 		});
 	}
 
+	/**
+	 * A page's path with a trailing slash, sent where SvelteKit sent it: to
+	 * the path without, query kept. The Location is this request's own path
+	 * less its last character, so it starts with /note/ and never names
+	 * another site.
+	 */
+	function withoutTrailingSlash(c: Context): Response {
+		const url = new URL(c.req.url);
+		return c.redirect(`${url.pathname.slice(0, -1)}${url.search}`, 308);
+	}
+
 	const routes = new Hono<AppEnv>();
 	routes.get("/", (c) => page(c, "home", 200));
 	routes.get("/note/:id", (c) => page(c, "note", 200));
+	routes.get("/note/:id/", withoutTrailingSlash);
 	routes.get("/note/:id/manage", (c) => page(c, "manage", 200));
+	routes.get("/note/:id/manage/", withoutTrailingSlash);
 	for (const route of staticRoutes(site.files.keys())) {
 		routes.get(route, (c) => {
 			const file = site.files.get(c.req.path);

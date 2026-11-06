@@ -344,6 +344,41 @@ describe("the pages", () => {
 		}
 	});
 
+	it.each([
+		[`/note/${NOTE_ID}/`, `/note/${NOTE_ID}`],
+		[`/note/${NOTE_ID}/?x=1&next=//evil.example/`, `/note/${NOTE_ID}?x=1&next=//evil.example/`],
+		[`/note/${NOTE_ID}/manage/`, `/note/${NOTE_ID}/manage`],
+		[`/note/${NOTE_ID}/manage/?a=b`, `/note/${NOTE_ID}/manage?a=b`],
+		["/note/%2F%2Fevil.example/", "/note/%2F%2Fevil.example"],
+	])("send %s to %s with a 308, as SvelteKit did", async (path, location) => {
+		const app = makeApp();
+
+		for (const method of ["GET", "HEAD"]) {
+			const res = await app.request(path, { method });
+
+			expect(res.status).toBe(308);
+			expect(res.headers.get("location")).toBe(location);
+			expect(await res.text()).toBe("");
+		}
+	});
+
+	it("never redirect a path that is no page's, off-site least of all", async () => {
+		const app = makeApp();
+
+		for (const path of [
+			"//evil.example/",
+			"//evil.example/note/x/",
+			"/note//evil.example/",
+			"/nope/",
+			`/note/${NOTE_ID}/more/`,
+		]) {
+			const res = await app.request(path);
+
+			expect(res.status).toBe(404);
+			expect(res.headers.get("location")).toBeNull();
+		}
+	});
+
 	it("answer HEAD like GET, without a body", async () => {
 		const app = makeApp();
 
