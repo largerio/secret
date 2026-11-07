@@ -227,6 +227,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL (`http://` or `https://`) |
+| `APP_DESCRIPTION` | — | The home page's description for search engines and link previews, in every language. Unset, each language keeps its own translated one |
 | `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: indigo). The gradients and the dark-theme shade are derived from it. See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
@@ -341,6 +342,8 @@ server {
 ```
 
 Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
+
+Behind either, set `ADDRESS_HEADER=X-Forwarded-For` and `XFF_DEPTH=1`: until then every visitor shares the proxy's rate-limit bucket, and the app warns about it at every start. See [Making rate limiting work behind a proxy](docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy).
 
 ## Development
 

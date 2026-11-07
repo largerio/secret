@@ -7,7 +7,9 @@ Thank you for your interest in contributing to Secret.
 - **Node.js >= 26** — the code uses `node:sqlite` and `Error.isError`, which
   are not available in Node 22. Check with `node --version`; with nvm, run
   `nvm use 26`.
-- **pnpm 10** — `corepack enable` picks up the version pinned in `package.json`.
+- **pnpm 10** — through corepack, which picks up the version pinned in
+  `package.json`. Node 25 and later no longer ship it: install the version the
+  Dockerfile does, `npm install -g corepack@0.35.0 && corepack enable`.
 - **Docker** (optional) — only needed for the containerized workflow below.
 
 ## Getting Started
@@ -24,7 +26,11 @@ export SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)
 pnpm dev
 ```
 
-This starts the API on `http://localhost:3001` and the web app on `http://localhost:5173`.
+This starts the API on `http://localhost:3000` and the web app on
+`http://localhost:5173`, whose dev server sends `/api` to the API. `PORT`
+moves the API, and the dev server follows it. Up to 1.7 the API listened on
+3001 in development, and `API_URL` pointed the dev server elsewhere: it is no
+longer read.
 
 The key must decode to exactly 32 bytes; the server refuses to start otherwise.
 Keep the same key across restarts, or the notes you created earlier become
@@ -62,9 +68,13 @@ pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 ```
 
 It builds the web app and starts the API serving it, as the image does. CI
-runs it against the image instead, on S3
-storage: `.github/scripts/e2e-image.sh <image>` starts both, then
-`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them.
+runs it against the image instead, on S3 storage:
+`.github/scripts/e2e-image.sh <image>` starts both, then
+`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them. With the web
+app built (`pnpm --filter @largerio/web build`), `scripts/verify-web-app.sh
+http://localhost:3000` then checks that the image serves that very build, as
+CI does and as anyone can of an instance
+([SECURITY.md](SECURITY.md#verifying-the-web-app)).
 
 The command line runs against the same image, installed with npm from its
 packed tarball and the SDK's, as a user installs it. Start the image with an
@@ -314,13 +324,14 @@ re-run tags the image `sha-<commit>` but neither moves `:main` nor deploys.
 
 Every week, `rebuild-release.yml` rebuilds the latest release if its base image
 has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild, as
-long as it serves the release's web app, by digest. Every
-tag moves through `.github/actions/promote-image`: a Trivy scan, the smoke test
+long as it serves the release's web app, by digest. Every tag moves through
+`.github/actions/promote-image`: a Trivy scan, the smoke test
 (`.github/actions/check-image`) and a signature check come first. The two
 workflows that build an image run `check-image` for `linux/arm64` before, on an
 arm64 runner, then sign the image in `promote-image` and attest its provenance;
-a release only checks the signature `deploy.yml` left. Renaming either of them changes the signing identity
-self-hosters verify ([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
+a release only checks the signature `deploy.yml` left. Renaming either of them
+changes the signing identity self-hosters verify
+([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
 
 ## License
 

@@ -35,8 +35,8 @@ function forwardedVariables(compose: string): ReadonlyArray<string> {
 
 /**
  * `PORT` is consumed by the `ports:` mapping (inside the container the app
- * always listens on 3000), and `HOST` is fixed by the image. Neither belongs in
- * `environment:`.
+ * always listens on 3000), and `HOST` keeps the API's default, all interfaces.
+ * Neither belongs in `environment:`.
  */
 const NOT_FORWARDED = new Set(["PORT", "HOST"]);
 
@@ -65,10 +65,17 @@ describe("docker-compose.yml", () => {
 		expect(withoutFile).toEqual([]);
 	});
 
+	it("reads something from both files", () => {
+		expect(declaredVariables(read(".env.example")).length).toBeGreaterThan(20);
+		expect(forwardedVariables(read("docker-compose.yml")).length).toBeGreaterThan(20);
+	});
+});
+
+describe("the files an operator configures the image from", () => {
 	// Up to 1.7 the image ran the API behind a web server, on a port of its
 	// own that these set. Nothing reads them now (entrypoint.sh warns when
 	// they are set): offered here, they would pass for settings.
-	it("offers none of the variables the image no longer reads", () => {
+	it("offer none of the variables the image no longer reads", () => {
 		const gone = new Set(["API_HOST", "API_PORT", "API_URL"]);
 		const offered = [
 			...declaredVariables(read(".env.example")),
@@ -78,10 +85,5 @@ describe("docker-compose.yml", () => {
 		];
 
 		expect(offered.filter((name) => gone.has(name))).toEqual([]);
-	});
-
-	it("reads something from both files", () => {
-		expect(declaredVariables(read(".env.example")).length).toBeGreaterThan(20);
-		expect(forwardedVariables(read("docker-compose.yml")).length).toBeGreaterThan(20);
 	});
 });

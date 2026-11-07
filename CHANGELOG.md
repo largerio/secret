@@ -10,7 +10,8 @@ image. Each version links to its GitHub release. The SDK has
 ### Security
 
 - Every page's `Content-Security-Policy` lists the inline scripts the page may run by their SHA-256, taken from the build, where SvelteKit drew a nonce for each response. Scripts come from the instance alone, and pages still cannot be framed. What a page may run is the same on every instance of a release, and can be checked against it.
-- The web app is a reproducible bundle: built from the same sources, anywhere, it gives the same files, which CI checks on every change by building it on two systems. Each release publishes its digest; `/api/health` reports as `bundle` the digest of the web app the instance serves, and `/bundle.json` lists its files with their SHA-256. Anyone can check what an instance serves them against a release, its pages and their policy included, as [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app) explains.
+- The web app is a reproducible bundle: built from the same sources, anywhere, it gives the same files, which CI checks on every change by building it on two systems. Each release publishes its digest; `/api/health` reports as `bundle` the digest of the web app the instance serves, and `/bundle.json` lists its files with their SHA-256. Anyone can check what an instance serves them against a release, its pages and their policy included: `scripts/verify-web-app.sh` does it all from a checkout of the release's tag, as [SECURITY.md](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app) explains, and CI runs it on every change against the image it builds.
+- The API's responses carry the pages' `Permissions-Policy`, which they sent without `payment` and `usb`.
 
 ### Added
 
@@ -22,17 +23,25 @@ image. Each version links to its GitHub release. The SDK has
 - The image runs one process instead of two: the API serves the web app and the API on `PORT` (3000), without the web server that stood in front of it and proxied every API request. The web app's dependencies no longer run on the server at all.
 - The web app is a static bundle, and pages are no longer rendered on the server. For each page, the server writes into the one HTML document the visitor's language, theme and accent, the page's title and meta tags, and the instance's settings; everything else is static files, cached for good when their name carries their hash.
 - A note's page checks its note from the browser, with `/api/v1/notes/{id}/exists`, instead of while the server rendered the page.
+- The app refuses to start when `messages/en.json`, which every language falls back to, lacks a key the pages' heads need, rather than writing the key's name into them.
 
 ### Fixed
 
 - With the SDK, a format 0 link whose key was cut short in transit spent the note's read before the key was refused, which burned a note read once; and a malformed note id could aim a request at another endpoint of the instance, so that a check could spend a format 0 note's read. The SDK now refuses both before any request. The web app already checked a link's shape. (#270)
+- `APP_DESCRIPTION` was read but used nowhere. Set, it is now the home page's description in every language: its meta description, `og:description`, `twitter:description` and JSON-LD. Unset, the default, each language keeps its translated description. A note's page keeps its own.
+- The page that deletes a note said "Note not found" when the instance could not be reached or limited the visitor's requests, so that a note's creator could be told it was gone while it could still be read. It now shows the notices of the note's page.
+- A language that `Accept-Language` gives `q=0`, meaning not wanted, could be chosen for the pages. It never is now.
+- Files an operator adds to the web app's build, `.ico`, `.jpg` and `.jpeg`, `.webp`, `.avif`, `.gif` and `.webmanifest`, were served as `application/octet-stream`. They get their content types.
+- A `KEY_FILE` in a folder that did not exist stopped the container at every start: the entrypoint created the database's folder, not the key's.
 
 ### Upgrade notes
 
 - Port 3001 is gone: the API no longer listens on a port of its own, inside the container, or outside it with `API_HOST=0.0.0.0`. Anything that reached it there must use the public port, `PORT`, where the API answers under `/api/` as before. `API_HOST`, `API_PORT` and `API_URL` are no longer read, and the logs warn when one is set.
 - `TRUSTED_PROXIES` no longer defaults to `127.0.0.1/32`, which trusted the web server inside the image. Behind a reverse proxy, `ADDRESS_HEADER` and `XFF_DEPTH` work as before ([Making rate limiting work behind a proxy](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy)). Without `ADDRESS_HEADER`, `TRUSTED_PROXIES` now applies to whatever connects to the container, your proxy, and no longer to a web server inside it.
+- With neither `ADDRESS_HEADER` nor `TRUSTED_PROXIES` set, the app now logs `WARNING: neither ADDRESS_HEADER nor TRUSTED_PROXIES is set` at every start, since the image no longer sets `TRUSTED_PROXIES`, which kept it quiet. That includes `docker compose up` with the default files, and a platform such as Render, whose own proxy sits in front. Behind a proxy, set `ADDRESS_HEADER` and `XFF_DEPTH`, as the warning says; exposed directly, with no proxy in front, ignore it.
 - The app checks `ADDRESS_HEADER` and `XFF_DEPTH` at startup, and refuses to start on an invalid one: `ADDRESS_HEADER` must be a header name, and `XFF_DEPTH` a whole number from 1, even with `ADDRESS_HEADER` unset; blank still means 1. Up to 1.7 the web server took them as they came: `XFF_DEPTH=0`, junk or a header name with a space gave every visitor the one shared bucket, and `2x` counted as 2. Check both before upgrading.
 - The app refuses to start when `MAX_FILE_SIZE`, `CHUNK_SIZE` or `MAX_CHUNKED_FILE_SIZE` is not a whole number of bytes. Up to 1.7, `CHUNK_SIZE=1048576.5` or `MAX_CHUNKED_FILE_SIZE=Infinity` were taken, and handed clients limits they could not use: the web app rounded them, `/api/v1/config` answered them as they were, and the command line refused such an instance.
+- If you set `APP_DESCRIPTION`, your instance now shows it: in every language, as the home page's description in search results and link previews. Up to 1.7, `.env.example` set it to `Secure zero-knowledge note and file sharing`, and `docker-compose.yml` defaulted to the same sentence: remove that line from a `.env` copied from it, and download `docker-compose.yml` again (or change its line to `APP_DESCRIPTION=${APP_DESCRIPTION:-}`), to keep each language's own description.
 - `/__data.json` no longer exists: a login in front of note creation ([Restricting who can create notes](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#restricting-who-can-create-notes)) only needs `/` and `/api/cap/`.
 
 ## [1.7.0] - 2026-10-30

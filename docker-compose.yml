@@ -17,7 +17,8 @@ services:
       - SERVER_ENCRYPTION_KEY_FILE=${SERVER_ENCRYPTION_KEY_FILE:-}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - APP_NAME=${APP_NAME:-Secret}
-      - APP_DESCRIPTION=${APP_DESCRIPTION:-Secure zero-knowledge note and file sharing}
+      # Unset, each language keeps its own description of the home page.
+      - APP_DESCRIPTION=${APP_DESCRIPTION:-}
       - APP_PRIMARY_COLOR=${APP_PRIMARY_COLOR:-}
       - APP_FOOTER_TEXT=${APP_FOOTER_TEXT:-}
       - APP_OG_IMAGE_URL=${APP_OG_IMAGE_URL:-}

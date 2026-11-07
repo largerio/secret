@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.dev
     ports:
       - "5173:5173"
-      - "3001:3001"
+      - "3000:3000"
     volumes:
       - .:/app
       - node_modules:/app/node_modules
@@ -18,7 +18,7 @@ services:
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-}
       - MAX_FILES_PER_NOTE=${MAX_FILES_PER_NOTE:-}
       - STORAGE_QUOTA_BYTES=${STORAGE_QUOTA_BYTES:-}
-      - PORT=3001
+      - PORT=3000
       - DATABASE_PATH=/app/data/secret.db
       - FILES_PATH=/app/data/files
       # Fixed 32-byte base64 key so `make dev` works on a fresh clone. The
