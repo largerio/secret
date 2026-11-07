@@ -21,6 +21,7 @@ import { createErrorHandler } from "./middleware/errorHandler.js";
 import { problem } from "./middleware/problem.js";
 import {
 	classifyNotesPath,
+	createClientAddress,
 	createRateLimit,
 	type NotesRateClass,
 	type RateLimitResult,
@@ -148,15 +149,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	// rateLimitMultiplier scales every bound for deployments where many
 	// legitimate users share one apparent address (corporate NAT, VPN, or a
 	// proxy the instance was not told about: ADDRESS_HEADER, TRUSTED_PROXIES).
+	//
+	// Every limiter counts a client under the same key, from one resolver.
+	const clientAddress = createClientAddress({
+		trustedProxies: config.trustedProxies,
+		addressHeader: config.addressHeader,
+		xffDepth: config.xffDepth,
+	});
 	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
 	const limit = (max: number) =>
-		createRateLimit({
-			windowMs: 60_000,
-			max: scale(max),
-			trustedProxies: config.trustedProxies,
-			addressHeader: config.addressHeader,
-			xffDepth: config.xffDepth,
-		});
+		createRateLimit({ windowMs: 60_000, max: scale(max), clientAddress });
 
 	const createLimit = limit(30);
 	const readLimit = limit(60);
