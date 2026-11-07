@@ -12,7 +12,7 @@ services:
     ports: !reset []
     environment:
       - APP_URL=https://${DOMAIN:?set DOMAIN in .env}
-      - TRUSTED_PROXIES=127.0.0.1/32
+      # Caddy, one hop in front, appends the client's address.
       - ADDRESS_HEADER=X-Forwarded-For
       - XFF_DEPTH=1
 

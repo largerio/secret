@@ -81,21 +81,6 @@ export interface ChunkedUploadCompleteResponse {
 	readonly deleteToken: string;
 }
 
-export interface ServerConfig {
-	readonly appName: string;
-	readonly appDescription: string;
-	readonly appUrl: string;
-	readonly primaryColor: string;
-	readonly footerText: string;
-	readonly ogImageUrl: string;
-	readonly maxFileSize: number;
-	readonly maxFilesPerNote: number;
-	readonly chunkSize: number;
-	readonly maxChunkedFileSize: number;
-	/** Retention ceiling in seconds; the expiry picker is filtered against it. */
-	readonly maxExpiry: number;
-}
-
 export type ExpirationOption = (typeof EXPIRATION_OPTIONS)[number];
 
 export const EXPIRATION_OPTIONS = [

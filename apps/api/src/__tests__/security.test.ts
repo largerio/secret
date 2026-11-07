@@ -1,9 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { describe, expect, it } from "vitest";
 import {
 	createCors,
 	createDocsSecurityHeaders,
 	createSecurityHeaders,
+	createSiteSecurityHeaders,
 } from "../middleware/security.js";
 
 describe("createSecurityHeaders", () => {
@@ -32,6 +33,60 @@ describe("createSecurityHeaders", () => {
 		expect(csp).toContain("default-src 'none'");
 		expect(csp).toContain("script-src 'self'");
 		expect(csp).toContain("frame-ancestors 'none'");
+	});
+
+	it("denies every powerful feature, payment and USB included", async () => {
+		const app = new Hono();
+		app.use("*", createSecurityHeaders());
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		const res = await app.request("/test");
+		const permissions = res.headers.get("permissions-policy") ?? "";
+		for (const feature of [
+			"camera",
+			"microphone",
+			"geolocation",
+			"gyroscope",
+			"magnetometer",
+			"accelerometer",
+			"payment",
+			"usb",
+		]) {
+			expect(permissions).toContain(`${feature}=()`);
+		}
+	});
+
+	it("sends what the web app sends, but its CSP and resource policy", async () => {
+		const headersOf = async (middleware: MiddlewareHandler) => {
+			const app = new Hono();
+			app.use("*", middleware);
+			app.get("/test", (c) => c.text("ok"));
+			return Object.fromEntries((await app.request("/test")).headers);
+		};
+		const common = (headers: Record<string, string>) => {
+			const rest = { ...headers };
+			delete rest["content-security-policy"];
+			delete rest["cross-origin-resource-policy"];
+			return rest;
+		};
+
+		const api = await headersOf(createSecurityHeaders());
+		const site = await headersOf(createSiteSecurityHeaders(["'sha256-x'"], "cross-origin"));
+
+		expect(api["content-security-policy"]).not.toBe(site["content-security-policy"]);
+		expect(api["cross-origin-resource-policy"]).toBe("same-origin");
+		expect(site["cross-origin-resource-policy"]).toBe("cross-origin");
+		expect(common(api)).toEqual(common(site));
+		expect(Object.keys(common(api))).toEqual(
+			expect.arrayContaining([
+				"strict-transport-security",
+				"cross-origin-opener-policy",
+				"referrer-policy",
+				"x-content-type-options",
+				"x-frame-options",
+				"permissions-policy",
+			]),
+		);
 	});
 
 	it("skips configured paths", async () => {

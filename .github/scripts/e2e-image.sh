@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run an image the way an operator would, on S3 storage, for the e2e suite to
-# test what ships rather than the dev servers: E2E_BASE_URL=http://localhost:3000
-# pnpm test:e2e. The storage is RustFS, an S3-compatible server; its image is
-# not tracked by Dependabot: bump the version and the digest together.
+# test what ships rather than a build of the sources on local storage:
+# E2E_BASE_URL=http://localhost:3000 pnpm test:e2e. The storage is RustFS, an
+# S3-compatible server; its image is not tracked by Dependabot: bump the
+# version and the digest together.
 #
 # The suite's settings mirror apps/e2e/playwright.config.ts: a trivial
 # proof-of-work, a raised rate limit (every test comes from one address) and

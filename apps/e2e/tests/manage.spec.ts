@@ -22,7 +22,40 @@ test.describe("management (revocation) flow", () => {
 		});
 
 		await page.goto(shareUrl);
-		await expect(page.getByText(/Note not found/i)).toBeVisible();
+		// The page asks the instance once it has started, its worker first.
+		await expect(page.getByText(/Note not found/i)).toBeVisible({ timeout: 15_000 });
+	});
+
+	test("an instance that cannot answer is never reported as a note deleted", async ({
+		page,
+		context,
+	}) => {
+		// A creator come to revoke a leaked link, told it was gone, would leave
+		// it readable.
+		await createNote(page, { text: "still here", maxReads: 3 });
+		const manageUrl = await getManageUrl(page);
+
+		for (const [status, title] of [
+			[503, "Service unavailable"],
+			[429, "Too many requests"],
+		] as const) {
+			await context.route("**/api/v1/notes/*/exists", (route) =>
+				route.fulfill({ status, contentType: "application/problem+json", body: "{}" }),
+			);
+			// From elsewhere: the same address again would only move to its fragment.
+			await page.goto("about:blank");
+			await page.goto(manageUrl);
+			await expect(page.getByRole("heading", { name: title })).toBeVisible({ timeout: 15_000 });
+			await expect(page.getByText(/Note not found/i)).toHaveCount(0);
+			await context.unrouteAll();
+		}
+
+		// The note was there all along.
+		await page.goto("about:blank");
+		await page.goto(manageUrl);
+		await expect(page.getByRole("button", { name: "Delete the note" })).toBeVisible({
+			timeout: 15_000,
+		});
 	});
 
 	test("a management link without its token is reported as incomplete", async ({ page }) => {
@@ -30,7 +63,7 @@ test.describe("management (revocation) flow", () => {
 		const manageUrl = await getManageUrl(page);
 
 		await page.goto(manageUrl.split("#")[0] as string);
-		await expect(page.getByText(/incomplete|invalid/i)).toBeVisible();
+		await expect(page.getByText(/incomplete|invalid/i)).toBeVisible({ timeout: 15_000 });
 
 		// The note must survive a failed management attempt.
 		await revealNote(page, shareUrl);

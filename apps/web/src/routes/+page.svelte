@@ -1,5 +1,6 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { flushSync, onMount } from "svelte";
 import Composer from "#lib/components/create/Composer.svelte";
 import Lifetime from "#lib/components/create/Lifetime.svelte";
@@ -10,9 +11,9 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
+import { defaultExpiration } from "#lib/utils/expiry.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { createNote } from "#lib/notes/notes.js";
-import { defaultExpiration } from "#lib/server-config.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { resolveContentMode } from "#lib/utils/contentMode.js";
@@ -25,9 +26,7 @@ const DONE_PAUSE_MS = 450;
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 
-let mounted = $state(false);
 onMount(() => {
-	mounted = true;
 	// Back would show the link again, with the only copy of its key: the page
 	// starts over as it is put away.
 	return onBackForwardCache(() => {
@@ -166,35 +165,11 @@ function reset(): void {
 }
 </script>
 
+<!-- The server renders the page's head for crawlers and link previews: the
+title is kept here, built as the server builds it, so that navigating back to
+this page sets it again. -->
 <svelte:head>
-	<title>{t("seo_title", { app: config.appName })}</title>
-	<meta name="description" content={t("seo_description")} />
-	<meta name="keywords" content={t("seo_keywords")} />
-	<link rel="canonical" href={config.appUrl} />
-	<meta property="og:title" content={t("seo_title", { app: config.appName })} />
-	<meta property="og:description" content={t("seo_description")} />
-	<meta property="og:url" content={config.appUrl} />
-	<meta name="twitter:title" content={t("seo_title", { app: config.appName })} />
-	<meta name="twitter:description" content={t("seo_description")} />
-	{@html `<script type="application/ld+json">${JSON.stringify({
-		"@context": "https://schema.org",
-		"@type": "WebApplication",
-		name: config.appName,
-		url: config.appUrl,
-		description: t("seo_description"),
-		applicationCategory: "SecurityApplication",
-		operatingSystem: "Any",
-		offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-		featureList: [
-			"End-to-end encryption",
-			"Zero-knowledge architecture",
-			"Burn after reading",
-			"Password protection",
-			"File sharing",
-			"QR code sharing",
-			"Self-hostable",
-		],
-	}).replace(/</g, "\\u003c")}</script>`}
+	<title>{pageTitle("home", config.appName, t)}</title>
 </svelte:head>
 
 {#if phase === "done" && result}
@@ -249,7 +224,7 @@ function reset(): void {
 			type="submit"
 			class="btn btn-primary btn-lg rise w-full"
 			style:animation-delay="0.3s"
-			disabled={!mounted || !canSubmit}
+			disabled={!canSubmit}
 		>
 			{t("submit_encrypt")}<Icon name="arrow-right" size={16} />
 		</button>

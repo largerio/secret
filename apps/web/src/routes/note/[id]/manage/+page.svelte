@@ -1,28 +1,32 @@
 <script lang="ts">
 import { SecretApiError } from "@largerio/secret-sdk";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
+import CheckingView from "#lib/components/ui/CheckingView.svelte";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import SuccessBadge from "#lib/components/ui/SuccessBadge.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { t } from "#lib/i18n/index.svelte.js";
+import { type CheckNotice, checkNoteLink, NOTICES } from "#lib/notes/check.js";
 import { deleteNote } from "#lib/notes/notes.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { requestErrorMessage } from "#lib/utils/errors.js";
-import type { PageData } from "./$types";
 
-const { data }: { data: PageData } = $props();
-
-let mounted = $state(false);
+// Where the note stands: "checking" while the instance is asked, "found" when
+// it is there to delete, else why the page has none to offer. An outage or a
+// rate limit is no note gone: a creator come to revoke a leaked link would
+// leave it readable. The page renders at once, and every screen after that
+// first one replaces another, so each one's title takes the focus
+// (afterAction): the answer is announced, and the keyboard starts from it.
+let standing = $state<"checking" | "found" | CheckNotice>("checking");
 let deleteToken = $state("");
 // Deleting is final, so it takes two clicks: the first only asks for confirmation.
 let confirming = $state(false);
 let isDeleting = $state(false);
 let isDeleted = $state(false);
-// Expired, read for the last time or deleted since the page loaded.
-let gone = $state(false);
 let error = $state("");
 // The button that replaces the one just clicked takes the focus, so the
 // keyboard never falls back to the top of the page.
@@ -31,7 +35,13 @@ let confirmButton: HTMLButtonElement | undefined = $state();
 
 onMount(() => {
 	deleteToken = window.location.hash.slice(1);
-	mounted = true;
+	let left = false;
+	checkNoteLink(page.params.id ?? "").then((check) => {
+		if (!left) standing = check.kind === "found" ? "found" : check.notice;
+	});
+	return () => {
+		left = true;
+	};
 });
 
 async function setConfirming(next: boolean): Promise<void> {
@@ -51,7 +61,8 @@ async function handleDelete(): Promise<void> {
 		await deleteNote(id, deleteToken, capToken);
 		isDeleted = true;
 	} catch (e) {
-		if (e instanceof SecretApiError && e.status === 404) gone = true;
+		// Expired, read for the last time or deleted since the page loaded.
+		if (e instanceof SecretApiError && e.status === 404) standing = "not_found";
 		// The instance's refusal of the token: a 403 without its code is a
 		// firewall's or a proxy's, which the token has nothing to do with.
 		else if (e instanceof SecretApiError && e.code === "wrong_delete_token")
@@ -63,9 +74,10 @@ async function handleDelete(): Promise<void> {
 }
 </script>
 
+<!-- The server renders the page's head (noindex included): the title is kept
+here, built as the server builds it, so that navigating here sets it. -->
 <svelte:head>
-	<title>{getConfig().appName} — {t("manage_title")}</title>
-	<meta name="robots" content="noindex, nofollow" />
+	<title>{pageTitle("manage", getConfig().appName, t)}</title>
 </svelte:head>
 
 {#if isDeleted}
@@ -77,17 +89,15 @@ async function handleDelete(): Promise<void> {
 	<div class="rise flex justify-center" style:animation-delay="0.18s">
 		<a href="/" class="btn btn-primary"><Icon name="plus" size={15} />{t("new_note")}</a>
 	</div>
-{:else if !data.noteExists || gone}
-	<NoticeView
-		icon="file-x"
-		title={t("not_found_title")}
-		sub={t("not_found_description")}
-		afterAction={gone}
-	/>
-{:else if mounted && !deleteToken}
-	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} />
+{:else if standing === "checking"}
+	<CheckingView />
+{:else if standing !== "found"}
+	{@const notice = NOTICES[standing]}
+	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction />
+{:else if !deleteToken}
+	<NoticeView icon="link" title={t("error_title")} sub={t("manage_invalid_token")} afterAction />
 {:else}
-	<PageHero title={t("manage_title")} sub={t("manage_description")} />
+	<PageHero title={t("manage_title")} sub={t("manage_description")} afterAction />
 
 	<section
 		class="card rise flex flex-col gap-3 p-4"
@@ -127,11 +137,10 @@ async function handleDelete(): Promise<void> {
 				type="button"
 				class="btn btn-outline btn-lg w-full"
 				bind:this={deleteButton}
-				disabled={!mounted}
 				onclick={() => setConfirming(true)}
 			>
 				<Icon name="trash" size={16} />
-				{mounted ? t("delete_button") : t("loading")}
+				{t("delete_button")}
 			</button>
 		{/if}
 	</section>

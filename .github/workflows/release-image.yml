@@ -3,7 +3,8 @@ name: Release image
 # A release builds nothing. The tagged commit was built once when it landed on
 # main, and tagged sha-<commit> once it had passed the scan and the smoke test
 # (deploy.yml). This gives that very digest the release tags: :1 is byte for
-# byte the image CI tested and production ran.
+# byte the image CI tested and production ran. Its summary gives the digest of
+# the web app the image serves, for the release notes.
 on:
   push:
     tags: ["v*"]
@@ -133,6 +134,19 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
+      # The release notes give the digest of the web app the image serves, for
+      # anyone to compare with an instance's or with a build of the tag
+      # (SECURITY.md#verifying-the-web-app). Read before any tag moves: an
+      # image whose platforms serve different web apps has no one digest to
+      # publish.
+      - name: Read the digest of the web app
+        id: bundle
+        env:
+          IMAGE: ghcr.io/largerio/secret@${{ steps.source.outputs.digest }}
+        run: |
+          bundle=$(.github/scripts/bundle-digest.sh "$IMAGE")
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+
       # Scanned again: a CVE may have been published since the build. Not
       # signed again: the signature check finds the one deploy.yml left.
       - name: Scan, smoke-test and tag the image
@@ -142,3 +156,26 @@ jobs:
           digest: ${{ steps.source.outputs.digest }}
           tags: ${{ steps.meta.outputs.tags }}
           version: ${{ steps.release.outputs.version }}
+
+      # On the run's page, for the release notes (CONTRIBUTING.md#the-app-image).
+      - name: Publish the digest of the web app
+        env:
+          TAG: ${{ github.ref_name }}
+          IMAGE: ghcr.io/largerio/secret@${{ steps.source.outputs.digest }}
+          BUNDLE: ${{ steps.bundle.outputs.bundle }}
+        run: |
+          echo "::notice title=Web app of $TAG::$BUNDLE"
+          {
+            echo "## $TAG"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`$IMAGE\` |"
+            echo "| Web app | \`$BUNDLE\` |"
+            echo
+            echo "For the release notes:"
+            echo
+            echo '```markdown'
+            echo "**Web app:** \`$BUNDLE\`, which \`/api/health\` reports as \`bundle\` on an instance of $TAG, and a build of the tag gives again. [How to verify](https://github.com/largerio/secret/blob/main/SECURITY.md#verifying-the-web-app)."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

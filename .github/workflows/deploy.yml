@@ -64,15 +64,17 @@ jobs:
       - name: Lint the workflows
         uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
 
-      # actionlint checks the run: blocks of workflows, not the scripts they call.
-      - name: Lint the CI scripts
-        run: find .github -name '*.sh' -print0 | xargs -0 shellcheck
+      # actionlint checks the run: blocks of workflows, not the scripts they
+      # call, nor the image's entrypoint and scripts/.
+      - name: Lint the shell scripts
+        run: find .github scripts entrypoint.sh -name '*.sh' -print0 | xargs -0 shellcheck
 
   # The suite runs against the image this commit builds, on S3 storage
-  # (RustFS), rather than the dev servers: a fault of the image, its proxy or
-  # the S3 backend shows up before the merge. `pnpm test:e2e` alone still
-  # starts the dev servers. The command line runs against the same image,
-  # installed from its tarball as a user installs it.
+  # (RustFS): a fault of the image or of the S3 backend shows up before the
+  # merge. `pnpm test:e2e` alone builds the web app and starts the API serving
+  # it, on local storage. The command line runs against the same image,
+  # installed from its tarball as a user installs it, and the web app in it
+  # must be the one this runner builds.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -97,6 +99,7 @@ jobs:
       # For this runner's platform, loaded rather than pushed. The layers come
       # from the cache the docker job writes on main.
       - name: Build the image
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -122,6 +125,37 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:3000
         run: pnpm test:e2e
+
+      # The digest a release publishes is only worth what a rebuild of its tag
+      # gives (SECURITY.md#verifying-the-web-app). Built here, on Ubuntu and
+      # glibc with this checkout's paths, the web app must be the image's,
+      # built on Alpine and musl. On Node 26, as in the image: before the
+      # switch below. Even after a failure of the suite, which says nothing
+      # of this.
+      - name: Build the web app on the runner
+        id: web
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm --filter @largerio/web build
+
+      # What anyone can check of an instance, against this build: run as
+      # SECURITY.md#verifying-the-web-app says, on the image started above.
+      - name: Verify the web app the image serves
+        if: ${{ !cancelled() && steps.web.outcome == 'success' && steps.image.outcome == 'success' }}
+        run: scripts/verify-web-app.sh http://localhost:3000
+
+      - name: Check the web app builds reproducibly
+        id: reproducible
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        run: .github/scripts/bundle-reproducible.sh secret:e2e apps/web/build "$RUNNER_TEMP/bundles"
+
+      # Both builds, for a diff of the files the check names.
+      - name: Upload both builds of the web app
+        if: ${{ !cancelled() && steps.reproducible.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-bundles
+          path: ${{ runner.temp }}/bundles/
+          retention-days: 7
 
       # The oldest Node the command line supports (engines, in
       # packages/cli/package.json): the rest of CI runs Node 26.
@@ -352,6 +386,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The e2e job checks the amd64 web app against a build on its runner;
+      # the arm64 one, built under QEMU, must be the same. A difference shows
+      # here, before any tag, rather than at the release, which reads the
+      # digest the same way (release-image.yml).
+      - name: Check both platforms serve the same web app
+        env:
+          IMAGE: ghcr.io/largerio/secret@${{ needs.docker.outputs.digest }}
+        run: |
+          bundle=$(.github/scripts/bundle-digest.sh "$IMAGE")
+          echo "::notice title=Web app::$bundle"
 
       - name: Scan, smoke-test, sign and tag the image
         uses: ./.github/actions/promote-image

@@ -7,8 +7,6 @@
  * not lose — cannot be copied at all.
  */
 function copyViaExecCommand(text: string): boolean {
-	if (typeof document === "undefined") return false;
-
 	const textarea = document.createElement("textarea");
 	textarea.value = text;
 	// Keep it off-screen and non-focusable-looking, but still selectable.

@@ -26,6 +26,13 @@ inputs:
     description: Package types Trivy fails on (see promote-image).
     required: false
     default: os,library
+  smoke-test:
+    description: >
+      The smoke test to run, a path from the workspace; empty for this
+      action's own. rebuild-release.yml passes the release's: a rebuild is
+      checked for what its release does, not for what main does since.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -49,4 +56,12 @@ runs:
         IMAGE: ${{ inputs.image }}@${{ inputs.digest }}
         EXPECTED_VERSION: ${{ inputs.version }}
         DOCKER_DEFAULT_PLATFORM: ${{ inputs.platform }}
-      run: '"$GITHUB_ACTION_PATH/smoke-test.sh" "$IMAGE"'
+        SMOKE_TEST: ${{ inputs.smoke-test }}
+      run: |
+        script=${SMOKE_TEST:-$GITHUB_ACTION_PATH/smoke-test.sh}
+        if [ ! -x "$script" ]; then
+          echo "::error::No smoke test to run at $script."
+          exit 1
+        fi
+        echo "Smoke test: $script"
+        "$script" "$IMAGE"

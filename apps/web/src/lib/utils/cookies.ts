@@ -13,3 +13,14 @@ export function setPreferenceCookie(
 	// biome-ignore lint/suspicious/noDocumentCookie: CookieStore API not universally supported
 	document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; samesite=lax${secure}`;
 }
+
+/** A cookie's value in a `document.cookie` string, as written: undefined when it is not set. */
+export function readCookie(cookies: string, name: string): string | undefined {
+	for (const pair of cookies.split(";")) {
+		const separator = pair.indexOf("=");
+		if (separator !== -1 && pair.slice(0, separator).trim() === name) {
+			return pair.slice(separator + 1).trim();
+		}
+	}
+	return undefined;
+}

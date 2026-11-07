@@ -62,7 +62,10 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
 - Timing-safe token comparison (`crypto.timingSafeEqual`)
 - Key buffers zeroed after use (`sodium.memzero`) — a best effort: JavaScript
   strings and libsodium's internal WASM copies are not wiped
-- Strict Content Security Policy (CSP)
+- Strict Content Security Policy (CSP): scripts from the instance alone, its
+  inline ones allowed by their hash, and no framing
+- A reproducible web app, whose digest each release publishes and every
+  instance reports ([how to verify](#verifying-the-web-app))
 - Per-IP rate limiting on all endpoints
 - Zod validation on all inputs with max length constraints
 - `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` on file downloads
@@ -98,7 +101,8 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   this is by design. Protect the link; optionally add a password.
 - **A compromised client** (malicious browser extension, XSS in an embedding page,
   a backdoored build of the web app) can read plaintext, since decryption happens
-  in the browser. Integrity of the delivered JavaScript is assumed (see Assumptions).
+  in the browser. Integrity of the delivered JavaScript is assumed (see
+  Assumptions); [it can be checked](#verifying-the-web-app).
 - **Endpoint security of sender/recipient** (keyloggers, shoulder-surfing, clipboard
   scrapers) is the user's responsibility.
 - **Traffic-analysis / metadata correlation** at the network layer.
@@ -114,7 +118,93 @@ set `SERVER_ENCRYPTION_KEY` from a secret store, or mount it as a file named by
   security-model change).
 - **The delivered web app and its dependencies are trusted.** Zero-knowledge relies
   on the integrity of the JavaScript served to the browser and the build/supply chain.
+  Anyone can check what an instance serves them against a release:
+  [Verifying the web app](#verifying-the-web-app).
 - **`SERVER_ENCRYPTION_KEY` is kept secret** and is backed up out-of-band.
+
+## Verifying the web app
+
+End-to-end encryption on the web has one weak point: the JavaScript that does
+it comes from the server. An instance that served a modified web app could read
+what a visitor types before it is encrypted, and the key of every link they
+open. A signed image does not help the visitor, who never sees the image, only
+what the instance serves. What can be checked is what the instance answers you:
+whether the pages and files you fetch are those of a release, and would run its
+code and no other.
+
+**The digest.** The web app is a static bundle, and its build writes
+`bundle.json` at its root: the SHA-256 of every other file in it, and a digest
+over them all, `sha256:<hex>`. The build is reproducible: the same sources give
+the same digest wherever they are built. CI checks it on every change, building
+the web app in the image (Alpine) and outside it (Ubuntu). The release workflow
+reads the digest from the image it releases, and the release notes give it.
+
+**What an instance says it serves.** `/api/health` reports
+`"bundle": "sha256:<hex>"`, the digest of the files the instance serves, which
+it computes from them when it starts. `/bundle.json` serves the manifest: every
+file, its size and its SHA-256. Both come from the instance, which could lie in
+them: they give you something to compare with the release notes, and with your
+own build.
+
+**Check an instance.** From a checkout of the release's tag, build the web app
+with Node 26 and pnpm, then run `scripts/verify-web-app.sh` with the
+instance's address as it gives it, its `APP_URL`, and the digest the release
+notes give:
+
+```bash
+TAG=vX.Y.Z   # the release to check
+git clone --depth 1 --branch "$TAG" https://github.com/largerio/secret.git
+cd secret
+# Node 25 and later ship no corepack: install the image's version.
+npm install -g corepack@0.35.0 && corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @largerio/web build
+scripts/verify-web-app.sh https://secret.example.com sha256:<hex>
+```
+
+It needs bash, coreutils, curl and Node. It says what differs, if anything,
+and exits with 1 when something does. Without the release's digest, it prints
+the build's, for you to compare with the release notes;
+`scripts/verify-web-app.sh --digest-of apps/web/build` prints it alone. CI
+runs it on every change, against the image it builds. It checks:
+
+- **The build**: its files make the digest its `bundle.json` names, so nothing
+  touched them since the build, and that digest is the release's.
+- **What the instance reports**: `/api/health` gives the same digest.
+- **The files**: every file of the build but the shell, `bundle.json`
+  included, is served at its path, compressed as a browser asks for it, and
+  hashes as yours does.
+- **The shell.** Every page is the shell, `index.html`, which the instance
+  writes into for each request: the visitor's language, theme and accent, the
+  page's title and meta tags, and the instance's settings for the page to
+  start from. Its bytes are not the build's, so it is checked for what it may
+  run, on the home page, a note's page, which a recipient opens, a note's
+  deletion page and an unknown one:
+  - every address it names, in an attribute or in its boot script, must be a
+    file of the build: a script it loaded from the instance could otherwise be
+    any script, as its policy lets the page run any of the instance's.
+    The only other address is the instance's own, in links that load nothing,
+    and it may hold no `<meta http-equiv="refresh">` nor `srcset`, which the
+    release's shell never does;
+  - its `Content-Security-Policy` header must let it run the instance's files
+    and the build's inline scripts, and nothing else: `script-src` must be
+    `'self' 'wasm-unsafe-eval'` followed by the SHA-256 of each inline script
+    of the build's `index.html` that a browser runs, and no `script-src-elem`
+    or `script-src-attr` may take its place.
+
+With both, the page runs the build's boot script and the files it names, which
+you compared, and those load only files of the build. An inline script added
+to the page has no hash in the policy, and the browser does not run it. The
+digest the script recomputes is the one `packages/shared/src/bundle.ts`
+specifies, which coreutils alone give.
+
+**What this proves.** That the responses you fetched, when you fetched them,
+were the release's files, and a page that runs the release's code alone. Not
+that the instance answers a browser the same, nor another visitor, nor later:
+an instance can tell its visitors apart, and serve a modified web app to some
+of them only. A check tells an instance that runs a release from one that does
+not, for whoever checks; whoever runs the instance is still someone its
+visitors trust.
 
 ## Known Limitations
 

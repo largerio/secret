@@ -18,7 +18,7 @@
 	"error_too_large": "ノートのサイズが、このサーバーで受け付けられる上限を超えています。",
 	"error_storage_full": "サーバーにこのノートを保存する空き容量がありません。後でもう一度お試しください。",
 	"error_clipboard": "クリップボードへのコピーに失敗しました",
-	"loading": "読み込み中",
+	"checking_link": "リンクを確認しています…",
 	"back_home": "ホームに戻る",
 	"new_note": "ノートを作成",
 	"show_password": "パスワードを表示",

@@ -7,7 +7,9 @@ Thank you for your interest in contributing to Secret.
 - **Node.js >= 26** — the code uses `node:sqlite` and `Error.isError`, which
   are not available in Node 22. Check with `node --version`; with nvm, run
   `nvm use 26`.
-- **pnpm 10** — `corepack enable` picks up the version pinned in `package.json`.
+- **pnpm 10** — through corepack, which picks up the version pinned in
+  `package.json`. Node 25 and later no longer ship it: install the version the
+  Dockerfile does, `npm install -g corepack@0.35.0 && corepack enable`.
 - **Docker** (optional) — only needed for the containerized workflow below.
 
 ## Getting Started
@@ -24,7 +26,11 @@ export SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)
 pnpm dev
 ```
 
-This starts the API on `http://localhost:3001` and the web app on `http://localhost:5173`.
+This starts the API on `http://localhost:3000` and the web app on
+`http://localhost:5173`, whose dev server sends `/api` to the API. `PORT`
+moves the API, and the dev server follows it. Up to 1.7 the API listened on
+3001 in development, and `API_URL` pointed the dev server elsewhere: it is no
+longer read.
 
 The key must decode to exactly 32 bytes; the server refuses to start otherwise.
 Keep the same key across restarts, or the notes you created earlier become
@@ -61,9 +67,14 @@ The first time you run the e2e suite:
 pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
 ```
 
-It starts the dev servers. CI runs it against the image instead, on S3
-storage: `.github/scripts/e2e-image.sh <image>` starts both, then
-`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them.
+It builds the web app and starts the API serving it, as the image does. CI
+runs it against the image instead, on S3 storage:
+`.github/scripts/e2e-image.sh <image>` starts both, then
+`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them. With the web
+app built (`pnpm --filter @largerio/web build`), `scripts/verify-web-app.sh
+http://localhost:3000` then checks that the image serves that very build, as
+CI does and as anyone can of an instance
+([SECURITY.md](SECURITY.md#verifying-the-web-app)).
 
 The command line runs against the same image, installed with npm from its
 packed tarball and the SDK's, as a user installs it. Start the image with an
@@ -177,12 +188,23 @@ Translations live in `messages/*.json` (10 languages: en, fr, es, de, pt, it, ja
 
 ### Adding a language
 
-Dropping a JSON file in `messages/` is not enough; register it in three places:
+Dropping a JSON file in `messages/` is not enough; register it in four places:
 
-1. `apps/web/src/lib/i18n/index.svelte.ts` — import the file, add the code to the
-   `Locale` union, and add the entry to the `messages` record
-2. `apps/web/src/hooks.server.ts` — add the code to `SUPPORTED_LOCALES`
-3. `apps/web/src/lib/components/LangToggle.svelte` — add it to `LANGS`
+1. `packages/shared/src/site.ts` — add the code to `LOCALES`, which the server
+   picks a visitor's language from
+2. `apps/web/src/lib/i18n/index.svelte.ts` — import the file and add the entry to
+   the `messages` record
+3. `apps/web/src/lib/components/LangMenu.svelte` — add it to `LANGS`
+4. `apps/api/src/site/shell.ts` — add its `og:locale` to `OG_LOCALES`
+
+The last three are keyed by `Locale`: once the code is in `LOCALES`,
+`pnpm typecheck` names whichever of them still lacks it. The sitemap and the
+pages' `hreflang` links follow `LOCALES` on their own.
+
+The API reads every language's file at startup, to write the pages' heads, and
+refuses to start when `en.json` lacks one of the messages they need
+(`HEAD_MESSAGES` in `apps/api/src/site/messages.ts`): the other languages fall
+back to English, message by message.
 
 ## Releases
 
@@ -293,7 +315,9 @@ git tag v1.4.0 <commit> && git push origin v1.4.0
 Nothing is rebuilt: `release-image.yml` gives the image CI tested for that
 commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
 `main` and is not redeployed. Once that run is green, publish the release
-(`gh release create`), starting its notes from the CHANGELOG entry.
+(`gh release create`), starting its notes from the CHANGELOG entry, with the
+line the run's summary gives: the digest of the web app the image serves
+([SECURITY.md](SECURITY.md#verifying-the-web-app)).
 
 Only that commit's image reports the version: an image of any later commit
 reports it suffixed `-dev`. So `release-image.yml` refuses a tag on any other
@@ -306,13 +330,15 @@ commit's CI/CD run, then the Release image run. Once `main` has moved on, a
 re-run tags the image `sha-<commit>` but neither moves `:main` nor deploys.
 
 Every week, `rebuild-release.yml` rebuilds the latest release if its base image
-has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild. Every
-tag moves through `.github/actions/promote-image`: a Trivy scan, the smoke test
+has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild, as
+long as it serves the release's web app, by digest. Every tag moves through
+`.github/actions/promote-image`: a Trivy scan, the smoke test
 (`.github/actions/check-image`) and a signature check come first. The two
 workflows that build an image run `check-image` for `linux/arm64` before, on an
 arm64 runner, then sign the image in `promote-image` and attest its provenance;
-a release only checks the signature `deploy.yml` left. Renaming either of them changes the signing identity
-self-hosters verify ([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
+a release only checks the signature `deploy.yml` left. Renaming either of them
+changes the signing identity self-hosters verify
+([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
 
 ## License
 

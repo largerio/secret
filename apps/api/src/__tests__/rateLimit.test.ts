@@ -2,9 +2,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import {
 	buildTrustedBlockList,
+	type ClientAddressOptions,
 	classifyNotesPath,
+	createClientAddress,
 	createRateLimit,
 	ipv6Prefix64,
+	type RateLimitResult,
 } from "../middleware/rateLimit.js";
 import { problemOf } from "./problems.js";
 
@@ -12,10 +15,18 @@ function mockEnv(remoteAddress: string): { incoming: { socket: { remoteAddress: 
 	return { incoming: { socket: { remoteAddress } } };
 }
 
+/** A limiter that tells clients apart as the app would with these settings. */
+function limiter(
+	options: { readonly windowMs: number; readonly max: number } & ClientAddressOptions,
+): RateLimitResult {
+	const { windowMs, max, ...address } = options;
+	return createRateLimit({ windowMs, max, clientAddress: createClientAddress(address) });
+}
+
 describe("createRateLimit", () => {
 	it("allows requests under the limit", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 5 });
+		const rl = limiter({ windowMs: 60_000, max: 5 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -26,7 +37,7 @@ describe("createRateLimit", () => {
 
 	it("returns 429 when limit is exceeded", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 2 });
+		const rl = limiter({ windowMs: 60_000, max: 2 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -41,7 +52,7 @@ describe("createRateLimit", () => {
 
 	it("resets after window expires", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 100, max: 1 });
+		const rl = limiter({ windowMs: 100, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -57,7 +68,7 @@ describe("createRateLimit", () => {
 
 	it("tracks different peer IPs separately", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -75,7 +86,7 @@ describe("createRateLimit", () => {
 
 	it("ignores X-Forwarded-For when peer is not a trusted proxy", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -92,7 +103,7 @@ describe("createRateLimit", () => {
 
 	it("keys on the right-most untrusted X-Forwarded-For hop when the peer is trusted", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["10.0.0.0/8"],
@@ -120,7 +131,7 @@ describe("createRateLimit", () => {
 
 	it("falls back to X-Real-IP when X-Forwarded-For is absent and peer is trusted", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["127.0.0.1/32"],
@@ -141,7 +152,7 @@ describe("createRateLimit", () => {
 
 	it("ignores an invalid X-Forwarded-For and falls through to X-Real-IP", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["10.0.0.0/8"],
@@ -169,7 +180,7 @@ describe("createRateLimit", () => {
 
 	it("falls back to peer IP when trusted proxy sends invalid forwarded headers", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["127.0.0.1/32"],
@@ -197,7 +208,7 @@ describe("createRateLimit", () => {
 
 	it("falls back to peer IP when trusted proxy sends no forwarded headers", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["127.0.0.1/32"],
@@ -214,7 +225,7 @@ describe("createRateLimit", () => {
 
 	it("bucket is shared when peer IP is missing (falls back to 'unknown')", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -227,7 +238,7 @@ describe("createRateLimit", () => {
 
 	it("treats invalid peer addresses as 'unknown'", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -240,7 +251,7 @@ describe("createRateLimit", () => {
 
 	it("handles IPv4-mapped IPv6 peer addresses", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -253,7 +264,7 @@ describe("createRateLimit", () => {
 
 	it("supports IPv6 trusted proxies", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({
+		const rl = limiter({
 			windowMs: 60_000,
 			max: 1,
 			trustedProxies: ["2001:db8::/32"],
@@ -277,14 +288,14 @@ describe("createRateLimit", () => {
 	});
 
 	it("returns cleanup function that clears interval", () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 5 });
+		const rl = limiter({ windowMs: 60_000, max: 5 });
 		expect(typeof rl.cleanup).toBe("function");
 		expect(() => rl.cleanup()).not.toThrow();
 	});
 
 	it("returns 429 response with correct error message", async () => {
 		const app = new Hono();
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
@@ -298,7 +309,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("cleanup interval removes expired entries", async () => {
-		const rl = createRateLimit({ windowMs: 50, max: 100 });
+		const rl = limiter({ windowMs: 50, max: 100 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -312,7 +323,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("cleanup interval keeps non-expired entries", async () => {
-		const rl = createRateLimit({ windowMs: 50, max: 100 });
+		const rl = limiter({ windowMs: 50, max: 100 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -328,7 +339,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("evicts expired entry when store is full and new IP arrives", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 100 });
+		const rl = limiter({ windowMs: 60_000, max: 100 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -352,7 +363,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("drops the oldest entry instead of refusing a new client when the store is full", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -378,7 +389,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("tells a limited client when to retry", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -395,7 +406,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("shares one bucket across an IPv6 /64", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -410,7 +421,7 @@ describe("createRateLimit", () => {
 	});
 
 	it("aggregates forwarded IPv6 clients by /64 too", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 1, trustedProxies: ["127.0.0.1"] });
+		const rl = limiter({ windowMs: 60_000, max: 1, trustedProxies: ["127.0.0.1"] });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
@@ -429,13 +440,125 @@ describe("createRateLimit", () => {
 	});
 
 	it("keeps the full address for IPv6 forms with an embedded IPv4", async () => {
-		const rl = createRateLimit({ windowMs: 60_000, max: 1 });
+		const rl = limiter({ windowMs: 60_000, max: 1 });
 		const app = new Hono();
 		app.use("*", rl.middleware);
 		app.get("/test", (c) => c.json({ ok: true }));
 
 		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.1"))).status).toBe(200);
 		expect((await app.request("/test", {}, mockEnv("64:ff9b::192.0.2.2"))).status).toBe(200);
+
+		rl.cleanup();
+	});
+});
+
+describe("createClientAddress", () => {
+	/** The key a request from `peer` with `headers` is counted under. */
+	async function keyOf(
+		options: ClientAddressOptions,
+		headers: Record<string, string>,
+		peer?: string,
+	): Promise<string> {
+		const app = new Hono();
+		const clientAddress = createClientAddress(options);
+		app.get("/", (c) => c.text(clientAddress(c)));
+		const res = await app.request("/", { headers }, peer === undefined ? {} : mockEnv(peer));
+		return res.text();
+	}
+
+	const xff = { addressHeader: "x-forwarded-for" };
+
+	it("reads the last X-Forwarded-For entry, the one the proxy wrote, by default", async () => {
+		expect(await keyOf(xff, { "X-Forwarded-For": "6.6.6.6, 1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+	});
+
+	it("reads the entry XFF_DEPTH from the right", async () => {
+		const headers = { "X-Forwarded-For": "6.6.6.6, 1.1.1.1, 172.16.0.1" };
+
+		expect(await keyOf({ ...xff, xffDepth: 2 }, headers, "10.0.0.1")).toBe("1.1.1.1");
+		expect(await keyOf({ ...xff, xffDepth: 3 }, headers, "10.0.0.1")).toBe("6.6.6.6");
+	});
+
+	it("trusts the header from any peer, TRUSTED_PROXIES or not", async () => {
+		const options = { ...xff, trustedProxies: ["192.0.2.1"] };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+	});
+
+	it("reads another header whole", async () => {
+		const options = { addressHeader: "cf-connecting-ip" };
+
+		expect(await keyOf(options, { "CF-Connecting-IP": " 1.1.1.1 " }, "10.0.0.1")).toBe("1.1.1.1");
+		// X-Forwarded-For says nothing then.
+		expect(await keyOf(options, { "X-Forwarded-For": "2.2.2.2" }, "10.0.0.1")).toBe("10.0.0.1");
+	});
+
+	it("counts a forwarded IPv6 client by its /64", async () => {
+		expect(await keyOf(xff, { "X-Forwarded-For": "2001:db8:0:1::5" }, "10.0.0.1")).toBe(
+			"2001:db8:0:1::/64",
+		);
+	});
+
+	it("falls back to the peer without the header, for a client that reached the port directly", async () => {
+		expect(await keyOf(xff, {}, "10.0.0.1")).toBe("10.0.0.1");
+	});
+
+	it("takes the header's name in any case", async () => {
+		const headers = { "X-Forwarded-For": "6.6.6.6, 1.1.1.1" };
+
+		// Read as X-Forwarded-For, its last entry, not as a header read whole.
+		expect(await keyOf({ addressHeader: "X-Forwarded-For" }, headers, "10.0.0.1")).toBe("1.1.1.1");
+		expect(
+			await keyOf(
+				{ addressHeader: "CF-Connecting-IP" },
+				{ "cf-connecting-ip": "2.2.2.2" },
+				"10.0.0.1",
+			),
+		).toBe("2.2.2.2");
+	});
+
+	it("falls back to the peer when the list is shorter than XFF_DEPTH", async () => {
+		const options = { ...xff, xffDepth: 3 };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1, 2.2.2.2" }, "10.0.0.1")).toBe(
+			"10.0.0.1",
+		);
+	});
+
+	it.each(["", "not-an-ip", "1.1.1.1:443", "unknown"])(
+		"falls back to the peer when the entry is %o",
+		async (entry) => {
+			expect(await keyOf(xff, { "X-Forwarded-For": entry }, "10.0.0.1")).toBe("10.0.0.1");
+			expect(await keyOf({ addressHeader: "x-real-ip" }, { "X-Real-IP": entry }, "10.0.0.1")).toBe(
+				"10.0.0.1",
+			);
+		},
+	);
+
+	it("shares the unknown bucket with neither the header nor a peer", async () => {
+		expect(await keyOf(xff, {})).toBe("unknown");
+	});
+
+	it("keeps the TRUSTED_PROXIES logic without ADDRESS_HEADER", async () => {
+		const options = { addressHeader: "", trustedProxies: ["10.0.0.0/8"] };
+
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "10.0.0.1")).toBe("1.1.1.1");
+		expect(await keyOf(options, { "X-Forwarded-For": "1.1.1.1" }, "192.0.2.1")).toBe("192.0.2.1");
+	});
+
+	it("limits by the header's address in createRateLimit", async () => {
+		const rl = limiter({ windowMs: 60_000, max: 1, ...xff });
+		const app = new Hono();
+		app.use("*", rl.middleware);
+		app.get("/test", (c) => c.json({ ok: true }));
+
+		const from = (client: string) =>
+			app.request("/test", { headers: { "X-Forwarded-For": client } }, mockEnv("10.0.0.1"));
+
+		expect((await from("1.1.1.1")).status).toBe(200);
+		expect((await from("2.2.2.2")).status).toBe(200);
+		// A forged prefix changes nothing: the proxy's entry is last.
+		expect((await from("9.9.9.9, 1.1.1.1")).status).toBe(429);
 
 		rl.cleanup();
 	});
@@ -500,7 +623,7 @@ describe("buildTrustedBlockList", () => {
 
 describe("X-Forwarded-For chain parsing", () => {
 	function appWithLimit(trustedProxies: string[]) {
-		const { middleware } = createRateLimit({ windowMs: 60_000, max: 1, trustedProxies });
+		const { middleware } = limiter({ windowMs: 60_000, max: 1, trustedProxies });
 		const app = new Hono();
 		app.use("*", middleware);
 		app.get("/", (c) => c.text("ok"));

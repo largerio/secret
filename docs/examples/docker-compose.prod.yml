@@ -38,11 +38,9 @@ services:
       - SERVER_ENCRYPTION_KEY=${SERVER_ENCRYPTION_KEY}
       - APP_URL=https://${DOMAIN}
 
-      # Rate limiting can only tell clients apart when these three agree with
-      # your proxy setup — otherwise every user shares one bucket and the API
-      # says so at startup.
+      # Rate limiting can only tell clients apart when these two agree with
+      # your proxy setup — otherwise every user shares one bucket.
       # See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy
-      - TRUSTED_PROXIES=127.0.0.1/32
       - ADDRESS_HEADER=X-Forwarded-For
       - XFF_DEPTH=1
 

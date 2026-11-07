@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { createRateLimit } from "../middleware/rateLimit.js";
+import { createClientAddress, createRateLimit } from "../middleware/rateLimit.js";
 import { type CapChallengeConfig, createCapRoutes, DEFAULT_CAP_CONFIG } from "../routes/cap.js";
 import { problemOf } from "./problems.js";
 
@@ -126,7 +126,7 @@ describe("POST /redeem", () => {
 describe("rate limiting", () => {
 	it("returns 429 once the per-IP challenge limit is exceeded", async () => {
 		const max = 3;
-		const rl = createRateLimit({ windowMs: 60_000, max });
+		const rl = createRateLimit({ windowMs: 60_000, max, clientAddress: createClientAddress({}) });
 		const rateLimited = new Hono();
 		rateLimited.use("/api/cap/*", rl.middleware);
 		rateLimited.route("/api/cap", createCapRoutes());

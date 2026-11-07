@@ -211,6 +211,10 @@ Browser                                   Server
 
 The encryption key lives in the URL fragment (`#key`), which browsers never send to the server.
 
+The code that encrypts comes from the server, though: the web app is a static bundle that builds
+reproducibly, and each release publishes its digest, which every instance reports, so anyone can
+[check](SECURITY.md#verifying-the-web-app) what an instance serves them against a release.
+
 [PROTOCOL.md](PROTOCOL.md) specifies the format and the API flows, with test vectors, for anyone writing a
 client in another language.
 
@@ -223,6 +227,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
 | `APP_NAME` | `Secret` | Application name |
 | `APP_URL` | `http://localhost:3000` | Public URL (`http://` or `https://`) |
+| `APP_DESCRIPTION` | — | The home page's description for search engines and link previews, in every language. Unset, each language keeps its own translated one |
 | `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: indigo). The gradients and the dark-theme shade are derived from it. See `.env.example` for footer and social image |
 | `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
 | `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
@@ -238,7 +243,7 @@ All settings via environment variables. See [.env.example](.env.example) for the
 | `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
 | `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
 | `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max size of a large note's files (500 MB). A note may take a little more room: its padding, at most 6.25% (0.8% at 500 MB) |
-| `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) serve the site on it — the API stays internal on `API_PORT` (`3001`) |
+| `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) get the site and the API on it: the app is one process, on one port |
 
 On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`, `STORAGE_RECONCILE`, `DEBUG`) accept `true` or `1` for on, and `false` or `0` for off; blank keeps the default. Any other value, like any invalid setting, stops the server at startup.
 
@@ -338,6 +343,8 @@ server {
 
 Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
 
+Behind either, set `ADDRESS_HEADER=X-Forwarded-For` and `XFF_DEPTH=1`: until then every visitor shares the proxy's rate-limit bucket, and the app warns about it at every start. See [Making rate limiting work behind a proxy](docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy).
+
 ## Development
 
 ```bash
@@ -354,7 +361,7 @@ pnpm typecheck    # TypeScript strict
 
 ```
 apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
-apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4)
+apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4), static files the API serves
 apps/e2e/         Playwright end-to-end tests (incl. axe-core a11y gate)
 packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/cli/     Command line (`secret`), built on the SDK
@@ -410,7 +417,8 @@ short-lived OIDC token against the package's configured trusted publisher. See
 | Database | SQLite `secure_delete`, WAL mode |
 | Docker | Non-root, read-only filesystem, dropped capabilities |
 | Image provenance | Signed (cosign, keyless) with a SLSA build provenance attestation, once scanned and smoke-tested — [how to verify](docs/self-hosting.md#verifying-the-image) |
-| HTTP | Strict CSP, HSTS (preload), Permissions-Policy, per-IP rate limiting |
+| Web app integrity | A reproducible static bundle: each release publishes its digest, which `/api/health` reports — [how to verify](SECURITY.md#verifying-the-web-app) |
+| HTTP | Strict CSP (inline scripts by hash, no framing), HSTS (preload), Permissions-Policy, per-IP rate limiting |
 | Storage | Path traversal protection, S3 key validation |
 | Validation | Zod schemas with max length constraints |
 

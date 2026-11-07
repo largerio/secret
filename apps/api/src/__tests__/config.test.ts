@@ -15,7 +15,13 @@ import {
 	MIN_EXPIRY_SECONDS,
 } from "@largerio/secret-shared";
 import { afterAll, describe, expect, it } from "vitest";
-import { type AppConfig, ConfigError, describeRateLimitScope, parseConfig } from "../config.js";
+import {
+	type AppConfig,
+	ConfigError,
+	describePrimaryColor,
+	describeRateLimitScope,
+	parseConfig,
+} from "../config.js";
 
 type Env = NodeJS.ProcessEnv;
 
@@ -45,11 +51,11 @@ describe("parseConfig", () => {
 			const config: AppConfig = parseConfig(baseEnv());
 
 			expect(config).toMatchObject({
-				port: 3001,
+				port: 3000,
 				host: "0.0.0.0",
 				databasePath: "./data/secret.db",
 				filesPath: "./data/files",
-				appUrl: "http://localhost:3001",
+				appUrl: "http://localhost:3000",
 				serverKey: TEST_KEY,
 				cleanupIntervalMs: CLEANUP_INTERVAL_MS,
 				capDifficulty: DEFAULT_CAP_DIFFICULTY,
@@ -68,6 +74,13 @@ describe("parseConfig", () => {
 				shutdownTimeoutMs: 8000,
 			});
 			expect(config.storage).toEqual({ type: "local", localPath: "./data/files" });
+		});
+
+		it("listens on every interface, port 3000, when HOST and PORT are blank", () => {
+			const config = parseConfig(baseEnv({ HOST: " ", PORT: "" }));
+
+			expect(config.host).toBe("0.0.0.0");
+			expect(config.port).toBe(3000);
 		});
 
 		it("derives appUrl from a custom PORT", () => {
@@ -301,6 +314,8 @@ describe("parseConfig", () => {
 			[{ STORAGE_BACKEND: "azure" }, "STORAGE_BACKEND must be 'local' or 's3'"],
 			[{ MAX_FILE_SIZE: "0" }, "MAX_FILE_SIZE must be a positive integer"],
 			[{ MAX_FILE_SIZE: "1.5" }, "MAX_FILE_SIZE must be a positive integer"],
+			[{ MAX_FILE_SIZE: "Infinity" }, "MAX_FILE_SIZE must be a positive integer"],
+			[{ MAX_FILE_SIZE: "1e300" }, "MAX_FILE_SIZE must be a positive integer"],
 			[{ MAX_FILES_PER_NOTE: "0" }, "MAX_FILES_PER_NOTE must be a positive integer"],
 			[{ MAX_FILES_PER_NOTE: "2.2" }, "MAX_FILES_PER_NOTE must be a positive integer"],
 			[
@@ -311,10 +326,21 @@ describe("parseConfig", () => {
 				{ STORAGE_QUOTA_BYTES: "1.5" },
 				"STORAGE_QUOTA_BYTES must be a non-negative integer (0 disables the quota)",
 			],
-			[{ CHUNK_SIZE: "0" }, "CHUNK_SIZE must be a positive number"],
-			[{ CHUNK_SIZE: "x" }, "CHUNK_SIZE must be a positive number"],
-			[{ MAX_CHUNKED_FILE_SIZE: "0" }, "MAX_CHUNKED_FILE_SIZE must be a positive number"],
-			[{ MAX_CHUNKED_FILE_SIZE: "y" }, "MAX_CHUNKED_FILE_SIZE must be a positive number"],
+			[{ CHUNK_SIZE: "0" }, "CHUNK_SIZE must be a positive integer"],
+			[{ CHUNK_SIZE: "x" }, "CHUNK_SIZE must be a positive integer"],
+			[{ CHUNK_SIZE: "1048576.5" }, "CHUNK_SIZE must be a positive integer"],
+			[{ CHUNK_SIZE: "Infinity" }, "CHUNK_SIZE must be a positive integer"],
+			[{ MAX_CHUNKED_FILE_SIZE: "0" }, "MAX_CHUNKED_FILE_SIZE must be a positive integer"],
+			[{ MAX_CHUNKED_FILE_SIZE: "y" }, "MAX_CHUNKED_FILE_SIZE must be a positive integer"],
+			[{ MAX_CHUNKED_FILE_SIZE: "Infinity" }, "MAX_CHUNKED_FILE_SIZE must be a positive integer"],
+			[
+				{ MAX_CHUNKED_FILE_SIZE: "524288000.5" },
+				"MAX_CHUNKED_FILE_SIZE must be a positive integer",
+			],
+			[
+				{ MAX_CHUNKED_FILE_SIZE: "9007199254740992" },
+				"MAX_CHUNKED_FILE_SIZE must be a positive integer",
+			],
 			[
 				{ CHUNK_SIZE: "100", MAX_CHUNKED_FILE_SIZE: "50" },
 				"CHUNK_SIZE must be less than or equal to MAX_CHUNKED_FILE_SIZE",
@@ -514,16 +540,115 @@ describe("secrets in files", () => {
 });
 
 describe("describeRateLimitScope", () => {
-	it("warns when no proxy is trusted, since every user then shares one bucket", () => {
-		const warning = describeRateLimitScope({ trustedProxies: [] });
+	it("warns when nothing says where the client is, since every user then shares one bucket", () => {
+		const warning = describeRateLimitScope({ trustedProxies: [], addressHeader: "" });
 
-		expect(warning).toContain("TRUSTED_PROXIES is empty");
-		expect(warning).toContain("ADDRESS_HEADER");
+		expect(warning).toContain("neither ADDRESS_HEADER nor TRUSTED_PROXIES is set");
+		expect(warning).toContain("ADDRESS_HEADER=X-Forwarded-For");
+		expect(warning).toContain("XFF_DEPTH=1");
 		expect(warning).toContain("docs/self-hosting.md");
 	});
 
 	it("stays quiet once a proxy is trusted", () => {
-		expect(describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"] })).toBeNull();
+		expect(
+			describeRateLimitScope({ trustedProxies: ["127.0.0.1/32"], addressHeader: "" }),
+		).toBeNull();
+	});
+
+	it("stays quiet once the proxy's header is named", () => {
+		expect(
+			describeRateLimitScope({ trustedProxies: [], addressHeader: "x-forwarded-for" }),
+		).toBeNull();
+	});
+});
+
+describe("the client address", () => {
+	it("tells clients apart by the socket peer by default", () => {
+		const config = parseConfig(baseEnv());
+
+		expect(config.addressHeader).toBe("");
+		expect(config.xffDepth).toBe(1);
+	});
+
+	it("reads ADDRESS_HEADER whatever its case, and XFF_DEPTH", () => {
+		const config = parseConfig(baseEnv({ ADDRESS_HEADER: " X-Forwarded-For ", XFF_DEPTH: "2" }));
+
+		expect(config.addressHeader).toBe("x-forwarded-for");
+		expect(config.xffDepth).toBe(2);
+	});
+
+	it("treats blank values as unset, as compose passes them", () => {
+		const config = parseConfig(baseEnv({ ADDRESS_HEADER: "", XFF_DEPTH: "" }));
+
+		expect(config.addressHeader).toBe("");
+		expect(config.xffDepth).toBe(1);
+	});
+
+	it.each(["0", "-1", "1.5", "two"])("refuses XFF_DEPTH=%s", (depth) => {
+		expectConfigError(baseEnv({ XFF_DEPTH: depth }), "XFF_DEPTH must be a positive integer");
+	});
+
+	it.each(["X-Forwarded-For:", "X Real IP", "x-réel"])("refuses ADDRESS_HEADER=%s", (header) => {
+		expectConfigError(
+			baseEnv({ ADDRESS_HEADER: header }),
+			"ADDRESS_HEADER must be a header name, such as X-Forwarded-For",
+		);
+	});
+});
+
+describe("the instance's branding", () => {
+	it("keeps the web app's defaults, and no description of the instance's own", () => {
+		const config = parseConfig(baseEnv({ APP_URL: "https://secret.example/" }));
+
+		expect(config).toMatchObject({
+			appName: "Secret",
+			appDescription: "",
+			primaryColor: "",
+			footerText: "",
+			ogImageUrl: "https://secret.example/og.png",
+		});
+	});
+
+	it("reads APP_NAME, APP_DESCRIPTION, APP_PRIMARY_COLOR, APP_FOOTER_TEXT, APP_OG_IMAGE_URL", () => {
+		const config = parseConfig(
+			baseEnv({
+				APP_NAME: "Vault",
+				APP_DESCRIPTION: "Our notes",
+				APP_PRIMARY_COLOR: "#0a7",
+				APP_FOOTER_TEXT: "Run by ACME",
+				APP_OG_IMAGE_URL: "https://cdn.example/preview.png",
+			}),
+		);
+
+		expect(config).toMatchObject({
+			appName: "Vault",
+			appDescription: "Our notes",
+			primaryColor: "#0a7",
+			footerText: "Run by ACME",
+			ogImageUrl: "https://cdn.example/preview.png",
+		});
+	});
+
+	it("treats blank values as unset", () => {
+		const config = parseConfig(
+			baseEnv({ APP_NAME: " ", APP_DESCRIPTION: "  ", APP_OG_IMAGE_URL: "" }),
+		);
+
+		expect(config.appName).toBe("Secret");
+		expect(config.appDescription).toBe("");
+		expect(config.ogImageUrl).toBe("http://localhost:3000/og.png");
+	});
+});
+
+describe("describePrimaryColor", () => {
+	it("warns of a colour the pages ignore, without refusing to start", () => {
+		const config = parseConfig(baseEnv({ APP_PRIMARY_COLOR: "red" }));
+
+		expect(describePrimaryColor(config)).toContain("APP_PRIMARY_COLOR is not a hex colour");
+	});
+
+	it.each(["", "#4f46e5", "#0a7"])("stays quiet for %o", (primaryColor) => {
+		expect(describePrimaryColor({ primaryColor })).toBeNull();
 	});
 });
 
@@ -554,7 +679,7 @@ describe("blank environment values", () => {
 			baseEnv({ PORT: "", MAX_FILE_SIZE: "", MAX_EXPIRY: "", CHUNK_SIZE: "" }),
 		);
 
-		expect(config.port).toBe(3001);
+		expect(config.port).toBe(3000);
 		expect(config.maxFileSize).toBe(MAX_FILE_SIZE);
 		expect(config.maxExpirySeconds).toBe(MAX_EXPIRY_SECONDS);
 		expect(config.chunkSize).toBe(DEFAULT_CHUNK_SIZE);

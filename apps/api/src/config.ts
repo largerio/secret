@@ -13,7 +13,9 @@ import {
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
+import type { PageConfig } from "@largerio/secret-shared/site";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
+import { accentStyle } from "./site/accent.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
 /**
@@ -27,6 +29,12 @@ import type { StorageConfig, StorageType } from "./storage/index.js";
 function readEnvNumber(value: string | undefined, fallback: number): number {
 	if (value === undefined || value.trim() === "") return fallback;
 	return Number(value);
+}
+
+/** A text setting, blank meaning the default like the numbers above. */
+function readEnvString(value: string | undefined, fallback: string): string {
+	if (value === undefined || value.trim() === "") return fallback;
+	return value;
 }
 
 /**
@@ -95,6 +103,9 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** AES-256 server layer key size. */
 const SERVER_KEY_BYTES = 32;
 
+/** A header's name (RFC 9110's token), lower-cased. */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+
 /** Roughly the length of `openssl rand -base64 32`; rejects toy keys. */
 const MIN_API_KEY_LENGTH = 32;
 
@@ -103,7 +114,7 @@ const MIN_METRICS_TOKEN_LENGTH = 32;
 
 /**
  * Seconds a shutdown waits for in-flight requests: under the 10 s Docker leaves
- * between SIGTERM and SIGKILL. The web server in the image drains as long.
+ * between SIGTERM and SIGKILL.
  */
 const DEFAULT_SHUTDOWN_TIMEOUT = 8;
 const MAX_SHUTDOWN_TIMEOUT = 3600;
@@ -151,6 +162,14 @@ export interface AppConfig {
 	readonly chunkSize: number;
 	readonly maxChunkedFileSize: number;
 	readonly trustedProxies: ReadonlyArray<string>;
+	/**
+	 * ADDRESS_HEADER, lower-cased: the header the reverse proxy writes the
+	 * client's address in, or "" to tell clients apart by the socket peer (and
+	 * TRUSTED_PROXIES). Same variable, same meaning as adapter-node's.
+	 */
+	readonly addressHeader: string;
+	/** XFF_DEPTH: with X-Forwarded-For, the entry that many from the right. */
+	readonly xffDepth: number;
 	/** Scales every per-IP rate limit; >1 for deployments behind a shared address. */
 	readonly rateLimitMultiplier: number;
 	/** Opt-in escape hatch for the server-key fingerprint guard (see keyGuard.ts). */
@@ -160,18 +179,47 @@ export interface AppConfig {
 	readonly metricsToken: string;
 	/** How long a shutdown waits for in-flight requests before it cuts them. */
 	readonly shutdownTimeoutMs: number;
+	/** APP_NAME, in every page's title and head. */
+	readonly appName: string;
+	/**
+	 * APP_DESCRIPTION: the home page's description in every language, in its
+	 * meta tags and JSON-LD; "" when unset, which keeps each language's own.
+	 */
+	readonly appDescription: string;
+	/** APP_PRIMARY_COLOR as set: anything but a hex colour is ignored (see describePrimaryColor). */
+	readonly primaryColor: string;
+	/** APP_FOOTER_TEXT, at the foot of every page; "" for none. */
+	readonly footerText: string;
+	/** APP_OG_IMAGE_URL, or the og.png the web app ships. */
+	readonly ogImageUrl: string;
+}
+
+/**
+ * What a page reads of the instance's settings, in the shell data: its name,
+ * its footer, and the limits it announces, which `GET /api/v1/config` answers
+ * too (INSTANCE_LIMITS).
+ */
+export function pageConfigOf(config: AppConfig): PageConfig {
+	return {
+		appName: config.appName,
+		footerText: config.footerText,
+		maxFileSize: config.maxFileSize,
+		maxFilesPerNote: config.maxFilesPerNote,
+		chunkSize: config.chunkSize,
+		maxChunkedFileSize: config.maxChunkedFileSize,
+		maxExpiry: config.maxExpirySeconds,
+	};
 }
 
 /**
  * Warn when per-IP rate limiting cannot actually tell clients apart.
  *
- * Behind any proxy the peer address is the proxy's. Without TRUSTED_PROXIES the
- * API has no reason to believe the forwarded address, and correctly falls back
- * to the peer — which means *every* user shares a single bucket. The limits
- * still apply, they just apply to the whole instance at once, and nothing about
- * that is visible from the outside. The Docker image's entrypoint trusts its
- * own web app (127.0.0.1/32) unless told otherwise, so this mostly concerns
- * the API run outside the image.
+ * Behind a reverse proxy the peer address is the proxy's. Without
+ * ADDRESS_HEADER or TRUSTED_PROXIES the API has no reason to believe a
+ * forwarded address, and correctly falls back to the peer — which means
+ * *every* user shares a single bucket. The limits still apply, they just apply
+ * to the whole instance at once, and nothing about that is visible from the
+ * outside.
  *
  * Returns null when the configuration can distinguish clients (or when the API
  * is exposed directly, where the peer address is the real one).
@@ -179,20 +227,36 @@ export interface AppConfig {
  * @returns A message to log at startup, or null.
  */
 export function describeRateLimitScope(config: {
-	trustedProxies: ReadonlyArray<string>;
+	readonly trustedProxies: ReadonlyArray<string>;
+	readonly addressHeader: string;
 }): string | null {
-	if (config.trustedProxies.length > 0) return null;
+	if (config.addressHeader !== "" || config.trustedProxies.length > 0) return null;
 
 	return [
-		"WARNING: TRUSTED_PROXIES is empty, so per-IP rate limits are shared by all",
-		"users behind any proxy, including the bundled web app. If a proxy sits in",
-		"front of this API, list its address, e.g. for the web app on this host:",
-		"  TRUSTED_PROXIES=127.0.0.1/32",
-		"and, on the web app, ADDRESS_HEADER=X-Forwarded-For plus XFF_DEPTH=<number",
-		"of proxies in front of it>. See",
-		"docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
-		"Ignore this if the API is exposed directly, with no proxy in front.",
+		"WARNING: neither ADDRESS_HEADER nor TRUSTED_PROXIES is set, so per-IP rate limits",
+		"are shared by all users behind any proxy. If a reverse proxy sits in front of",
+		"this instance, name the header it writes the client address in, and how many",
+		"proxies sit in front, e.g. for a single Nginx, Traefik or Caddy:",
+		"  ADDRESS_HEADER=X-Forwarded-For",
+		"  XFF_DEPTH=1",
+		"See docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy.",
+		"Ignore this if the instance is exposed directly, with no proxy in front.",
 	].join("\n");
+}
+
+/**
+ * Warn when APP_PRIMARY_COLOR is set but is not a hex colour: the pages keep
+ * the built-in accent, as they always have, and the operator would otherwise
+ * never learn why.
+ *
+ * @returns A message to log at startup, or null.
+ */
+export function describePrimaryColor(config: { readonly primaryColor: string }): string | null {
+	if (config.primaryColor.trim() === "" || accentStyle(config.primaryColor) !== undefined) {
+		return null;
+	}
+
+	return "APP_PRIMARY_COLOR is not a hex colour (#rgb or #rrggbb): the pages keep the built-in accent.";
 }
 
 /**
@@ -201,8 +265,8 @@ export function describeRateLimitScope(config: {
  * surface it (the entry point logs + exits; tests assert on the message).
  */
 export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
-	const port = readEnvNumber(env["PORT"], Number("3001"));
-	const host = env["HOST"] ?? "0.0.0.0";
+	const port = readEnvNumber(env["PORT"], Number("3000"));
+	const host = readEnvString(env["HOST"], "0.0.0.0");
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
 	const serverKey = readSecret(env, "SERVER_ENCRYPTION_KEY");
@@ -255,6 +319,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		.split(",")
 		.map((v) => v.trim())
 		.filter((v) => v.length > 0);
+	const addressHeader = (env["ADDRESS_HEADER"] ?? "").trim().toLowerCase();
+	const xffDepth = readEnvNumber(env["XFF_DEPTH"], 1);
 
 	if (!serverKey) {
 		throw new ConfigError(
@@ -273,8 +339,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		);
 	}
 
-	// A weak API key is reachable from the internet (the web app forwards the
-	// Authorization header to the API), so refuse the ones that are brute-forceable.
+	// A weak API key is reachable from the internet, so refuse the ones that
+	// are brute-forceable.
 	const weakKey = apiKeys.find((key) => key.length < MIN_API_KEY_LENGTH);
 	if (weakKey !== undefined) {
 		throw new ConfigError(
@@ -331,7 +397,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError("STORAGE_BACKEND must be 'local' or 's3'");
 	}
 
-	if (!Number.isInteger(maxFileSize) || maxFileSize <= 0) {
+	// Byte counts, which /api/v1/config and the pages' shell data hand every
+	// client as JSON: a fraction of a byte means nothing, Infinity reaches them
+	// as null, and past 2^53 a count is no longer exact. A client refuses such
+	// a limit, and the web app its whole configuration with it.
+	if (!Number.isSafeInteger(maxFileSize) || maxFileSize <= 0) {
 		throw new ConfigError("MAX_FILE_SIZE must be a positive integer");
 	}
 
@@ -362,12 +432,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		);
 	}
 
-	if (Number.isNaN(chunkSize) || chunkSize <= 0) {
-		throw new ConfigError("CHUNK_SIZE must be a positive number");
+	if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
+		throw new ConfigError("CHUNK_SIZE must be a positive integer");
 	}
 
-	if (Number.isNaN(maxChunkedFileSize) || maxChunkedFileSize <= 0) {
-		throw new ConfigError("MAX_CHUNKED_FILE_SIZE must be a positive number");
+	if (!Number.isSafeInteger(maxChunkedFileSize) || maxChunkedFileSize <= 0) {
+		throw new ConfigError("MAX_CHUNKED_FILE_SIZE must be a positive integer");
 	}
 
 	if (chunkSize > maxChunkedFileSize) {
@@ -392,6 +462,14 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		throw new ConfigError(`TRUSTED_PROXIES contains an invalid entry: ${(err as Error).message}`);
 	}
 
+	if (addressHeader !== "" && !HEADER_NAME.test(addressHeader)) {
+		throw new ConfigError("ADDRESS_HEADER must be a header name, such as X-Forwarded-For");
+	}
+
+	if (!Number.isInteger(xffDepth) || xffDepth < 1) {
+		throw new ConfigError("XFF_DEPTH must be a positive integer");
+	}
+
 	if (storageBackend === "s3" && (!s3Bucket || !s3AccessKeyId || !s3SecretAccessKey)) {
 		throw new ConfigError(
 			"S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required when STORAGE_BACKEND=s3",
@@ -413,12 +491,14 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 				}
 			: { type: "local", localPath: filesPath };
 
+	const normalizedAppUrl = withoutTrailingSlashes(appUrl.href);
+
 	return {
 		port,
 		host,
 		databasePath,
 		filesPath,
-		appUrl: withoutTrailingSlashes(appUrl.href),
+		appUrl: normalizedAppUrl,
 		serverKey,
 		cleanupIntervalMs,
 		capDifficulty,
@@ -434,10 +514,20 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		chunkSize,
 		maxChunkedFileSize,
 		trustedProxies,
+		addressHeader,
+		xffDepth,
 		rateLimitMultiplier,
 		allowServerKeyChange,
 		debug,
 		metricsToken,
 		shutdownTimeoutMs: shutdownTimeout * 1000,
+		// The web server's variables, with its defaults: the pages are the API's
+		// now. APP_DESCRIPTION, which its pages never showed, has none: unset, the
+		// home page keeps the description translated for each language.
+		appName: readEnvString(env["APP_NAME"], "Secret"),
+		appDescription: readEnvString(env["APP_DESCRIPTION"], ""),
+		primaryColor: readEnvString(env["APP_PRIMARY_COLOR"], ""),
+		footerText: readEnvString(env["APP_FOOTER_TEXT"], ""),
+		ogImageUrl: readEnvString(env["APP_OG_IMAGE_URL"], `${normalizedAppUrl}/og.png`),
 	};
 }

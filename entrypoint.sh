@@ -1,12 +1,9 @@
 #!/bin/sh
-# Start both processes and forward termination signals to them so each can
-# shut down gracefully (the API closes the SQLite handle / checkpoints WAL on
-# SIGTERM). Under a plain `sh` PID 1, background children are NOT signaled on
-# `docker stop`, so we trap and relay explicitly.
+# Resolve the server key, then replace this shell with the app: one process,
+# the API, which serves the web app and the API on PORT. Exec'd, it is the
+# process Docker signals, and shuts down gracefully on its own (it closes the
+# SQLite handle and checkpoints the WAL on SIGTERM).
 set -eu
-
-term() { kill -TERM "$api_pid" "$web_pid" 2>/dev/null || true; }
-trap term TERM INT
 
 # Resolve the server encryption key so a fresh instance boots with zero config.
 # Priority:
@@ -26,7 +23,7 @@ if [ -z "${SERVER_ENCRYPTION_KEY:-}" ] && [ -z "${SERVER_ENCRYPTION_KEY_FILE:-}"
 		# Not SERVER_ENCRYPTION_KEY: compose exports it blank, and the API
 		# would get the key both ways.
 		key=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-		mkdir -p "$data_dir"
+		mkdir -p "$(dirname "$KEY_FILE")"
 		# Subshell + umask so the key file is created 0600 (owner-only) atomically.
 		( umask 077; printf '%s\n' "$key" > "$KEY_FILE" )
 		unset key
@@ -42,66 +39,15 @@ if [ -z "${SERVER_ENCRYPTION_KEY:-}" ] && [ -z "${SERVER_ENCRYPTION_KEY_FILE:-}"
 	export SERVER_ENCRYPTION_KEY_FILE
 fi
 
-# `PORT` is the public web server's, never the API's: every PaaS injects it and
-# routes traffic there.
-api_port="${API_PORT:-3001}"
-web_port="${PORT:-3000}"
-
-# The API's peer is the web server in this container, which always replaces
-# X-Forwarded-For with the client address it resolved, dropping whatever the
-# client sent. Trusting the loopback lets the API tell clients apart: left
-# empty, every visitor of the instance shared a single rate-limit bucket.
-TRUSTED_PROXIES="${TRUSTED_PROXIES:-127.0.0.1/32}"
-export TRUSTED_PROXIES
-
-# API server: loopback only, since its one caller is the web server in this same
-# container. API_HOST=0.0.0.0 exposes it.
-PORT="$api_port" HOST="${API_HOST:-127.0.0.1}" node apps/api/dist/index.js &
-api_pid=$!
-
-# Web server (exposed): API paths stream straight to the API, everything else
-# goes to SvelteKit (apps/web/src/server/). Uploads never cross SvelteKit, so
-# its request body limit no longer needs raising: the API enforces its own,
-# derived from MAX_FILE_SIZE and MAX_FILES_PER_NOTE. ORIGIN is the app's public
-# origin, read by that server (adapter-node 6 no longer supports it).
-#
-# The web server gets none of the API's secrets, nor the variables naming their
-# files, so a compromised dependency that dumps process.env finds nothing. This
-# is not isolation: both processes run as the same user, which can read those
-# files.
-#
-# Docker sends SIGKILL 10 seconds after SIGTERM: like the API, the web server
-# drains for at most 8.
-(
-	unset SERVER_ENCRYPTION_KEY API_KEY S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY \
-		SERVER_ENCRYPTION_KEY_FILE API_KEY_FILE S3_ACCESS_KEY_ID_FILE \
-		S3_SECRET_ACCESS_KEY_FILE KEY_FILE METRICS_TOKEN METRICS_TOKEN_FILE \
-		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-	for name in $(env | sed -n 's/^\(API_KEY_[0-9][0-9]*\(_FILE\)\{0,1\}\)=.*/\1/p'); do
-		unset "$name"
-	done
-	exec env PORT="$web_port" ORIGIN="${APP_URL:-http://localhost:$web_port}" \
-		API_URL="${API_URL:-http://127.0.0.1:$api_port}" \
-		SHUTDOWN_TIMEOUT="${SHUTDOWN_TIMEOUT:-8}" \
-		node apps/web/dist/server/index.js
-) &
-web_pid=$!
-
-# Exit as soon as either process exits, then signal the other and reap both.
-# busybox ash has no working `wait -n` (it waits for ALL children), so poll
-# instead: if one process dies the container must exit so Docker's restart
-# policy and orchestrators see the failure instead of a "running" but broken
-# container.
-while kill -0 "$api_pid" 2>/dev/null && kill -0 "$web_pid" 2>/dev/null; do
-	sleep 1
+# Up to 1.7, the API sat behind a web server in this container, on a port of
+# its own that these set. Nothing reads them now: said rather than ignored in
+# silence, since whatever used that port must move to PORT.
+for name in API_PORT API_HOST API_URL; do
+	if [ -n "$(printenv "$name")" ]; then
+		echo "WARNING: $name is set, but no longer used: the app serves the site and the API on PORT (${PORT:-3000}) alone." >&2
+	fi
 done
 
-status=0
-if ! kill -0 "$api_pid" 2>/dev/null; then
-	wait "$api_pid" || status=$?
-else
-	wait "$web_pid" || status=$?
-fi
-term
-wait "$api_pid" "$web_pid" 2>/dev/null || true
-exit "$status"
+# PORT, HOST and SHUTDOWN_TIMEOUT, unset or blank, are the API's to default
+# (apps/api/src/config.ts).
+exec node apps/api/dist/index.js

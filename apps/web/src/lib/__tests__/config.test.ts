@@ -1,10 +1,10 @@
-import type { ServerConfig } from "@largerio/secret-shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 } from "@largerio/secret-shared";
+import type { PageConfig } from "@largerio/secret-shared/site";
 import { describe, expect, it } from "vitest";
 import { getConfig, setConfig } from "../config.svelte.js";
 
@@ -19,13 +19,9 @@ describe("config store", () => {
 	});
 
 	it("replaces the active config via setConfig", () => {
-		const injected: ServerConfig = {
+		const injected: PageConfig = {
 			appName: "My Vault",
-			appDescription: "Custom instance",
-			appUrl: "https://vault.example",
-			primaryColor: "#ff0000",
 			footerText: "© 2026",
-			ogImageUrl: "https://vault.example/og.png",
 			maxFileSize: 1234,
 			maxFilesPerNote: 3,
 			chunkSize: 5678,

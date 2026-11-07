@@ -3,9 +3,10 @@ import { type AppEnv, createApp } from "../app.js";
 import { UNKNOWN_BUILD } from "../buildInfo.js";
 import { type AppConfig, parseConfig } from "../config.js";
 import type { AppDatabase } from "../db/index.js";
-import { createLogger } from "../logger.js";
+import { createLogger, type Logger } from "../logger.js";
 import { createMetrics } from "../metrics.js";
 import { createNotesService, type NotesService } from "../notes/service.js";
+import type { Site } from "../site/load.js";
 import type { StorageBackend } from "../storage/index.js";
 
 export interface TestApp {
@@ -19,14 +20,18 @@ export interface TestApp {
  * limits, auth, error handler) over the given database and storage,
  * configured from `env` as an operator would. Every test request comes from
  * the same address, so the per-IP bounds are raised a hundredfold. Request
- * logs stay quiet; the routes' own log lines still reach the console, where
- * tests watch them.
+ * logs stay quiet unless `logger` takes them; the routes' own log lines
+ * still reach the console, where tests watch them.
  */
 export function createTestApp(options: {
 	readonly db: AppDatabase;
 	readonly serverKey: Buffer;
 	readonly storage: StorageBackend;
 	readonly env?: Record<string, string>;
+	/** The web app (loadSite), served beside the API. */
+	readonly site?: Site;
+	/** Where the app's own log lines go, requests' included: nowhere by default. */
+	readonly logger?: Logger;
 }): TestApp {
 	const config = testConfig(options.serverKey, { RATE_LIMIT_MULTIPLIER: "100", ...options.env });
 	const created = createApp({
@@ -34,7 +39,8 @@ export function createTestApp(options: {
 		serverKey: options.serverKey,
 		storage: options.storage,
 		config,
-		logger: createLogger({ write: () => {} }),
+		logger: options.logger ?? createLogger({ write: () => {} }),
+		site: options.site,
 	});
 	return {
 		app: created.app,

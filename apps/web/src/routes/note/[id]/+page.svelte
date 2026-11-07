@@ -1,19 +1,22 @@
 <script lang="ts">
 import { SecretApiError, SecretDecryptionError } from "@largerio/secret-sdk";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { flushSync, onMount, tick } from "svelte";
 import { page } from "$app/state";
-import Icon, { type IconName } from "#lib/components/Icon.svelte";
+import Icon from "#lib/components/Icon.svelte";
 import FileRow from "#lib/components/note/FileRow.svelte";
 import NoteContent from "#lib/components/note/NoteContent.svelte";
 import Callout from "#lib/components/ui/Callout.svelte";
+import CheckingView from "#lib/components/ui/CheckingView.svelte";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import PageHero from "#lib/components/ui/PageHero.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
-import { formatDateTime, type MessageKey, t, tn } from "#lib/i18n/index.svelte.js";
-import { checkNote, type OpenedNote, readNote } from "#lib/notes/notes.js";
+import { formatDateTime, t, tn } from "#lib/i18n/index.svelte.js";
+import { checkNoteLink, type LinkNotice, NOTICES, type NoteSummary } from "#lib/notes/check.js";
+import { type OpenedNote, readNote } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { isUnreachable, requestErrorMessage } from "#lib/utils/errors.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
@@ -26,53 +29,23 @@ import {
 	readsBefore,
 	readsLeft,
 } from "#lib/utils/reads.js";
-import { isKeyFragment } from "#lib/utils/shareUrl.js";
-import type { PageData } from "./$types";
-
-type NoteInfo = NonNullable<PageData["noteInfo"]>;
-
-type Notice = "not_found" | "link_incomplete" | "unavailable" | "rate_limited";
-
-/** Where the note stands, as the server reports it now. */
-type NoteNow =
-	| { readonly exists: false }
-	| {
-			readonly exists: true;
-			readonly readCount: number | null;
-			readonly passwordAttemptsLeft: number | null;
-	  };
+import { isKeyFragment, keyAfterHashChange } from "#lib/utils/shareUrl.js";
 
 type NoteStatus =
-	| { state: "notice"; notice: Notice }
-	| { state: "ready"; info: NoteInfo }
+	| { state: "checking" }
+	| { state: "notice"; notice: LinkNotice }
+	| { state: "ready"; info: NoteSummary }
 	| { state: "opening"; progress: ProgressView }
 	| { state: "revealed"; note: OpenedNote; urls: string[]; after: ReadsAfter }
 	| { state: "error"; message: string };
 
-const NOTICES: Record<Notice, { title: MessageKey; body: MessageKey; icon: IconName }> = {
-	not_found: { title: "not_found_title", body: "not_found_description", icon: "file-x" },
-	link_incomplete: {
-		title: "link_incomplete_title",
-		body: "link_incomplete_description",
-		icon: "link",
-	},
-	unavailable: { title: "unavailable_title", body: "unavailable_description", icon: "alert" },
-	rate_limited: { title: "rate_limited_title", body: "rate_limited_description", icon: "clock" },
-};
-
-const { data }: { data: PageData } = $props();
-
-// The page starts from what the loader found; from there on, the reader drives it.
-function initialStatus(): NoteStatus {
-	if (data.noteInfo) return { state: "ready", info: data.noteInfo };
-	const notice = data.unavailable ? "unavailable" : data.rateLimited ? "rate_limited" : "not_found";
-	return { state: "notice", notice };
-}
-
-let status = $state<NoteStatus>(initialStatus());
-let mounted = $state(false);
-// Once the reader has acted, each new screen takes the focus.
-let acted = $state(false);
+// The page renders at once and asks the instance where the note stands; from
+// its answer on, the reader drives it. Every screen after the first replaces
+// another, so each one's title takes the focus (afterAction): the answer is
+// announced, and the keyboard starts from it.
+let status = $state<NoteStatus>({ state: "checking" });
+// The note as the check found it, null until then or if it found none.
+let checked = $state<NoteSummary | null>(null);
 let keyFragment = $state("");
 let password = $state("");
 let passwordProblem = $state<"" | "empty" | "wrong">("");
@@ -82,10 +55,10 @@ let renderedMarkdown = $state("");
 // Left before a read ended, the page lets go of the note it gets.
 let destroyed = false;
 
-// From the loader, not from `status`: a failed read is handled once `status`
+// From the check, not from `status`: a failed read is handled once `status`
 // has moved on, and that path must still know the note was single-read —
 // otherwise it offers a retry on a note that no longer exists.
-const isBurn = $derived(data.noteInfo?.maxReads === 1);
+const isBurn = $derived(checked?.maxReads === 1);
 
 const openingLabel = $derived(
 	status.state === "opening" && status.progress.step === 0
@@ -118,25 +91,36 @@ $effect(() => {
 	};
 });
 
-onMount(() => {
-	keyFragment = window.location.hash.slice(1);
-	mounted = true;
-
+/** Where the page starts once the instance has answered. */
+async function check(id: string): Promise<void> {
+	const result = await checkNoteLink(id);
+	if (destroyed) return;
+	if (result.kind === "notice") {
+		status = { state: "notice", notice: result.notice };
+		return;
+	}
+	checked = result.note;
 	// A missing or cut fragment means the link was truncated in transit (mail
 	// clients, chat apps and SMS linkifiers all do it), not that the note is
 	// gone. Caught here, before any read: the server spends a read before the
 	// key is ever used, so a broken key would burn reads on every attempt.
-	if (status.state === "ready" && !isKeyFragment(keyFragment)) {
-		status = { state: "notice", notice: "link_incomplete" };
-	}
+	status = isKeyFragment(keyFragment)
+		? { state: "ready", info: result.note }
+		: { state: "notice", notice: "link_incomplete" };
+}
+
+onMount(() => {
+	keyFragment = window.location.hash.slice(1);
+	void check(page.params["id"] ?? "");
 
 	// The full link pasted into the same tab only changes the fragment: the
-	// page does not reload, so pick the key up from here.
+	// page does not reload, so pick the key up from here. Only a key, though:
+	// an in-page anchor's fragment once replaced a key that worked.
 	const onHashChange = () => {
-		keyFragment = window.location.hash.slice(1);
+		keyFragment = keyAfterHashChange(keyFragment, window.location.hash);
 		const incomplete = status.state === "notice" && status.notice === "link_incomplete";
-		if (incomplete && data.noteInfo && isKeyFragment(keyFragment)) {
-			status = { state: "ready", info: data.noteInfo };
+		if (incomplete && checked && isKeyFragment(keyFragment)) {
+			status = { state: "ready", info: checked };
 		}
 	};
 	window.addEventListener("hashchange", onHashChange);
@@ -147,7 +131,7 @@ onMount(() => {
 		() =>
 			flushSync(() => {
 				forgetNote();
-				status = initialStatus();
+				status = { state: "checking" };
 				password = "";
 			}),
 		() => location.reload(),
@@ -168,7 +152,7 @@ function forgetNote(): void {
 	void status.note.close();
 }
 
-function readsText(info: NoteInfo): string {
+function readsText(info: NoteSummary): string {
 	const reads = readsBefore(info.maxReads, info.readCount);
 	if (reads.kind === "left") return tn("un_reads_left", reads.count);
 	return reads.kind === "total" ? tn("un_reads_total", reads.count) : "";
@@ -177,21 +161,12 @@ function readsText(info: NoteInfo): string {
 /**
  * Ask the server where the note stands, rather than work it out locally:
  * other readers may have spent reads since the page loaded. Null when the
- * server cannot be asked.
+ * server cannot tell.
  */
-async function recheck(id: string): Promise<NoteNow | null> {
-	try {
-		const info = await checkNote(id);
-		return info.exists
-			? {
-					exists: true,
-					readCount: info.readCount ?? null,
-					passwordAttemptsLeft: info.passwordAttemptsLeft ?? null,
-				}
-			: { exists: false };
-	} catch {
-		return null;
-	}
+async function recheck(id: string): Promise<NoteSummary | "gone" | null> {
+	const now = await checkNoteLink(id);
+	if (now.kind === "found") return now.note;
+	return now.notice === "not_found" ? "gone" : null;
 }
 
 function attemptsText(left: number | null): string {
@@ -200,7 +175,7 @@ function attemptsText(left: number | null): string {
 	return attempts.kind === "last" ? t("un_pw_attempt_last") : tn("un_pw_attempts", attempts.count);
 }
 
-async function failPassword(id: string, current: NoteInfo): Promise<void> {
+async function failPassword(id: string, current: NoteSummary): Promise<void> {
 	if (current.format === 1) {
 		await failProof(id, current);
 		return;
@@ -214,12 +189,12 @@ async function failPassword(id: string, current: NoteInfo): Promise<void> {
 	}
 
 	const fresh = await recheck(id);
-	if (fresh?.exists === false) {
+	if (fresh === "gone") {
 		status = { state: "error", message: t("error_wrong_password_last") };
 		return;
 	}
 
-	const info = { ...current, readCount: fresh ? fresh.readCount : null };
+	const info = { ...current, readCount: fresh?.readCount ?? null };
 	const left = readsLeft(info.maxReads, info.readCount);
 	wrongMessage = left === null ? t("error_wrong_password") : tn("error_wrong_password_left", left);
 	passwordProblem = "wrong";
@@ -232,14 +207,14 @@ async function failPassword(id: string, current: NoteInfo): Promise<void> {
  * A format 1 note's server checked a proof of the password before serving
  * anything: no read was spent, an attempt was, and the last one deletes it.
  */
-async function failProof(id: string, current: NoteInfo): Promise<void> {
+async function failProof(id: string, current: NoteSummary): Promise<void> {
 	const fresh = await recheck(id);
-	if (fresh?.exists === false) {
+	if (fresh === "gone") {
 		status = { state: "error", message: t("error_wrong_password_exhausted") };
 		return;
 	}
 
-	const left = fresh ? fresh.passwordAttemptsLeft : null;
+	const left = fresh?.passwordAttemptsLeft ?? null;
 	const attempts = attemptsLeft(left);
 	wrongMessage =
 		attempts.kind === "none"
@@ -272,7 +247,6 @@ async function handleOpen(): Promise<void> {
 	}
 
 	passwordProblem = "";
-	acted = true;
 	status = { state: "opening", progress: { step: 0, percent: 0, chunk: null } };
 
 	try {
@@ -305,7 +279,7 @@ async function handleOpen(): Promise<void> {
 		} else if (isUnreachable(e)) {
 			// The server may have counted the read before the failure.
 			const fresh = await recheck(id);
-			status = { state: "notice", notice: fresh?.exists === false ? "not_found" : "unavailable" };
+			status = { state: "notice", notice: fresh === "gone" ? "not_found" : "unavailable" };
 		} else if (e instanceof SecretApiError) {
 			status = { state: "error", message: requestErrorMessage(e) };
 		} else {
@@ -315,23 +289,21 @@ async function handleOpen(): Promise<void> {
 }
 </script>
 
+<!-- The server renders the page's head (noindex included) for crawlers and
+link previews: the title is kept here, built as the server builds it, so that
+navigating here sets it. -->
 <svelte:head>
-	<title>{getConfig().appName} — {t("view_title")}</title>
-	<meta name="robots" content="noindex, nofollow" />
-	<meta name="description" content={t("view_description")} />
-	<meta property="og:title" content="{getConfig().appName} — {t("view_title")}" />
-	<meta property="og:description" content={t("view_description")} />
+	<title>{pageTitle("note", getConfig().appName, t)}</title>
 </svelte:head>
 
-{#if status.state === "notice"}
-	{@const notice = NOTICES[status.notice]}
-	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction={acted} />
+{#if status.state === "checking"}
+	<CheckingView />
 {:else if status.state === "ready"}
 	{@const info = status.info}
 	{@const lastRead = isLastRead(info.maxReads, info.readCount)}
 	{@const reads = isBurn ? "" : readsText(info)}
 	{@const attempts = info.format === 1 ? attemptsText(info.passwordAttemptsLeft) : ""}
-	<PageHero title={t("un_title")} sub={t("un_sub")} />
+	<PageHero title={t("un_title")} sub={t("un_sub")} afterAction />
 
 	<form
 		class="card rise"
@@ -404,7 +376,7 @@ async function handleOpen(): Promise<void> {
 		{/if}
 
 		<div class="border-t border-line p-3">
-			<button type="submit" class="btn btn-primary btn-lg w-full" disabled={!mounted}>
+			<button type="submit" class="btn btn-primary btn-lg w-full">
 				<Icon name="unlock" size={16} />
 				{info.hasPassword ? t("un_unlock") : t("un_show")}
 			</button>
@@ -412,6 +384,9 @@ async function handleOpen(): Promise<void> {
 	</form>
 
 	<div class="rise" style:animation-delay="0.3s"><TrustLine /></div>
+{:else if status.state === "notice"}
+	{@const notice = NOTICES[status.notice]}
+	<NoticeView icon={notice.icon} title={t(notice.title)} sub={t(notice.body)} afterAction />
 {:else if status.state === "opening"}
 	<PageHero title={t("un_title")} sub={t("un_sub")} afterAction />
 	<ProgressPanel

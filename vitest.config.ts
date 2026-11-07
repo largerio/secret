@@ -20,8 +20,9 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			// Only `.ts` sources (this also covers `*.svelte.ts` rune modules);
-			// keeps `.svelte`/`.html`/`.css` out of the v8 parser.
-			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
+			// keeps `.svelte`/`.html`/`.css` out of the v8 parser. The web app's
+			// build scripts too: what they write is what the release publishes.
+			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "apps/web/scripts/*.ts"],
 			exclude: [
 				"**/*.d.ts",
 				"**/*.test.ts",
@@ -33,22 +34,24 @@ export default defineConfig({
 				"packages/crypto/src/client.ts",
 				"packages/sdk-js/src/index.ts",
 				"packages/shared/src/index.ts",
-				// Entry points that start a server on import. The image smoke test
-				// runs both.
+				// The entry point that starts the server on import. The image smoke
+				// test runs it.
 				"apps/api/src/index.ts",
-				"apps/web/src/server/index.ts",
 				// The backup command's entry point: one line handing argv to
 				// runBackupCommand (db/backup.ts), which is tested.
 				"apps/api/src/backup.ts",
 				// The command line's entry point: one line handing argv to run
 				// (packages/cli/src/run.ts), which is tested.
 				"packages/cli/src/bin.ts",
-				// Frontend: gate the logic modules + utils, but exclude route
-				// loaders and server-only modules (`$app/env`/SSR SDK) that need a
-				// SvelteKit harness to exercise. (`.svelte` components are already
+				// The build's step that writes bundle.json: three lines handing
+				// build/ to writeBundleManifest (apps/web/scripts/manifest.ts), which
+				// is tested. The build runs it.
+				"apps/web/scripts/bundle-manifest.ts",
+				// Frontend: gate the logic modules + utils, but exclude the route
+				// modules (`+layout.ts`), which need a SvelteKit harness to exercise
+				// and only hand over to lib/. (`.svelte` components are already
 				// outside the `*.ts` include above.)
 				"apps/web/src/routes/**",
-				"apps/web/src/lib/server/**",
 				// The worker's entry point, which wires `lib/notes/worker.ts` to the
 				// worker's messages; the e2e suite runs it.
 				"apps/web/src/lib/notes/notes.worker.ts",

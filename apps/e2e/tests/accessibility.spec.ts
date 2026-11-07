@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { createNote, expectNoA11yViolations, gotoCreate, revealNote } from "./helpers";
+import {
+	createNote,
+	expectNoA11yViolations,
+	gotoCreate,
+	holdNoteChecks,
+	revealNote,
+} from "./helpers";
 
 // Accessibility regression gate. Each test drives the app into a distinct UI
 // state with the shared flow helpers, waits for that state to settle, then runs
@@ -72,6 +78,17 @@ test.describe("success view", () => {
 });
 
 test.describe("note view", () => {
+	test("the check of the link has no a11y violations", async ({ page, context }) => {
+		const shareUrl = await createNote(page, { text: `a11y checking ${Date.now()}` });
+		const check = await holdNoteChecks(context);
+		const reader = await context.newPage();
+		await reader.goto(shareUrl);
+		await check.asked;
+		await expect(reader.getByRole("status")).toHaveText("Checking the link…");
+		await expectNoA11yViolations(reader, "note view (checking)");
+		check.release();
+	});
+
 	test("single-read warning has no a11y violations", async ({ page, context }) => {
 		const shareUrl = await createNote(page, { text: `a11y burn ${Date.now()}` });
 		const reader = await context.newPage();

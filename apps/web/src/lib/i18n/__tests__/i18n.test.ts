@@ -1,11 +1,12 @@
+import { pageTitle } from "@largerio/secret-shared/site";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
+	chooseLocale,
 	detectLocale,
 	formatDateTime,
 	getLocale,
 	type Locale,
 	type MessageKey,
-	parseAcceptLanguage,
 	setLocale,
 	t,
 	tn,
@@ -14,21 +15,6 @@ import {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	setLocale("en");
-});
-
-describe("parseAcceptLanguage", () => {
-	it("picks the first supported language", () => {
-		expect(parseAcceptLanguage("fr-FR,fr;q=0.9,en;q=0.8")).toBe("fr");
-	});
-
-	it("respects quality weighting over order", () => {
-		expect(parseAcceptLanguage("en;q=0.5,de;q=0.9")).toBe("de");
-	});
-
-	it("falls back to English for unsupported or empty headers", () => {
-		expect(parseAcceptLanguage("xx-YY,zz")).toBe("en");
-		expect(parseAcceptLanguage("")).toBe("en");
-	});
 });
 
 describe("locale state and translation", () => {
@@ -41,6 +27,20 @@ describe("locale state and translation", () => {
 		expect(getLocale()).toBe("fr");
 		setLocale("en");
 		expect(getLocale()).toBe("en");
+	});
+
+	it("keeps <html lang> in step with the page's language", () => {
+		setLocale("ja");
+		expect(document.documentElement.lang).toBe("ja");
+		setLocale("en");
+		expect(document.documentElement.lang).toBe("en");
+	});
+
+	it("chooseLocale switches the page, and keeps the choice for the next ones", () => {
+		chooseLocale("de");
+		expect(getLocale()).toBe("de");
+		expect(document.documentElement.lang).toBe("de");
+		expect(document.cookie).toContain("secret_lang=de");
 	});
 
 	it("interpolates named parameters", () => {
@@ -63,16 +63,20 @@ describe("locale state and translation", () => {
 		expect(value).toContain("{current}");
 		expect(value).toContain("{total}");
 	});
+
+	it("gives the shared page titles what they expect, {app} left in", () => {
+		// The pages and the server build their titles with pageTitle alike.
+		expect(pageTitle("home", "Vault", t)).toBe(
+			"Vault — Secure, Zero-Knowledge Encrypted Note & File Sharing",
+		);
+		setLocale("fr");
+		expect(pageTitle("manage", "Vault", t)).toBe(`Vault — ${t("manage_title")}`);
+	});
 });
 
 describe("detectLocale", () => {
 	it("returns a supported locale based on navigator.language", () => {
 		// jsdom reports navigator.language as "en-US".
-		expect(detectLocale()).toBe("en");
-	});
-
-	it("returns English when navigator is unavailable (SSR)", () => {
-		vi.stubGlobal("navigator", undefined);
 		expect(detectLocale()).toBe("en");
 	});
 
@@ -84,6 +88,16 @@ describe("detectLocale", () => {
 	it("maps a supported navigator.language to its locale", () => {
 		vi.stubGlobal("navigator", { language: "fr-FR" });
 		expect(detectLocale()).toBe("fr");
+	});
+
+	it("takes the first of the browser's languages the app speaks", () => {
+		vi.stubGlobal("navigator", { language: "nl-NL", languages: ["nl-NL", "de-DE", "fr-FR"] });
+		expect(detectLocale()).toBe("de");
+	});
+
+	it("falls back on navigator.language when the list is empty", () => {
+		vi.stubGlobal("navigator", { language: "ja-JP", languages: [] });
+		expect(detectLocale()).toBe("ja");
 	});
 });
 

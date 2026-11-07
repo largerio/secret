@@ -1,11 +1,9 @@
+import { THEME_COOKIE, type ThemePreference } from "@largerio/secret-shared/site";
 import { setPreferenceCookie } from "./utils/cookies.js";
 
 /** The theme on screen. */
 export type ThemeMode = "dark" | "light";
-/** What the visitor chose: "system" until they pick a theme themselves. */
-export type ThemePreference = ThemeMode | "system";
 
-const COOKIE_NAME = "secret_theme";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 let mode = $state<ThemeMode>("light");
@@ -15,12 +13,6 @@ let listening = false;
 function systemQuery(): MediaQueryList | undefined {
 	if (typeof matchMedia !== "function") return undefined;
 	return matchMedia(DARK_QUERY);
-}
-
-function documentPreference(): ThemePreference | undefined {
-	if (typeof document === "undefined") return undefined;
-	const current = document.documentElement.dataset["mode"];
-	return current === "light" || current === "dark" ? current : "system";
 }
 
 // The page's colours follow the OS through CSS on their own; this keeps the
@@ -33,14 +25,15 @@ function listenToSystem(query: MediaQueryList): void {
 	});
 }
 
-/** Sync the store with the preference the server rendered into `<html data-mode>`. */
-export function initTheme(preference?: ThemePreference): void {
-	const initial = preference ?? documentPreference();
-	if (!initial) return;
-
-	followsSystem = initial === "system";
-	if (initial !== "system") {
-		mode = initial;
+/**
+ * Sync the store with the preference the page starts from, and `<html
+ * data-mode>`, which the CSS reads: this store is its one writer.
+ */
+export function initTheme(preference: ThemePreference): void {
+	document.documentElement.dataset["mode"] = preference;
+	followsSystem = preference === "system";
+	if (preference !== "system") {
+		mode = preference;
 		return;
 	}
 
@@ -53,13 +46,12 @@ export function getMode(): ThemeMode {
 	return mode;
 }
 
+/** The visitor's choice: the page switches to it, and so do the next ones (the cookie). */
 export function setMode(next: ThemeMode): void {
 	mode = next;
 	followsSystem = false;
-	if (typeof document !== "undefined") {
-		document.documentElement.dataset["mode"] = next;
-		setPreferenceCookie(COOKIE_NAME, next);
-	}
+	document.documentElement.dataset["mode"] = next;
+	setPreferenceCookie(THEME_COOKIE, next);
 }
 
 export function toggleMode(): void {

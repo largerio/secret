@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+// Builds no Zod schema, so it may come before the app factory.
+import { LOCALES } from "@largerio/secret-shared/site";
 import { Hono } from "hono";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // Import the app factory first: it pulls in `@hono/zod-openapi`, which extends
@@ -44,7 +46,8 @@ function makeApp(config: AppConfig = buildConfig()) {
 	return createApp({ db, serverKey: TEST_SERVER_KEY, storage, config }).app;
 }
 
-const UNKNOWN = { version: "unknown", revision: "unknown" };
+/** What /api/health reports of a build that says nothing of itself, serving no web app. */
+const UNKNOWN = { version: "unknown", revision: "unknown", bundle: null };
 
 beforeEach(() => {
 	for (const path of [TEST_DB_PATH, `${TEST_DB_PATH}-wal`, `${TEST_DB_PATH}-shm`]) {
@@ -208,6 +211,17 @@ describe("createApp — unversioned routes", () => {
 		expect(res.headers.get("content-type")).toContain("application/xml");
 		const body = await res.text();
 		expect(body).toContain("<loc>https://secret.test/</loc>");
+	});
+
+	it("names the home page in every language the web app speaks", async () => {
+		const body = await (await makeApp().request("/sitemap.xml")).text();
+		const hreflangs = [...body.matchAll(/hreflang="([^"]+)" href="https:\/\/secret\.test\/"/g)].map(
+			(match) => match[1],
+		);
+
+		expect(hreflangs).toEqual([...LOCALES, "x-default"]);
+		expect(body).toMatch(/^<\?xml version="1.0" encoding="UTF-8"\?>\n<urlset /);
+		expect(body).toMatch(/<\/url>\n<\/urlset>\n$/);
 	});
 
 	it("allows CORS from APP_URL's origin, whatever its trailing slash", async () => {

@@ -7,12 +7,14 @@ import { defineConfig, devices } from "@playwright/test";
 // and not committing a literal keeps secret scanners happy.
 const TEST_SERVER_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-// Dedicated ports, distinct from the 5173/3001 dev defaults: with
-// reuseExistingServer, a `pnpm dev` running in another terminal would otherwise
-// be reused, writing ~18 test notes into ./data/secret.db and running the PoW
-// at production difficulty (apiEnv below would never be applied).
-const WEB_PORT = Number(process.env["E2E_WEB_PORT"] ?? 4173);
-const API_PORT = Number(process.env["E2E_API_PORT"] ?? 4001);
+// The port of the instance the suite starts from the sources, when
+// E2E_BASE_URL names none: not E2E_PORT, the one .github/scripts/e2e-image.sh
+// runs the image on. A dedicated port, distinct from the dev servers' (Vite's
+// 5173, the API's 3000): with reuseExistingServer, a `pnpm dev` running in
+// another terminal would otherwise be reused, writing the suite's notes into
+// ./data/secret.db and running the PoW at production difficulty (serverEnv
+// below would never be applied).
+const PORT = Number(process.env["E2E_SOURCES_PORT"] ?? 4173);
 
 // Set, the suite runs against that instance and starts no server: CI points it
 // at the image it builds, on S3 storage (.github/scripts/e2e-image.sh, which
@@ -22,23 +24,23 @@ const BASE_URL = process.env["E2E_BASE_URL"];
 // Absolute paths so they resolve the same regardless of each pnpm script's cwd.
 const TMP_DIR = path.resolve(import.meta.dirname, ".e2e-tmp");
 
-// Smaller than the SDK's 4 MiB default, on both servers: a chunked upload only
-// works if the web app hands the instance's chunk size to the SDK.
+// Smaller than the SDK's 4 MiB default: a chunked upload only works if the web
+// app hands the instance's chunk size to the SDK.
 const CHUNK_SIZE = String(1024 * 1024);
 
 // Keep Proof-of-Work trivial so the in-browser Cap widget solves instantly.
-const apiEnv = {
+const serverEnv = {
 	SERVER_ENCRYPTION_KEY: TEST_SERVER_ENCRYPTION_KEY,
 	CAP_DIFFICULTY: "1",
 	CAP_CHALLENGE_COUNT: "1",
 	// The whole suite hits the API from one address, so the per-IP budget is
-	// shared by all 26 tests running back to back. Without this the later ones
-	// get 429s that surface as "Service unavailable".
+	// shared by all its tests, which run back to back. Without this the later
+	// ones get 429s that surface as "Service unavailable".
 	RATE_LIMIT_MULTIPLIER: "50",
 	CHUNK_SIZE,
 	DATABASE_PATH: path.join(TMP_DIR, "secret.db"),
 	FILES_PATH: path.join(TMP_DIR, "files"),
-	PORT: String(API_PORT),
+	PORT: String(PORT),
 };
 
 export default defineConfig({
@@ -49,7 +51,7 @@ export default defineConfig({
 	workers: 1,
 	reporter: process.env["CI"] ? [["list"], ["html", { open: "never" }]] : "list",
 	use: {
-		baseURL: BASE_URL ?? `http://localhost:${WEB_PORT}`,
+		baseURL: BASE_URL ?? `http://localhost:${PORT}`,
 		// Pinned: the assertions match English UI copy, and the app picks its
 		// locale from Accept-Language. A runner (or a local Chromium) in another
 		// language fails every test with an opaque 30s timeout.
@@ -66,22 +68,22 @@ export default defineConfig({
 		? []
 		: [
 				{
-					// Wipe the temp dir first: it is keyed to a per-run random server key,
-					// so leftovers from a previous run are undecryptable dead weight.
-					command: `rm -rf "${TMP_DIR}" && mkdir -p "${path.join(TMP_DIR, "files")}" && pnpm --filter @largerio/api dev`,
-					port: API_PORT,
-					env: apiEnv,
+					// What an instance runs, from the sources: the web app's static
+					// build, served with the API by the one server, which finds it in
+					// apps/web/build. Wipe the temp dir first: it is keyed to a per-run
+					// random server key, so leftovers from a previous run are
+					// undecryptable dead weight.
+					command: [
+						`rm -rf "${TMP_DIR}"`,
+						`mkdir -p "${path.join(TMP_DIR, "files")}"`,
+						"pnpm --filter @largerio/web build",
+						"pnpm --filter @largerio/api dev",
+					].join(" && "),
+					port: PORT,
+					env: serverEnv,
 					reuseExistingServer: !process.env["CI"],
-					timeout: 120_000,
-				},
-				{
-					command: `pnpm --filter @largerio/web dev --port ${String(WEB_PORT)}`,
-					port: WEB_PORT,
-					// The web dev server proxies to the API; without this it falls back to
-					// the hardcoded http://localhost:3001 default.
-					env: { API_URL: `http://localhost:${String(API_PORT)}`, CHUNK_SIZE },
-					reuseExistingServer: !process.env["CI"],
-					timeout: 120_000,
+					// The build comes first.
+					timeout: 240_000,
 				},
 			],
 });
