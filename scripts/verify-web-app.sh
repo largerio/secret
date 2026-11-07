@@ -171,7 +171,7 @@ const { createHash } = require("node:crypto");
 const html = require("node:fs").readFileSync(process.argv[2], "utf8");
 const runs = /^(|module|(application|text)\/(x-)?(ecma|java)script|text\/javascript1\.[0-5]|text\/(jscript|livescript))$/;
 const sources = new Set();
-for (const [, tag, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+for (const [, tag, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi)) {
 	const attributes = new Map();
 	for (const [, name, ...values] of tag.matchAll(/([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
 		attributes.set(name.toLowerCase(), values.find((value) => value !== undefined) ?? "");

@@ -381,6 +381,16 @@ describe("inlineScriptHashes", () => {
 		expect(inlineScriptHashes(html)).toEqual([]);
 	});
 
+	it("ends a script where a browser ends it, at an end tag of any shape", () => {
+		const html = [
+			"<script>a()</script\t\n bar>",
+			"<script>b()</script/>",
+			'<script>c("</scripts>")</script>',
+		].join("\n");
+
+		expect(inlineScriptHashes(html)).toEqual(["a()", "b()", 'c("</scripts>")'].map(hashOf));
+	});
+
 	it("hashes a script once, however often it appears", () => {
 		expect(inlineScriptHashes("<script>a()</script><script>a()</script>")).toEqual([hashOf("a()")]);
 	});

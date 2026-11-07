@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/**
+ * A script element, as HTML's tokenizer reads one: its text ends at the first
+ * `</script` that whitespace, `/` or `>` follows, and that end tag runs to its
+ * `>`, whatever it holds (`</script\t\n foo>`). `</scripts>` ends nothing.
+ */
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi;
 
 const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
