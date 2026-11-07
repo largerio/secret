@@ -7,6 +7,8 @@ image. Each version links to its GitHub release. The SDK has
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-07
+
 ### Security
 
 - Every page's `Content-Security-Policy` lists the inline scripts the page may run by their SHA-256, taken from the build, where SvelteKit drew a nonce for each response. Scripts come from the instance alone, and pages still cannot be framed. What a page may run is the same on every instance of a release, and can be checked against it. (#272)
@@ -484,7 +486,8 @@ image. Each version links to its GitHub release. The SDK has
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/largerio/secret/releases/tag/v1.8.0
 [1.7.0]: https://github.com/largerio/secret/releases/tag/v1.7.0
 [1.6.0]: https://github.com/largerio/secret/releases/tag/v1.6.0
 [1.5.0]: https://github.com/largerio/secret/releases/tag/v1.5.0
