@@ -12,7 +12,10 @@ export interface CrawlerRoutes {
 	readonly paths: ReadonlyArray<string>;
 }
 
-/** Every page is the same document in each language: the home page is the one to index. */
+/**
+ * The home page, the one page to index, at the same address in every
+ * language the web app speaks: the server answers each visitor in theirs.
+ */
 function sitemap(appUrl: string): string {
 	const home = `${appUrl}/`;
 	const alternates = [...LOCALES, "x-default"].map(
