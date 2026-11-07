@@ -1,5 +1,4 @@
 import {
-	DEFAULT_LOCALE,
 	LOCALES,
 	type Locale,
 	type Page,
@@ -15,7 +14,8 @@ import { type AppConfig, pageConfigOf } from "../config.js";
 import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
 import { HTML_CONTENT_TYPE } from "./files.js";
-import type { Messages, Site } from "./load.js";
+import type { Site } from "./load.js";
+import { type HeadMessage, translator } from "./messages.js";
 
 /** What the page is rendered for: the language and theme the visitor chose, or their browser's. */
 export interface Visitor {
@@ -65,7 +65,7 @@ function meta(attribute: "name" | "property", key: string, content: string): str
  * and link previews, which run no JavaScript. The title is the one the page
  * sets once it runs: both build it with pageTitle.
  */
-function pageHead(page: Page, t: (key: string) => string, config: AppConfig): string[] {
+function pageHead(page: Page, t: (key: HeadMessage) => string, config: AppConfig): string[] {
 	const heading = pageTitle(page, config.appName, t);
 	const title = `<title>${escapeHtml(heading)}</title>`;
 	const noindex = meta("name", "robots", "noindex, nofollow");
@@ -153,10 +153,6 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 	const accent = accentStyle(config.primaryColor);
 	const style = accent === undefined ? "" : ` style="${escapeHtml(accent)}"`;
 	const rendered = new Map<string, RenderedPage>();
-
-	function translator(messages: Messages, locale: Locale): (key: string) => string {
-		return (key) => messages[locale][key] ?? messages[DEFAULT_LOCALE][key] ?? key;
-	}
 
 	function render(page: Page, { locale, theme }: Visitor): string {
 		const t = translator(site.messages, locale);

@@ -417,20 +417,6 @@ describe("the pages", () => {
 		expect(html).toContain(`<title>${expected}</title>`);
 	});
 
-	it("show a message's key when no language has it", async () => {
-		const partial = createSiteFixture();
-		try {
-			partial.write("messages/en.json", JSON.stringify({ view_title: "Encrypted note" }));
-			const app = makeApp({}, loadSite({ ...partial, logger: silent }));
-
-			const html = await (await app.request(`/note/${NOTE_ID}/manage`)).text();
-
-			expect(html).toContain("<title>Secret — manage_title</title>");
-		} finally {
-			partial.remove();
-		}
-	});
-
 	it("render each page once per language and theme", async () => {
 		const app = makeApp();
 

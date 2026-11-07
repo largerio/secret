@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,8 +9,15 @@ import { createLogger, type LogLevel } from "../logger.js";
 import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
 import { cacheControlOf, contentTypeOf, isEmbeddable, siteFile } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
+import { HEAD_MESSAGES } from "../site/messages.js";
 import { inlineScriptHashes } from "../site/scripts.js";
-import { BOOT_SCRIPT, createSiteFixture, SHELL, type SiteFixture } from "./siteFixture.js";
+import {
+	BOOT_SCRIPT,
+	createSiteFixture,
+	MESSAGES,
+	SHELL,
+	type SiteFixture,
+} from "./siteFixture.js";
 
 let created: SiteFixture | undefined;
 
@@ -262,6 +270,46 @@ describe("loadSite", () => {
 		expect(() => loadSite({ ...fixture, messagesDir, logger: capture().logger })).toThrow(
 			`${join(messagesDir, "en.json")} cannot be read: ENOENT`,
 		);
+	});
+
+	it("refuses an English catalog that lacks a message of the heads", () => {
+		const fixture = useFixture();
+		const lacking = new Set(["seo_keywords", "manage_title"]);
+		const partial = Object.entries(MESSAGES["en"] ?? {}).filter(([key]) => !lacking.has(key));
+		fixture.write("messages/en.json", JSON.stringify(Object.fromEntries(partial)));
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toBe(
+			`${join(fixture.messagesDir, "en.json")} lacks seo_keywords, manage_title, which the pages' heads are written with`,
+		);
+		expect((error as SiteError).hint).toContain("messages/*.json");
+	});
+
+	it("takes another language without them, English filling in", () => {
+		const fixture = useFixture();
+		fixture.write("messages/fr.json", JSON.stringify({}));
+
+		expect(loadSite({ ...fixture, logger: capture().logger }).messages.fr).toEqual({});
+	});
+});
+
+describe("the repository's messages", () => {
+	const messagesDir = fileURLToPath(new URL("../../../../messages/", import.meta.url));
+
+	it("give English every message the heads are written with", () => {
+		const fixture = useFixture();
+		const { messages } = loadSite({ ...fixture, messagesDir, logger: capture().logger });
+
+		for (const key of HEAD_MESSAGES) {
+			expect(messages.en[key], key).toMatch(/\S/);
+		}
 	});
 });
 
