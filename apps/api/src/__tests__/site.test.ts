@@ -342,7 +342,13 @@ describe("compressedCopies", () => {
 	const text = Buffer.from(`export const app = "${"x".repeat(4096)}";\n`);
 
 	it("compresses text and WebAssembly with brotli, then gzip", () => {
-		for (const type of ["text/javascript; charset=utf-8", "application/wasm", "image/svg+xml"]) {
+		for (const type of [
+			"text/javascript; charset=utf-8",
+			"application/wasm",
+			"application/manifest+json",
+			"image/svg+xml",
+			"image/x-icon",
+		]) {
 			const [br, gzip, ...rest] = compressedCopies(text, type);
 
 			expect(br?.encoding).toBe("br");
@@ -398,8 +404,15 @@ describe("contentTypeOf", () => {
 		["worker.mjs", "text/javascript; charset=utf-8"],
 		["app.CSS", "text/css; charset=utf-8"],
 		["_app/version.json", "application/json"],
+		["manifest.webmanifest", "application/manifest+json"],
 		["favicon.svg", "image/svg+xml"],
 		["og.png", "image/png"],
+		["og.jpg", "image/jpeg"],
+		["og.JPEG", "image/jpeg"],
+		["og.webp", "image/webp"],
+		["og.avif", "image/avif"],
+		["loading.gif", "image/gif"],
+		["favicon.ico", "image/x-icon"],
 		["inter.woff2", "font/woff2"],
 		["inter.woff", "font/woff"],
 		["wasm/cap_wasm_bg.wasm", "application/wasm"],
@@ -414,13 +427,20 @@ describe("contentTypeOf", () => {
 
 describe("isEmbeddable", () => {
 	it.each([
-		["og.png", "image/png", true],
-		["favicon.svg", "image/svg+xml", true],
-		["_app/immutable/assets/logo.Ab1.png", "image/png", false],
-		["bundle.json", "application/json", false],
-		["wasm/cap_wasm_bg.wasm", "application/wasm", false],
-	])("lets other sites show %s (%s): %s", (path, type, embeddable) => {
-		expect(isEmbeddable(path, type)).toBe(embeddable);
+		["og.png", true],
+		["og.jpg", true],
+		["og.jpeg", true],
+		["og.webp", true],
+		["og.avif", true],
+		["og.gif", true],
+		["favicon.svg", true],
+		["favicon.ico", true],
+		["_app/immutable/assets/logo.Ab1.png", false],
+		["manifest.webmanifest", false],
+		["bundle.json", false],
+		["wasm/cap_wasm_bg.wasm", false],
+	])("lets other sites show %s: %s", (path, embeddable) => {
+		expect(isEmbeddable(path, contentTypeOf(path))).toBe(embeddable);
 	});
 
 	it("marks the files loadSite reads", () => {

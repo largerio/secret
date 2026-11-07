@@ -17,15 +17,20 @@ export interface EncodedBody {
  */
 const BROTLI_QUALITY = 9;
 
-/** Text and WebAssembly; images and fonts come compressed already. */
+/**
+ * Text and WebAssembly; images and fonts come compressed already, but for an
+ * SVG, text too, and an icon, which mostly holds bitmaps.
+ */
 const COMPRESSIBLE = new Set([
 	"text/javascript",
 	"text/css",
 	"text/html",
 	"text/plain",
 	"application/json",
+	"application/manifest+json",
 	"application/wasm",
 	"image/svg+xml",
+	"image/x-icon",
 ]);
 
 /**
