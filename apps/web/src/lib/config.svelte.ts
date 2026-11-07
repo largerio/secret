@@ -1,4 +1,3 @@
-import type { ServerConfig } from "@largerio/secret-shared";
 import {
 	DEFAULT_CHUNK_SIZE,
 	DEFAULT_MAX_CHUNKED_SIZE,
@@ -6,15 +5,12 @@ import {
 	MAX_FILE_SIZE,
 	MAX_FILES_PER_NOTE,
 } from "@largerio/secret-shared";
+import type { PageConfig } from "@largerio/secret-shared/site";
 
 /** An instance's settings when it sets none, which a page the server did not render starts from. */
-export const DEFAULT_CONFIG: ServerConfig = {
+export const DEFAULT_CONFIG: PageConfig = {
 	appName: "Secret",
-	appDescription: "Zero-knowledge encrypted sharing",
-	appUrl: "",
-	primaryColor: "",
 	footerText: "",
-	ogImageUrl: "",
 	maxFileSize: MAX_FILE_SIZE,
 	maxFilesPerNote: MAX_FILES_PER_NOTE,
 	chunkSize: DEFAULT_CHUNK_SIZE,
@@ -22,12 +18,12 @@ export const DEFAULT_CONFIG: ServerConfig = {
 	maxExpiry: MAX_EXPIRY_SECONDS,
 };
 
-let config = $state<ServerConfig>(DEFAULT_CONFIG);
+let config = $state<PageConfig>(DEFAULT_CONFIG);
 
-export function setConfig(newConfig: ServerConfig): void {
+export function setConfig(newConfig: PageConfig): void {
 	config = newConfig;
 }
 
-export function getConfig(): ServerConfig {
+export function getConfig(): PageConfig {
 	return config;
 }

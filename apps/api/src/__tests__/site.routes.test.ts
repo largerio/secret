@@ -190,11 +190,7 @@ describe("the pages", () => {
 		expect(shellDataOf(html)).toEqual({
 			config: {
 				appName: "Vault",
-				appDescription: "Our notes",
-				appUrl: APP_URL,
-				primaryColor: "",
 				footerText: "Run by ACME",
-				ogImageUrl: `${APP_URL}/og.png`,
 				maxFileSize: 1_048_576,
 				maxFilesPerNote: 3,
 				chunkSize: 4_194_304,

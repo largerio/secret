@@ -6,6 +6,7 @@ import {
 	LOCALE_COOKIE,
 	LOCALES,
 	type Locale,
+	type PageConfig,
 	parseAcceptLanguage,
 	SHELL_DATA_ID,
 	SHELL_HEAD_MARKER,
@@ -188,6 +189,15 @@ const HTML = "text/html; charset=utf-8";
  */
 export function createShellRenderer(site: Site, config: AppConfig): ShellRenderer {
 	const settings = serverConfigOf(config);
+	const pageConfig: PageConfig = {
+		appName: settings.appName,
+		footerText: settings.footerText,
+		maxFileSize: settings.maxFileSize,
+		maxFilesPerNote: settings.maxFilesPerNote,
+		chunkSize: settings.chunkSize,
+		maxChunkedFileSize: settings.maxChunkedFileSize,
+		maxExpiry: settings.maxExpiry,
+	};
 	const accent = accentStyle(settings.primaryColor);
 	const style = accent === undefined ? "" : ` style="${escapeHtml(accent)}"`;
 	const rendered = new Map<string, RenderedPage>();
@@ -201,7 +211,7 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 		const head = [
 			...pageHead(page, t, settings),
 			...layoutHead(locale, settings),
-			`<script type="application/json" id="${SHELL_DATA_ID}">${serializeShellData({ config: settings, locale, theme })}</script>`,
+			`<script type="application/json" id="${SHELL_DATA_ID}">${serializeShellData({ config: pageConfig, locale, theme })}</script>`,
 		].join("\n\t\t");
 
 		// Replaced by functions: a `$&` in a setting must stay as it is.

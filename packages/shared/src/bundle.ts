@@ -11,7 +11,16 @@
  *   cd apps/web/build
  *   find . -type f ! -path ./bundle.json -printf '%P\n' | LC_ALL=C sort \
  *     | xargs -d '\n' sha256sum | sha256sum
+ *
+ * The build (`apps/web/scripts/bundle-manifest.ts`) and the server
+ * (`apps/api/src/site/load.ts`) both read a bundle with `readBundle` and digest
+ * it with `bundleDigest`: what the release publishes and what an instance
+ * answers are computed the same way. Node only: the web app never imports it.
  */
+
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 export const BUNDLE_MANIFEST = "bundle.json";
 
@@ -48,4 +57,40 @@ export function bundleListing(files: ReadonlyArray<Pick<BundleFile, "path" | "sh
 	return sortBundleFiles(files)
 		.map((file) => `${file.sha256}  ${file.path}\n`)
 		.join("");
+}
+
+function sha256Hex(data: string | Uint8Array): string {
+	return createHash("sha256").update(data).digest("hex");
+}
+
+/** The digest of a bundle: `sha256:` and the SHA-256 of its listing, the manifest left out. */
+export function bundleDigest(files: ReadonlyArray<Pick<BundleFile, "path" | "sha256">>): string {
+	return `sha256:${sha256Hex(bundleListing(files.filter((file) => file.path !== BUNDLE_MANIFEST)))}`;
+}
+
+/** A file of a bundle, read. */
+export interface BundleEntry {
+	/** Relative to the bundle's root, `/`-separated. */
+	readonly path: string;
+	readonly body: Buffer<ArrayBuffer>;
+	/** Lower-case hex. */
+	readonly sha256: string;
+}
+
+/**
+ * Every file under `root`, read, the manifest included, in no order. Symbolic
+ * links are left out, as `find -type f` leaves them out of the digest.
+ */
+export function readBundle(root: string): ReadonlyArray<BundleEntry> {
+	return readdirSync(root, { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isFile())
+		.map((entry) => {
+			const absolute = join(entry.parentPath, entry.name);
+			const body = readFileSync(absolute);
+			return {
+				path: relative(root, absolute).split(sep).join("/"),
+				body,
+				sha256: sha256Hex(body),
+			};
+		});
 }

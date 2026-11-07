@@ -1,15 +1,19 @@
-import type { ServerConfig } from "@largerio/secret-shared";
-import { SHELL_DATA_ID, type ShellData, serializeShellData } from "@largerio/secret-shared/site";
+import {
+	type PageConfig,
+	SHELL_DATA_ID,
+	type ShellData,
+	serializeShellData,
+} from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, getConfig, setConfig } from "../config.svelte.js";
 import { getLocale, setLocale } from "../i18n/index.svelte.js";
 import { fetchInstanceLimits, localShellData, servedShellData, startPage } from "../shell.js";
 import { getMode } from "../theme.svelte.js";
 
-const INSTANCE: ServerConfig = {
+const INSTANCE: PageConfig = {
 	...DEFAULT_CONFIG,
 	appName: "Vault",
-	appUrl: "https://vault.example",
+	footerText: "© Vault",
 	maxExpiry: 3600,
 };
 
