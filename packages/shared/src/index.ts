@@ -73,7 +73,6 @@ export type {
 	NoteFile,
 	NotePayload,
 	ReadNoteResponse,
-	ServerConfig,
 } from "./types.js";
 export { EXPIRATION_OPTIONS } from "./types.js";
 export { withoutTrailingSlashes } from "./url.js";
