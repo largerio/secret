@@ -37,7 +37,7 @@ RUN pnpm --filter @largerio/web build
 RUN pnpm --filter @largerio/api build
 
 # Rewrite package exports from .ts sources to compiled .js dist, every subpath
-# included (the shared package's ./site, ./bundle, ./accent...).
+# included (the shared package's ./site, ./bundle...).
 RUN node -e " \
   const fs = require('fs'); \
   for (const pkg of ['packages/shared', 'packages/crypto']) { \

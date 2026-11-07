@@ -197,7 +197,14 @@ Dropping a JSON file in `messages/` is not enough; register it in four places:
 3. `apps/web/src/lib/components/LangMenu.svelte` — add it to `LANGS`
 4. `apps/api/src/site/shell.ts` — add its `og:locale` to `OG_LOCALES`
 
-The API reads every language's file at startup, to write the pages' heads.
+The last three are keyed by `Locale`: once the code is in `LOCALES`,
+`pnpm typecheck` names whichever of them still lacks it. The sitemap and the
+pages' `hreflang` links follow `LOCALES` on their own.
+
+The API reads every language's file at startup, to write the pages' heads, and
+refuses to start when `en.json` lacks one of the messages they need
+(`HEAD_MESSAGES` in `apps/api/src/site/messages.ts`): the other languages fall
+back to English, message by message.
 
 ## Releases
 

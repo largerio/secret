@@ -33,6 +33,7 @@ image. Each version links to its GitHub release. The SDK has
 - A language that `Accept-Language` gives `q=0`, meaning not wanted, could be chosen for the pages. It never is now.
 - Files an operator adds to the web app's build, `.ico`, `.jpg` and `.jpeg`, `.webp`, `.avif`, `.gif` and `.webmanifest`, were served as `application/octet-stream`. They get their content types.
 - A `KEY_FILE` in a folder that did not exist stopped the container at every start: the entrypoint created the database's folder, not the key's.
+- `/sitemap.xml` offered the home page in English and French only; it names every language the app speaks, as the pages' `hreflang` links do.
 
 ### Upgrade notes
 
