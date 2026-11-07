@@ -24,7 +24,11 @@ export SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)
 pnpm dev
 ```
 
-This starts the API on `http://localhost:3001` and the web app on `http://localhost:5173`.
+This starts the API on `http://localhost:3000` and the web app on
+`http://localhost:5173`, whose dev server sends `/api` to the API. `PORT`
+moves the API, and the dev server follows it. Up to 1.7 the API listened on
+3001 in development, and `API_URL` pointed the dev server elsewhere: it is no
+longer read.
 
 The key must decode to exactly 32 bytes; the server refuses to start otherwise.
 Keep the same key across restarts, or the notes you created earlier become
