@@ -80,9 +80,6 @@ export function startPage(doc: Document = document): void {
 	setConfig(data.config);
 	setLocale(data.locale);
 	initTheme(data.theme);
-	// What the server writes on <html> for a page it renders.
-	doc.documentElement.lang = data.locale;
-	doc.documentElement.dataset["mode"] = data.theme;
 
 	if (import.meta.env.DEV && served === undefined) {
 		void fetchInstanceLimits().then((limits) => setConfig({ ...getConfig(), ...limits }));

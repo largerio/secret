@@ -1,4 +1,9 @@
-import { DEFAULT_LOCALE, type Locale, parseAcceptLanguage } from "@largerio/secret-shared/site";
+import {
+	DEFAULT_LOCALE,
+	LOCALE_COOKIE,
+	type Locale,
+	parseAcceptLanguage,
+} from "@largerio/secret-shared/site";
 import de from "../../../../../messages/de.json";
 import en from "../../../../../messages/en.json";
 import es from "../../../../../messages/es.json";
@@ -9,6 +14,7 @@ import ko from "../../../../../messages/ko.json";
 import pt from "../../../../../messages/pt.json";
 import ru from "../../../../../messages/ru.json";
 import zh from "../../../../../messages/zh.json";
+import { setPreferenceCookie } from "../utils/cookies.js";
 
 export type { Locale } from "@largerio/secret-shared/site";
 export type MessageKey = keyof typeof en;
@@ -28,8 +34,18 @@ const messages: Record<Locale, Record<string, string>> = {
 
 let currentLocale = $state<Locale>(DEFAULT_LOCALE);
 
+/** The page's language, and `<html lang>`'s: this module is its one writer. */
 export function setLocale(locale: Locale): void {
 	currentLocale = locale;
+	// Kept in step with the page, or screen readers would announce it in the
+	// previous language's voice (WCAG 3.1.1), with its hyphenation and quotes.
+	document.documentElement.lang = locale;
+}
+
+/** The visitor's choice: the page switches to it, and so do the next ones (the cookie). */
+export function chooseLocale(locale: Locale): void {
+	setLocale(locale);
+	setPreferenceCookie(LOCALE_COOKIE, locale);
 }
 
 export function getLocale(): Locale {

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
+	chooseLocale,
 	detectLocale,
 	formatDateTime,
 	getLocale,
@@ -25,6 +26,20 @@ describe("locale state and translation", () => {
 		expect(getLocale()).toBe("fr");
 		setLocale("en");
 		expect(getLocale()).toBe("en");
+	});
+
+	it("keeps <html lang> in step with the page's language", () => {
+		setLocale("ja");
+		expect(document.documentElement.lang).toBe("ja");
+		setLocale("en");
+		expect(document.documentElement.lang).toBe("en");
+	});
+
+	it("chooseLocale switches the page, and keeps the choice for the next ones", () => {
+		chooseLocale("de");
+		expect(getLocale()).toBe("de");
+		expect(document.documentElement.lang).toBe("de");
+		expect(document.cookie).toContain("secret_lang=de");
 	});
 
 	it("interpolates named parameters", () => {

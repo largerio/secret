@@ -68,6 +68,15 @@ describe("theme store", () => {
 		expect(getMode()).toBe("light");
 	});
 
+	it("initTheme writes the preference on <html>, where the CSS reads it", async () => {
+		stubSystemTheme(true);
+		const { initTheme } = await loadTheme();
+		initTheme("light");
+		expect(document.documentElement.dataset["mode"]).toBe("light");
+		initTheme("system");
+		expect(document.documentElement.dataset["mode"]).toBe("system");
+	});
+
 	it("resolves the system preference from the OS setting", async () => {
 		stubSystemTheme(true);
 		const { getMode, initTheme } = await loadTheme();

@@ -25,8 +25,12 @@ function listenToSystem(query: MediaQueryList): void {
 	});
 }
 
-/** Sync the store with the preference the page started from. */
+/**
+ * Sync the store with the preference the page starts from, and `<html
+ * data-mode>`, which the CSS reads: this store is its one writer.
+ */
 export function initTheme(preference: ThemePreference): void {
+	document.documentElement.dataset["mode"] = preference;
 	followsSystem = preference === "system";
 	if (preference !== "system") {
 		mode = preference;
@@ -42,6 +46,7 @@ export function getMode(): ThemeMode {
 	return mode;
 }
 
+/** The visitor's choice: the page switches to it, and so do the next ones (the cookie). */
 export function setMode(next: ThemeMode): void {
 	mode = next;
 	followsSystem = false;
