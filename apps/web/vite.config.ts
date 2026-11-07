@@ -7,8 +7,8 @@ import { BUNDLE_SOURCES, sourcesDigest } from "./scripts/sources.ts";
 
 // Under `vite dev`, Vite serves the pages and proxies /api to the API, which
 // listens on PORT: `pnpm dev` starts both with the same environment, so the
-// proxy reads it as the API does, 3000 when it is not set.
-const API_TARGET = `http://localhost:${process.env["PORT"] ?? 3000}`;
+// proxy reads it as the API does, 3000 when it is unset or blank.
+const API_TARGET = `http://localhost:${process.env["PORT"]?.trim() || 3000}`;
 
 // SvelteKit writes the app's version into the bundle (its boot script,
 // _app/version.json, the chunks that read it), and reads _app/version.json

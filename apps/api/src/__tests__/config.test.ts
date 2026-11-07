@@ -76,6 +76,13 @@ describe("parseConfig", () => {
 			expect(config.storage).toEqual({ type: "local", localPath: "./data/files" });
 		});
 
+		it("listens on every interface, port 3000, when HOST and PORT are blank", () => {
+			const config = parseConfig(baseEnv({ HOST: " ", PORT: "" }));
+
+			expect(config.host).toBe("0.0.0.0");
+			expect(config.port).toBe(3000);
+		});
+
 		it("derives appUrl from a custom PORT", () => {
 			const config = parseConfig(baseEnv({ PORT: "8080" }));
 			expect(config.port).toBe(8080);

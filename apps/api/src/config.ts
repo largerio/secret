@@ -266,7 +266,7 @@ export function describePrimaryColor(config: { readonly primaryColor: string }):
  */
 export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 	const port = readEnvNumber(env["PORT"], Number("3000"));
-	const host = env["HOST"] ?? "0.0.0.0";
+	const host = readEnvString(env["HOST"], "0.0.0.0");
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
 	const serverKey = readSecret(env, "SERVER_ENCRYPTION_KEY");
