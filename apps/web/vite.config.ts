@@ -5,17 +5,19 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { BUNDLE_SOURCES, sourcesDigest } from "./scripts/sources.ts";
 
-// In dev it is Vite that proxies /api to the backend, so this target must
-// follow the API port. Hardcoding it meant the e2e suite could not run the API
-// anywhere other than 3001 (ECONNREFUSED on every request that touches the
-// backend).
-const API_TARGET = process.env["API_URL"] ?? "http://localhost:3001";
+// Under `vite dev`, Vite serves the pages and proxies /api to the API, which
+// listens on PORT: `pnpm dev` starts both with the same environment, so the
+// proxy reads it as the API does, 3000 when it is not set.
+const API_TARGET = `http://localhost:${process.env["PORT"] ?? 3000}`;
 
 // SvelteKit writes the app's version into the bundle (its boot script,
-// _app/version.json, the chunks that read it) and polls it to tell a new
-// deployment, and defaults it to the build's time: no two builds were alike,
-// and nobody could rebuild the bundle an instance serves to check it. A digest
-// of what the bundle is built from instead, which changes with any of it.
+// _app/version.json, the chunks that read it), and reads _app/version.json
+// again to tell a new deployment: when the tab comes back into view, when a
+// navigation fails, and every version.pollInterval (an hour unless set, never
+// when 0). It defaults the version to the build's time: no two builds were
+// alike, and nobody could rebuild the bundle an instance serves to check it.
+// A digest of what the bundle is built from instead, which changes with any
+// of it.
 // Not a commit: the image is built without the repository's history. (The
 // build script sets NODE_ENV=production: Vite builds for the NODE_ENV it is
 // given, and the dev container's, development, gave a dev-mode bundle, with

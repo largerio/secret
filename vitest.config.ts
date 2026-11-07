@@ -20,8 +20,9 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			// Only `.ts` sources (this also covers `*.svelte.ts` rune modules);
-			// keeps `.svelte`/`.html`/`.css` out of the v8 parser.
-			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],
+			// keeps `.svelte`/`.html`/`.css` out of the v8 parser. The web app's
+			// build scripts too: what they write is what the release publishes.
+			include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "apps/web/scripts/*.ts"],
 			exclude: [
 				"**/*.d.ts",
 				"**/*.test.ts",
@@ -42,6 +43,10 @@ export default defineConfig({
 				// The command line's entry point: one line handing argv to run
 				// (packages/cli/src/run.ts), which is tested.
 				"packages/cli/src/bin.ts",
+				// The build's step that writes bundle.json: three lines handing
+				// build/ to writeBundleManifest (apps/web/scripts/manifest.ts), which
+				// is tested. The build runs it.
+				"apps/web/scripts/bundle-manifest.ts",
 				// Frontend: gate the logic modules + utils, but exclude the route
 				// modules (`+layout.ts`), which need a SvelteKit harness to exercise
 				// and only hand over to lib/. (`.svelte` components are already

@@ -1,5 +1,7 @@
+import { pageTitle } from "@largerio/secret-shared/site";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
+	chooseLocale,
 	detectLocale,
 	formatDateTime,
 	getLocale,
@@ -27,6 +29,20 @@ describe("locale state and translation", () => {
 		expect(getLocale()).toBe("en");
 	});
 
+	it("keeps <html lang> in step with the page's language", () => {
+		setLocale("ja");
+		expect(document.documentElement.lang).toBe("ja");
+		setLocale("en");
+		expect(document.documentElement.lang).toBe("en");
+	});
+
+	it("chooseLocale switches the page, and keeps the choice for the next ones", () => {
+		chooseLocale("de");
+		expect(getLocale()).toBe("de");
+		expect(document.documentElement.lang).toBe("de");
+		expect(document.cookie).toContain("secret_lang=de");
+	});
+
 	it("interpolates named parameters", () => {
 		// `chunk_progress` is defined as "Chunk {current} of {total}".
 		setLocale("en");
@@ -47,16 +63,20 @@ describe("locale state and translation", () => {
 		expect(value).toContain("{current}");
 		expect(value).toContain("{total}");
 	});
+
+	it("gives the shared page titles what they expect, {app} left in", () => {
+		// The pages and the server build their titles with pageTitle alike.
+		expect(pageTitle("home", "Vault", t)).toBe(
+			"Vault — Secure, Zero-Knowledge Encrypted Note & File Sharing",
+		);
+		setLocale("fr");
+		expect(pageTitle("manage", "Vault", t)).toBe(`Vault — ${t("manage_title")}`);
+	});
 });
 
 describe("detectLocale", () => {
 	it("returns a supported locale based on navigator.language", () => {
 		// jsdom reports navigator.language as "en-US".
-		expect(detectLocale()).toBe("en");
-	});
-
-	it("returns English when navigator is unavailable (SSR)", () => {
-		vi.stubGlobal("navigator", undefined);
 		expect(detectLocale()).toBe("en");
 	});
 

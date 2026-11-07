@@ -28,9 +28,10 @@
 }
 
 /*
- * The accent comes from APP_PRIMARY_COLOR: the root layout turns it into the
- * --brand* variables on <html> (lib/utils/accent.ts), with a variant for the
- * dark theme. Without it, the built-in indigo applies.
+ * The accent comes from APP_PRIMARY_COLOR: the server turns it into the
+ * --brand* variables in the style of <html> as it serves the page
+ * (apps/api/src/site/accent.ts), with a variant for the dark theme. Without
+ * it, the built-in indigo applies.
  */
 :root {
 	color-scheme: light;

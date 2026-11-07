@@ -48,6 +48,7 @@ afterEach(() => {
 	setConfig(DEFAULT_CONFIG);
 	setLocale("en");
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
 });
 
 describe("servedShellData", () => {
@@ -103,7 +104,7 @@ describe("fetchInstanceLimits", () => {
 			chunkSize: 512,
 			maxChunkedFileSize: 4000,
 		});
-		expect(fetcher).toHaveBeenCalledWith("/api/v1/config", expect.anything());
+		expect(fetcher).toHaveBeenCalledWith("/api/v1/config");
 	});
 
 	it("keeps only what is a limit, and nothing else the answer holds", async () => {
@@ -134,11 +135,12 @@ describe("fetchInstanceLimits", () => {
 });
 
 describe("startPage", () => {
-	it("starts from the shell data, and asks nothing more", async () => {
+	it("starts from the shell data, and asks nothing more", () => {
 		serve(serializeShellData({ config: INSTANCE, locale: "fr", theme: "dark" }));
 		const fetcher = answering({});
+		vi.stubGlobal("fetch", fetcher);
 
-		await startPage(document, fetcher);
+		startPage(document);
 
 		expect(getConfig()).toEqual(INSTANCE);
 		expect(getLocale()).toBe("fr");
@@ -148,7 +150,7 @@ describe("startPage", () => {
 		expect(fetcher).not.toHaveBeenCalled();
 	});
 
-	it("applies the visitor's choices at once without it, then the instance's limits", async () => {
+	it("under vite dev, applies the visitor's choices at once without it, then the instance's limits", async () => {
 		setCookie("secret_lang", "es");
 		setCookie("secret_theme", "light");
 		let answer: (response: Response) => void = () => undefined;
@@ -158,8 +160,9 @@ describe("startPage", () => {
 					answer = resolve;
 				}),
 		);
+		vi.stubGlobal("fetch", fetcher);
 
-		const started = startPage(document, fetcher);
+		startPage(document);
 
 		// Rendered from these, before the API has answered.
 		expect(getConfig()).toEqual(DEFAULT_CONFIG);
@@ -167,15 +170,32 @@ describe("startPage", () => {
 		expect(getMode()).toBe("light");
 		expect(document.documentElement.lang).toBe("es");
 		expect(document.documentElement.dataset["mode"]).toBe("light");
+		expect(fetcher).toHaveBeenCalledWith("/api/v1/config");
 
 		answer(Response.json({ maxExpiry: 3600 }));
-		await started;
-		expect(getConfig()).toEqual({ ...DEFAULT_CONFIG, maxExpiry: 3600 });
+		await vi.waitFor(() => expect(getConfig()).toEqual({ ...DEFAULT_CONFIG, maxExpiry: 3600 }));
 	});
 
-	it("reads the page it is running in by default", async () => {
+	it("in a build, starts a page without it from the defaults, and asks nothing", () => {
+		// The server fills in every page of a build: this one is not its.
+		vi.stubEnv("DEV", false);
+		setCookie("secret_lang", "es");
+		setCookie("secret_theme", "dark");
+		setLocale("de");
+		const fetcher = answering({ maxExpiry: 3600 });
+		vi.stubGlobal("fetch", fetcher);
+
+		startPage(document);
+
+		expect(getConfig()).toEqual(DEFAULT_CONFIG);
+		expect(getLocale()).toBe("en");
+		expect(document.documentElement.dataset["mode"]).toBe("system");
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
+	it("reads the page it is running in by default", () => {
 		serve(serializeShellData({ config: INSTANCE, locale: "it", theme: "system" }));
-		await startPage();
+		startPage();
 		expect(getLocale()).toBe("it");
 	});
 });

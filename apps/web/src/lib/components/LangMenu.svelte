@@ -1,21 +1,22 @@
 <script lang="ts">
-import { LOCALE_COOKIE } from "@largerio/secret-shared/site";
+import { isLocale } from "@largerio/secret-shared/site";
 import Icon from "#lib/components/Icon.svelte";
-import { getLocale, type Locale, setLocale, t } from "#lib/i18n/index.svelte.js";
-import { setPreferenceCookie } from "#lib/utils/cookies.js";
+import { chooseLocale, getLocale, type Locale, t } from "#lib/i18n/index.svelte.js";
 
-const LANGS: { code: Locale; label: string }[] = [
-	{ code: "en", label: "English" },
-	{ code: "fr", label: "Français" },
-	{ code: "es", label: "Español" },
-	{ code: "de", label: "Deutsch" },
-	{ code: "it", label: "Italiano" },
-	{ code: "pt", label: "Português" },
-	{ code: "ja", label: "日本語" },
-	{ code: "zh", label: "中文" },
-	{ code: "ru", label: "Русский" },
-	{ code: "ko", label: "한국어" },
-];
+// Each language in its own name, in the order the menu lists them: a language
+// the app speaks and this leaves out does not compile.
+const LANGS: Record<Locale, string> = {
+	en: "English",
+	fr: "Français",
+	es: "Español",
+	de: "Deutsch",
+	it: "Italiano",
+	pt: "Português",
+	ja: "日本語",
+	zh: "中文",
+	ru: "Русский",
+	ko: "한국어",
+};
 
 // On Windows, arrowing through a closed select fires `change` at every step:
 // switching the whole page on each key press would make the list unusable.
@@ -24,13 +25,8 @@ let browsing = false;
 
 function pick(code: string): void {
 	browsing = false;
-	if (code === getLocale()) return;
-	setLocale(code as Locale);
-	setPreferenceCookie(LOCALE_COOKIE, code);
-	// <html lang> otherwise keeps the language the page started in until a full
-	// reload, so screen readers announce the new content with the previous
-	// language's voice (WCAG 3.1.1) and hyphenation/quotes stay wrong.
-	document.documentElement.lang = code;
+	if (!isLocale(code) || code === getLocale()) return;
+	chooseLocale(code);
 }
 
 function onKeydown(event: KeyboardEvent & { currentTarget: HTMLSelectElement }): void {
@@ -53,8 +49,8 @@ function onKeydown(event: KeyboardEvent & { currentTarget: HTMLSelectElement }):
 			if (browsing) pick(event.currentTarget.value);
 		}}
 	>
-		{#each LANGS as lang (lang.code)}
-			<option value={lang.code} lang={lang.code}>{lang.label}</option>
+		{#each Object.entries(LANGS) as [code, label] (code)}
+			<option value={code} lang={code}>{label}</option>
 		{/each}
 	</select>
 </label>

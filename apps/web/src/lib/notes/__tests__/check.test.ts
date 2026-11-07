@@ -7,7 +7,7 @@ import {
 	SecretValidationError,
 } from "@largerio/secret-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { checkFailure, checkForReader, noteExists, summarize } from "../check.js";
+import { checkFailure, checkNoteLink, NOTICES, summarize } from "../check.js";
 import { checkNote } from "../notes.js";
 
 // No worker is started: the checks are handed in, or this one stands for it.
@@ -91,10 +91,10 @@ describe("checkFailure", () => {
 	});
 });
 
-describe("checkForReader", () => {
+describe("checkNoteLink", () => {
 	it("finds a note that is there", async () => {
 		const check = answering(FORMAT_1);
-		await expect(checkForReader("abc", check)).resolves.toEqual({
+		await expect(checkNoteLink("abc", check)).resolves.toEqual({
 			kind: "found",
 			note: summarize(FORMAT_1),
 		});
@@ -102,7 +102,7 @@ describe("checkForReader", () => {
 	});
 
 	it("reports a note that is gone", async () => {
-		await expect(checkForReader("abc", answering({ exists: false }))).resolves.toEqual({
+		await expect(checkNoteLink("abc", answering({ exists: false }))).resolves.toEqual({
 			kind: "notice",
 			notice: "not_found",
 		});
@@ -110,33 +110,37 @@ describe("checkForReader", () => {
 
 	it("reports why a check failed", async () => {
 		await expect(
-			checkForReader("abc", failing(new SecretApiError("Too many requests", 429))),
+			checkNoteLink("abc", failing(new SecretApiError("Too many requests", 429))),
 		).resolves.toEqual({ kind: "notice", notice: "rate_limited" });
-		await expect(checkForReader("abc", failing(new SecretNetworkError("down")))).resolves.toEqual({
+		await expect(checkNoteLink("abc", failing(new SecretNetworkError("down")))).resolves.toEqual({
 			kind: "notice",
 			notice: "unavailable",
 		});
 	});
 
+	it("never tells the creator a note is gone when the instance cannot be asked", async () => {
+		// A creator come to revoke a leaked link would leave it readable.
+		for (const error of [
+			new SecretNetworkError("down"),
+			new SecretApiError("Bad gateway", 502),
+			new SecretApiError("Too many requests", 429),
+		]) {
+			const check = await checkNoteLink("abc", failing(error));
+			expect(check).not.toEqual({ kind: "notice", notice: "not_found" });
+		}
+	});
+
 	it("asks the notes' worker by default", async () => {
 		vi.mocked(checkNote).mockResolvedValueOnce({ exists: false });
-		await expect(checkForReader("abc")).resolves.toEqual({ kind: "notice", notice: "not_found" });
+		await expect(checkNoteLink("abc")).resolves.toEqual({ kind: "notice", notice: "not_found" });
 		expect(checkNote).toHaveBeenCalledWith("abc");
 	});
 });
 
-describe("noteExists", () => {
-	it("says whether the note is there", async () => {
-		await expect(noteExists("abc", answering(FORMAT_1))).resolves.toBe(true);
-		await expect(noteExists("abc", answering({ exists: false }))).resolves.toBe(false);
-	});
-
-	it("counts a check that fails as a note gone", async () => {
-		await expect(noteExists("abc", failing(new SecretNetworkError("down")))).resolves.toBe(false);
-	});
-
-	it("asks the notes' worker by default", async () => {
-		vi.mocked(checkNote).mockResolvedValueOnce(FORMAT_1);
-		await expect(noteExists("abc")).resolves.toBe(true);
+describe("NOTICES", () => {
+	it("gives every notice its own title and text: an outage never reads as a missing note", () => {
+		const notices = Object.values(NOTICES);
+		expect(new Set(notices.map((notice) => notice.title)).size).toBe(notices.length);
+		expect(new Set(notices.map((notice) => notice.body)).size).toBe(notices.length);
 	});
 });

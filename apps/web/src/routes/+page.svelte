@@ -1,5 +1,6 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { flushSync, onMount } from "svelte";
 import Composer from "#lib/components/create/Composer.svelte";
 import Lifetime from "#lib/components/create/Lifetime.svelte";
@@ -10,7 +11,7 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
-import { defaultExpiration } from "#lib/expiry.js";
+import { defaultExpiration } from "#lib/utils/expiry.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { createNote } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
@@ -25,9 +26,7 @@ const DONE_PAUSE_MS = 450;
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 
-let mounted = $state(false);
 onMount(() => {
-	mounted = true;
 	// Back would show the link again, with the only copy of its key: the page
 	// starts over as it is put away.
 	return onBackForwardCache(() => {
@@ -167,9 +166,10 @@ function reset(): void {
 </script>
 
 <!-- The server renders the page's head for crawlers and link previews: the
-title is kept here so that navigating back to this page sets it again. -->
+title is kept here, built as the server builds it, so that navigating back to
+this page sets it again. -->
 <svelte:head>
-	<title>{t("seo_title", { app: config.appName })}</title>
+	<title>{pageTitle("home", config.appName, t)}</title>
 </svelte:head>
 
 {#if phase === "done" && result}
@@ -224,7 +224,7 @@ title is kept here so that navigating back to this page sets it again. -->
 			type="submit"
 			class="btn btn-primary btn-lg rise w-full"
 			style:animation-delay="0.3s"
-			disabled={!mounted || !canSubmit}
+			disabled={!canSubmit}
 		>
 			{t("submit_encrypt")}<Icon name="arrow-right" size={16} />
 		</button>

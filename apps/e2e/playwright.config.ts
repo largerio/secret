@@ -7,11 +7,14 @@ import { defineConfig, devices } from "@playwright/test";
 // and not committing a literal keeps secret scanners happy.
 const TEST_SERVER_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-// A dedicated port, distinct from the 5173/3001 dev defaults: with
-// reuseExistingServer, a `pnpm dev` running in another terminal would otherwise
-// be reused, writing ~18 test notes into ./data/secret.db and running the PoW
-// at production difficulty (serverEnv below would never be applied).
-const PORT = Number(process.env["E2E_WEB_PORT"] ?? 4173);
+// The port of the instance the suite starts from the sources, when
+// E2E_BASE_URL names none: not E2E_PORT, the one .github/scripts/e2e-image.sh
+// runs the image on. A dedicated port, distinct from the dev servers' (Vite's
+// 5173, the API's 3000): with reuseExistingServer, a `pnpm dev` running in
+// another terminal would otherwise be reused, writing the suite's notes into
+// ./data/secret.db and running the PoW at production difficulty (serverEnv
+// below would never be applied).
+const PORT = Number(process.env["E2E_SOURCES_PORT"] ?? 4173);
 
 // Set, the suite runs against that instance and starts no server: CI points it
 // at the image it builds, on S3 storage (.github/scripts/e2e-image.sh, which
@@ -31,8 +34,8 @@ const serverEnv = {
 	CAP_DIFFICULTY: "1",
 	CAP_CHALLENGE_COUNT: "1",
 	// The whole suite hits the API from one address, so the per-IP budget is
-	// shared by all 26 tests running back to back. Without this the later ones
-	// get 429s that surface as "Service unavailable".
+	// shared by all its tests, which run back to back. Without this the later
+	// ones get 429s that surface as "Service unavailable".
 	RATE_LIMIT_MULTIPLIER: "50",
 	CHUNK_SIZE,
 	DATABASE_PATH: path.join(TMP_DIR, "secret.db"),

@@ -18,7 +18,6 @@
 	"error_too_large": "La nota supera la dimensione accettata da questo server.",
 	"error_storage_full": "Il server non ha più spazio per questa nota. Riprova più tardi.",
 	"error_clipboard": "Impossibile copiare negli appunti",
-	"loading": "Caricamento",
 	"checking_link": "Verifica del link…",
 	"back_home": "Torna alla home",
 	"new_note": "Crea una nota",

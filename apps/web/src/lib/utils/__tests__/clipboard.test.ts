@@ -88,11 +88,4 @@ describe("copyWithFeedback", () => {
 
 		expect(await copyWithFeedback("text", vi.fn())).toBe(false);
 	});
-
-	it("returns false when there is no document at all (SSR)", async () => {
-		writeText.mockRejectedValue(new Error("denied"));
-		vi.stubGlobal("document", undefined);
-
-		expect(await copyWithFeedback("text", vi.fn())).toBe(false);
-	});
 });
