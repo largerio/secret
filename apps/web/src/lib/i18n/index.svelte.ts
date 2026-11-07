@@ -42,7 +42,6 @@ export function getLocale(): Locale {
  * the same list.
  */
 export function detectLocale(): Locale {
-	if (typeof navigator === "undefined") return DEFAULT_LOCALE;
 	const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
 	return parseAcceptLanguage(languages.join(","));
 }

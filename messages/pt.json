@@ -18,7 +18,6 @@
 	"error_too_large": "A nota excede o tamanho que este servidor aceita.",
 	"error_storage_full": "O servidor não tem espaço para esta nota. Tente novamente mais tarde.",
 	"error_clipboard": "Falha ao copiar para a área de transferência",
-	"loading": "A carregar",
 	"checking_link": "A verificar o link…",
 	"back_home": "Voltar ao início",
 	"new_note": "Criar uma nota",

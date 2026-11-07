@@ -55,11 +55,6 @@ describe("detectLocale", () => {
 		expect(detectLocale()).toBe("en");
 	});
 
-	it("returns English when navigator is unavailable (SSR)", () => {
-		vi.stubGlobal("navigator", undefined);
-		expect(detectLocale()).toBe("en");
-	});
-
 	it("returns English when navigator.language is unsupported", () => {
 		vi.stubGlobal("navigator", { language: "xx-XX" });
 		expect(detectLocale()).toBe("en");

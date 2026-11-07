@@ -18,7 +18,6 @@
 	"error_too_large": "笔记超出了此服务器接受的大小。",
 	"error_storage_full": "服务器已没有空间存放此笔记，请稍后重试。",
 	"error_clipboard": "复制到剪贴板失败",
-	"loading": "加载中",
 	"checking_link": "正在检查链接…",
 	"back_home": "返回首页",
 	"new_note": "创建笔记",

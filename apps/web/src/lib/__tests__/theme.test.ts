@@ -75,7 +75,7 @@ describe("theme store", () => {
 		expect(getMode()).toBe("dark");
 	});
 
-	it("falls back to light when the OS setting is unavailable (server, old browsers)", async () => {
+	it("falls back to light when the OS setting is unavailable (old browsers)", async () => {
 		vi.stubGlobal("matchMedia", undefined);
 		const { getMode, initTheme } = await loadTheme();
 		initTheme("system");
@@ -96,30 +96,6 @@ describe("theme store", () => {
 
 		setMode("light");
 		system.flip(true);
-		expect(getMode()).toBe("light");
-	});
-
-	it("reads the preference the server rendered when none is passed", async () => {
-		stubSystemTheme(true);
-		const { getMode, initTheme } = await loadTheme();
-
-		document.documentElement.dataset["mode"] = "light";
-		initTheme();
-		expect(getMode()).toBe("light");
-
-		document.documentElement.dataset["mode"] = "system";
-		initTheme();
-		expect(getMode()).toBe("dark");
-	});
-
-	it("skips DOM side effects when document is undefined (SSR)", async () => {
-		const { getMode, initTheme, setMode } = await loadTheme();
-		setMode("dark");
-		vi.stubGlobal("document", undefined);
-		expect(() => setMode("light")).not.toThrow();
-		expect(getMode()).toBe("light");
-
-		initTheme();
 		expect(getMode()).toBe("light");
 	});
 });
