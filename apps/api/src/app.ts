@@ -34,6 +34,7 @@ import {
 } from "./middleware/security.js";
 import { createNotesService } from "./notes/service.js";
 import { createCapRoutes } from "./routes/cap.js";
+import { createCrawlerRoutes } from "./routes/crawlers.js";
 import { noteErrorToHttp } from "./routes/notes/errorStatus.js";
 import { createNotesRoutes } from "./routes/notes/index.js";
 import type { Site } from "./site/load.js";
@@ -90,7 +91,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	const metrics =
 		deps.metrics ?? createMetrics({ db, build, quotaBytes: config.storageQuotaBytes, logger });
 
-	const site = deps.site ? createSiteRoutes(deps.site, config) : undefined;
+	// robots.txt and the sitemap: the API's, though outside /api/.
+	const crawlers = createCrawlerRoutes(config.appUrl);
+	const siteRoutes = deps.site ? createSiteRoutes(deps.site, config, crawlers.paths) : undefined;
 
 	const app = new Hono<AppEnv>();
 
@@ -98,7 +101,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		createErrorHandler({ debug: config.debug, logger, toHttpException: noteErrorToHttp }),
 	);
 
-	app.notFound((c) => site?.notFound(c) ?? problem(c, 404, "not_found", "Not found"));
+	app.notFound((c) => siteRoutes?.notFound(c) ?? problem(c, 404, "not_found", "Not found"));
 
 	// First so every later middleware, handler and the error handler can
 	// correlate their log lines with this request. Health probes are skipped:
@@ -110,16 +113,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		"*",
 		createRequestLogger(logger, {
 			skipPaths: HEALTH_PATHS,
-			quietPaths: [METRICS_PATH, ...(site?.staticPaths ?? [])],
+			quietPaths: [METRICS_PATH, ...(siteRoutes?.staticPaths ?? [])],
 		}),
 	);
 	app.use("*", createRequestMetrics(metrics));
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
 	const apiSecurityHeaders = createSecurityHeaders({ skipPaths: ["/api/v1/docs"] });
-	app.use("*", site ? site.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
+	app.use("*", siteRoutes ? siteRoutes.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
 	app.use("*", createCors([new URL(config.appUrl).origin]));
-	app.use("*", site ? site.apiOnly(compress()) : compress());
+	app.use("*", siteRoutes ? siteRoutes.apiOnly(compress()) : compress());
 
 	// Around the limits and the auth below, which answer before reading a body.
 	app.use("*", createCloseAfterError());
@@ -234,20 +237,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		app.get(METRICS_PATH, createMetricsHandler(metrics, config.metricsToken));
 	}
 
-	app.get("/robots.txt", (c) => {
-		c.header("Content-Type", "text/plain");
-		c.header("Cache-Control", "public, max-age=86400");
-		return c.body(
-			`User-agent: *\nAllow: /\nDisallow: /note/\nDisallow: /api/\n\nSitemap: ${config.appUrl}/sitemap.xml\n`,
-		);
-	});
-	app.get("/sitemap.xml", (c) => {
-		c.header("Content-Type", "application/xml");
-		c.header("Cache-Control", "public, max-age=86400");
-		return c.body(
-			`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n  <url>\n    <loc>${config.appUrl}/</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${config.appUrl}/" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${config.appUrl}/" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${config.appUrl}/" />\n    <changefreq>monthly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
-		);
-	});
+	app.route("/", crawlers.routes);
 
 	// --- Cap: Cap's own format, not versioned, specified in PROTOCOL.md ("Proof of work") ---
 
@@ -309,8 +299,8 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	// On paths of its own, the 404 aside: a route that matched every path would
 	// be the pattern every request is logged and counted under (matchedRoute).
-	if (site) {
-		app.route("/", site.routes);
+	if (siteRoutes) {
+		app.route("/", siteRoutes.routes);
 	}
 
 	return {

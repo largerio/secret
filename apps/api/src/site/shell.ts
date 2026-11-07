@@ -1,22 +1,16 @@
 import type { ServerConfig } from "@largerio/secret-shared";
 import {
 	DEFAULT_LOCALE,
-	isLocale,
-	LOCALE_COOKIE,
 	LOCALES,
 	type Locale,
 	type PageConfig,
-	parseAcceptLanguage,
 	SHELL_DATA_ID,
 	SHELL_HEAD_MARKER,
 	SHELL_HTML_TAG,
 	scriptJson,
 	serializeShellData,
-	THEME_COOKIE,
 	type ThemePreference,
 } from "@largerio/secret-shared/site";
-import type { Context } from "hono";
-import { getCookie } from "hono/cookie";
 import type { AppConfig } from "../config.js";
 import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
@@ -79,16 +73,6 @@ export function serverConfigOf(config: AppConfig): ServerConfig {
 		chunkSize: config.chunkSize,
 		maxChunkedFileSize: config.maxChunkedFileSize,
 		maxExpiry: config.maxExpirySeconds,
-	};
-}
-
-/** The language of the cookie the app writes, else the browser's; the theme likewise, else the system's. */
-export function visitorOf(c: Context): Visitor {
-	const locale = getCookie(c, LOCALE_COOKIE);
-	const theme = getCookie(c, THEME_COOKIE);
-	return {
-		locale: isLocale(locale) ? locale : parseAcceptLanguage(c.req.header("accept-language") ?? ""),
-		theme: theme === "light" || theme === "dark" ? theme : "system",
 	};
 }
 
