@@ -11,7 +11,7 @@ import PageHero from "#lib/components/ui/PageHero.svelte";
 import ProgressPanel from "#lib/components/ui/ProgressPanel.svelte";
 import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
-import { defaultExpiration } from "#lib/expiry.js";
+import { defaultExpiration } from "#lib/utils/expiry.js";
 import { t } from "#lib/i18n/index.svelte.js";
 import { createNote } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";

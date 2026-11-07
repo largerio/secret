@@ -4,7 +4,7 @@ import Icon from "#lib/components/Icon.svelte";
 import InlineSelect from "#lib/components/ui/InlineSelect.svelte";
 import PasswordField from "#lib/components/ui/PasswordField.svelte";
 import { getConfig } from "#lib/config.svelte.js";
-import { allowedExpirationOptions } from "#lib/expiry.js";
+import { allowedExpirationOptions } from "#lib/utils/expiry.js";
 import { t, tn } from "#lib/i18n/index.svelte.js";
 import { splitTemplate } from "#lib/i18n/template.js";
 import { generatePassword } from "#lib/utils/password.js";

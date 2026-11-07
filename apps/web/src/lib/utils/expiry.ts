@@ -1,4 +1,4 @@
-import { EXPIRATION_OPTIONS } from "@largerio/secret-shared";
+import { DEFAULT_EXPIRY_SECONDS, EXPIRATION_OPTIONS } from "@largerio/secret-shared";
 
 /**
  * The expiration choices this instance will actually accept.
@@ -17,12 +17,13 @@ export function allowedExpirationOptions(
 }
 
 /**
- * Pick a default expiry that the instance accepts: the configured default when
- * it fits, otherwise the longest option that does.
+ * Pick a default expiry that the instance accepts: a day, the SDK's and the
+ * command line's default too (DEFAULT_EXPIRY_SECONDS), when it fits,
+ * otherwise the longest option that does.
  */
 export function defaultExpiration(maxExpiry: number): number {
 	const allowed = allowedExpirationOptions(maxExpiry);
-	const preferred = allowed.find((option) => option.value === 86_400);
+	const preferred = allowed.find((option) => option.value === DEFAULT_EXPIRY_SECONDS);
 	if (preferred) return preferred.value;
 
 	// allowedExpirationOptions never returns an empty list, so this is safe and
