@@ -59,7 +59,7 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # corepack (pnpm) is the only package manager used here; npm is needed solely to
 # bootstrap corepack and is never invoked at runtime. Drop it from the final image
 # so it also drops npm's bundled undici (flagged by Trivy, e.g. CVE-2026-12151).
-# The Node runtime's built-in undici and the app's own undici are unaffected.
+# The Node runtime's built-in undici, the only one left, is unaffected.
 RUN npm install -g corepack@0.35.0 && corepack enable && \
 	rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
