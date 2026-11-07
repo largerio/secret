@@ -146,90 +146,55 @@ file, its size and its SHA-256. Both come from the instance, which could lie in
 them: they give you something to compare with the release notes, and with your
 own build.
 
-**Rebuild it.** From the release's tag, with Node 26 and pnpm
-(`corepack enable`):
+**Check an instance.** From a checkout of the release's tag, build the web app
+with Node 26 and pnpm, then run `scripts/verify-web-app.sh` with the
+instance's address as it gives it, its `APP_URL`, and the digest the release
+notes give:
 
 ```bash
 TAG=vX.Y.Z   # the release to check
 git clone --depth 1 --branch "$TAG" https://github.com/largerio/secret.git
 cd secret
+# Node 25 and later ship no corepack: install the image's version.
+npm install -g corepack@0.35.0 && corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @largerio/web build
-cd apps/web/build
-find . -type f ! -path ./bundle.json -printf '%P\n' | LC_ALL=C sort \
-  | xargs -d '\n' sha256sum | sha256sum | sed 's/^/sha256:/; s/ .*//'
+scripts/verify-web-app.sh https://secret.example.com sha256:<hex>
 ```
 
-The last command prints the digest, `sha256:<hex>`, which must be the one in the
-release notes and in `bundle.json`. It needs GNU `find` and `xargs`, as on Linux.
-The commands below run from the same directory.
+It needs bash, coreutils, curl and Node. It says what differs, if anything,
+and exits with 1 when something does. Without the release's digest, it prints
+the build's, for you to compare with the release notes;
+`scripts/verify-web-app.sh --digest-of apps/web/build` prints it alone. CI
+runs it on every change, against the image it builds. It checks:
 
-**Compare the files the instance serves.** Every file of the build but the
-shell is served at its path, and must hash as your own does. `INSTANCE` is the
-instance's address as it gives it, its `APP_URL`, with no slash at the end:
-
-```bash
-INSTANCE=https://secret.example.com
-find . -type f ! -path ./bundle.json ! -path ./index.html -printf '%P\n' \
-  | while read -r path; do
-      served=$(curl -fsS "$INSTANCE/$path" | sha256sum)
-      [ "$served" = "$(sha256sum < "$path")" ] || echo "differs: $path"
-    done
-```
-
-It prints nothing when every file matches.
-
-**Check the shell.** Every page is the shell, `index.html`, which the instance
-writes into for each request: the visitor's language, theme and accent, the
-page's title and meta tags, and the instance's settings for the page to start
-from. Its bytes are not the build's, so it is checked for what it may run.
-Fetch a page, `/` or a note's (`/note/<id>`, which a recipient opens):
-
-```bash
-curl -fsS -D headers.txt -o shell.html "$INSTANCE/"
-```
-
-First, every address it names, in an attribute or in its boot script, must be a
-file of the build: a script it loaded from the instance could otherwise be any
-script, as the policy below lets the page run any of the instance's. The only
-other address is the instance's own, in links that load nothing. This prints
-whatever is neither, by an exact match on the build's paths:
-
-```bash
-files=$(find . -type f -printf '/%P\n')
-tr "'" '"' < shell.html \
-  | grep -oiE '(src|href)[[:space:]]*=[[:space:]]*("[^"]*"|[^[:space:]">]+)|import\("[^"]*"\)' \
-  | sed -E 's/^[^=(]*[=(][[:space:]]*"?//; s/"?\)?$//' | sort -u \
-  | while read -r url; do
-      [ "$url" = "$INSTANCE" ] || grep -qxF -- "$url" <<< "$files" || echo "not of the build: $url"
-    done
-```
-
-Then, its `Content-Security-Policy` header must let it run the instance's files
-and the build's inline scripts, and nothing else: `script-src` must be
-`'self' 'wasm-unsafe-eval'` followed by the SHA-256 of each inline script of
-the build's `index.html`, and no other directive may be about scripts. This
-prints `ok`, or the policy the instance sent:
-
-```bash
-hashes=$(node - index.html <<'EOF'
-const { createHash } = require("node:crypto");
-const html = require("node:fs").readFileSync(process.argv[2], "utf8");
-// Every inline script but a JSON data block, which never runs.
-for (const [, attributes, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
-  if (/\bsrc\s*=/i.test(attributes) || /\btype\s*=\s*["']?[^"'\s>]*json\b/i.test(attributes)) continue;
-  process.stdout.write(` 'sha256-${createHash("sha256").update(body).digest("base64")}'`);
-}
-EOF
-)
-policy=$(grep -i '^content-security-policy:' headers.txt | cut -d: -f2- | tr -d '\r' \
-  | tr ';' '\n' | sed 's/^ *//' | grep -i '^script-src')
-if [ "$policy" = "script-src 'self' 'wasm-unsafe-eval'$hashes" ]; then echo ok; else echo "$policy"; fi
-```
+- **The build**: its files make the digest its `bundle.json` names, so nothing
+  touched them since the build, and that digest is the release's.
+- **What the instance reports**: `/api/health` gives the same digest.
+- **The files**: every file of the build but the shell, `bundle.json`
+  included, is served at its path, compressed as a browser asks for it, and
+  hashes as yours does.
+- **The shell.** Every page is the shell, `index.html`, which the instance
+  writes into for each request: the visitor's language, theme and accent, the
+  page's title and meta tags, and the instance's settings for the page to
+  start from. Its bytes are not the build's, so it is checked for what it may
+  run, on the home page, a note's page, which a recipient opens, a note's
+  deletion page and an unknown one:
+  - every address it names, in an attribute or in its boot script, must be a
+    file of the build: a script it loaded from the instance could otherwise be
+    any script, as its policy lets the page run any of the instance's.
+    The only other address is the instance's own, in links that load nothing;
+  - its `Content-Security-Policy` header must let it run the instance's files
+    and the build's inline scripts, and nothing else: `script-src` must be
+    `'self' 'wasm-unsafe-eval'` followed by the SHA-256 of each inline script
+    of the build's `index.html` that a browser runs, and no `script-src-elem`
+    or `script-src-attr` may take its place.
 
 With both, the page runs the build's boot script and the files it names, which
 you compared, and those load only files of the build. An inline script added
-to the page has no hash in the policy, and the browser does not run it.
+to the page has no hash in the policy, and the browser does not run it. The
+digest the script recomputes is the one `packages/shared/src/bundle.ts`
+specifies, which coreutils alone give.
 
 **What this proves.** That the responses you fetched, when you fetched them,
 were the release's files, and a page that runs the release's code alone. Not
