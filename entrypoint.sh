@@ -23,7 +23,7 @@ if [ -z "${SERVER_ENCRYPTION_KEY:-}" ] && [ -z "${SERVER_ENCRYPTION_KEY_FILE:-}"
 		# Not SERVER_ENCRYPTION_KEY: compose exports it blank, and the API
 		# would get the key both ways.
 		key=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-		mkdir -p "$data_dir"
+		mkdir -p "$(dirname "$KEY_FILE")"
 		# Subshell + umask so the key file is created 0600 (owner-only) atomically.
 		( umask 077; printf '%s\n' "$key" > "$KEY_FILE" )
 		unset key
@@ -48,14 +48,6 @@ for name in API_PORT API_HOST API_URL; do
 	fi
 done
 
-# PORT is the one a PaaS injects and routes traffic to; HOST is all interfaces,
-# since the container's network is what isolates it.
-PORT="${PORT:-3000}"
-HOST="${HOST:-0.0.0.0}"
-# Docker sends SIGKILL 10 seconds after SIGTERM: in-flight requests get 8, so
-# the database is closed before the kill. A longer drain needs the grace
-# period raised as well.
-SHUTDOWN_TIMEOUT="${SHUTDOWN_TIMEOUT:-8}"
-export PORT HOST SHUTDOWN_TIMEOUT
-
+# PORT, HOST and SHUTDOWN_TIMEOUT, unset or blank, are the API's to default
+# (apps/api/src/config.ts).
 exec node apps/api/dist/index.js

@@ -94,7 +94,7 @@ RUN mkdir -p /app/data/files && chown -R appuser:appuser /app/data
 USER 1001
 
 ENV NODE_ENV=production
-# PORT is deliberately unset: it is the one a PaaS injects, and entrypoint.sh
+# PORT is deliberately unset: it is the one a PaaS injects, and the API
 # defaults it to 3000, as the HEALTHCHECK below does.
 ENV DATABASE_PATH=/app/data/secret.db
 ENV FILES_PATH=/app/data/files
