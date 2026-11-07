@@ -14,12 +14,13 @@ import {
 import { INSTANCE_LIMITS, pageTitle, parseShellData } from "@largerio/secret-shared/site";
 import type { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type AppEnv, createApp } from "../app.js";
+import type { AppEnv } from "../app.js";
 import { parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
-import { createLogger } from "../logger.js";
+import { createLogger, type Logger } from "../logger.js";
 import { accentStyle } from "../site/accent.js";
 import { loadSite, type Site } from "../site/load.js";
+import { createShellRenderer } from "../site/shell.js";
 import { LocalStorage } from "../storage/local.js";
 import { problemOf } from "./problems.js";
 import {
@@ -69,13 +70,18 @@ function removeFiles(): void {
 }
 
 /** The app with the fixture's site, another one, or none (null). */
-function makeApp(env: Record<string, string> = {}, served: Site | null = site): Hono<AppEnv> {
+function makeApp(
+	env: Record<string, string> = {},
+	served: Site | null = site,
+	logger?: Logger,
+): Hono<AppEnv> {
 	const created = createTestApp({
 		db,
 		serverKey: SERVER_KEY,
 		storage: new LocalStorage(TEST_FILES_PATH),
 		env: { APP_URL, ...env },
 		...(served ? { site: served } : {}),
+		...(logger ? { logger } : {}),
 	});
 	stops.push(created.stop);
 	return created.app;
@@ -467,13 +473,22 @@ describe("the pages", () => {
 		expect(html).toContain(`<title>${expected}</title>`);
 	});
 
-	it("render each page once per language and theme", async () => {
-		const app = makeApp();
+	it("render each page once per language and theme", () => {
+		const config = parseConfig({
+			SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
+			APP_URL,
+		} as NodeJS.ProcessEnv);
+		const render = createShellRenderer(site, config);
+		const visitor = { locale: "fr", theme: "dark" } as const;
 
-		const first = await (await app.request("/")).text();
-		const second = await (await app.request("/")).text();
+		const first = render("home", visitor);
 
-		expect(second).toBe(first);
+		expect(render("home", { ...visitor })).toBe(first);
+		expect(render("home", { ...visitor, theme: "light" })).not.toBe(first);
+		expect(render("home", { ...visitor, locale: "de" })).not.toBe(first);
+		expect(render("note", visitor)).not.toBe(first);
+		// Compressed with it, once.
+		expect(render("home", visitor).encodings).toBe(first.encodings);
 	});
 });
 
@@ -765,22 +780,7 @@ describe("the site's logs and metrics", () => {
 	it("log pages and failures by route pattern, never a file served or a note id", async () => {
 		const lines: Array<Record<string, unknown>> = [];
 		const logger = createLogger({ write: (_level, line) => lines.push(JSON.parse(line)) });
-		const config = parseConfig({
-			SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
-			APP_URL,
-		} as NodeJS.ProcessEnv);
-		const created = createApp({
-			db,
-			serverKey: SERVER_KEY,
-			storage: new LocalStorage(TEST_FILES_PATH),
-			config,
-			logger,
-			site,
-		});
-		stops.push(() => {
-			for (const limiter of created.rateLimiters) limiter.cleanup();
-		});
-		const { app } = created;
+		const app = makeApp({}, site, logger);
 		const etag = site.files.get("/favicon.svg")?.etag as string;
 
 		await app.request("/favicon.svg");
