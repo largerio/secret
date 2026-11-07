@@ -1,5 +1,6 @@
 <script lang="ts">
 import { SecretApiError, SecretDecryptionError } from "@largerio/secret-sdk";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { flushSync, onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
@@ -289,9 +290,10 @@ async function handleOpen(): Promise<void> {
 </script>
 
 <!-- The server renders the page's head (noindex included) for crawlers and
-link previews: the title is kept here so that navigating here sets it. -->
+link previews: the title is kept here, built as the server builds it, so that
+navigating here sets it. -->
 <svelte:head>
-	<title>{getConfig().appName} — {t("view_title")}</title>
+	<title>{pageTitle("note", getConfig().appName, t)}</title>
 </svelte:head>
 
 {#if status.state === "checking"}

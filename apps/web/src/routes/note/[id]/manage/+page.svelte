@@ -1,5 +1,6 @@
 <script lang="ts">
 import { SecretApiError } from "@largerio/secret-sdk";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { onMount, tick } from "svelte";
 import { page } from "$app/state";
 import Icon from "#lib/components/Icon.svelte";
@@ -74,9 +75,9 @@ async function handleDelete(): Promise<void> {
 </script>
 
 <!-- The server renders the page's head (noindex included): the title is kept
-here so that navigating here sets it. -->
+here, built as the server builds it, so that navigating here sets it. -->
 <svelte:head>
-	<title>{getConfig().appName} — {t("manage_title")}</title>
+	<title>{pageTitle("manage", getConfig().appName, t)}</title>
 </svelte:head>
 
 {#if isDeleted}

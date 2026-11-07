@@ -1,3 +1,4 @@
+import { pageTitle } from "@largerio/secret-shared/site";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
 	chooseLocale,
@@ -61,6 +62,15 @@ describe("locale state and translation", () => {
 		const value = t("chunk_progress");
 		expect(value).toContain("{current}");
 		expect(value).toContain("{total}");
+	});
+
+	it("gives the shared page titles what they expect, {app} left in", () => {
+		// The pages and the server build their titles with pageTitle alike.
+		expect(pageTitle("home", "Vault", t)).toBe(
+			"Vault — Secure, Zero-Knowledge Encrypted Note & File Sharing",
+		);
+		setLocale("fr");
+		expect(pageTitle("manage", "Vault", t)).toBe(`Vault — ${t("manage_title")}`);
 	});
 });
 

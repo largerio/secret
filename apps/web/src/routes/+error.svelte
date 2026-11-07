@@ -1,4 +1,5 @@
 <script lang="ts">
+import { errorTitle } from "@largerio/secret-shared/site";
 import { page } from "$app/state";
 import NoticeView from "#lib/components/ui/NoticeView.svelte";
 import { getConfig } from "#lib/config.svelte.js";
@@ -6,7 +7,7 @@ import { t } from "#lib/i18n/index.svelte.js";
 </script>
 
 <svelte:head>
-	<title>{page.status} | {getConfig().appName}</title>
+	<title>{errorTitle(page.status, getConfig().appName)}</title>
 </svelte:head>
 
 <NoticeView

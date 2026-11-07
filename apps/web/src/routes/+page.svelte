@@ -1,5 +1,6 @@
 <script lang="ts">
 import { MAX_TEXT_SIZE } from "@largerio/secret-shared";
+import { pageTitle } from "@largerio/secret-shared/site";
 import { flushSync, onMount } from "svelte";
 import Composer from "#lib/components/create/Composer.svelte";
 import Lifetime from "#lib/components/create/Lifetime.svelte";
@@ -165,9 +166,10 @@ function reset(): void {
 </script>
 
 <!-- The server renders the page's head for crawlers and link previews: the
-title is kept here so that navigating back to this page sets it again. -->
+title is kept here, built as the server builds it, so that navigating back to
+this page sets it again. -->
 <svelte:head>
-	<title>{t("seo_title", { app: config.appName })}</title>
+	<title>{pageTitle("home", config.appName, t)}</title>
 </svelte:head>
 
 {#if phase === "done" && result}
