@@ -342,6 +342,8 @@ server {
 
 Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
 
+Behind either, set `ADDRESS_HEADER=X-Forwarded-For` and `XFF_DEPTH=1`: until then every visitor shares the proxy's rate-limit bucket, and the app warns about it at every start. See [Making rate limiting work behind a proxy](docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy).
+
 ## Development
 
 ```bash

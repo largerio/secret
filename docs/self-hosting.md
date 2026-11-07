@@ -230,14 +230,14 @@ XFF_DEPTH=1
 ```
 
 Exposed directly, with no proxy in front, the instance already tells clients
-apart and needs neither.
+apart and needs neither. It cannot know that no proxy sits in front, though:
+without either, it logs `WARNING: neither ADDRESS_HEADER nor TRUSTED_PROXIES is
+set` at every start, which you can then ignore.
 
 With `ADDRESS_HEADER` set, it alone decides the address, and `TRUSTED_PROXIES`
 plays no part. Without it, `TRUSTED_PROXIES` lists the proxies (addresses or
 CIDR ranges) whose `X-Forwarded-For` or `X-Real-IP` the app believes; empty, the
-default, it believes no one. Up to 1.7 the image set it to `127.0.0.1/32`, for
-the web server it ran in front of the API: the app now runs alone, and its peer
-is your proxy.
+default, it believes no one.
 
 `XFF_DEPTH` matters: `X-Forwarded-For` is a list a client can prefill, and only
 the last entries — the ones your own proxies appended — are trustworthy. Set it
@@ -253,15 +253,21 @@ proxy_set_header X-Real-IP $remote_addr;
 
 Caddy and Traefik do it on their own.
 
-**Verify it took effect** — this should answer `200`, not hang or 503:
+**Verify it took effect.** Recreate the container, then look for the warning
+in the log of its start:
 
 ```bash
-docker compose exec app node -e "fetch('http://localhost:3000/api/health').then(r=>console.log(r.status))"
+docker compose up -d --force-recreate
+docker compose logs app | grep 'neither ADDRESS_HEADER nor TRUSTED_PROXIES'
 ```
 
-Requests that skip the proxy (like this health check) carry no
-`X-Forwarded-For`, which is expected and handled — they simply fall back to the
-shared bucket.
+It prints nothing once `ADDRESS_HEADER` or `TRUSTED_PROXIES` reaches the app.
+An invalid `ADDRESS_HEADER` or `XFF_DEPTH` stops the start instead, with an
+error that names it. Neither says whether `XFF_DEPTH` matches your proxies:
+that is for you to count.
+
+Requests that skip the proxy, such as the container's own health check, carry
+no such header: they are counted under the address that sent them.
 
 **On Synology** you can skip an external proxy and use the built-in one:
 DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
