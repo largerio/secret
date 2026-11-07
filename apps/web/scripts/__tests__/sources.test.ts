@@ -1,11 +1,16 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUNDLE_SOURCES, sourcesDigest } from "../sources.ts";
 
 let root: string;
+
+function sha256(data: string | Buffer): string {
+	return createHash("sha256").update(data).digest("hex");
+}
 
 function write(path: string, contents: string): void {
 	mkdirSync(join(root, path, ".."), { recursive: true });
@@ -44,6 +49,14 @@ describe("sourcesDigest", () => {
 		writeRepository();
 		expect(sourcesDigest(root, [...ENTRIES].reverse())).toBe(digest);
 		rmSync(elsewhere, { recursive: true, force: true });
+	});
+
+	it("digests the listing sha256sum prints for the sources", () => {
+		writeRepository();
+		const listing = ["app/package.json", "app/src/a.ts", "app/src/lib/b.ts"]
+			.map((path) => `${sha256(readFileSync(join(root, path)))}  ${path}\n`)
+			.join("");
+		expect(sourcesDigest(root, ENTRIES)).toBe(sha256(listing));
 	});
 
 	it("changes with a source's contents, or its name", () => {

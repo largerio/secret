@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { bundleListing } from "@largerio/secret-shared/bundle";
 
 /**
  * What the web app's bundle is built from, relative to the repository's
@@ -50,16 +51,16 @@ function sha256(data: string | Buffer): string {
 }
 
 /**
- * A digest of the files under `entries`: each one's path and the SHA-256 of
- * its bytes, in code-unit order, so that it depends on nothing but them —
- * neither the time, nor the folder they are in, nor the order a file system
- * lists them in.
+ * A digest of the files under `entries`: the SHA-256 of their listing as a
+ * bundle's is written (each one's path and the SHA-256 of its bytes, in
+ * code-unit order), so that it depends on nothing but them — neither the
+ * time, nor the folder they are in, nor the order a file system lists them in.
  */
 export function sourcesDigest(root: string, entries: ReadonlyArray<string>): string {
-	const files = entries.flatMap((entry) => filesUnder(root, entry));
-	const listing = [...new Set(files)]
-		.sort((a, b) => (a < b ? -1 : Number(a > b)))
-		.map((path) => `${sha256(readFileSync(join(root, path)))}  ${path}\n`)
-		.join("");
-	return sha256(listing);
+	const paths = new Set(entries.flatMap((entry) => filesUnder(root, entry)));
+	const files = [...paths].map((path) => ({
+		path,
+		sha256: sha256(readFileSync(join(root, path))),
+	}));
+	return sha256(bundleListing(files));
 }

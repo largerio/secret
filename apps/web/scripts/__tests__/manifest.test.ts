@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bundleManifest, checkShell, writeBundleManifest } from "../bundle-manifest.ts";
+import { bundleManifest, checkShell, writeBundleManifest } from "../manifest.ts";
 
 const SHELL = `<!doctype html>\n${SHELL_HTML_TAG}<head>${SHELL_HEAD_MARKER}</head></html>\n`;
 
@@ -36,7 +36,7 @@ afterEach(async () => {
 describe("bundleManifest", () => {
 	it("lists every file but itself, sorted, with its hash and size", async () => {
 		await writeBundle();
-		const manifest = await bundleManifest(dir);
+		const manifest = bundleManifest(dir);
 
 		expect(manifest.version).toBe(1);
 		expect(manifest.files).toEqual([
@@ -49,7 +49,7 @@ describe("bundleManifest", () => {
 
 	it("digests the listing sha256sum prints for the files", async () => {
 		await writeBundle();
-		const manifest = await bundleManifest(dir);
+		const manifest = bundleManifest(dir);
 
 		// `find … | LC_ALL=C sort | xargs sha256sum | sha256sum`, as bundle.ts documents it.
 		const listing = manifest.files.map((file) => `${file.sha256}  ${file.path}\n`).join("");
@@ -86,19 +86,19 @@ describe("checkShell", () => {
 describe("writeBundleManifest", () => {
 	it("writes the manifest at the bundle's root", async () => {
 		await writeBundle();
-		const manifest = await writeBundleManifest(dir);
+		const manifest = writeBundleManifest(dir);
 		const written: unknown = JSON.parse(await readFile(join(dir, "bundle.json"), "utf8"));
 
 		expect(written).toEqual(manifest);
 		// Written again, it is the same: the manifest never lists itself.
-		await expect(writeBundleManifest(dir)).resolves.toEqual(manifest);
+		expect(writeBundleManifest(dir)).toEqual(manifest);
 	});
 
 	it("writes nothing for a shell the server could not fill in", async () => {
 		await writeBundle();
 		await writeFile(join(dir, "index.html"), "<html><head></head></html>");
 
-		await expect(writeBundleManifest(dir)).rejects.toThrow("the server cannot fill it in");
+		expect(() => writeBundleManifest(dir)).toThrow("the server cannot fill it in");
 		await expect(readFile(join(dir, "bundle.json"), "utf8")).resolves.toBe("stale");
 	});
 });
