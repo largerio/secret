@@ -145,10 +145,6 @@ jobs:
           IMAGE: ghcr.io/largerio/secret@${{ steps.source.outputs.digest }}
         run: |
           bundle=$(.github/scripts/bundle-digest.sh "$IMAGE")
-          if [ -z "$bundle" ]; then
-            echo "::error::$IMAGE has no bundle.json: there is no digest of its web app to publish."
-            exit 1
-          fi
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
 
       # Scanned again: a CVE may have been published since the build. Not

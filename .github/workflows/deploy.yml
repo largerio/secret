@@ -389,10 +389,6 @@ jobs:
           IMAGE: ghcr.io/largerio/secret@${{ needs.docker.outputs.digest }}
         run: |
           bundle=$(.github/scripts/bundle-digest.sh "$IMAGE")
-          if [ -z "$bundle" ]; then
-            echo "::error::$IMAGE has no bundle.json."
-            exit 1
-          fi
           echo "::notice title=Web app::$bundle"
 
       - name: Scan, smoke-test, sign and tag the image

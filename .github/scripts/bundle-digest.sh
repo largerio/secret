@@ -2,17 +2,27 @@
 # Print the digest of the web app an image in the registry serves: the one its
 # bundle.json names (packages/shared/src/bundle.ts), which /api/health reports
 # and each release publishes. Every platform of the index must serve the same
-# web app, since a release publishes one digest. Prints nothing for an image
-# from before the bundle had one (1.7 and older); fails when only some of its
-# platforms have one.
+# web app, since a release publishes one digest. Fails when a platform has no
+# bundle.json; with --allow-none, an image none of whose platforms has one, from
+# before the bundle had a digest (1.7 and older), prints nothing instead.
 #
 # Each platform's image is read by its own manifest digest, from a container
 # that never starts: no emulation, and the index's reference is never pulled.
 # Pulled once per platform, it would point at the last one pulled, and the
 # classic image store refuses the second pull of a digest reference.
 #
-# Usage: bundle-digest.sh <image-ref>
+# Usage: bundle-digest.sh [--allow-none] <image-ref>
 set -euo pipefail
+
+allow_none=false
+if [ "${1:-}" = --allow-none ]; then
+	allow_none=true
+	shift
+fi
+if [ "$#" -ne 1 ]; then
+	echo "Usage: bundle-digest.sh [--allow-none] <image-ref>" >&2
+	exit 2
+fi
 
 IMAGE=$1
 MANIFEST=/app/apps/web/build/bundle.json
@@ -45,7 +55,9 @@ while read -r platform digest; do
 		args=(--platform "$platform")
 	fi
 	container=$(docker create ${args[@]+"${args[@]}"} "$repo@$digest" < /dev/null)
-	if docker cp "$container:$MANIFEST" "$work/bundle.json" > /dev/null 2>&1; then
+	# docker cp says why it copied nothing: no such file, or a failure of its
+	# own, which must not pass for an image from before the manifest.
+	if docker cp "$container:$MANIFEST" "$work/bundle.json" > /dev/null; then
 		bundle=$(jq -r .digest "$work/bundle.json")
 		if ! [[ $bundle =~ ^sha256:[0-9a-f]{64}$ ]]; then
 			echo "::error::$MANIFEST on $platform names the digest $bundle" >&2
@@ -60,7 +72,7 @@ while read -r platform digest; do
 	container=""
 done <<< "$images"
 
-if [ "${#found[@]}" -eq 0 ]; then
+if [ "${#found[@]}" -eq 0 ] && [ "$allow_none" = true ]; then
 	exit 0
 fi
 if [ "${#missing[@]}" -gt 0 ]; then

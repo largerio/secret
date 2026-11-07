@@ -258,14 +258,19 @@ jobs:
 
       # The release notes give the digest of the release's web app
       # (release-image.yml): on its new base, the line must serve that very
-      # one. Both are empty for a release from before the digest.
+      # one. Only a release whose build writes no manifest (1.7 and older) may
+      # have none, and then neither image has one.
       - name: Check the rebuild serves the release's web app
         env:
           RELEASED: ghcr.io/largerio/secret:${{ needs.check.outputs.version }}
           REBUILT: ghcr.io/largerio/secret@${{ needs.rebuild.outputs.digest }}
         run: |
-          released=$(.github/scripts/bundle-digest.sh "$RELEASED")
-          rebuilt=$(.github/scripts/bundle-digest.sh "$REBUILT")
+          options=()
+          if [ ! -e release/apps/web/scripts/bundle-manifest.ts ]; then
+            options=(--allow-none)
+          fi
+          released=$(.github/scripts/bundle-digest.sh ${options[@]+"${options[@]}"} "$RELEASED")
+          rebuilt=$(.github/scripts/bundle-digest.sh ${options[@]+"${options[@]}"} "$REBUILT")
           if [ "$rebuilt" != "$released" ]; then
             echo "::error::The rebuild serves the web app ${rebuilt:-without a digest}, $RELEASED ${released:-without a digest}: the line would no longer serve what the release notes give."
             exit 1
