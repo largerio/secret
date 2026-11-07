@@ -6,7 +6,7 @@ import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type LogLevel } from "../logger.js";
 import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
-import { cacheControlOf, contentTypeOf, isEmbeddable } from "../site/files.js";
+import { cacheControlOf, contentTypeOf, isEmbeddable, siteFile } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
 import { inlineScriptHashes } from "../site/scripts.js";
 import { BOOT_SCRIPT, createSiteFixture, SHELL, type SiteFixture } from "./siteFixture.js";
@@ -183,13 +183,36 @@ describe("loadSite", () => {
 		const buildDir = join(fixture.buildDir, "_app");
 
 		expect(() => loadSite({ ...fixture, buildDir, logger: capture().logger })).toThrow(
-			new SiteError(`${join(buildDir, "index.html")} is missing`),
+			new SiteError(`${join(buildDir, "index.html")} is missing`, "build"),
 		);
+	});
+
+	it.each([
+		["none", "ENOENT"],
+		["favicon.svg", "ENOTDIR"],
+	])("refuses a build it cannot read (%s: %s), with no stack trace", (under, code) => {
+		const fixture = useFixture();
+		const buildDir = join(fixture.buildDir, under);
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, buildDir, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toContain(`${buildDir} cannot be read: ${code}`);
+		expect((error as SiteError).hint).toContain("pnpm build");
 	});
 
 	it.each([
 		[SHELL_HTML_TAG, SHELL.replace(SHELL_HTML_TAG, "<html>")],
 		[SHELL_HEAD_MARKER, SHELL.replace(SHELL_HEAD_MARKER, "")],
+		[
+			`${SHELL_HTML_TAG} and ${SHELL_HEAD_MARKER}`,
+			SHELL.replace(SHELL_HTML_TAG, "<html>").replace(SHELL_HEAD_MARKER, ""),
+		],
 	])("refuses a shell that lacks %s", (marker, shell) => {
 		const fixture = useFixture({ shell });
 		const path = join(fixture.buildDir, "index.html");
@@ -216,10 +239,20 @@ describe("loadSite", () => {
 		const fixture = useFixture();
 		fixture.write("messages/ja.json", content);
 
-		const load = () => loadSite({ ...fixture, logger: capture().logger });
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
 
-		expect(load).toThrow(SiteError);
-		expect(load).toThrow(`${join(fixture.messagesDir, "ja.json")} ${reason}`);
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toContain(
+			`${join(fixture.messagesDir, "ja.json")} ${reason}`,
+		);
+		// A source to fix, which building the web app again would not.
+		expect((error as SiteError).hint).toContain("messages/*.json");
+		expect((error as SiteError).hint).not.toContain("pnpm build");
 	});
 
 	it("refuses a language whose messages are missing", () => {
@@ -398,6 +431,26 @@ describe("isEmbeddable", () => {
 			expect.arrayContaining(["/og.png", "/favicon.svg"]),
 		);
 		expect([...site.files].filter(([, file]) => file.embeddable)).toHaveLength(2);
+	});
+});
+
+describe("siteFile", () => {
+	it("serves a file under its SHA-256, and each copy under that and its coding", () => {
+		const body = Buffer.from(`export const app = "${"x".repeat(4096)}";\n`);
+
+		const file = siteFile("_app/immutable/entry/app.Cd2.js", body, "ab12");
+
+		expect(file).toMatchObject({
+			body,
+			etag: '"ab12"',
+			contentType: "text/javascript; charset=utf-8",
+			cacheControl: "public, max-age=31536000, immutable",
+			embeddable: false,
+		});
+		expect(file.encodings.map(({ encoding, etag }) => ({ encoding, etag }))).toEqual([
+			{ encoding: "br", etag: '"ab12-br"' },
+			{ encoding: "gzip", etag: '"ab12-gzip"' },
+		]);
 	});
 });
 

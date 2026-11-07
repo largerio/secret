@@ -20,6 +20,7 @@ import { getCookie } from "hono/cookie";
 import type { AppConfig } from "../config.js";
 import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
+import { HTML_CONTENT_TYPE } from "./files.js";
 import type { Messages, Site } from "./load.js";
 
 /** The pages the server knows, each with its own head; `notFound` for any other path. */
@@ -178,8 +179,6 @@ export interface RenderedPage {
 
 export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
 
-const HTML = "text/html; charset=utf-8";
-
 /**
  * Render the shell for a page and a visitor: their language and theme on
  * `<html>`, with the instance's accent, and in the head the page's title and
@@ -226,7 +225,7 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 		if (cached !== undefined) return cached;
 
 		const body = Buffer.from(render(page, visitor));
-		const sent = { body, encodings: compressedCopies(body, HTML) };
+		const sent = { body, encodings: compressedCopies(body, HTML_CONTENT_TYPE) };
 		rendered.set(key, sent);
 		return sent;
 	};

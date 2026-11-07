@@ -4,7 +4,7 @@ import type { AppEnv } from "../app.js";
 import type { AppConfig } from "../config.js";
 import { createSiteSecurityHeaders } from "../middleware/security.js";
 import { negotiate } from "./encodings.js";
-import { serveFile } from "./files.js";
+import { HTML_CONTENT_TYPE, serveFile } from "./files.js";
 import type { Site } from "./load.js";
 import { createShellRenderer, type Page, visitorOf } from "./shell.js";
 
@@ -68,9 +68,7 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 		if (copy) {
 			c.header("Content-Encoding", copy.encoding);
 		}
-		return c.body(copy?.body ?? rendered.body, status, {
-			"Content-Type": "text/html; charset=utf-8",
-		});
+		return c.body(copy?.body ?? rendered.body, status, { "Content-Type": HTML_CONTENT_TYPE });
 	}
 
 	/**
