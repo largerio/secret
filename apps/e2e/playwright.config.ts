@@ -34,7 +34,7 @@ const serverEnv = {
 	CAP_DIFFICULTY: "1",
 	CAP_CHALLENGE_COUNT: "1",
 	// The whole suite hits the API from one address, so the per-IP budget is
-	// shared by all its tests (38) running back to back. Without this the later
+	// shared by all its tests, which run back to back. Without this the later
 	// ones get 429s that surface as "Service unavailable".
 	RATE_LIMIT_MULTIPLIER: "50",
 	CHUNK_SIZE,
