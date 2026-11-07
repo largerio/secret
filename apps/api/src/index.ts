@@ -5,7 +5,6 @@ import { serve } from "@hono/node-server";
 // schemas, which config.js loads first and the routes extend.
 import "@hono/zod-openapi";
 import { parseServerKey } from "@largerio/secret-crypto/server";
-import { lingerOnClose } from "@largerio/secret-shared/linger";
 import { readBuildInfo } from "./buildInfo.js";
 import {
 	ConfigError,
@@ -17,6 +16,7 @@ import { createDatabase } from "./db/index.js";
 import { DatabaseVersionError, MigrationError } from "./db/migrations.js";
 import { startInstance } from "./instance.js";
 import { assertServerKeyMatches, ServerKeyMismatchError } from "./keyGuard.js";
+import { lingerOnClose } from "./linger.js";
 import { log } from "./logger.js";
 import { loadBuiltSite, type Site, SiteError } from "./site/load.js";
 import { createStorageBackend } from "./storage/index.js";

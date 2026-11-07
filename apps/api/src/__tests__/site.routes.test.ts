@@ -11,7 +11,6 @@ import {
 	MAX_FILES_PER_NOTE,
 	MAX_MESSAGE_LENGTH,
 } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
 import { parseShellData } from "@largerio/secret-shared/site";
 import type { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -19,6 +18,7 @@ import { type AppEnv, createApp } from "../app.js";
 import { parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
 import { createLogger } from "../logger.js";
+import { accentStyle } from "../site/accent.js";
 import { loadSite, type Site } from "../site/load.js";
 import { LocalStorage } from "../storage/local.js";
 import { problemOf } from "./problems.js";

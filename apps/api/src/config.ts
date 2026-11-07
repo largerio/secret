@@ -13,8 +13,8 @@ import {
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
+import { accentStyle } from "./site/accent.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
 /**

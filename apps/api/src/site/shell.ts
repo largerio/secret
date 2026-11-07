@@ -1,5 +1,4 @@
 import type { ServerConfig } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
 import {
 	DEFAULT_LOCALE,
 	isLocale,
@@ -19,6 +18,7 @@ import {
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppConfig } from "../config.js";
+import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
 import type { Messages, Site } from "./load.js";
 
