@@ -265,7 +265,7 @@ export function describePrimaryColor(config: { readonly primaryColor: string }):
  * surface it (the entry point logs + exits; tests assert on the message).
  */
 export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
-	const port = readEnvNumber(env["PORT"], Number("3001"));
+	const port = readEnvNumber(env["PORT"], Number("3000"));
 	const host = env["HOST"] ?? "0.0.0.0";
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";

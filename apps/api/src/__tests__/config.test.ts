@@ -51,11 +51,11 @@ describe("parseConfig", () => {
 			const config: AppConfig = parseConfig(baseEnv());
 
 			expect(config).toMatchObject({
-				port: 3001,
+				port: 3000,
 				host: "0.0.0.0",
 				databasePath: "./data/secret.db",
 				filesPath: "./data/files",
-				appUrl: "http://localhost:3001",
+				appUrl: "http://localhost:3000",
 				serverKey: TEST_KEY,
 				cleanupIntervalMs: CLEANUP_INTERVAL_MS,
 				capDifficulty: DEFAULT_CAP_DIFFICULTY,
@@ -629,7 +629,7 @@ describe("the instance's branding", () => {
 
 		expect(config.appName).toBe("Secret");
 		expect(config.appDescription).toBe("");
-		expect(config.ogImageUrl).toBe("http://localhost:3001/og.png");
+		expect(config.ogImageUrl).toBe("http://localhost:3000/og.png");
 	});
 });
 
@@ -672,7 +672,7 @@ describe("blank environment values", () => {
 			baseEnv({ PORT: "", MAX_FILE_SIZE: "", MAX_EXPIRY: "", CHUNK_SIZE: "" }),
 		);
 
-		expect(config.port).toBe(3001);
+		expect(config.port).toBe(3000);
 		expect(config.maxFileSize).toBe(MAX_FILE_SIZE);
 		expect(config.maxExpirySeconds).toBe(MAX_EXPIRY_SECONDS);
 		expect(config.chunkSize).toBe(DEFAULT_CHUNK_SIZE);
