@@ -112,12 +112,14 @@ export function headerQualities(header: string): ReadonlyMap<string, number> {
 /**
  * The supported language an `Accept-Language` header prefers, English failing
  * any: by q, the header's order between equals, a language given q=0 never.
+ * A range is read by its primary subtag: `pt-BR` is Portuguese, `kok`
+ * (Konkani) none of the app's languages.
  */
 export function parseAcceptLanguage(header: string): Locale {
 	const ranked = [...headerQualities(header)].filter(([, q]) => q > 0).sort((a, b) => b[1] - a[1]);
 
 	for (const [range] of ranked) {
-		const language = range.slice(0, 2);
+		const [language] = range.split("-");
 		if (isLocale(language)) {
 			return language;
 		}

@@ -53,6 +53,12 @@ describe("parseAcceptLanguage", () => {
 		expect(parseAcceptLanguage("fr;q=0")).toBe(DEFAULT_LOCALE);
 	});
 
+	it("reads a range by its primary subtag, never by its first two letters", () => {
+		expect(parseAcceptLanguage("pt-BR,en;q=0.5")).toBe("pt");
+		expect(parseAcceptLanguage("zh-Hant-TW")).toBe("zh");
+		expect(parseAcceptLanguage("kok,jam,frr,rup")).toBe(DEFAULT_LOCALE);
+	});
+
 	it("reads a q written with spaces, and keeps the header's order between equals", () => {
 		expect(parseAcceptLanguage("fr ; q = 0.5, de;q=0.9")).toBe("de");
 		expect(parseAcceptLanguage("ja;q=0.8, ko;q=0.8")).toBe("ja");
