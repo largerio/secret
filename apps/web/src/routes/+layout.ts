@@ -7,7 +7,6 @@ export const ssr = false;
 export const prerender = false;
 
 export const load: LayoutLoad = () => {
-	// Applies the shell data at once; without any, the page renders from the
-	// defaults while the instance's limits are fetched.
-	void startPage();
+	// Applies the shell data at once.
+	startPage();
 };
