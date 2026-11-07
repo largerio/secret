@@ -45,7 +45,6 @@ type NoteStatus =
 let status = $state<NoteStatus>({ state: "checking" });
 // The note as the check found it, null until then or if it found none.
 let checked = $state<NoteSummary | null>(null);
-let mounted = $state(false);
 let keyFragment = $state("");
 let password = $state("");
 let passwordProblem = $state<"" | "empty" | "wrong">("");
@@ -111,7 +110,6 @@ async function check(id: string): Promise<void> {
 
 onMount(() => {
 	keyFragment = window.location.hash.slice(1);
-	mounted = true;
 	void check(page.params["id"] ?? "");
 
 	// The full link pasted into the same tab only changes the fragment: the
@@ -376,7 +374,7 @@ link previews: the title is kept here so that navigating here sets it. -->
 		{/if}
 
 		<div class="border-t border-line p-3">
-			<button type="submit" class="btn btn-primary btn-lg w-full" disabled={!mounted}>
+			<button type="submit" class="btn btn-primary btn-lg w-full">
 				<Icon name="unlock" size={16} />
 				{info.hasPassword ? t("un_unlock") : t("un_show")}
 			</button>

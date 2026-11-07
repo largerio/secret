@@ -25,9 +25,7 @@ const DONE_PAUSE_MS = 450;
 const config = $derived(getConfig());
 const maxFileSize = $derived(config.maxChunkedFileSize || config.maxFileSize);
 
-let mounted = $state(false);
 onMount(() => {
-	mounted = true;
 	// Back would show the link again, with the only copy of its key: the page
 	// starts over as it is put away.
 	return onBackForwardCache(() => {
@@ -224,7 +222,7 @@ title is kept here so that navigating back to this page sets it again. -->
 			type="submit"
 			class="btn btn-primary btn-lg rise w-full"
 			style:animation-delay="0.3s"
-			disabled={!mounted || !canSubmit}
+			disabled={!canSubmit}
 		>
 			{t("submit_encrypt")}<Icon name="arrow-right" size={16} />
 		</button>

@@ -18,23 +18,13 @@ export interface CreateNoteOptions {
 }
 
 /**
- * Navigates to the create page and blocks until Svelte has mounted the form.
- *
- * The submit button is `disabled={!mounted || !canSubmit}`, so re-typing until it
- * becomes enabled proves both that `mounted` flipped and that `bind:value` is
- * live. Once that holds, the rest of the form's handlers — tab switches,
- * `<select>`s and the file input — are wired up too, so subsequent interactions
- * won't be silently dropped.
+ * Navigates to the create page and waits for its form. The page renders in
+ * the browser only, its handlers attached as its elements are created: once
+ * the note's field can be typed in, the whole form is live.
  */
 export async function gotoCreate(page: Page): Promise<void> {
 	await page.goto("/");
-	const textarea = page.locator("#note-text");
-	const submit = page.getByRole("button", { name: /Encrypt and create the link/i });
-	await expect(async () => {
-		await textarea.fill("hydration-probe");
-		await expect(submit).toBeEnabled({ timeout: 1000 });
-	}).toPass({ timeout: 30_000 });
-	await textarea.fill("");
+	await expect(page.locator("#note-text")).toBeEditable({ timeout: 30_000 });
 }
 
 /**
@@ -158,9 +148,9 @@ export async function revealNote(
 	await page.goto(shareUrl);
 	const open = page.getByRole("button", { name: /Show the note|Unlock the note/i });
 
-	// The button appears once the page has checked the note, and is
-	// `disabled={!mounted}`: enabled, the submit handler is attached.
-	await expect(open).toBeEnabled({ timeout: 30_000 });
+	// The button appears once the page has checked the note, its handler
+	// attached with it.
+	await expect(open).toBeVisible({ timeout: 30_000 });
 
 	if (options.password !== undefined) {
 		await page.locator("#decrypt-password").fill(options.password);
@@ -172,7 +162,7 @@ export async function revealNote(
  * Runs axe-core against the current page state and asserts there are no WCAG
  * 2.0/2.1 A or AA violations. The caller is responsible for first navigating to —
  * and waiting for — the UI state it wants to audit (axe analyses the live DOM at
- * call time, so a stable, fully-hydrated state is required for a meaningful scan).
+ * call time, so the page must have rendered that state for a meaningful scan).
  *
  * `best-practice` rules are intentionally left out: the gate covers the WCAG
  * success criteria only, which keeps it actionable and stable across axe releases.
