@@ -70,9 +70,9 @@ jobs:
         run: find .github scripts entrypoint.sh -name '*.sh' -print0 | xargs -0 shellcheck
 
   # The suite runs against the image this commit builds, on S3 storage
-  # (RustFS), rather than the dev servers: a fault of the image, its proxy or
-  # the S3 backend shows up before the merge. `pnpm test:e2e` alone still
-  # starts the dev servers. The command line runs against the same image,
+  # (RustFS): a fault of the image or of the S3 backend shows up before the
+  # merge. `pnpm test:e2e` alone builds the web app and starts the API serving
+  # it, on local storage. The command line runs against the same image,
   # installed from its tarball as a user installs it, and the web app in it
   # must be the one this runner builds.
   e2e:
