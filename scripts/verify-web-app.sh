@@ -197,7 +197,7 @@ for page in / "/note/$id" "/note/$id/manage" "/$id"; do
 	# Every address in an attribute or the boot script: a file of the build,
 	# or the instance's own address, in links that load nothing.
 	strangers=$(tr "'" '"' < "$work/page" \
-		| grep -oiE '(src|href)[[:space:]]*=[[:space:]]*("[^"]*"|[^[:space:]">]+)|import\("[^"]*"\)' \
+		| { grep -oiE '(src|href)[[:space:]]*=[[:space:]]*("[^"]*"|[^[:space:]">]+)|import\("[^"]*"\)' || true; } \
 		| sed -E 's/^[^=(]*[=(][[:space:]]*"?//; s/"?\)?$//' | LC_ALL=C sort -u \
 		| while IFS= read -r url; do
 			if [ "$url" != "$INSTANCE" ] && ! grep -qxF -- "$url" "$work/addresses"; then
@@ -210,6 +210,12 @@ for page in / "/note/$id" "/note/$id/manage" "/$id"; do
 		while IFS= read -r url; do
 			differs "it names $url, which is not a file of the build"
 		done <<< "$strangers"
+	fi
+
+	# Addresses the check above does not read, and the release's shell never
+	# holds: a refresh sends the page elsewhere, a srcset lists images.
+	if grep -qiE 'http-equiv[[:space:]]*=[[:space:]]*"?refresh|srcset[[:space:]]*=' "$work/page"; then
+		differs "it holds a <meta http-equiv=\"refresh\"> or a srcset, which the release's shell does not"
 	fi
 
 	# One script-src, of the instance's files and the build's inline scripts:

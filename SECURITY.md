@@ -183,7 +183,9 @@ runs it on every change, against the image it builds. It checks:
   - every address it names, in an attribute or in its boot script, must be a
     file of the build: a script it loaded from the instance could otherwise be
     any script, as its policy lets the page run any of the instance's.
-    The only other address is the instance's own, in links that load nothing;
+    The only other address is the instance's own, in links that load nothing,
+    and it may hold no `<meta http-equiv="refresh">` nor `srcset`, which the
+    release's shell never does;
   - its `Content-Security-Policy` header must let it run the instance's files
     and the build's inline scripts, and nothing else: `script-src` must be
     `'self' 'wasm-unsafe-eval'` followed by the SHA-256 of each inline script
