@@ -1,4 +1,5 @@
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
+import { headerQualities } from "@largerio/secret-shared/site";
 
 export type Encoding = "br" | "gzip";
 
@@ -53,18 +54,6 @@ export function compressedCopies(
 	return copies.filter((copy) => copy.body.length < body.length);
 }
 
-/** The q each coding of Accept-Encoding is given, by lower-cased name. */
-function qualities(acceptEncoding: string): ReadonlyMap<string, number> {
-	const qualities = new Map<string, number>();
-	for (const item of acceptEncoding.toLowerCase().split(",")) {
-		const [coding, ...parameters] = item.split(";").map((part) => part.trim());
-		const q = parameters.find((parameter) => parameter.startsWith("q="));
-		// A q that is no number (NaN) accepts nothing, as q=0 does.
-		qualities.set(coding as string, q === undefined ? 1 : Number(q.slice(2)));
-	}
-	return qualities;
-}
-
 /**
  * The copy to send for Accept-Encoding, in the order the copies come (brotli
  * before gzip), or undefined for the body itself. A coding given q=0 is
@@ -76,7 +65,7 @@ export function negotiate<T extends EncodedBody>(
 ): T | undefined {
 	if (acceptEncoding === undefined) return undefined;
 
-	const q = qualities(acceptEncoding);
+	const q = headerQualities(acceptEncoding);
 	const others = q.get("*") ?? 0;
 	return copies.find((copy) => (q.get(copy.encoding) ?? others) > 0);
 }

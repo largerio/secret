@@ -340,6 +340,8 @@ describe("negotiate", () => {
 		["gzip;q=0.5, br;q=0.1", br],
 		["br;q=0, gzip", gzip],
 		["br ; q=0 , gzip ; q=0.8", gzip],
+		["br; q = 0, gzip", gzip],
+		["br;q=, gzip", gzip],
 		["br;q=no, gzip", gzip],
 		["*", br],
 		["*;q=0, gzip", gzip],
