@@ -1,10 +1,11 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-shared";
+import { INSTANCE_LIMITS } from "@largerio/secret-shared/site";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono, type MiddlewareHandler } from "hono";
 import { compress } from "hono/compress";
 import { type BuildInfo, UNKNOWN_BUILD } from "./buildInfo.js";
-import type { AppConfig } from "./config.js";
+import { type AppConfig, pageConfigOf } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
 import { createHealthCheck, createReadiness } from "./health.js";
 import { type Logger, log } from "./logger.js";
@@ -21,6 +22,7 @@ import { createErrorHandler } from "./middleware/errorHandler.js";
 import { problem } from "./middleware/problem.js";
 import {
 	classifyNotesPath,
+	createClientAddress,
 	createRateLimit,
 	type NotesRateClass,
 	type RateLimitResult,
@@ -33,6 +35,7 @@ import {
 } from "./middleware/security.js";
 import { createNotesService } from "./notes/service.js";
 import { createCapRoutes } from "./routes/cap.js";
+import { createCrawlerRoutes } from "./routes/crawlers.js";
 import { noteErrorToHttp } from "./routes/notes/errorStatus.js";
 import { createNotesRoutes } from "./routes/notes/index.js";
 import type { Site } from "./site/load.js";
@@ -89,7 +92,9 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	const metrics =
 		deps.metrics ?? createMetrics({ db, build, quotaBytes: config.storageQuotaBytes, logger });
 
-	const site = deps.site ? createSiteRoutes(deps.site, config) : undefined;
+	// robots.txt and the sitemap: the API's, though outside /api/.
+	const crawlers = createCrawlerRoutes(config.appUrl);
+	const siteRoutes = deps.site ? createSiteRoutes(deps.site, config, crawlers.paths) : undefined;
 
 	const app = new Hono<AppEnv>();
 
@@ -97,7 +102,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		createErrorHandler({ debug: config.debug, logger, toHttpException: noteErrorToHttp }),
 	);
 
-	app.notFound((c) => site?.notFound(c) ?? problem(c, 404, "not_found", "Not found"));
+	app.notFound((c) => siteRoutes?.notFound(c) ?? problem(c, 404, "not_found", "Not found"));
 
 	// First so every later middleware, handler and the error handler can
 	// correlate their log lines with this request. Health probes are skipped:
@@ -109,16 +114,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		"*",
 		createRequestLogger(logger, {
 			skipPaths: HEALTH_PATHS,
-			quietPaths: [METRICS_PATH, ...(site?.staticPaths ?? [])],
+			quietPaths: [METRICS_PATH, ...(siteRoutes?.staticPaths ?? [])],
 		}),
 	);
 	app.use("*", createRequestMetrics(metrics));
 
 	app.use("/api/v1/docs", createDocsSecurityHeaders());
 	const apiSecurityHeaders = createSecurityHeaders({ skipPaths: ["/api/v1/docs"] });
-	app.use("*", site ? site.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
+	app.use("*", siteRoutes ? siteRoutes.securityHeaders(apiSecurityHeaders) : apiSecurityHeaders);
 	app.use("*", createCors([new URL(config.appUrl).origin]));
-	app.use("*", site ? site.apiOnly(compress()) : compress());
+	app.use("*", siteRoutes ? siteRoutes.apiOnly(compress()) : compress());
 
 	// Around the limits and the auth below, which answer before reading a body.
 	app.use("*", createCloseAfterError());
@@ -148,15 +153,16 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 	// rateLimitMultiplier scales every bound for deployments where many
 	// legitimate users share one apparent address (corporate NAT, VPN, or a
 	// proxy the instance was not told about: ADDRESS_HEADER, TRUSTED_PROXIES).
+	//
+	// Every limiter counts a client under the same key, from one resolver.
+	const clientAddress = createClientAddress({
+		trustedProxies: config.trustedProxies,
+		addressHeader: config.addressHeader,
+		xffDepth: config.xffDepth,
+	});
 	const scale = (max: number) => Math.ceil(max * config.rateLimitMultiplier);
 	const limit = (max: number) =>
-		createRateLimit({
-			windowMs: 60_000,
-			max: scale(max),
-			trustedProxies: config.trustedProxies,
-			addressHeader: config.addressHeader,
-			xffDepth: config.xffDepth,
-		});
+		createRateLimit({ windowMs: 60_000, max: scale(max), clientAddress });
 
 	const createLimit = limit(30);
 	const readLimit = limit(60);
@@ -232,20 +238,7 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		app.get(METRICS_PATH, createMetricsHandler(metrics, config.metricsToken));
 	}
 
-	app.get("/robots.txt", (c) => {
-		c.header("Content-Type", "text/plain");
-		c.header("Cache-Control", "public, max-age=86400");
-		return c.body(
-			`User-agent: *\nAllow: /\nDisallow: /note/\nDisallow: /api/\n\nSitemap: ${config.appUrl}/sitemap.xml\n`,
-		);
-	});
-	app.get("/sitemap.xml", (c) => {
-		c.header("Content-Type", "application/xml");
-		c.header("Cache-Control", "public, max-age=86400");
-		return c.body(
-			`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n  <url>\n    <loc>${config.appUrl}/</loc>\n    <xhtml:link rel="alternate" hreflang="en" href="${config.appUrl}/" />\n    <xhtml:link rel="alternate" hreflang="fr" href="${config.appUrl}/" />\n    <xhtml:link rel="alternate" hreflang="x-default" href="${config.appUrl}/" />\n    <changefreq>monthly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
-		);
-	});
+	app.route("/", crawlers.routes);
 
 	// --- Cap: Cap's own format, not versioned, specified in PROTOCOL.md ("Proof of work") ---
 
@@ -273,15 +266,11 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		}),
 	);
 
-	v1.get("/config", (c) => {
-		return c.json({
-			maxFileSize: config.maxFileSize,
-			maxFilesPerNote: config.maxFilesPerNote,
-			maxExpiry: config.maxExpirySeconds,
-			chunkSize: config.chunkSize,
-			maxChunkedFileSize: config.maxChunkedFileSize,
-		});
-	});
+	// The limits of the pages' settings, and only them: the pages and the
+	// clients of the API are told the same.
+	const pageConfig = pageConfigOf(config);
+	const limits = Object.fromEntries(INSTANCE_LIMITS.map((limit) => [limit, pageConfig[limit]]));
+	v1.get("/config", (c) => c.json(limits));
 
 	v1.doc31("/openapi.json", {
 		openapi: "3.1.0",
@@ -307,8 +296,8 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 
 	// On paths of its own, the 404 aside: a route that matched every path would
 	// be the pattern every request is logged and counted under (matchedRoute).
-	if (site) {
-		app.route("/", site.routes);
+	if (siteRoutes) {
+		app.route("/", siteRoutes.routes);
 	}
 
 	return {

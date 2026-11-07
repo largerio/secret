@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accentStyle, contrastRatio } from "../accent.js";
+import { accentStyle, contrastRatio } from "../site/accent.js";
 
 type Rgb = [number, number, number];
 

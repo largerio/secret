@@ -1,29 +1,21 @@
-import type { ServerConfig } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
 import {
-	DEFAULT_LOCALE,
-	isLocale,
-	LOCALE_COOKIE,
 	LOCALES,
 	type Locale,
-	type PageConfig,
-	parseAcceptLanguage,
+	type Page,
+	pageTitle,
 	SHELL_DATA_ID,
 	SHELL_HEAD_MARKER,
 	SHELL_HTML_TAG,
 	scriptJson,
 	serializeShellData,
-	THEME_COOKIE,
 	type ThemePreference,
 } from "@largerio/secret-shared/site";
-import type { Context } from "hono";
-import { getCookie } from "hono/cookie";
-import type { AppConfig } from "../config.js";
+import { type AppConfig, pageConfigOf } from "../config.js";
+import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
-import type { Messages, Site } from "./load.js";
-
-/** The pages the server knows, each with its own head; `notFound` for any other path. */
-export type Page = "home" | "note" | "manage" | "notFound";
+import { HTML_CONTENT_TYPE } from "./files.js";
+import type { Site } from "./load.js";
+import { type HeadMessage, translator } from "./messages.js";
 
 /** What the page is rendered for: the language and theme the visitor chose, or their browser's. */
 export interface Visitor {
@@ -55,7 +47,7 @@ const FEATURES = [
 ];
 
 /** For text and for attribute values alike: every value written here is the operator's or a translator's. */
-export function escapeHtml(text: string): string {
+function escapeHtml(text: string): string {
 	return text
 		.replaceAll("&", "&amp;")
 		.replaceAll("<", "&lt;")
@@ -64,52 +56,25 @@ export function escapeHtml(text: string): string {
 		.replaceAll("'", "&#39;");
 }
 
-/** The settings the pages start from, as the web server used to hand them over. */
-export function serverConfigOf(config: AppConfig): ServerConfig {
-	return {
-		appName: config.appName,
-		appDescription: config.appDescription,
-		appUrl: config.appUrl,
-		primaryColor: config.primaryColor,
-		footerText: config.footerText,
-		ogImageUrl: config.ogImageUrl,
-		maxFileSize: config.maxFileSize,
-		maxFilesPerNote: config.maxFilesPerNote,
-		chunkSize: config.chunkSize,
-		maxChunkedFileSize: config.maxChunkedFileSize,
-		maxExpiry: config.maxExpirySeconds,
-	};
-}
-
-/** The language of the cookie the app writes, else the browser's; the theme likewise, else the system's. */
-export function visitorOf(c: Context): Visitor {
-	const locale = getCookie(c, LOCALE_COOKIE);
-	const theme = getCookie(c, THEME_COOKIE);
-	return {
-		locale: isLocale(locale) ? locale : parseAcceptLanguage(c.req.header("accept-language") ?? ""),
-		theme: theme === "light" || theme === "dark" ? theme : "system",
-	};
-}
-
 function meta(attribute: "name" | "property", key: string, content: string): string {
 	return `<meta ${attribute}="${key}" content="${escapeHtml(content)}" />`;
 }
 
-function title(text: string): string {
-	return `<title>${escapeHtml(text)}</title>`;
-}
-
 /**
  * What the Svelte pages put in `<svelte:head>`, rendered here for crawlers
- * and link previews, which run no JavaScript.
+ * and link previews, which run no JavaScript. The title is the one the page
+ * sets once it runs: both build it with pageTitle.
  */
-function pageHead(page: Page, t: (key: string) => string, config: ServerConfig): string[] {
+function pageHead(page: Page, t: (key: HeadMessage) => string, config: AppConfig): string[] {
+	const heading = pageTitle(page, config.appName, t);
+	const title = `<title>${escapeHtml(heading)}</title>`;
 	const noindex = meta("name", "robots", "noindex, nofollow");
 
 	switch (page) {
 		case "home": {
-			const heading = t("seo_title").replaceAll("{app}", () => config.appName);
-			const description = t("seo_description");
+			// The operator's, in every language, when they wrote one.
+			const description =
+				config.appDescription === "" ? t("seo_description") : config.appDescription;
 			const application = {
 				"@context": "https://schema.org",
 				"@type": "WebApplication",
@@ -122,7 +87,7 @@ function pageHead(page: Page, t: (key: string) => string, config: ServerConfig):
 				featureList: FEATURES,
 			};
 			return [
-				title(heading),
+				title,
 				meta("name", "description", description),
 				meta("name", "keywords", t("seo_keywords")),
 				`<link rel="canonical" href="${escapeHtml(config.appUrl)}" />`,
@@ -135,10 +100,9 @@ function pageHead(page: Page, t: (key: string) => string, config: ServerConfig):
 			];
 		}
 		case "note": {
-			const heading = `${config.appName} — ${t("view_title")}`;
 			const description = t("view_description");
 			return [
-				title(heading),
+				title,
 				noindex,
 				meta("name", "description", description),
 				meta("property", "og:title", heading),
@@ -146,14 +110,14 @@ function pageHead(page: Page, t: (key: string) => string, config: ServerConfig):
 			];
 		}
 		case "manage":
-			return [title(`${config.appName} — ${t("manage_title")}`), noindex];
+			return [title, noindex];
 		case "notFound":
-			return [title(`404 | ${config.appName}`)];
+			return [title];
 	}
 }
 
 /** The root layout's head, on every page. */
-function layoutHead(locale: Locale, config: ServerConfig): string[] {
+function layoutHead(locale: Locale, config: AppConfig): string[] {
 	const appUrl = escapeHtml(config.appUrl);
 	return [
 		meta("property", "og:site_name", config.appName),
@@ -178,39 +142,25 @@ export interface RenderedPage {
 
 export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
 
-const HTML = "text/html; charset=utf-8";
-
 /**
  * Render the shell for a page and a visitor: their language and theme on
  * `<html>`, with the instance's accent, and in the head the page's title and
  * meta tags and the shell data the app starts from. A page depends on nothing
- * else, so each one is rendered and compressed once: four pages, ten
- * languages and three themes at most, and no request costs a compression.
+ * else, so each one is rendered and compressed once, for the first request
+ * that asks for it, and kept: four pages, ten languages and three themes, 120
+ * at most. Every later request is sent the copy kept.
  */
 export function createShellRenderer(site: Site, config: AppConfig): ShellRenderer {
-	const settings = serverConfigOf(config);
-	const pageConfig: PageConfig = {
-		appName: settings.appName,
-		footerText: settings.footerText,
-		maxFileSize: settings.maxFileSize,
-		maxFilesPerNote: settings.maxFilesPerNote,
-		chunkSize: settings.chunkSize,
-		maxChunkedFileSize: settings.maxChunkedFileSize,
-		maxExpiry: settings.maxExpiry,
-	};
-	const accent = accentStyle(settings.primaryColor);
+	const pageConfig = pageConfigOf(config);
+	const accent = accentStyle(config.primaryColor);
 	const style = accent === undefined ? "" : ` style="${escapeHtml(accent)}"`;
 	const rendered = new Map<string, RenderedPage>();
-
-	function translator(messages: Messages, locale: Locale): (key: string) => string {
-		return (key) => messages[locale][key] ?? messages[DEFAULT_LOCALE][key] ?? key;
-	}
 
 	function render(page: Page, { locale, theme }: Visitor): string {
 		const t = translator(site.messages, locale);
 		const head = [
-			...pageHead(page, t, settings),
-			...layoutHead(locale, settings),
+			...pageHead(page, t, config),
+			...layoutHead(locale, config),
 			`<script type="application/json" id="${SHELL_DATA_ID}">${serializeShellData({ config: pageConfig, locale, theme })}</script>`,
 		].join("\n\t\t");
 
@@ -226,7 +176,7 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 		if (cached !== undefined) return cached;
 
 		const body = Buffer.from(render(page, visitor));
-		const sent = { body, encodings: compressedCopies(body, HTML) };
+		const sent = { body, encodings: compressedCopies(body, HTML_CONTENT_TYPE) };
 		rendered.set(key, sent);
 		return sent;
 	};

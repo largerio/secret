@@ -5,15 +5,16 @@ import type { Socket } from "node:net";
 export const LINGER_MS = 2000;
 
 /**
- * Lingering close (RFC 9112, section 9.6), for the API and the web server.
+ * Lingering close (RFC 9112, section 9.6), for the server that answers the
+ * API and the web app (index.ts).
  *
  * A server that answers a request before reading all of its body (a refused
  * write, a body too large) closes the connection: Node calls
  * `socket.destroySoon()`, which closes the socket as soon as the answer is
  * sent. The client is still sending, and what it sends to a closed socket
  * draws a reset, which can make its system throw the answer away before the
- * client reads it: the refusal turned into a network error, or a 502 behind
- * the web server's proxy.
+ * client reads it: the refusal turned into a network error, or a 502 from the
+ * reverse proxy in front.
  *
  * On every connection of `server`, closing now ends the answer, keeps reading
  * and discarding what still arrives, and closes once the client has closed its

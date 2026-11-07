@@ -17,15 +17,19 @@ export interface RateLimitResult {
 /** Where the client's address comes from: see createClientAddress. */
 export interface ClientAddressOptions {
 	readonly trustedProxies?: ReadonlyArray<string>;
-	/** Lower-cased header name (ADDRESS_HEADER), or "" for none. */
+	/** The header's name (ADDRESS_HEADER), in any case, or "" for none. */
 	readonly addressHeader?: string;
 	/** With X-Forwarded-For, the entry that many from the right (XFF_DEPTH). */
 	readonly xffDepth?: number;
 }
 
-export interface RateLimitOptions extends ClientAddressOptions {
+/** The key a request is counted under: see createClientAddress. */
+export type ClientAddress = (c: Context) => string;
+
+export interface RateLimitOptions {
 	readonly windowMs: number;
 	readonly max: number;
+	readonly clientAddress: ClientAddress;
 }
 
 type IpType = "ipv4" | "ipv6";
@@ -132,10 +136,13 @@ function forwardedClientIp(c: Context, trusted: BlockList): string {
 }
 
 /**
- * The address ADDRESS_HEADER holds, read the way adapter-node reads it: with
- * X-Forwarded-For, which a client can prefill, the entry `depth` hops from the
- * right, the one the closest of our proxies wrote. Null when the header is
- * missing, the list shorter than `depth`, or the entry not an address.
+ * The address ADDRESS_HEADER holds, read the way adapter-node reads it. With
+ * X-Forwarded-For, which a client can prefill, that is the entry `depth` hops
+ * from the right: each of our `depth` proxies appends the address it got the
+ * request from, so that entry is the one the outermost of them wrote, the
+ * proxy nearest the client (the last entry, with a single proxy). Null when
+ * the header is missing, the list shorter than `depth`, or the entry not an
+ * address.
  */
 function headerAddress(c: Context, header: string, depth: number): Address | null {
 	const value = c.req.header(header);
@@ -151,14 +158,16 @@ function headerAddress(c: Context, header: string, depth: number): Address | nul
  * The key a request is counted under: the client's address, or its IPv6 /64.
  *
  * With ADDRESS_HEADER set, the reverse proxy in front says who the client is,
- * and TRUSTED_PROXIES is not consulted. A request that does not carry it (one
- * that skipped the proxy, such as the container's health check) falls back to
- * the socket peer: throwing there, as adapter-node does, once took production
- * down. Without ADDRESS_HEADER, X-Forwarded-For and X-Real-IP count only from
- * a peer in TRUSTED_PROXIES.
+ * and TRUSTED_PROXIES is not consulted. A request that does not carry it (a
+ * client that reached the port directly) falls back to the socket peer:
+ * throwing there, as adapter-node does, once took production down. Without
+ * ADDRESS_HEADER, X-Forwarded-For and X-Real-IP count only from a peer in
+ * TRUSTED_PROXIES.
+ *
+ * Built once for the app, and shared by its limiters.
  */
-export function createClientAddress(options: ClientAddressOptions): (c: Context) => string {
-	const header = options.addressHeader ?? "";
+export function createClientAddress(options: ClientAddressOptions): ClientAddress {
+	const header = (options.addressHeader ?? "").toLowerCase();
 	if (header === "") {
 		const trusted = buildTrustedBlockList(options.trustedProxies ?? []);
 		return (c) => forwardedClientIp(c, trusted);
@@ -200,7 +209,7 @@ export function classifyNotesPath(path: string): NotesRateClass {
 
 export function createRateLimit(options: RateLimitOptions): RateLimitResult {
 	const store = new Map<string, RateLimitStore>();
-	const clientAddress = createClientAddress(options);
+	const { clientAddress } = options;
 
 	const cleanupInterval = Math.min(30_000, options.windowMs);
 	const timer = setInterval(() => {

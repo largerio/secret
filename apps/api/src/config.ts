@@ -13,8 +13,9 @@ import {
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
+import type { PageConfig } from "@largerio/secret-shared/site";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
+import { accentStyle } from "./site/accent.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
 
 /**
@@ -178,14 +179,36 @@ export interface AppConfig {
 	readonly metricsToken: string;
 	/** How long a shutdown waits for in-flight requests before it cuts them. */
 	readonly shutdownTimeoutMs: number;
-	/** What the pages show of the instance (APP_NAME, APP_DESCRIPTION…). */
+	/** APP_NAME, in every page's title and head. */
 	readonly appName: string;
+	/**
+	 * APP_DESCRIPTION: the home page's description in every language, in its
+	 * meta tags and JSON-LD; "" when unset, which keeps each language's own.
+	 */
 	readonly appDescription: string;
 	/** APP_PRIMARY_COLOR as set: anything but a hex colour is ignored (see describePrimaryColor). */
 	readonly primaryColor: string;
+	/** APP_FOOTER_TEXT, at the foot of every page; "" for none. */
 	readonly footerText: string;
 	/** APP_OG_IMAGE_URL, or the og.png the web app ships. */
 	readonly ogImageUrl: string;
+}
+
+/**
+ * What a page reads of the instance's settings, in the shell data: its name,
+ * its footer, and the limits it announces, which `GET /api/v1/config` answers
+ * too (INSTANCE_LIMITS).
+ */
+export function pageConfigOf(config: AppConfig): PageConfig {
+	return {
+		appName: config.appName,
+		footerText: config.footerText,
+		maxFileSize: config.maxFileSize,
+		maxFilesPerNote: config.maxFilesPerNote,
+		chunkSize: config.chunkSize,
+		maxChunkedFileSize: config.maxChunkedFileSize,
+		maxExpiry: config.maxExpirySeconds,
+	};
 }
 
 /**
@@ -242,7 +265,7 @@ export function describePrimaryColor(config: { readonly primaryColor: string }):
  * surface it (the entry point logs + exits; tests assert on the message).
  */
 export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
-	const port = readEnvNumber(env["PORT"], Number("3001"));
+	const port = readEnvNumber(env["PORT"], Number("3000"));
 	const host = env["HOST"] ?? "0.0.0.0";
 	const databasePath = env["DATABASE_PATH"] ?? "./data/secret.db";
 	const filesPath = env["FILES_PATH"] ?? "./data/files";
@@ -498,9 +521,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		debug,
 		metricsToken,
 		shutdownTimeoutMs: shutdownTimeout * 1000,
-		// The web server's variables, with its defaults: the pages are the API's now.
+		// The web server's variables, with its defaults: the pages are the API's
+		// now. APP_DESCRIPTION, which its pages never showed, has none: unset, the
+		// home page keeps the description translated for each language.
 		appName: readEnvString(env["APP_NAME"], "Secret"),
-		appDescription: readEnvString(env["APP_DESCRIPTION"], "Zero-knowledge encrypted sharing"),
+		appDescription: readEnvString(env["APP_DESCRIPTION"], ""),
 		primaryColor: readEnvString(env["APP_PRIMARY_COLOR"], ""),
 		footerText: readEnvString(env["APP_FOOTER_TEXT"], ""),
 		ogImageUrl: readEnvString(env["APP_OG_IMAGE_URL"], `${normalizedAppUrl}/og.png`),

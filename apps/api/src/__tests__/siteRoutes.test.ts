@@ -11,18 +11,25 @@ import {
 	MAX_FILES_PER_NOTE,
 	MAX_MESSAGE_LENGTH,
 } from "@largerio/secret-shared";
-import { accentStyle } from "@largerio/secret-shared/accent";
-import { parseShellData } from "@largerio/secret-shared/site";
+import { INSTANCE_LIMITS, pageTitle, parseShellData } from "@largerio/secret-shared/site";
 import type { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type AppEnv, createApp } from "../app.js";
+import type { AppEnv } from "../app.js";
 import { parseConfig } from "../config.js";
 import { type AppDatabase, createDatabase } from "../db/index.js";
-import { createLogger } from "../logger.js";
+import { createLogger, type Logger } from "../logger.js";
+import { accentStyle } from "../site/accent.js";
 import { loadSite, type Site } from "../site/load.js";
+import { createShellRenderer } from "../site/shell.js";
 import { LocalStorage } from "../storage/local.js";
 import { problemOf } from "./problems.js";
-import { BOOT_SCRIPT, createSiteFixture, FILES, type SiteFixture } from "./siteFixture.js";
+import {
+	BOOT_SCRIPT,
+	createSiteFixture,
+	FILES,
+	MESSAGES,
+	type SiteFixture,
+} from "./siteFixture.js";
 import { createTestApp } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/site-routes-test.db";
@@ -63,13 +70,18 @@ function removeFiles(): void {
 }
 
 /** The app with the fixture's site, another one, or none (null). */
-function makeApp(env: Record<string, string> = {}, served: Site | null = site): Hono<AppEnv> {
+function makeApp(
+	env: Record<string, string> = {},
+	served: Site | null = site,
+	logger?: Logger,
+): Hono<AppEnv> {
 	const created = createTestApp({
 		db,
 		serverKey: SERVER_KEY,
 		storage: new LocalStorage(TEST_FILES_PATH),
 		env: { APP_URL, ...env },
 		...(served ? { site: served } : {}),
+		...(logger ? { logger } : {}),
 	});
 	stops.push(created.stop);
 	return created.app;
@@ -150,6 +162,56 @@ describe("the pages", () => {
 		expect(html).toContain(`<script>${BOOT_SCRIPT}</script>`);
 	});
 
+	/** The home page's descriptions: its meta tags' and its JSON-LD's. */
+	function descriptionsOf(html: string) {
+		const content = (attribute: string) =>
+			new RegExp(`<meta ${attribute} content="([^"]*)" />`).exec(html)?.[1];
+		const jsonLd = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(html)?.[1];
+		return [
+			content('name="description"'),
+			content('property="og:description"'),
+			content('name="twitter:description"'),
+			JSON.parse(jsonLd ?? "{}").description,
+		];
+	}
+
+	it("describe the home page in each language, without APP_DESCRIPTION", async () => {
+		const app = makeApp();
+		const home = async (language: string) =>
+			(await app.request("/", { headers: { "Accept-Language": language } })).text();
+
+		expect(descriptionsOf(await home("en"))).toEqual(
+			Array(4).fill("Share secrets: encrypted in your browser."),
+		);
+		expect(descriptionsOf(await home("fr"))).toEqual(
+			Array(4).fill("Partagez des secrets : chiffrés dans votre navigateur."),
+		);
+	});
+
+	it("describe the home page by APP_DESCRIPTION in every language, once it is set", async () => {
+		const app = makeApp({ APP_DESCRIPTION: `Our "notes" & <files>` });
+
+		for (const language of ["en", "fr", "ko"]) {
+			const res = await app.request("/", { headers: { "Accept-Language": language } });
+			const [meta, og, twitter, jsonLd] = descriptionsOf(await res.text());
+
+			expect([meta, og, twitter]).toEqual(
+				Array(3).fill("Our &quot;notes&quot; &amp; &lt;files&gt;"),
+			);
+			expect(jsonLd).toBe(`Our "notes" & <files>`);
+		}
+	});
+
+	it("keep a note's own description, APP_DESCRIPTION or not", async () => {
+		const res = await makeApp({ APP_DESCRIPTION: "Our notes" }).request(`/note/${NOTE_ID}`);
+		const html = await res.text();
+
+		expect(html).toContain(
+			'<meta name="description" content="Decrypted in your browser, never on the server." />',
+		);
+		expect(html).not.toContain("Our notes");
+	});
+
 	it("describe the instance in JSON-LD", async () => {
 		const html = await (await makeApp().request("/")).text();
 		const jsonLd = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(html)?.[1];
@@ -200,6 +262,16 @@ describe("the pages", () => {
 			locale: "en",
 			theme: "system",
 		});
+	});
+
+	it("hand the page the limits GET /api/v1/config answers, and the API no more", async () => {
+		const app = makeApp({ MAX_FILE_SIZE: "1048576", MAX_EXPIRY: "3600" });
+
+		const config = shellDataOf(await (await app.request("/")).text())?.config;
+		const answered = await (await app.request("/api/v1/config")).json();
+
+		expect(Object.keys(answered).sort()).toEqual([...INSTANCE_LIMITS].sort());
+		expect(config).toMatchObject(answered);
 	});
 
 	it("hand the page every limit the instance takes, the largest ones included", async () => {
@@ -389,27 +461,34 @@ describe("the pages", () => {
 		}
 	});
 
-	it("show a message's key when no language has it", async () => {
-		const partial = createSiteFixture();
-		try {
-			partial.write("messages/en.json", JSON.stringify({ view_title: "Encrypted note" }));
-			const app = makeApp({}, loadSite({ ...partial, logger: silent }));
+	it.each([
+		["/", "home"],
+		[`/note/${NOTE_ID}`, "note"],
+		[`/note/${NOTE_ID}/manage`, "manage"],
+		["/nope", "notFound"],
+	] as const)("title %s as the page titles itself, by pageTitle", async (path, page) => {
+		const html = await (await makeApp({ APP_NAME: "Vault" }).request(path)).text();
+		const expected = pageTitle(page, "Vault", (key) => MESSAGES["en"]?.[key] ?? key);
 
-			const html = await (await app.request(`/note/${NOTE_ID}/manage`)).text();
-
-			expect(html).toContain("<title>Secret — manage_title</title>");
-		} finally {
-			partial.remove();
-		}
+		expect(html).toContain(`<title>${expected}</title>`);
 	});
 
-	it("render each page once per language and theme", async () => {
-		const app = makeApp();
+	it("render each page once per language and theme", () => {
+		const config = parseConfig({
+			SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
+			APP_URL,
+		} as NodeJS.ProcessEnv);
+		const render = createShellRenderer(site, config);
+		const visitor = { locale: "fr", theme: "dark" } as const;
 
-		const first = await (await app.request("/")).text();
-		const second = await (await app.request("/")).text();
+		const first = render("home", visitor);
 
-		expect(second).toBe(first);
+		expect(render("home", { ...visitor })).toBe(first);
+		expect(render("home", { ...visitor, theme: "light" })).not.toBe(first);
+		expect(render("home", { ...visitor, locale: "de" })).not.toBe(first);
+		expect(render("note", visitor)).not.toBe(first);
+		// Compressed with it, once.
+		expect(render("home", visitor).encodings).toBe(first.encodings);
 	});
 });
 
@@ -701,22 +780,7 @@ describe("the site's logs and metrics", () => {
 	it("log pages and failures by route pattern, never a file served or a note id", async () => {
 		const lines: Array<Record<string, unknown>> = [];
 		const logger = createLogger({ write: (_level, line) => lines.push(JSON.parse(line)) });
-		const config = parseConfig({
-			SERVER_ENCRYPTION_KEY: SERVER_KEY.toString("base64"),
-			APP_URL,
-		} as NodeJS.ProcessEnv);
-		const created = createApp({
-			db,
-			serverKey: SERVER_KEY,
-			storage: new LocalStorage(TEST_FILES_PATH),
-			config,
-			logger,
-			site,
-		});
-		stops.push(() => {
-			for (const limiter of created.rateLimiters) limiter.cleanup();
-		});
-		const { app } = created;
+		const app = makeApp({}, site, logger);
 		const etag = site.files.get("/favicon.svg")?.etag as string;
 
 		await app.request("/favicon.svg");

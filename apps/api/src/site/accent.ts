@@ -1,12 +1,20 @@
+/**
+ * The instance's accent (APP_PRIMARY_COLOR), which the server writes on the
+ * shell's `<html>` as CSS variables. The colours below mirror the variables of
+ * apps/web/src/app.css that the accent must stand out from: a change there
+ * belongs here too.
+ */
+
 type Rgb = readonly [number, number, number];
 
 const WHITE: Rgb = [255, 255, 255];
 const BLACK: Rgb = [0, 0, 0];
+// The light theme's text (--text), the ink on a light accent.
 const INK_DARK = "#17171c";
 const INK_DARK_RGB: Rgb = [0x17, 0x17, 0x1c];
-// The dark theme's background (app.css): a dark-theme accent must stand out from it.
+// The dark theme's background (--bg): a dark-theme accent must stand out from it.
 const DARK_BG: Rgb = [0x09, 0x09, 0x0b];
-// The light theme's softest surface (app.css --soft): accent text must read on it.
+// The light theme's softest surface (--soft): accent text must read on it.
 const LIGHT_SOFT: Rgb = [0xf4, 0xf4, 0xf6];
 
 // WCAG 2's floors: text, and UI components against their surroundings.

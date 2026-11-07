@@ -1,15 +1,23 @@
 import { createHash } from "node:crypto";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type LogLevel } from "../logger.js";
 import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
-import { cacheControlOf, contentTypeOf, isEmbeddable } from "../site/files.js";
+import { cacheControlOf, contentTypeOf, isEmbeddable, siteFile } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
+import { HEAD_MESSAGES } from "../site/messages.js";
 import { inlineScriptHashes } from "../site/scripts.js";
-import { BOOT_SCRIPT, createSiteFixture, SHELL, type SiteFixture } from "./siteFixture.js";
+import {
+	BOOT_SCRIPT,
+	createSiteFixture,
+	MESSAGES,
+	SHELL,
+	type SiteFixture,
+} from "./siteFixture.js";
 
 let created: SiteFixture | undefined;
 
@@ -183,13 +191,36 @@ describe("loadSite", () => {
 		const buildDir = join(fixture.buildDir, "_app");
 
 		expect(() => loadSite({ ...fixture, buildDir, logger: capture().logger })).toThrow(
-			new SiteError(`${join(buildDir, "index.html")} is missing`),
+			new SiteError(`${join(buildDir, "index.html")} is missing`, "build"),
 		);
+	});
+
+	it.each([
+		["none", "ENOENT"],
+		["favicon.svg", "ENOTDIR"],
+	])("refuses a build it cannot read (%s: %s), with no stack trace", (under, code) => {
+		const fixture = useFixture();
+		const buildDir = join(fixture.buildDir, under);
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, buildDir, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toContain(`${buildDir} cannot be read: ${code}`);
+		expect((error as SiteError).hint).toContain("pnpm build");
 	});
 
 	it.each([
 		[SHELL_HTML_TAG, SHELL.replace(SHELL_HTML_TAG, "<html>")],
 		[SHELL_HEAD_MARKER, SHELL.replace(SHELL_HEAD_MARKER, "")],
+		[
+			`${SHELL_HTML_TAG} and ${SHELL_HEAD_MARKER}`,
+			SHELL.replace(SHELL_HTML_TAG, "<html>").replace(SHELL_HEAD_MARKER, ""),
+		],
 	])("refuses a shell that lacks %s", (marker, shell) => {
 		const fixture = useFixture({ shell });
 		const path = join(fixture.buildDir, "index.html");
@@ -216,10 +247,20 @@ describe("loadSite", () => {
 		const fixture = useFixture();
 		fixture.write("messages/ja.json", content);
 
-		const load = () => loadSite({ ...fixture, logger: capture().logger });
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
 
-		expect(load).toThrow(SiteError);
-		expect(load).toThrow(`${join(fixture.messagesDir, "ja.json")} ${reason}`);
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toContain(
+			`${join(fixture.messagesDir, "ja.json")} ${reason}`,
+		);
+		// A source to fix, which building the web app again would not.
+		expect((error as SiteError).hint).toContain("messages/*.json");
+		expect((error as SiteError).hint).not.toContain("pnpm build");
 	});
 
 	it("refuses a language whose messages are missing", () => {
@@ -229,6 +270,46 @@ describe("loadSite", () => {
 		expect(() => loadSite({ ...fixture, messagesDir, logger: capture().logger })).toThrow(
 			`${join(messagesDir, "en.json")} cannot be read: ENOENT`,
 		);
+	});
+
+	it("refuses an English catalog that lacks a message of the heads", () => {
+		const fixture = useFixture();
+		const lacking = new Set(["seo_keywords", "manage_title"]);
+		const partial = Object.entries(MESSAGES["en"] ?? {}).filter(([key]) => !lacking.has(key));
+		fixture.write("messages/en.json", JSON.stringify(Object.fromEntries(partial)));
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toBe(
+			`${join(fixture.messagesDir, "en.json")} lacks seo_keywords, manage_title, which the pages' heads are written with`,
+		);
+		expect((error as SiteError).hint).toContain("messages/*.json");
+	});
+
+	it("takes another language without them, English filling in", () => {
+		const fixture = useFixture();
+		fixture.write("messages/fr.json", JSON.stringify({}));
+
+		expect(loadSite({ ...fixture, logger: capture().logger }).messages.fr).toEqual({});
+	});
+});
+
+describe("the repository's messages", () => {
+	const messagesDir = fileURLToPath(new URL("../../../../messages/", import.meta.url));
+
+	it("give English every message the heads are written with", () => {
+		const fixture = useFixture();
+		const { messages } = loadSite({ ...fixture, messagesDir, logger: capture().logger });
+
+		for (const key of HEAD_MESSAGES) {
+			expect(messages.en[key], key).toMatch(/\S/);
+		}
 	});
 });
 
@@ -309,7 +390,13 @@ describe("compressedCopies", () => {
 	const text = Buffer.from(`export const app = "${"x".repeat(4096)}";\n`);
 
 	it("compresses text and WebAssembly with brotli, then gzip", () => {
-		for (const type of ["text/javascript; charset=utf-8", "application/wasm", "image/svg+xml"]) {
+		for (const type of [
+			"text/javascript; charset=utf-8",
+			"application/wasm",
+			"application/manifest+json",
+			"image/svg+xml",
+			"image/x-icon",
+		]) {
 			const [br, gzip, ...rest] = compressedCopies(text, type);
 
 			expect(br?.encoding).toBe("br");
@@ -340,6 +427,8 @@ describe("negotiate", () => {
 		["gzip;q=0.5, br;q=0.1", br],
 		["br;q=0, gzip", gzip],
 		["br ; q=0 , gzip ; q=0.8", gzip],
+		["br; q = 0, gzip", gzip],
+		["br;q=, gzip", gzip],
 		["br;q=no, gzip", gzip],
 		["*", br],
 		["*;q=0, gzip", gzip],
@@ -363,8 +452,15 @@ describe("contentTypeOf", () => {
 		["worker.mjs", "text/javascript; charset=utf-8"],
 		["app.CSS", "text/css; charset=utf-8"],
 		["_app/version.json", "application/json"],
+		["manifest.webmanifest", "application/manifest+json"],
 		["favicon.svg", "image/svg+xml"],
 		["og.png", "image/png"],
+		["og.jpg", "image/jpeg"],
+		["og.JPEG", "image/jpeg"],
+		["og.webp", "image/webp"],
+		["og.avif", "image/avif"],
+		["loading.gif", "image/gif"],
+		["favicon.ico", "image/x-icon"],
 		["inter.woff2", "font/woff2"],
 		["inter.woff", "font/woff"],
 		["wasm/cap_wasm_bg.wasm", "application/wasm"],
@@ -379,13 +475,20 @@ describe("contentTypeOf", () => {
 
 describe("isEmbeddable", () => {
 	it.each([
-		["og.png", "image/png", true],
-		["favicon.svg", "image/svg+xml", true],
-		["_app/immutable/assets/logo.Ab1.png", "image/png", false],
-		["bundle.json", "application/json", false],
-		["wasm/cap_wasm_bg.wasm", "application/wasm", false],
-	])("lets other sites show %s (%s): %s", (path, type, embeddable) => {
-		expect(isEmbeddable(path, type)).toBe(embeddable);
+		["og.png", true],
+		["og.jpg", true],
+		["og.jpeg", true],
+		["og.webp", true],
+		["og.avif", true],
+		["og.gif", true],
+		["favicon.svg", true],
+		["favicon.ico", true],
+		["_app/immutable/assets/logo.Ab1.png", false],
+		["manifest.webmanifest", false],
+		["bundle.json", false],
+		["wasm/cap_wasm_bg.wasm", false],
+	])("lets other sites show %s: %s", (path, embeddable) => {
+		expect(isEmbeddable(path, contentTypeOf(path))).toBe(embeddable);
 	});
 
 	it("marks the files loadSite reads", () => {
@@ -396,6 +499,26 @@ describe("isEmbeddable", () => {
 			expect.arrayContaining(["/og.png", "/favicon.svg"]),
 		);
 		expect([...site.files].filter(([, file]) => file.embeddable)).toHaveLength(2);
+	});
+});
+
+describe("siteFile", () => {
+	it("serves a file under its SHA-256, and each copy under that and its coding", () => {
+		const body = Buffer.from(`export const app = "${"x".repeat(4096)}";\n`);
+
+		const file = siteFile("_app/immutable/entry/app.Cd2.js", body, "ab12");
+
+		expect(file).toMatchObject({
+			body,
+			etag: '"ab12"',
+			contentType: "text/javascript; charset=utf-8",
+			cacheControl: "public, max-age=31536000, immutable",
+			embeddable: false,
+		});
+		expect(file.encodings.map(({ encoding, etag }) => ({ encoding, etag }))).toEqual([
+			{ encoding: "br", etag: '"ab12-br"' },
+			{ encoding: "gzip", etag: '"ab12-gzip"' },
+		]);
 	});
 });
 

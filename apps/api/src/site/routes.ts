@@ -1,18 +1,30 @@
-import type { Context, MiddlewareHandler } from "hono";
-import { Hono } from "hono";
-import type { AppEnv } from "../app.js";
+import {
+	isLocale,
+	LOCALE_COOKIE,
+	type Page,
+	parseAcceptLanguage,
+	THEME_COOKIE,
+	themePreferenceOf,
+} from "@largerio/secret-shared/site";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import type { AppConfig } from "../config.js";
 import { createSiteSecurityHeaders } from "../middleware/security.js";
 import { negotiate } from "./encodings.js";
-import { serveFile } from "./files.js";
+import { HTML_CONTENT_TYPE, serveFile } from "./files.js";
 import type { Site } from "./load.js";
-import { createShellRenderer, type Page, visitorOf } from "./shell.js";
+import { createShellRenderer, type Visitor } from "./shell.js";
 
-/** Paths the API answers, never the web app: the ones the web server in front used to proxy. */
-export function isApiPath(path: string): boolean {
-	return (
-		path === "/api" || path.startsWith("/api/") || path === "/robots.txt" || path === "/sitemap.xml"
-	);
+/**
+ * The language of the cookie the app writes, else the browser's; the theme
+ * likewise, else the system's.
+ */
+function visitorOf(c: Context): Visitor {
+	const locale = getCookie(c, LOCALE_COOKIE);
+	return {
+		locale: isLocale(locale) ? locale : parseAcceptLanguage(c.req.header("accept-language") ?? ""),
+		theme: themePreferenceOf(getCookie(c, THEME_COOKIE)),
+	};
 }
 
 /**
@@ -20,7 +32,10 @@ export function isApiPath(path: string): boolean {
  * logs and metrics name a route pattern, and these stay few whatever the
  * build holds, where a path each would not.
  */
-function staticRoutes(paths: Iterable<string>): ReadonlyArray<string> {
+function staticRoutes(
+	paths: Iterable<string>,
+	isApiPath: (path: string) => boolean,
+): ReadonlyArray<string> {
 	const routes = new Set<string>();
 	for (const path of paths) {
 		const slash = path.indexOf("/", 1);
@@ -31,7 +46,7 @@ function staticRoutes(paths: Iterable<string>): ReadonlyArray<string> {
 
 export interface SiteRoutes {
 	/** Pages and static files, mounted at the root. */
-	readonly routes: Hono<AppEnv>;
+	readonly routes: Hono;
 	/** The site's headers on what it answers, `api` on the API's paths. */
 	readonly securityHeaders: (api: MiddlewareHandler) => MiddlewareHandler;
 	/**
@@ -53,11 +68,22 @@ export interface SiteRoutes {
  * The web app, served by the API: its pages rendered from the shell, its files
  * from memory. The client router takes over once the page has loaded, so a
  * path the server does not know is the router's to render too.
+ *
+ * @param rootApiPaths What the API answers at the root, outside `/api/`
+ *   (robots.txt, the sitemap): the build's files never shadow them.
  */
-export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
+export function createSiteRoutes(
+	site: Site,
+	config: AppConfig,
+	rootApiPaths: ReadonlyArray<string>,
+): SiteRoutes {
 	const render = createShellRenderer(site, config);
 	const siteHeaders = createSiteSecurityHeaders(site.scriptHashes, "same-origin");
 	const embeddedHeaders = createSiteSecurityHeaders(site.scriptHashes, "cross-origin");
+
+	const rootApi = new Set(rootApiPaths);
+	const isApiPath = (path: string) =>
+		path === "/api" || path.startsWith("/api/") || rootApi.has(path);
 
 	function page(c: Context, which: Page, status: 200 | 404): Response {
 		const rendered = render(which, visitorOf(c));
@@ -68,9 +94,7 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 		if (copy) {
 			c.header("Content-Encoding", copy.encoding);
 		}
-		return c.body(copy?.body ?? rendered.body, status, {
-			"Content-Type": "text/html; charset=utf-8",
-		});
+		return c.body(copy?.body ?? rendered.body, status, { "Content-Type": HTML_CONTENT_TYPE });
 	}
 
 	/**
@@ -84,13 +108,13 @@ export function createSiteRoutes(site: Site, config: AppConfig): SiteRoutes {
 		return c.redirect(`${url.pathname.slice(0, -1)}${url.search}`, 308);
 	}
 
-	const routes = new Hono<AppEnv>();
+	const routes = new Hono();
 	routes.get("/", (c) => page(c, "home", 200));
 	routes.get("/note/:id", (c) => page(c, "note", 200));
 	routes.get("/note/:id/", withoutTrailingSlash);
 	routes.get("/note/:id/manage", (c) => page(c, "manage", 200));
 	routes.get("/note/:id/manage/", withoutTrailingSlash);
-	for (const route of staticRoutes(site.files.keys())) {
+	for (const route of staticRoutes(site.files.keys(), isApiPath)) {
 		routes.get(route, (c) => {
 			const file = site.files.get(c.req.path);
 			return file ? serveFile(c, file) : page(c, "notFound", 404);
