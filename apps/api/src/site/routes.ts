@@ -1,6 +1,7 @@
 import {
 	isLocale,
 	LOCALE_COOKIE,
+	type Page,
 	parseAcceptLanguage,
 	THEME_COOKIE,
 	themePreferenceOf,
@@ -12,7 +13,7 @@ import { createSiteSecurityHeaders } from "../middleware/security.js";
 import { negotiate } from "./encodings.js";
 import { HTML_CONTENT_TYPE, serveFile } from "./files.js";
 import type { Site } from "./load.js";
-import { createShellRenderer, type Page, type Visitor } from "./shell.js";
+import { createShellRenderer, type Visitor } from "./shell.js";
 
 /**
  * The language of the cookie the app writes, else the browser's; the theme

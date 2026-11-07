@@ -11,7 +11,7 @@ import {
 	MAX_FILES_PER_NOTE,
 	MAX_MESSAGE_LENGTH,
 } from "@largerio/secret-shared";
-import { parseShellData } from "@largerio/secret-shared/site";
+import { INSTANCE_LIMITS, pageTitle, parseShellData } from "@largerio/secret-shared/site";
 import type { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AppEnv, createApp } from "../app.js";
@@ -22,7 +22,13 @@ import { accentStyle } from "../site/accent.js";
 import { loadSite, type Site } from "../site/load.js";
 import { LocalStorage } from "../storage/local.js";
 import { problemOf } from "./problems.js";
-import { BOOT_SCRIPT, createSiteFixture, FILES, type SiteFixture } from "./siteFixture.js";
+import {
+	BOOT_SCRIPT,
+	createSiteFixture,
+	FILES,
+	MESSAGES,
+	type SiteFixture,
+} from "./siteFixture.js";
 import { createTestApp } from "./testApp.js";
 
 const TEST_DB_PATH = "./data/site-routes-test.db";
@@ -200,6 +206,16 @@ describe("the pages", () => {
 			locale: "en",
 			theme: "system",
 		});
+	});
+
+	it("hand the page the limits GET /api/v1/config answers, and the API no more", async () => {
+		const app = makeApp({ MAX_FILE_SIZE: "1048576", MAX_EXPIRY: "3600" });
+
+		const config = shellDataOf(await (await app.request("/")).text())?.config;
+		const answered = await (await app.request("/api/v1/config")).json();
+
+		expect(Object.keys(answered).sort()).toEqual([...INSTANCE_LIMITS].sort());
+		expect(config).toMatchObject(answered);
 	});
 
 	it("hand the page every limit the instance takes, the largest ones included", async () => {
@@ -387,6 +403,18 @@ describe("the pages", () => {
 			expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
 			expect(await res.text()).toBe("");
 		}
+	});
+
+	it.each([
+		["/", "home"],
+		[`/note/${NOTE_ID}`, "note"],
+		[`/note/${NOTE_ID}/manage`, "manage"],
+		["/nope", "notFound"],
+	] as const)("title %s as the page titles itself, by pageTitle", async (path, page) => {
+		const html = await (await makeApp({ APP_NAME: "Vault" }).request(path)).text();
+		const expected = pageTitle(page, "Vault", (key) => MESSAGES["en"]?.[key] ?? key);
+
+		expect(html).toContain(`<title>${expected}</title>`);
 	});
 
 	it("show a message's key when no language has it", async () => {

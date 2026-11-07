@@ -13,6 +13,7 @@ import {
 	MIN_EXPIRY_SECONDS,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
+import type { PageConfig } from "@largerio/secret-shared/site";
 import { buildTrustedBlockList } from "./middleware/rateLimit.js";
 import { accentStyle } from "./site/accent.js";
 import type { StorageConfig, StorageType } from "./storage/index.js";
@@ -186,6 +187,23 @@ export interface AppConfig {
 	readonly footerText: string;
 	/** APP_OG_IMAGE_URL, or the og.png the web app ships. */
 	readonly ogImageUrl: string;
+}
+
+/**
+ * What a page reads of the instance's settings, in the shell data: its name,
+ * its footer, and the limits it announces, which `GET /api/v1/config` answers
+ * too (INSTANCE_LIMITS).
+ */
+export function pageConfigOf(config: AppConfig): PageConfig {
+	return {
+		appName: config.appName,
+		footerText: config.footerText,
+		maxFileSize: config.maxFileSize,
+		maxFilesPerNote: config.maxFilesPerNote,
+		chunkSize: config.chunkSize,
+		maxChunkedFileSize: config.maxChunkedFileSize,
+		maxExpiry: config.maxExpirySeconds,
+	};
 }
 
 /**

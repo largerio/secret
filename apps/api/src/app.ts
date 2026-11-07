@@ -1,10 +1,11 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { CAP_CHALLENGE_EXPIRES_MS, CAP_CHALLENGE_SIZE } from "@largerio/secret-shared";
+import { INSTANCE_LIMITS } from "@largerio/secret-shared/site";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono, type MiddlewareHandler } from "hono";
 import { compress } from "hono/compress";
 import { type BuildInfo, UNKNOWN_BUILD } from "./buildInfo.js";
-import type { AppConfig } from "./config.js";
+import { type AppConfig, pageConfigOf } from "./config.js";
 import type { AppDatabase } from "./db/index.js";
 import { createHealthCheck, createReadiness } from "./health.js";
 import { type Logger, log } from "./logger.js";
@@ -265,15 +266,11 @@ export function createApp(deps: CreateAppDeps): CreatedApp {
 		}),
 	);
 
-	v1.get("/config", (c) => {
-		return c.json({
-			maxFileSize: config.maxFileSize,
-			maxFilesPerNote: config.maxFilesPerNote,
-			maxExpiry: config.maxExpirySeconds,
-			chunkSize: config.chunkSize,
-			maxChunkedFileSize: config.maxChunkedFileSize,
-		});
-	});
+	// The limits of the pages' settings, and only them: the pages and the
+	// clients of the API are told the same.
+	const pageConfig = pageConfigOf(config);
+	const limits = Object.fromEntries(INSTANCE_LIMITS.map((limit) => [limit, pageConfig[limit]]));
+	v1.get("/config", (c) => c.json(limits));
 
 	v1.doc31("/openapi.json", {
 		openapi: "3.1.0",
