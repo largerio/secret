@@ -590,12 +590,12 @@ describe("the client address", () => {
 });
 
 describe("the instance's branding", () => {
-	it("keeps the web app's defaults", () => {
+	it("keeps the web app's defaults, and no description of the instance's own", () => {
 		const config = parseConfig(baseEnv({ APP_URL: "https://secret.example/" }));
 
 		expect(config).toMatchObject({
 			appName: "Secret",
-			appDescription: "Zero-knowledge encrypted sharing",
+			appDescription: "",
 			primaryColor: "",
 			footerText: "",
 			ogImageUrl: "https://secret.example/og.png",
@@ -624,11 +624,11 @@ describe("the instance's branding", () => {
 
 	it("treats blank values as unset", () => {
 		const config = parseConfig(
-			baseEnv({ APP_NAME: " ", APP_DESCRIPTION: "", APP_OG_IMAGE_URL: "" }),
+			baseEnv({ APP_NAME: " ", APP_DESCRIPTION: "  ", APP_OG_IMAGE_URL: "" }),
 		);
 
 		expect(config.appName).toBe("Secret");
-		expect(config.appDescription).toBe("Zero-knowledge encrypted sharing");
+		expect(config.appDescription).toBe("");
 		expect(config.ogImageUrl).toBe("http://localhost:3001/og.png");
 	});
 });

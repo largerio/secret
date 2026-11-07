@@ -72,7 +72,9 @@ function pageHead(page: Page, t: (key: HeadMessage) => string, config: AppConfig
 
 	switch (page) {
 		case "home": {
-			const description = t("seo_description");
+			// The operator's, in every language, when they wrote one.
+			const description =
+				config.appDescription === "" ? t("seo_description") : config.appDescription;
 			const application = {
 				"@context": "https://schema.org",
 				"@type": "WebApplication",

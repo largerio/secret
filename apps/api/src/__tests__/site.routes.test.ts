@@ -156,6 +156,56 @@ describe("the pages", () => {
 		expect(html).toContain(`<script>${BOOT_SCRIPT}</script>`);
 	});
 
+	/** The home page's descriptions: its meta tags' and its JSON-LD's. */
+	function descriptionsOf(html: string) {
+		const content = (attribute: string) =>
+			new RegExp(`<meta ${attribute} content="([^"]*)" />`).exec(html)?.[1];
+		const jsonLd = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(html)?.[1];
+		return [
+			content('name="description"'),
+			content('property="og:description"'),
+			content('name="twitter:description"'),
+			JSON.parse(jsonLd ?? "{}").description,
+		];
+	}
+
+	it("describe the home page in each language, without APP_DESCRIPTION", async () => {
+		const app = makeApp();
+		const home = async (language: string) =>
+			(await app.request("/", { headers: { "Accept-Language": language } })).text();
+
+		expect(descriptionsOf(await home("en"))).toEqual(
+			Array(4).fill("Share secrets: encrypted in your browser."),
+		);
+		expect(descriptionsOf(await home("fr"))).toEqual(
+			Array(4).fill("Partagez des secrets : chiffrés dans votre navigateur."),
+		);
+	});
+
+	it("describe the home page by APP_DESCRIPTION in every language, once it is set", async () => {
+		const app = makeApp({ APP_DESCRIPTION: `Our "notes" & <files>` });
+
+		for (const language of ["en", "fr", "ko"]) {
+			const res = await app.request("/", { headers: { "Accept-Language": language } });
+			const [meta, og, twitter, jsonLd] = descriptionsOf(await res.text());
+
+			expect([meta, og, twitter]).toEqual(
+				Array(3).fill("Our &quot;notes&quot; &amp; &lt;files&gt;"),
+			);
+			expect(jsonLd).toBe(`Our "notes" & <files>`);
+		}
+	});
+
+	it("keep a note's own description, APP_DESCRIPTION or not", async () => {
+		const res = await makeApp({ APP_DESCRIPTION: "Our notes" }).request(`/note/${NOTE_ID}`);
+		const html = await res.text();
+
+		expect(html).toContain(
+			'<meta name="description" content="Decrypted in your browser, never on the server." />',
+		);
+		expect(html).not.toContain("Our notes");
+	});
+
 	it("describe the instance in JSON-LD", async () => {
 		const html = await (await makeApp().request("/")).text();
 		const jsonLd = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(html)?.[1];

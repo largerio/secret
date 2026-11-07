@@ -179,11 +179,16 @@ export interface AppConfig {
 	readonly metricsToken: string;
 	/** How long a shutdown waits for in-flight requests before it cuts them. */
 	readonly shutdownTimeoutMs: number;
-	/** What the pages show of the instance (APP_NAME, APP_DESCRIPTION…). */
+	/** APP_NAME, in every page's title and head. */
 	readonly appName: string;
+	/**
+	 * APP_DESCRIPTION: the home page's description in every language, in its
+	 * meta tags and JSON-LD; "" when unset, which keeps each language's own.
+	 */
 	readonly appDescription: string;
 	/** APP_PRIMARY_COLOR as set: anything but a hex colour is ignored (see describePrimaryColor). */
 	readonly primaryColor: string;
+	/** APP_FOOTER_TEXT, at the foot of every page; "" for none. */
 	readonly footerText: string;
 	/** APP_OG_IMAGE_URL, or the og.png the web app ships. */
 	readonly ogImageUrl: string;
@@ -516,9 +521,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): AppConfig {
 		debug,
 		metricsToken,
 		shutdownTimeoutMs: shutdownTimeout * 1000,
-		// The web server's variables, with its defaults: the pages are the API's now.
+		// The web server's variables, with its defaults: the pages are the API's
+		// now. APP_DESCRIPTION, which its pages never showed, has none: unset, the
+		// home page keeps the description translated for each language.
 		appName: readEnvString(env["APP_NAME"], "Secret"),
-		appDescription: readEnvString(env["APP_DESCRIPTION"], "Zero-knowledge encrypted sharing"),
+		appDescription: readEnvString(env["APP_DESCRIPTION"], ""),
 		primaryColor: readEnvString(env["APP_PRIMARY_COLOR"], ""),
 		footerText: readEnvString(env["APP_FOOTER_TEXT"], ""),
 		ogImageUrl: readEnvString(env["APP_OG_IMAGE_URL"], `${normalizedAppUrl}/og.png`),
