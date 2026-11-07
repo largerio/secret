@@ -34,15 +34,17 @@ from_file() {
 
 # Two containers, since the API refuses a secret given both as NAME and as
 # NAME_FILE: one that starts with zero config and generates its server key,
-# one whose operator brings the key. Every PaaS injects PORT.
+# on the PORT a PaaS injects; one whose operator brings the key.
 args=(-e PORT=10000 -p 10000:10000)
 from_file API_KEY_2
 from_file METRICS_TOKEN
 docker run -d --name smoke "${args[@]}" "$IMAGE" > /dev/null
 
-# Boots alongside: it is only checked at the end. It keeps what an instance of
-# 1.7 or older may still set for its internal API, which must open nothing.
-args=(-e PORT=10001 -p 10001:10001 -e "SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)"
+# Boots alongside: it is only checked at the end. Without PORT, as
+# docker-compose.yml runs it, it must listen on 3000, which compose publishes
+# and the HEALTHCHECK polls. It keeps what an instance of 1.7 or older may
+# still set for its internal API, which must open nothing.
+args=(-p 10001:3000 -e "SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)"
 	-e API_PORT=3001 -e API_HOST=0.0.0.0 -e API_URL=http://127.0.0.1:3001)
 from_file API_KEY
 docker run -d --name smoke-keyed "${args[@]}" "$IMAGE" > /dev/null
@@ -201,9 +203,9 @@ code=$(fetch -X POST -H "Authorization: Bearer $(cat "$work/API_KEY")" \
 	-H "Content-Type: application/json" -d '{}' http://localhost:10001/api/v1/notes) \
 	|| fail "a write with API_KEY_FILE's key failed" smoke-keyed
 [ "$code" = "400" ] || fail "a write with API_KEY_FILE's key answered $code" smoke-keyed
-echo "--- the internal API's settings must open no port, and be warned about ---"
+echo "--- without PORT, 3000 alone: the internal API's settings open no port, and are warned about ---"
 ports=$(listening smoke-keyed) || fail "the ports of the container cannot be read" smoke-keyed
-[ "$ports" = "10001" ] || fail "with API_PORT and API_HOST set, the container listens on [$ports]" smoke-keyed
+[ "$ports" = "3000" ] || fail "without PORT, and with API_PORT and API_HOST set, the container listens on [$ports]" smoke-keyed
 logs=$(docker logs smoke-keyed 2>&1)
 for name in API_PORT API_HOST API_URL; do
 	grep -q "WARNING: $name is set" <<< "$logs" || fail "no warning that $name is no longer used" smoke-keyed
