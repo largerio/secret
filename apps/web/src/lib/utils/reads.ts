@@ -31,10 +31,8 @@ export function readsBefore(maxReads: number, readCount: number | null): ReadsBe
 	return maxReads > 0 ? { kind: "total", count: maxReads } : { kind: "none" };
 }
 
-/** Where the note stands once read, as the server reported it afterwards. */
-export type NoteAfterRead =
-	| { readonly exists: false }
-	| { readonly exists: true; readonly readCount: number | null };
+/** Where the note stands once read, as the server reported it afterwards: its reads, or gone. */
+export type NoteAfterRead = { readonly readCount: number | null } | "gone";
 
 /** What the page says about the note once it is open. */
 export type ReadsAfter =
@@ -49,7 +47,7 @@ export type ReadsAfter =
  *   readers may have spent reads since the page loaded, making this one the last.
  */
 export function readsAfter(maxReads: number, after: NoteAfterRead | null): ReadsAfter {
-	if (maxReads === 1 || after?.exists === false) return { kind: "gone" };
+	if (maxReads === 1 || after === "gone") return { kind: "gone" };
 	if (maxReads <= 0) return { kind: "unlimited" };
 
 	const left = after ? readsLeft(maxReads, after.readCount) : null;

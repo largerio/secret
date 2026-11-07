@@ -4,6 +4,8 @@ import {
 	SecretApiError,
 	SecretValidationError,
 } from "@largerio/secret-sdk";
+import type { IconName } from "#lib/components/Icon.svelte";
+import type { MessageKey } from "#lib/i18n/index.svelte.js";
 import { checkNote } from "#lib/notes/notes.js";
 
 /** What a reader is told of a note before opening it. */
@@ -21,12 +23,33 @@ export interface NoteSummary {
 	readonly passwordAttemptsLeft: number | null;
 }
 
-/** Why a note page has no note to offer. */
+/** Why a note's page has no note to offer. */
 export type CheckNotice = "not_found" | "unavailable" | "rate_limited";
 
 export type NoteCheck =
 	| { readonly kind: "found"; readonly note: NoteSummary }
 	| { readonly kind: "notice"; readonly notice: CheckNotice };
+
+/** A notice of a note's pages, the link's own included: a key cut off in transit. */
+export type LinkNotice = CheckNotice | "link_incomplete";
+
+/** What a page shows for a notice. */
+export interface NoticeText {
+	readonly title: MessageKey;
+	readonly body: MessageKey;
+	readonly icon: IconName;
+}
+
+export const NOTICES: Readonly<Record<LinkNotice, NoticeText>> = {
+	not_found: { title: "not_found_title", body: "not_found_description", icon: "file-x" },
+	link_incomplete: {
+		title: "link_incomplete_title",
+		body: "link_incomplete_description",
+		icon: "link",
+	},
+	unavailable: { title: "unavailable_title", body: "unavailable_description", icon: "alert" },
+	rate_limited: { title: "rate_limited_title", body: "rate_limited_description", icon: "clock" },
+};
 
 export function summarize(info: ExistingNoteInfo): NoteSummary {
 	return {
@@ -50,13 +73,17 @@ export function checkFailure(error: unknown): CheckNotice {
 	// before asking.
 	if (error instanceof SecretValidationError) return "not_found";
 	// Anything else is NOT a missing note. Collapsing the two showed "Note not
-	// found" during an outage, telling the reader their secret had been
-	// destroyed when it was still there.
+	// found" during an outage: the reader was told their secret was destroyed,
+	// and the creator that the leaked link they came to revoke was dead, while
+	// the note could still be read.
 	return "unavailable";
 }
 
-/** Asks the instance where a note stands, before the reader opens it: spends nothing. */
-export async function checkForReader(
+/**
+ * Asks the instance where the note a link names stands, for the page that
+ * reads it and the one that deletes it: spends nothing.
+ */
+export async function checkNoteLink(
 	id: string,
 	check: (id: string) => Promise<NoteInfo> = checkNote,
 ): Promise<NoteCheck> {
@@ -67,20 +94,5 @@ export async function checkForReader(
 			: { kind: "notice", notice: "not_found" };
 	} catch (error) {
 		return { kind: "notice", notice: checkFailure(error) };
-	}
-}
-
-/**
- * Whether the note a deletion link names is still there. A check that fails
- * counts as gone: there is nothing the page could delete.
- */
-export async function noteExists(
-	id: string,
-	check: (id: string) => Promise<NoteInfo> = checkNote,
-): Promise<boolean> {
-	try {
-		return (await check(id)).exists;
-	} catch {
-		return false;
 	}
 }

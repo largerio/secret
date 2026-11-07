@@ -58,24 +58,24 @@ describe("readsAfter", () => {
 	});
 
 	it("trusts the server that the note no longer exists", () => {
-		expect(readsAfter(3, { exists: false })).toEqual({ kind: "gone" });
+		expect(readsAfter(3, "gone")).toEqual({ kind: "gone" });
 	});
 
 	it("reports the reads the server says are left", () => {
-		expect(readsAfter(3, { exists: true, readCount: 1 })).toEqual({ kind: "left", count: 2 });
+		expect(readsAfter(3, { readCount: 1 })).toEqual({ kind: "left", count: 2 });
 	});
 
 	it("calls a note with no reads left gone", () => {
-		expect(readsAfter(3, { exists: true, readCount: 3 })).toEqual({ kind: "gone" });
+		expect(readsAfter(3, { readCount: 3 })).toEqual({ kind: "gone" });
 	});
 
 	it("stays vague when the count is unknown or the server could not be asked", () => {
-		expect(readsAfter(3, { exists: true, readCount: null })).toEqual({ kind: "limited" });
+		expect(readsAfter(3, { readCount: null })).toEqual({ kind: "limited" });
 		expect(readsAfter(3, null)).toEqual({ kind: "limited" });
 	});
 
 	it("has nothing to count on a note without a limit", () => {
-		expect(readsAfter(0, { exists: true, readCount: 0 })).toEqual({ kind: "unlimited" });
+		expect(readsAfter(0, { readCount: 0 })).toEqual({ kind: "unlimited" });
 	});
 });
 
