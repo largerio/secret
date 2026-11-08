@@ -1,6 +1,6 @@
 # @largerio/secret-sdk
 
-JavaScript/TypeScript SDK for [Secret](https://github.com/largerio/secret) — create, read and delete zero-knowledge, end-to-end encrypted notes and files on any Secret instance.
+JavaScript/TypeScript SDK for [Secret](https://github.com/largerio/secret): create, read and delete zero-knowledge, end-to-end encrypted notes and files on any Secret instance.
 
 The payload is encrypted **in your process** with XChaCha20-Poly1305 before anything is sent. The decryption key never leaves it: it is returned to you as a key fragment, and the server never sees it.
 
@@ -10,14 +10,14 @@ npm install @largerio/secret-sdk
 
 Works in Node.js and in the browser. Ships as ESM with TypeScript types. From a terminal or a shell script, use the command line built on it, [`@largerio/secret-cli`](https://www.npmjs.com/package/@largerio/secret-cli): `secret send`, `secret read`.
 
-> **Reads are open on every instance. Writes are not.** `createNote` and `deleteNote` need an API key — a string the instance operator sets in their own environment. There is no sign-up: point the SDK at an instance you run, or at one that issued you a key. See [Instances and access](#instances-and-access).
+> **Reads are open on every instance. Writes are not.** `createNote` and `deleteNote` need an API key, a string the instance's operator sets in its environment, or a [proof of work](#proof-of-work-instead-of-a-key). There is no sign-up: point the SDK at an instance you run, or at one that issued you a key. See [Instances and access](#instances-and-access).
 
 ## Quick start
 
 ```ts
 import { SecretClient } from "@largerio/secret-sdk";
 
-// `create` (not `new`) — it waits for the libsodium WASM module to load.
+// `create`, not `new`: it waits for the libsodium WASM module to load.
 const client = await SecretClient.create({
   baseUrl: "https://secret.example.com", // the instance you talk to
   apiKey: process.env.SECRET_API_KEY,    // required to write
@@ -43,9 +43,9 @@ console.log(payload.text); // "the launch code is 0000"
 |---|---|---|
 | One you run | ✅ | ✅ with the `API_KEY` you set |
 | One that issued you a key | ✅ | ✅ with that key |
-| Any other public instance | ✅ | ❌ `401 Unauthorized` |
+| Any other public instance | ✅ | With a [proof-of-work token](#proof-of-work-instead-of-a-key), else `401 Unauthorized` |
 
-An API key is not something you sign up for — it is a value the operator puts in the instance's environment (`API_KEY=…`, 32 characters minimum). The public demo at `secret.larger.io` is no exception: a `createNote` without credentials gets a flat `401`. Against an instance where you hold no key, the SDK is read-only.
+An API key isn't something you sign up for: it's a value the operator puts in the instance's environment (`API_KEY=…`, 32 characters minimum). The public demo at `secret.larger.io` is no exception: a `createNote` with neither a key nor a proof-of-work token gets a flat `401`.
 
 Running your own takes three lines:
 
@@ -59,26 +59,23 @@ That key is now the one you pass as `apiKey`. See the [self-hosting guide](https
 
 ### Calling from a browser
 
-An instance answers cross-origin requests from exactly one origin: the `APP_URL` it was configured with. A page served from any other domain is blocked by CORS — **reads included**. So either call the SDK from your server, or serve your front-end from the instance's own origin.
+An instance answers cross-origin requests from exactly one origin: the `APP_URL` it was configured with. A page served from any other domain is blocked by CORS, **reads included**. So either call the SDK from your server, or serve your front-end from the instance's own origin.
 
-### Proof-of-Work instead of a key
+### Proof of work instead of a key
 
-Instances also accept a Cap Proof-of-Work token per write, which is how the bundled web UI writes without shipping a key to the browser:
+Without a key, a write can carry a proof-of-work token instead, one per write. That's how the web app writes without shipping a key to the browser, and how the command line writes on any instance:
 
 ```ts
 await client.createNote({ text: "hi", capToken });
 ```
 
-The token comes from the [Cap](https://capjs.js.org) widget solving a challenge against the instance's own `/api/cap/` endpoints — a browser path, same-origin by construction. Anything server-side: use an API key.
+The token comes from solving the instance's [Cap](https://capjs.js.org) challenge, under `/api/cap/`. The web app uses Cap's widget, and the command line its own solver; [PROTOCOL.md](https://github.com/largerio/secret/blob/main/PROTOCOL.md#proof-of-work) specifies the challenge for any other client. The SDK doesn't solve it for you.
 
 ## Formats
 
 Notes are written in [format 1](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-1): the note is padded, so the instance learns its size class, not its length, and the server serves it only to a reader who proves they hold the link, and the password of a password note. Its links name the format: `#1.<key>`.
 
-- An instance older than **1.6.0** refuses format 1 with a `400`. Pass `format: 0` to write to one.
-- An SDK older than **1.3.0** cannot read a format 1 note: the instance refuses its read with a `400`, without spending one.
-
-`readNote` takes either format, from the link: notes written in format 0, by older apps and SDKs, keep reading as before.
+An instance older than 1.6.0 refuses format 1 with a `400`: pass `format: 0` to write to one, in the [legacy format](https://github.com/largerio/secret/blob/main/PROTOCOL.md#format-0-legacy). `readNote` takes either format, from the link.
 
 ## Reading safely
 
@@ -92,7 +89,7 @@ Check first, then collect the password, then read once:
 const info = await client.checkNote(id);
 
 if (!info.exists) {
-  // Expired, already read, or never existed — deliberately indistinguishable.
+  // Expired, already read, or never existed: deliberately indistinguishable.
   return;
 }
 
@@ -114,7 +111,7 @@ if (info.maxReads > 0 && info.readCount !== undefined) {
 
 ## Files
 
-A file is a name, a MIME type and the bytes — the SDK never touches the filesystem itself:
+A file is a name, a MIME type and the bytes: the SDK never touches the filesystem itself:
 
 ```ts
 import { readFile } from "node:fs/promises";
@@ -189,10 +186,10 @@ Every failure path is typed, so you can branch on the cause:
 
 | Class | When | Notable |
 |---|---|---|
-| `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work. A note id that is not one (12 characters of `A-Z a-z 0-9 _ -`) is refused so by every method that takes one, and so is a key that is not 32 bytes in base64url, of either format: a link mistyped or cut short spends no read |
-| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout), `.code` the instance's name for the error (`note_not_found`, `rate_limited`…, see [Errors](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors)), and `.retryAfter` a `429`'s wait in seconds. A missing or wrong `apiKey` on a write surfaces here as `401`. An error without a `.code` came from something in front of the instance (a proxy, a firewall), or from an instance older than 1.7.0 |
+| `SecretValidationError` | The request is malformed or exceeds a protocol limit | Thrown before any encryption or network work. Every method refuses a malformed note id (anything but 12 characters of `A-Z a-z 0-9 _ -`) and a key that isn't 32 bytes in base64url, so a link mistyped or cut short spends no read |
+| `SecretApiError` | The server responded with an error | `.status` carries the HTTP code (`0` for a timeout), `.code` the instance's name for the error (`note_not_found`, `rate_limited`…, see [Errors](https://github.com/largerio/secret/blob/main/PROTOCOL.md#errors)), and `.retryAfter` a `429`'s wait in seconds. A missing or wrong `apiKey` on a write surfaces here as `401`. An error without a `.code` came from something in front of the instance (a proxy, a firewall) |
 | `SecretNetworkError` | The request failed in transit | DNS, offline, connection reset, CORS, or a connection lost mid-download. `.cause` holds the original error |
-| `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable** — telling them apart would make this a password oracle. On a format 1 note, the server refuses a wrong link or password before serving anything; that refusal surfaces here too |
+| `SecretDecryptionError` | The note could not be decrypted | Wrong password, wrong key and tampered ciphertext are **intentionally indistinguishable**: telling them apart would make this a password oracle. On a format 1 note, the server refuses a wrong link or password before serving anything; that refusal surfaces here too |
 
 ```ts
 import { SecretApiError, SecretDecryptionError, SecretNetworkError } from "@largerio/secret-sdk";
@@ -208,7 +205,7 @@ try {
 }
 ```
 
-Note that a missing note is a `404` from `readNote`, but `{ exists: false }` from `checkNote` — the latter never throws for that case.
+Note that a missing note is a `404` from `readNote`, but `{ exists: false }` from `checkNote`, which never throws for that case.
 
 ## Cancelling
 
@@ -228,16 +225,16 @@ What was done stays done. A read the server has started to serve is spent, and a
 
 ```ts
 await SecretClient.create({
-  baseUrl: "https://secret.example.com",  // default: "" (relative — browser, same origin)
+  baseUrl: "https://secret.example.com",  // default: "" (relative: a browser, same origin)
   apiKey: "…",                            // sent as `Authorization: Bearer …`
   timeoutMs: 30_000,                      // default: none
-  maxRetries: 2,                          // default: 0 — checkNote and chunk PUTs only
+  maxRetries: 2,                          // default: 0; checkNote and chunk PUTs only
   retryBackoffMs: (attempt) => attempt * 500, // ms before retry N (1-based). Default: 2 ** N * 250
   fetch: customFetch,                     // defaults to globalThis.fetch; uploads go through it too, without upload progress
 });
 ```
 
-Note creation, deletion and `readNote` are deliberately never retried: a retried `createNote` could store the note twice, and a retried read could spend a second read — or destroy a burn-after-read note before you see it.
+Note creation, deletion and `readNote` are deliberately never retried: a retried `createNote` could store the note twice, and a retried read could spend a second read, or destroy a burn-after-read note before you see it.
 
 ## Reference
 
@@ -245,8 +242,8 @@ Note creation, deletion and `readNote` are deliberately never retried: a retried
 |---|---|
 | `SecretClient.create(config?)` | Build a client with libsodium initialised |
 | `createNote(options)` | Encrypt and upload; returns `{ id, keyFragment, deleteToken, expiresAt }` |
-| `readNote(id, keyFragment, options?)` | Download and decrypt — **consumes a read** |
-| `readNoteInto(id, keyFragment, options)` | Download and decrypt into your streams — **consumes a read** |
+| `readNote(id, keyFragment, options?)` | Download and decrypt. **Consumes a read** |
+| `readNoteInto(id, keyFragment, options)` | Download and decrypt into your streams. **Consumes a read** |
 | `checkNote(id)` | Metadata only; consumes nothing |
 | `deleteNote(id, deleteToken, capToken?)` | Revoke before expiry |
 | `buildShareUrl(id, keyFragment)` | Assemble the share URL |
@@ -266,4 +263,4 @@ The threat model, guarantees and known limitations are documented in [SECURITY.m
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+[MIT](./LICENSE)

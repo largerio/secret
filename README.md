@@ -1,19 +1,38 @@
-# Secret — Secure, Zero-Knowledge Encrypted Note & File Sharing
+<p align="center">
+  <img src="apps/web/static/favicon.svg" alt="" width="72" />
+</p>
 
-[![CI/CD](https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg)](https://github.com/largerio/secret/actions/workflows/deploy.yml)
-[![Coverage](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](vitest.config.ts)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue)](https://github.com/largerio/secret/stargazers)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue.svg)](https://ghcr.io/largerio/secret)
-[![npm](https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk)](https://www.npmjs.com/package/@largerio/secret-sdk)
-[![npm](https://img.shields.io/npm/v/@largerio/secret-cli?color=blue&label=%40largerio%2Fsecret-cli)](https://www.npmjs.com/package/@largerio/secret-cli)
+<h1 align="center">Secret</h1>
 
-Share passwords, notes, and files securely with end-to-end encryption. Your data is encrypted in the browser using XChaCha20-Poly1305 — **the server never sees your content.** Self-hosted with a single Docker container. No accounts, no analytics, and no content, keys or IP addresses in the logs.
+<p align="center"><b>Share an encrypted note that opens only once.</b></p>
 
-A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — built with Svelte 5, Hono, and TypeScript.
+<p align="center">
+  <a href="https://github.com/largerio/secret/actions/workflows/deploy.yml"><img src="https://github.com/largerio/secret/actions/workflows/deploy.yml/badge.svg" alt="CI/CD" /></a>
+  <a href="vitest.config.ts"><img src="https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg" alt="Coverage" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/largerio/secret/stargazers"><img src="https://img.shields.io/github/stars/largerio/secret?style=flat&color=blue" alt="GitHub stars" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-blue.svg" alt="TypeScript" /></a>
+  <a href="https://ghcr.io/largerio/secret"><img src="https://img.shields.io/badge/Docker-ghcr.io-blue.svg" alt="Docker" /></a>
+  <a href="https://www.npmjs.com/package/@largerio/secret-sdk"><img src="https://img.shields.io/npm/v/@largerio/secret-sdk?color=blue&label=%40largerio%2Fsecret-sdk" alt="npm: @largerio/secret-sdk" /></a>
+  <a href="https://www.npmjs.com/package/@largerio/secret-cli"><img src="https://img.shields.io/npm/v/@largerio/secret-cli?color=blue&label=%40largerio%2Fsecret-cli" alt="npm: @largerio/secret-cli" /></a>
+</p>
 
-**[🔗 Live demo](https://secret.larger.io)** &nbsp;·&nbsp; [Quick Start](#quick-start) &nbsp;·&nbsp; [Self-Hosting](docs/self-hosting.md) &nbsp;·&nbsp; [SDK](#sdk) &nbsp;·&nbsp; [CLI](#command-line) &nbsp;·&nbsp; [Security](SECURITY.md)
+<p align="center">
+  <a href="https://secret.larger.io"><b>Live demo</b></a> &nbsp;·&nbsp;
+  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="docs/self-hosting.md">Self-hosting</a> &nbsp;·&nbsp;
+  <a href="#sdk">SDK</a> &nbsp;·&nbsp;
+  <a href="#command-line">CLI</a> &nbsp;·&nbsp;
+  <a href="SECURITY.md">Security</a>
+</p>
+
+Type a password or a message, or drop a file: it's encrypted in your browser,
+and you get a link that works once. The server never sees what you send.
+
+Secret runs in a single Docker container you host yourself. There are no
+accounts and no analytics, and the logs hold no content, keys or IP
+addresses. It's an open-source alternative to PrivateBin, OneTimeSecret and
+Yopass, built with Svelte 5, Hono and TypeScript.
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Type a secret, encrypt it in the browser and copy the one-time link; the recipient opens it once, and the same link then finds nothing" width="100%" />
@@ -22,60 +41,46 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/create-dark.png" />
-    <img src="docs/images/create.png" alt="Compose a note — encrypted in your browser before it is ever sent" width="32%" />
+    <img src="docs/images/create.png" alt="Compose a note, encrypted in your browser before it is ever sent" width="32%" />
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/share-dark.png" />
-    <img src="docs/images/share.png" alt="Get a one-time link — the decryption key lives in the URL and never reaches the server" width="32%" />
+    <img src="docs/images/share.png" alt="Get a one-time link: the decryption key lives in the URL and never reaches the server" width="32%" />
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/view-dark.png" />
-    <img src="docs/images/view.png" alt="Recipient opens the link — decrypted locally, erased from the server as it is read" width="32%" />
+    <img src="docs/images/view.png" alt="The recipient opens the link: decrypted locally, erased from the server as it is read" width="32%" />
   </picture>
 </p>
 
-<p align="center"><sub><b>Create</b> → encrypted locally &nbsp;·&nbsp; <b>Share</b> → one-time link, key never sent &nbsp;·&nbsp; <b>Read</b> → decrypted in-browser, then gone</sub></p>
-
-## Table of Contents
-
-- [Features](#features)
-- [Comparison](#comparison)
-- [Quick Start](#quick-start)
-- [SDK](#sdk)
-- [Command line](#command-line)
-- [How It Works](#how-it-works)
-- [Configuration](#configuration)
-  - [S3 Storage (optional)](#s3-storage-optional)
-- [Self-Hosting (Synology, VPS, backups)](#self-hosting)
-- [Updating](#updating)
-- [Reverse Proxy](#reverse-proxy)
-- [Development](#development)
-- [Security](#security)
-- [License](#license)
-- [Contributing](#contributing)
+<p align="center"><sub><b>Create</b>: encrypted locally &nbsp;·&nbsp; <b>Share</b>: a one-time link, the key never sent &nbsp;·&nbsp; <b>Read</b>: decrypted in the browser, then gone</sub></p>
 
 ## Features
 
-- **Zero-knowledge encryption** — XChaCha20-Poly1305 in the browser, plus an AES-256-GCM layer at rest on the server
-- **Text & files** — Notes, documents, images, any file type. Up to 10 files per note, drag & drop.
-- **Burn after read** — Destroyed after the first view
-- **Password protection** — Optional, Argon2id key derivation. The server checks a proof of the password before serving anything: a wrong one spends no read, the fifth destroys the note
-- **Padding** — A note is padded to a size class, 4 KiB at least, so the server does not learn its length
-- **Auto-expiry** — 5 minutes to 30 days
-- **Read limits** — Auto-delete after N reads
-- **Delete token** — Manually delete a note at any time
-- **Markdown** — Optional formatting with a preview, sanitized (DOMPurify) before the reader sees it
-- **Password generator** — Inserts a strong password where you type, or shares one on its own
-- **Light & dark themes** — Follows the system, switchable from the footer
-- **File previews** — Images, video, audio rendered in-browser after decryption
-- **Chunked uploads** — Large files are encrypted and uploaded in chunks with progress tracking, up to 500 MB. The browser reads a file from disk as it encrypts it, and decrypts a note's files to disk on read: a large file is never held in memory
-- **S3 storage** — Optional S3-compatible backend (AWS S3, Cloudflare R2, RustFS, Garage) for large files
-- **QR codes** — Share links easily on mobile
-- **i18n** — 10 languages (en, fr, es, de, pt, it, ja, zh, ru, ko); [adding one](CONTRIBUTING.md#i18n) is a JSON file in [`messages/`](messages/) plus three registration lines
-- **Command line** — `secret send` and `secret read` from a terminal or a CI job, on any instance: the link alone on stdout, received files never written over anything ([`@largerio/secret-cli`](packages/cli/README.md))
-- **Self-hostable** — Single Docker container, customizable branding
+- End-to-end encryption with XChaCha20-Poly1305 in the browser, plus an
+  AES-256-GCM layer on the server.
+- Text and files: up to 10 files and 500 MB per note, with drag and drop.
+  Files are encrypted and uploaded in chunks, and decrypted straight to disk,
+  so a large file never sits in memory.
+- Burn after reading, or after a set number of reads, and an expiry from 5
+  minutes to 30 days.
+- An optional password, stretched with Argon2id. The server checks a proof of
+  the password before serving anything: a wrong one spends no read, and the
+  fifth deletes the note.
+- Padding to a size class, 4 KiB at least, so the server doesn't learn how
+  long a note is.
+- A delete link, to remove a note before anyone reads it.
+- Markdown with a preview (sanitized with DOMPurify), a password generator,
+  and previews of images, video and audio once decrypted.
+- QR codes, light and dark themes, and 10 languages (en, fr, es, de, pt, it,
+  ja, zh, ru, ko). [Adding one](CONTRIBUTING.md#adding-a-language) takes a
+  JSON file in [`messages/`](messages/) and four registrations.
+- A [JS/TS SDK](packages/sdk-js/README.md) and a
+  [command line](packages/cli/README.md), `secret send` and `secret read`.
+- Files on the data volume or in any S3-compatible bucket (AWS S3,
+  Cloudflare R2, RustFS, Garage), and your own name, accent color and footer.
 
 ## Comparison
 
@@ -93,72 +98,48 @@ A modern, open-source alternative to PrivateBin, OneTimeSecret, and Yopass — b
 | Stack                  | Svelte 5 + Hono     | PHP                 | Ruby                | Go + React          |
 | Deploy                 | Single Docker       | PHP server          | Ruby + Redis        | Single Docker       |
 
-¹ A server-held key, on top of the end-to-end layer. It protects a leaked database or S3 bucket on its own, not a stolen data volume when the key is stored on that volume — which is the zero-config default. See [what the server can see](SECURITY.md#what-the-server-can-see).
+¹ A server-held key, on top of the end-to-end layer. On its own it protects a
+leaked database or S3 bucket, not a stolen data volume when the key is stored
+on that volume, which is the default. See
+[what the server can see](SECURITY.md#what-the-server-can-see).
 
-> Comparison reflects publicly documented features at the time of writing. See each project's docs for the latest details.
+The comparison reflects each project's public documentation when it was
+written. Check their docs for the latest.
 
-## Quick Start
+## Quick start
 
-**Fastest — prebuilt image (no clone, no build):**
+With Docker, there's nothing to clone or build:
 
 ```bash
 mkdir secret && cd secret
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml
-
-docker compose up -d      # pulls ghcr.io/largerio/secret:1
+docker compose up -d
 ```
 
-That's it — on first launch the server encryption key is generated automatically and
-saved inside the data volume, so there's nothing to configure.
+Open `http://localhost:3000`. The server's encryption key is generated on
+the first launch and saved in the data volume, so there's nothing to
+configure. The API reference is at `/api/v1/docs`.
 
-**On your own domain, with HTTPS** — add `docker-compose.tls.yml`, which brings a
-Caddy that obtains and renews the certificate:
+To serve it on your own domain over HTTPS, add `docker-compose.tls.yml`. It
+runs Caddy, which gets and renews the certificate. Point the domain at the
+host first:
 
 ```bash
 curl -O https://raw.githubusercontent.com/largerio/secret/main/docker-compose.tls.yml
 echo "DOMAIN=secret.example.com" > .env
-
 docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
-Point the domain at the host first, so Caddy can answer the ACME challenge. To pin
-the encryption key yourself instead of using the generated one, add
-`SERVER_ENCRYPTION_KEY=$(openssl rand -base64 32)` to `.env` **before** the first launch.
-
-Open `http://localhost:3000`. API documentation is available at `/api/v1/docs` ([Scalar](https://scalar.com/)).
-If something doesn't work, run `docker compose logs -f` — see
-[Troubleshooting](docs/self-hosting.md#troubleshooting).
-
-**One-click / platform deploys:**
+The [self-hosting guide](docs/self-hosting.md) covers the rest: settings, a
+reverse proxy you already run, Synology, Coolify, Portainer and Render,
+backups, monitoring and updates. If something goes wrong, start with
+`docker compose logs -f` and [Troubleshooting](docs/self-hosting.md#troubleshooting).
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
 
-| Platform | How |
-|----------|-----|
-| **Render** | Click the button above ([guide](docs/self-hosting.md#railway--render-paas)) |
-| **Coolify** | New Resource → Docker Image → `ghcr.io/largerio/secret:1` ([guide](docs/self-hosting.md#coolify)) |
-| **Portainer** | Stacks → paste `docker-compose.yml` ([guide](docs/self-hosting.md#portainer)) |
-| **Synology NAS** | Container Manager project ([guide](docs/self-hosting.md#synology-nas-dsm-7--container-manager)) |
-
-**From source (for contributors):**
-
-```bash
-git clone https://github.com/largerio/secret.git
-cd secret
-cp .env.example .env   # optional — set APP_URL / pin SERVER_ENCRYPTION_KEY if you want
-
-# Uncomment `build: .` (and comment out `image:`) in docker-compose.yml to build locally
-docker compose up -d
-```
-
-For Synology NAS, VPS, reverse proxy, troubleshooting and backup instructions, see the
-[Self-Hosting guide](docs/self-hosting.md).
-
 ## SDK
 
-Read from any Secret instance programmatically, and write to the ones where you hold an API key
-(writes require an API key or a Proof-of-Work token — see the
-[SDK README](packages/sdk-js/README.md)):
+Create and read notes from your own code, on any Secret instance:
 
 ```bash
 npm install @largerio/secret-sdk
@@ -182,9 +163,13 @@ const { payload } = await client.readNote(parsed.id, parsed.keyFragment);
 console.log(payload.text); // "Hello, World!"
 ```
 
+Reading is open. Writing needs an API key from the instance's operator, or a
+proof of work: see the [SDK's README](packages/sdk-js/README.md).
+
 ## Command line
 
-Send and read notes from a terminal or a script, on any instance (Node.js 22 or later):
+Send and read notes from a terminal or a script, on any instance (Node.js 22
+or later):
 
 ```bash
 npm install -g @largerio/secret-cli
@@ -193,10 +178,11 @@ echo "the launch code is 0000" | secret send --instance https://secret.example.c
 secret read          # asks for the link, without echo
 ```
 
-Writes take an API key in `SECRET_API_KEY`, or solve the instance's proof of work as the
-browser does. See the [CLI README](packages/cli/README.md).
+To write, it takes an API key in `SECRET_API_KEY`, or solves the instance's
+proof of work as the browser does. See the
+[CLI's README](packages/cli/README.md).
 
-## How It Works
+## How it works
 
 ```
 Browser                                   Server
@@ -209,225 +195,34 @@ Browser                                   Server
 └──────────────────────┘             └──────────────────┘
 ```
 
-The encryption key lives in the URL fragment (`#key`), which browsers never send to the server.
+The key lives in the URL fragment (`#key`), which browsers never send to the
+server. Opening a note works the other way round: the browser proves it holds
+the link, the server sends the ciphertext, and the browser decrypts it.
 
-The code that encrypts comes from the server, though: the web app is a static bundle that builds
-reproducibly, and each release publishes its digest, which every instance reports, so anyone can
-[check](SECURITY.md#verifying-the-web-app) what an instance serves them against a release.
-
-[PROTOCOL.md](PROTOCOL.md) specifies the format and the API flows, with test vectors, for anyone writing a
-client in another language.
-
-## Configuration
-
-All settings via environment variables. See [.env.example](.env.example) for the full list.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVER_ENCRYPTION_KEY` | _auto_ | AES-256-GCM key (32 bytes, base64). Auto-generated and persisted in the data volume on first launch if unset; set it explicitly to control/back up the key yourself |
-| `APP_NAME` | `Secret` | Application name |
-| `APP_URL` | `http://localhost:3000` | Public URL (`http://` or `https://`) |
-| `APP_DESCRIPTION` | — | The home page's description for search engines and link previews, in every language. Unset, each language keeps its own translated one |
-| `APP_PRIMARY_COLOR` | — | Accent color as hex, e.g. `#1d4ed8` (default: indigo). The gradients and the dark-theme shade are derived from it. See `.env.example` for footer and social image |
-| `MAX_FILE_SIZE` | `10485760` | Max file size in bytes (10 MB) |
-| `MAX_FILES_PER_NOTE` | `10` | Max files per note (cannot exceed 10) |
-| `MAX_EXPIRY` | `2592000` | Retention ceiling in seconds (30 days). Can only be tightened; minimum 300 |
-| `STORAGE_QUOTA_BYTES` | `0` | Total storage budget for encrypted payloads. Writes beyond it get HTTP 507 until notes expire or are deleted; `0` = unlimited. Usage is in the metrics (`secret_storage_used_bytes`) |
-| `STORAGE_RECONCILE` | `true` | Daily sweep that deletes stored files no note points to any more. Requires a bucket or `FILES_PATH` used by this instance alone. See [Storage cleanup](docs/self-hosting.md#storage-cleanup) |
-| `API_KEY` | — | API key for SDK clients, min. 32 chars (optional) |
-| `API_KEY_1`, `API_KEY_2`… | — | Multiple API keys (optional) |
-| `…_FILE` | — | Read a secret from a file instead, such as a Docker or Kubernetes secret: `SERVER_ENCRYPTION_KEY_FILE`, `API_KEY_FILE`, `API_KEY_1_FILE`…, `S3_ACCESS_KEY_ID_FILE`, `S3_SECRET_ACCESS_KEY_FILE`, `METRICS_TOKEN_FILE`. Cannot be combined with the variable itself. See [Secrets in files](docs/self-hosting.md#secrets-in-files) |
-| `ALLOW_SERVER_KEY_CHANGE` | `false` | Allow booting with a different `SERVER_ENCRYPTION_KEY`, discarding every existing note |
-| `METRICS_TOKEN` | — | Turns on `/api/metrics` (Prometheus) for requests bearing this token, min. 32 chars. See [Monitoring](docs/self-hosting.md#monitoring) |
-| `SHUTDOWN_TIMEOUT` | `8` | Seconds a stopping container gives in-flight requests. Keep it a couple of seconds under the stop grace period (10 s unless raised) |
-| `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many legitimate users share one apparent address (corporate NAT, VPN) |
-| `CHUNK_SIZE` | `4194304` | Chunk size for large uploads (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
-| `MAX_CHUNKED_FILE_SIZE` | `524288000` | Max size of a large note's files (500 MB). A note may take a little more room: its padding, at most 6.25% (0.8% at 500 MB) |
-| `PORT` | `3000` | Host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) get the site and the API on it: the app is one process, on one port |
-
-On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`, `STORAGE_RECONCILE`, `DEBUG`) accept `true` or `1` for on, and `false` or `0` for off; blank keeps the default. Any other value, like any invalid setting, stops the server at startup.
-
-> **Warning:** Never change `SERVER_ENCRYPTION_KEY` after deployment — all existing notes become unreadable. The server stores a fingerprint of the key and **refuses to start** if it changes while notes exist, so a mistake fails loudly instead of silently bricking your data. When the key is auto-generated it lives at `.encryption_key` inside the data volume; read it back with `docker compose exec app cat /app/data/.encryption_key` and keep a copy apart from your backups (see [Backup & restore](docs/self-hosting.md#backup--restore)).
-
-### S3 Storage (optional)
-
-Files are stored locally by default. For larger files, enable S3-compatible storage:
-
-```env
-STORAGE_BACKEND=s3
-S3_BUCKET=my-bucket
-S3_REGION=us-east-1
-S3_ENDPOINT=http://rustfs:9000   # Omit for AWS S3
-S3_ACCESS_KEY_ID=your-key
-S3_SECRET_ACCESS_KEY=your-secret
-S3_FORCE_PATH_STYLE=true         # Required by self-hosted servers
-MAX_FILE_SIZE=104857600           # 100 MB
-```
-
-Works with AWS S3, Cloudflare R2, and self-hosted servers such as
-[RustFS](https://github.com/rustfs/rustfs) or [Garage](https://garagehq.deuxfleurs.fr).
-With Garage, set `S3_REGION` to its region (`garage` by default).
-
-The two keys can also come from files: `S3_ACCESS_KEY_ID_FILE` and
-`S3_SECRET_ACCESS_KEY_FILE`.
-
-Give each instance a bucket of its own, without versioning, and add the
-lifecycle rule in [S3 bucket settings](docs/self-hosting.md#s3-bucket-settings).
-
-## Self-Hosting
-
-Step-by-step deployment guides for common setups are in
-**[docs/self-hosting.md](docs/self-hosting.md)**:
-
-- **VPS / any Docker host** — two-file deploy (`docker-compose.yml` + `.env`), no clone
-- **Synology NAS** — DSM Container Manager walkthrough, with volume/permission notes
-- **Reverse proxy & HTTPS** — including DSM's built-in reverse proxy
-- **Backup & restore** — a hot copy of the database, the files and the key, and how long to keep them
-- **Monitoring** — liveness and readiness probes, the version, Prometheus metrics
-
-## Updating
-
-```bash
-docker compose pull           # Pull new image
-docker compose up -d          # Restart
-docker image prune -f         # Clean up
-```
-
-Data lives in a Docker volume — updates never delete your notes.
-
-### Pinning a version
-
-`docker-compose.yml` tracks `:1`, the latest `1.x` release. For reproducible
-deploys, pin an exact release tag on the `image:` line instead:
-
-| Image tag | Tracks |
-|-----------|--------|
-| `ghcr.io/largerio/secret:1` | latest `1.x` release — **recommended** (the default), gets fixes and features without breaking changes |
-| `ghcr.io/largerio/secret:1.1` | latest `1.1.x` patch only |
-| `ghcr.io/largerio/secret:1.1.0` | that exact release, fully reproducible — never moves |
-| `ghcr.io/largerio/secret:latest` | newest release of any major version — moves to `2.x` and its breaking changes when it ships |
-| `ghcr.io/largerio/secret:main` | tip of `main`, unreleased and unreviewed changes included — for testing only |
-
-Between releases, `:1`, `:1.1` and `:latest` are rebuilt within a week of
-each base image (`node:26-alpine`) update, after a vulnerability scan and a
-smoke test. Exact tags never change.
-
-After changing the tag, run `docker compose pull && docker compose up -d`. Read
-the **Upgrade notes** in [CHANGELOG.md](CHANGELOG.md) before upgrading.
-
-## Reverse Proxy
-
-**Caddy** (automatic HTTPS):
-```
-secret.example.com {
-    reverse_proxy localhost:3000
-}
-```
-
-**Nginx:**
-```nginx
-server {
-    listen 443 ssl;
-    server_name secret.example.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 600M;
-    }
-}
-```
-
-Set `client_max_body_size` to at least `MAX_CHUNKED_FILE_SIZE` (or `MAX_FILE_SIZE` if chunked uploads are not used). The example uses 600M as a safety margin above the 500 MB default.
-
-Behind either, set `ADDRESS_HEADER=X-Forwarded-For` and `XFF_DEPTH=1`: until then every visitor shares the proxy's rate-limit bucket, and the app warns about it at every start. See [Making rate limiting work behind a proxy](docs/self-hosting.md#making-rate-limiting-work-behind-a-proxy).
-
-## Development
-
-```bash
-pnpm install
-pnpm dev          # API + web dev servers
-pnpm test         # full suite
-pnpm test:coverage # same, with the 100% coverage gate (what CI runs)
-pnpm lint         # Biome lint + format
-pnpm build        # Production build
-pnpm typecheck    # TypeScript strict
-```
-
-### Structure
-
-```
-apps/api/         Hono API (Node.js, SQLite, Drizzle ORM, OpenAPI)
-apps/web/         SvelteKit frontend (Svelte 5, Tailwind CSS 4), static files the API serves
-apps/e2e/         Playwright end-to-end tests (incl. axe-core a11y gate)
-packages/sdk-js/  JS/TS SDK (SecretClient, encrypt/decrypt flows)
-packages/cli/     Command line (`secret`), built on the SDK
-packages/crypto/  libsodium + AES-256-GCM encryption
-packages/shared/  Zod schemas, types, constants, crypto test vectors
-messages/         i18n (10 languages)
-```
-
-> Requires **Node.js 26+** (the code uses Node 26 APIs such as `Error.isError`
-> and the built-in `node:sqlite`). Use `nvm use 26` if your shell defaults to an
-> older version.
-
-### Publishing to npm
-
-Two packages are published to npm: **`@largerio/secret-sdk`** and
-**`@largerio/secret-cli`**, which depends on it. The SDK's build (tsup) bundles
-the internal `@largerio/secret-crypto` and `@largerio/secret-shared` packages,
-which stay private — so consumers install a single self-contained package; the
-CLI's build bundles its own code, and installs the SDK as its one dependency.
-Releases go through [changesets](https://github.com/changesets/changesets):
-
-```bash
-pnpm changeset                            # describe the change + pick the version bump
-pnpm version-packages                     # apply pending changesets (bump version + changelog)
-pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build   # into dist/
-pnpm release                              # publish the built packages to npm
-```
-
-In development everything resolves to TypeScript sources (`exports` → `./src`);
-the bundled `dist/` is produced only when a package is packed/published.
-
-CI publishes via **npm trusted publishing (OIDC)** — see
-[`.github/workflows/release.yml`](.github/workflows/release.yml). Merging a
-changeset to `main` opens a "Version Packages" PR; merging that PR publishes the
-new version. No `NPM_TOKEN` secret is used: GitHub authenticates to npm with a
-short-lived OIDC token against the package's configured trusted publisher. See
-[Releases](CONTRIBUTING.md#releases) for the details.
+[PROTOCOL.md](PROTOCOL.md) specifies the format and the API, with test
+vectors, for anyone writing a client in another language.
 
 ## Security
 
-| Layer | Details |
-|-------|---------|
-| Client encryption | XChaCha20-Poly1305 (192-bit nonce, AEAD) |
-| Server encryption | AES-256-GCM at rest, bound to the note ID. Guards a leaked database or bucket; keep `SERVER_ENCRYPTION_KEY` off the data volume to guard a stolen volume too |
-| Password KDF | Argon2id (256 MiB, 3 iterations — libsodium `MODERATE`) |
-| Read proof | A note is served only to a reader who proves the link, and the password of a password note; five wrong passwords delete it |
-| Padding | Padmé size classes, 4 KiB at least: at most 6.25% over the content |
-| Write auth | PoW (Cap.js SHA-256) for the browser and the CLI without a key, API keys for the SDK and the CLI |
-| Token comparison | Timing-safe (`crypto.timingSafeEqual`) |
-| Key hygiene | Key buffers zeroed after use (`sodium.memzero`), as a best effort: JavaScript strings and libsodium's internal WASM copies are not wiped. The key also lives in the URL, browser history and clipboard — that is inherent to the link-carries-the-key model. |
-| Reader's device | A note's files are decrypted to the browser's private storage for the site while the note is shown, and deleted once the page lets go of it ([details](SECURITY.md#known-limitations)) |
-| Privacy | No analytics, no IP addresses or note content in logs. Two first-party preference cookies (language, theme). |
-| Database | SQLite `secure_delete`, WAL mode |
-| Docker | Non-root, read-only filesystem, dropped capabilities |
-| Image provenance | Signed (cosign, keyless) with a SLSA build provenance attestation, once scanned and smoke-tested — [how to verify](docs/self-hosting.md#verifying-the-image) |
-| Web app integrity | A reproducible static bundle: each release publishes its digest, which `/api/health` reports — [how to verify](SECURITY.md#verifying-the-web-app) |
-| HTTP | Strict CSP (inline scripts by hash, no framing), HSTS (preload), Permissions-Policy, per-IP rate limiting |
-| Storage | Path traversal protection, S3 key validation |
-| Validation | Zod schemas with max length constraints |
+- The server stores ciphertext it can't read, and only serves it to a reader
+  who proves they hold the link.
+- The code that encrypts comes from the server, though. The web app is a
+  reproducible build: each release publishes its digest, which every
+  instance reports, so anyone can [check](SECURITY.md#verifying-the-web-app)
+  what an instance serves them.
+- The images are signed, with a build provenance attestation
+  ([how to verify](docs/self-hosting.md#verifying-the-image)).
+- A strict Content Security Policy, a non-root container on a read-only
+  filesystem, and per-IP rate limits.
 
-See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy.
+[SECURITY.md](SECURITY.md) covers the threat model, what the server can and
+can't see, the known limitations, and how to report a vulnerability.
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to set up the project, run
+the tests and send a change.
 
 ## License
 
 [MIT](LICENSE)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).

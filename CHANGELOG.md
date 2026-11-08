@@ -1,8 +1,9 @@
 # Changelog
 
 Notable changes to the Secret app, published as the `ghcr.io/largerio/secret`
-image. Each version links to its GitHub release. The SDK has
-[its own changelog](packages/sdk-js/CHANGELOG.md), and
+image. Each version links to its GitHub release. The SDK and the command
+line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
+[CLI](packages/cli/CHANGELOG.md)), and
 [SECURITY.md](SECURITY.md#supported-versions) lists the supported versions.
 
 ## [Unreleased]

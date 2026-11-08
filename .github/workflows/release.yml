@@ -2,7 +2,7 @@ name: Release npm packages
 
 # Publishes @largerio/secret-sdk and @largerio/secret-cli to npm. The app
 # image is released by release-image.yml. npm's trusted publisher names this
-# file: renaming it stops every publish (CONTRIBUTING.md).
+# file: renaming it stops every publish (docs/releasing.md).
 on:
   push:
     branches: [main]
@@ -73,7 +73,7 @@ jobs:
       # GitHub starts no `pull_request` workflow for a PR opened with
       # GITHUB_TOKEN, so the Version Packages PR would reach main with no CI.
       # Opened as the release App, it gets its checks. Without the App (a
-      # fork), this falls back to GITHUB_TOKEN. Setup: CONTRIBUTING.md.
+      # fork), this falls back to GITHUB_TOKEN. Setup: docs/releasing.md.
       - name: Mint a GitHub App token
         id: app-token
         if: env.HAS_RELEASE_APP == 'true'

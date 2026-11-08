@@ -31,7 +31,7 @@ pbpaste | secret read --out ~/Downloads             # or takes it on stdin
 
 There is no default instance. `send` writes to the one `--instance <url>` or `SECRET_INSTANCE` names: an `http:` or `https:` URL, with its path when the instance is served under one. `read`, `check` and `delete` talk to the instance of the link, and take no `--instance`.
 
-Reads are open on every instance. Writes (`send`, `delete`) are let in one of two ways:
+Reads are open on every instance. Writes (`send`, `delete`) need one of two things:
 
 - **An API key**, in `SECRET_API_KEY`, or in the file `SECRET_API_KEY_FILE` names (blanks and line endings around it are dropped; set one or the other). A key is the operator's to give: it is a value set in the instance's environment ([API keys](https://github.com/largerio/secret/blob/main/docs/self-hosting.md#api-keys-for-the-sdk)). There is no option for it, since an argument stays in the shell's history and shows in `ps`. A key the instance refuses is an error (exit 4): the command does not fall back on a proof of work.
 - **Without a key, a proof of work.** The command solves the instance's challenge, as the browser does, for a token that lets in one write: a few seconds at an instance's default difficulty. It refuses a challenge beyond [its bounds](https://github.com/largerio/secret/blob/main/PROTOCOL.md#proof-of-work); write with a key there, and on an instance that keeps its challenge behind a login.
@@ -74,7 +74,7 @@ To delete it sooner: secret delete https://secret.example.com/note/aBcDeFgHiJkL 
 
 ### `secret read [link] [options]`
 
-Decrypts a note: its text on stdout, its files on disk. This spends one of the note's reads, and its last read deletes it, which `read` tells on stderr.
+Decrypts a note: its text on stdout, its files on disk. This spends one of the note's reads. When it's the last one, the note is deleted, and `read` says so on stderr.
 
 The link is the argument, or else the first line of stdin when stdin is not a terminal, or else it is asked on the terminal, without echo. Prefer stdin or the prompt: see [Security](#security).
 
@@ -108,7 +108,7 @@ It needs only the note's id: give it the link without its `#…` fragment, which
 
 ### `secret delete <link> --token=<deleteToken>`
 
-Deletes a note before it expires, with the delete token `send` printed. It is a write, let in by an API key or a proof of work, which is not solved for a note that is already gone (exit 3). A wrong token exits with 4. Like `check`, it needs only the note's id: give it the link without its fragment.
+Deletes a note before it expires, with the delete token `send` printed. Like `send`, it needs an API key or a proof of work; when the note is already gone, it exits with 3 without solving anything. A wrong token exits with 4. Like `check`, it needs only the note's id: give it the link without its fragment.
 
 Write the token with `=`: a token may start with `-`, which `--token <deleteToken>` would read as an option.
 
@@ -136,7 +136,7 @@ Write the token with `=`: a token may start with `-`, which `--token <deleteToke
 What a wrong password costs depends on the note's format, which `check` shows:
 
 - **Format 1**, which `send` writes: the instance checks a proof of the password before it serves anything, so a wrong password spends no read. The fifth wrong one, over the note's life, deletes the note. On a terminal, `read` asks again, with the attempts left, and warns when the next wrong one deletes the note; its first prompt gives the attempts left too, once fewer than five are. A password given by `SECRET_PASSWORD` or a file is tried once: wrong, it counts an attempt, and `read` exits with 4.
-- **Format 0**, written by the web app up to 1.5, the SDK up to 1.2, or `send --format 0`: the instance serves the note before the password can be checked, so a wrong password spends a read, the only one of a burn-after-read note. `read` warns before it asks, and says so when it fails (exit 4).
+- **Format 0**, the legacy format, which `send --format 0` writes: the instance serves the note before the password can be checked, so a wrong password spends a read, the only one of a burn-after-read note. `read` warns before it asks, and says so when it fails (exit 4).
 
 ## Files received
 
@@ -242,4 +242,4 @@ Secret's threat model, what an instance learns, and the known limitations are in
 
 ## License
 
-MIT — see [LICENSE](https://github.com/largerio/secret/blob/main/packages/cli/LICENSE).
+[MIT](https://github.com/largerio/secret/blob/main/packages/cli/LICENSE)

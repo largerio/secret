@@ -1,17 +1,18 @@
-# Self-Hosting Guide
+# Self-hosting guide
 
-Deploy your own Secret instance in minutes — no clone, no build. The official
+Deploy your own Secret instance in minutes, with no clone and no build. The official
 image is published to [`ghcr.io/largerio/secret`](https://ghcr.io/largerio/secret)
 and runs as a single container.
 
 | Where you're deploying | Start here |
 |---|---|
-| A VPS, or any host with Docker | [Quick deploy](#quick-deploy-vps--any-docker-host) — with HTTPS in one command |
+| A VPS, or any host with Docker | [Quick deploy](#quick-deploy-vps--any-docker-host), with HTTPS in one command |
 | Coolify, Portainer, Render | [One-click & platform deploys](#one-click--platform-deploys) |
 | A Synology NAS | [Synology NAS](#synology-nas-dsm-7--container-manager) |
 | Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
 
-Once it is up: [API keys](#api-keys-for-the-sdk) ·
+Once it is up: [Configuration](#configuration) ·
+[API keys](#api-keys-for-the-sdk) ·
 [Secrets in files](#secrets-in-files) ·
 [Restricting who can create notes](#restricting-who-can-create-notes) ·
 [Backup & restore](#backup--restore) · [Storage cleanup](#storage-cleanup) ·
@@ -21,7 +22,7 @@ Once it is up: [API keys](#api-keys-for-the-sdk) ·
 [Deploying from CI](#deploying-from-ci) · [Troubleshooting](#troubleshooting)
 
 > **Image architecture:** the official image is multi-arch (`linux/amd64` and
-> `linux/arm64`), so it runs natively on x86 servers as well as ARM hosts —
+> `linux/arm64`), so it runs natively on x86 servers as well as ARM hosts such as
 > Synology ARM models, Raspberry Pi (64-bit), and Apple Silicon.
 
 ---
@@ -58,7 +59,7 @@ echo "DOMAIN=secret.example.com" > .env
 docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
-Point the domain at this host first — Caddy proves ownership over ports 80 and
+Point the domain at this host first: Caddy proves ownership over ports 80 and
 443. Only those two are published: the app itself is reachable through the proxy
 alone, and `APP_URL` is derived from `DOMAIN`.
 
@@ -67,7 +68,7 @@ Already running a reverse proxy? Skip that file, set `APP_URL` in `.env`, and se
 
 > ⚠️ **The encryption key cannot be rotated.** Setting a different
 > `SERVER_ENCRYPTION_KEY` on a running instance makes every stored note
-> permanently unreadable — the server checks a fingerprint and refuses to start
+> permanently unreadable. The server checks a fingerprint and refuses to start
 > rather than let that pass silently. To manage the key yourself, pin it
 > **before the very first launch**; otherwise it lives in the data volume at
 > `.encryption_key`. Either way, back it up apart from the data
@@ -81,7 +82,7 @@ Already running a reverse proxy? Skip that file, set `APP_URL` in `.env`, and se
 
 ### One-liner `docker run`
 
-The fastest way to spin up a test instance — no files at all:
+The fastest way to spin up a test instance, with no files at all:
 
 ```bash
 # Generate and SAVE the key (without it, notes are unreadable forever)
@@ -103,37 +104,35 @@ Coolify gives you automatic HTTPS through its built-in proxy.
 
 1. **New Resource** → **Docker Image** → `ghcr.io/largerio/secret:1`
    (or **Docker Compose** and paste this repo's `docker-compose.yml`).
-2. **Environment variables:** set `SERVER_ENCRYPTION_KEY` (generate one) and
-   `APP_URL` to the domain Coolify assigns.
-3. **Persistent Storage:** add a volume mounted at **`/app/data`**.
+2. **Environment variables:** set `APP_URL` to the domain Coolify assigns.
+3. **Persistent Storage:** add a volume mounted at **`/app/data`**. The
+   encryption key is generated there on the first start.
 4. **Ports:** expose `3000`. Coolify provisions the TLS certificate automatically.
 
 ### Portainer
 
 1. **Stacks** → **Add stack** → **Web editor**.
 2. Paste this repo's `docker-compose.yml`.
-3. Fill in the environment variables (at least `SERVER_ENCRYPTION_KEY` and
-   `APP_URL`) in the editor, then **Deploy the stack**.
+3. Set `APP_URL` in the environment variables, then **Deploy the stack**.
+   The encryption key is generated in the stack's volume on the first start.
 
-### Railway / Render (PaaS)
+### Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
 
-Deploy directly from the image `ghcr.io/largerio/secret:1`. A
-[`render.yaml`](../render.yaml) blueprint is included — the button above deploys
-it in one click; Render will then prompt you for the two required values
-(`SERVER_ENCRYPTION_KEY` and `APP_URL`).
+The button deploys the [`render.yaml`](../render.yaml) blueprint, which runs
+the image `ghcr.io/largerio/secret:1` on a persistent disk mounted at
+`/app/data`. Render then asks for two values:
 
-- ⚠️ **Attach a persistent disk/volume mounted at `/app/data`** — PaaS
-  filesystems are ephemeral, so without it every redeploy wipes all notes.
-  The included `render.yaml` already declares this disk. Note that persistent
-  disks require a **paid** instance type on Render (the free tier has no disks).
-- Set `APP_URL` to the platform-assigned domain.
-- The platform injects `PORT`, and routes traffic there: the app serves the
-  site and the API on that one port, from one process.
-- Set `SERVER_ENCRYPTION_KEY` yourself — it must be 32 random bytes, base64
-  encoded (`openssl rand -base64 32`). A platform's generic "random value"
-  generator won't match this format.
+- `APP_URL`: the address Render gives the service
+  (`https://<service>.onrender.com`), or your own domain.
+- `SERVER_ENCRYPTION_KEY`: 32 random bytes in base64, from
+  `openssl rand -base64 32`. Render's own "generate" button doesn't produce
+  that format. Keep a copy: without it, the notes can't be read.
+
+A persistent disk needs a paid instance type: on the free tier, every
+redeploy would wipe the notes. Render injects `PORT` and routes traffic
+there, and the app serves the site and the API on that one port.
 
 ---
 
@@ -142,12 +141,13 @@ it in one click; Render will then prompt you for the two required values
 1. **Install Container Manager** from the DSM Package Center (if not already).
 2. **Prepare a folder.** In File Station, create `docker/secret`. Put two files
    in it:
-   - `docker-compose.yml` (from the link above)
-   - `.env` — start from `.env.example`, then set `SERVER_ENCRYPTION_KEY`
-     (`openssl rand -base64 32`) and `APP_URL` (e.g. `https://secret.example.com`).
+   - [`docker-compose.yml`](https://raw.githubusercontent.com/largerio/secret/main/docker-compose.yml)
+   - `.env`, with `APP_URL` set to the address you'll use (e.g.
+     `https://secret.example.com`). The encryption key is generated in the
+     volume on the first start.
 3. **Create the project.** Container Manager → **Project** → **Create** →
    set the path to `docker/secret` and import the existing `docker-compose.yml`.
-4. **Run it.** Build/Start the project — Container Manager pulls
+4. **Run it.** Build/Start the project. Container Manager pulls
    `ghcr.io/largerio/secret:1` automatically.
 5. **Access it.** Port `3000` is mapped to the NAS; browse to `http://<NAS-IP>:3000`.
 
@@ -155,7 +155,7 @@ it in one click; Render will then prompt you for the two required values
 
 - The container runs as a **non-root user (uid 1001)** with a **read-only root
   filesystem**; only the `secret-data` volume and an in-memory `/tmp` are
-  writable. This works out of the box on DSM with the named Docker volume — no
+  writable. This works out of the box on DSM with the named Docker volume: no
   permission tweaks needed.
 - **Prefer the named volume `secret-data`** (the default). If you instead
   bind-mount a NAS folder (e.g. `/volume1/docker/secret/data:/app/data`), you
@@ -167,13 +167,77 @@ it in one click; Render will then prompt you for the two required values
 
 ---
 
+## Configuration
+
+Everything is set through environment variables, in `.env` next to
+`docker-compose.yml`. [`.env.example`](../.env.example) lists them all; these
+are the ones you're most likely to need:
+
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `SERVER_ENCRYPTION_KEY` | generated | The server's AES-256-GCM key, 32 bytes in base64. Unset, it's generated on the first start and kept in the data volume. Never change it once notes exist: see [the warning above](#quick-deploy-vps--any-docker-host) |
+| `APP_URL` | `http://localhost:3000` | The public address, `http://` or `https://` |
+| `APP_NAME` | `Secret` | The name shown in the pages |
+| `APP_DESCRIPTION` | — | The home page's description for search engines and link previews, in every language. Unset, each language keeps its own |
+| `APP_PRIMARY_COLOR` | indigo | The accent color, in hex (`#1d4ed8`). The gradients and the dark theme's shade follow it |
+| `APP_FOOTER_TEXT`, `APP_OG_IMAGE_URL` | — | A footer text, and the image of link previews |
+| `MAX_CHUNKED_FILE_SIZE` | `524288000` | The most file bytes a note can carry (500 MB). Its padding takes a little more room: at most 6.25%, 0.8% at 500 MB |
+| `MAX_FILES_PER_NOTE` | `10` | Files per note, 10 at most |
+| `MAX_FILE_SIZE` | `10485760` | Sizes the body limit of a note sent in one request: `MAX_FILE_SIZE × MAX_FILES_PER_NOTE` plus 1 MB. Larger notes go up in chunks, so there's rarely a reason to change it |
+| `CHUNK_SIZE` | `4194304` | The size of those chunks (4 MB). The web app follows it; SDK clients must pass the same value as `chunkSize` |
+| `MAX_EXPIRY` | `2592000` | The longest a note can live, in seconds (30 days). It can only be lowered, to 300 at least |
+| `STORAGE_QUOTA_BYTES` | `0` | The total room for encrypted notes, `0` for no limit. Past it, writes get `507` until notes expire or are deleted. Usage is in the [metrics](#metrics) |
+| `STORAGE_RECONCILE` | `true` | The daily sweep that deletes stored files no note points to. It needs a bucket or `FILES_PATH` used by this instance alone: see [Storage cleanup](#storage-cleanup) |
+| `API_KEY`, `API_KEY_1`, `API_KEY_2`… | — | [API keys](#api-keys-for-the-sdk) for scripts, the SDK and the command line, 32 characters at least |
+| `…_FILE` | — | Reads a secret from a file: see [Secrets in files](#secrets-in-files) |
+| `ADDRESS_HEADER`, `XFF_DEPTH`, `TRUSTED_PROXIES` | — | Where the client's address comes from behind a reverse proxy: see [Making rate limiting work behind a proxy](#making-rate-limiting-work-behind-a-proxy) |
+| `RATE_LIMIT_MULTIPLIER` | `1` | Scales every per-IP rate limit. Raise it when many people share one address (a company NAT, a VPN) |
+| `CAP_DIFFICULTY`, `CAP_CHALLENGE_COUNT` | `4`, `50` | The proof of work a browser solves before each write. Raise them under sustained abuse |
+| `METRICS_TOKEN` | — | Turns on `/api/metrics` for requests that carry it, 32 characters at least: see [Metrics](#metrics) |
+| `ALLOW_SERVER_KEY_CHANGE` | `false` | Lets the server start with another `SERVER_ENCRYPTION_KEY`, giving up every existing note |
+| `SHUTDOWN_TIMEOUT` | `8` | Seconds a stopping container gives the requests in flight. Keep it a couple of seconds under the stop grace period (10 s unless raised) |
+| `PORT` | `3000` | The host port compose publishes. Platforms that inject it (Render, Railway, Cloud Run) get the site and the API on it |
+
+On/off settings (`ALLOW_SERVER_KEY_CHANGE`, `S3_FORCE_PATH_STYLE`,
+`STORAGE_RECONCILE`, `DEBUG`) take `true` or `1` for on, `false` or `0` for
+off; blank keeps the default. Any other value, like any invalid setting,
+stops the server at startup.
+
+After changing `.env`, run `docker compose up -d --force-recreate`.
+
+### S3 storage
+
+Files are kept in the data volume by default. To keep them in an
+S3-compatible bucket instead:
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET=my-bucket
+S3_REGION=us-east-1
+S3_ENDPOINT=http://rustfs:9000   # leave out for AWS S3
+S3_ACCESS_KEY_ID=your-key
+S3_SECRET_ACCESS_KEY=your-secret
+S3_FORCE_PATH_STYLE=true         # needed by self-hosted servers
+```
+
+This works with AWS S3, Cloudflare R2, and self-hosted servers such as
+[RustFS](https://github.com/rustfs/rustfs) or
+[Garage](https://garagehq.deuxfleurs.fr). With Garage, set `S3_REGION` to
+its region (`garage` by default). The two keys can also come from files,
+`S3_ACCESS_KEY_ID_FILE` and `S3_SECRET_ACCESS_KEY_FILE`.
+
+Give each instance a bucket of its own, without versioning, and add the
+lifecycle rule in [S3 bucket settings](#s3-bucket-settings).
+
+---
+
 ## Reverse proxy & HTTPS
 
 This section is for a proxy you run yourself. If you don't have one,
 `docker-compose.tls.yml` ([Quick deploy](#quick-deploy-vps--any-docker-host))
 brings its own Caddy and there is nothing to configure here.
 
-**Caddy** — certificates handled for you, `X-Forwarded-For` set on its own:
+**Caddy**, which handles the certificate and sets `X-Forwarded-For` on its own:
 
 ```caddyfile
 secret.example.com {
@@ -202,9 +266,9 @@ server {
 Two reminders:
 
 - The body limit must clear the largest single upload request,
-  `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default) — not
-  `MAX_CHUNKED_FILE_SIZE`, since large uploads are split into 4 MB chunks and no
-  single request comes close to it.
+  `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default), not
+  `MAX_CHUNKED_FILE_SIZE`: large notes go up in 4 MB chunks, one request
+  each.
 - Update `APP_URL` in `.env` to your `https://` domain.
 
 ### Making rate limiting work behind a proxy
@@ -214,9 +278,9 @@ until you tell the app where the client address is. The limits still apply;
 they just apply to your whole instance at once, so one busy visitor can exhaust
 them for everybody.
 
-The app takes the address of whatever connects to it for the client's. Behind a
-reverse proxy, that is the proxy's address, the same for every visitor: the app
-cannot guess that a proxy sits in front of it, nor where it writes the client's
+By default, the app treats whoever connects to it as the client. Behind a
+reverse proxy, that's the proxy, the same for every visitor: the app can't
+guess that a proxy sits in front of it, nor where the proxy puts the client's
 address.
 
 Two variables fix it:
@@ -240,7 +304,7 @@ CIDR ranges) whose `X-Forwarded-For` or `X-Real-IP` the app believes; empty, the
 default, it believes no one.
 
 `XFF_DEPTH` matters: `X-Forwarded-For` is a list a client can prefill, and only
-the last entries — the ones your own proxies appended — are trustworthy. Set it
+the last entries, the ones your own proxies appended, are trustworthy. Set it
 too high and a client can pick its own bucket; set it too low and everyone
 shares one again.
 
@@ -277,21 +341,22 @@ DSM → **Login Portal → Advanced → Reverse Proxy** → create a rule from
 
 ## API keys (for the SDK)
 
-Reads are open; writes are not. Browsers solve a Proof-of-Work challenge —
-anything scripted (the [JS SDK](https://www.npmjs.com/package/@largerio/secret-sdk),
-a backup job) needs a key you issue in `.env`:
+Reads are open; writes are not. A browser solves a proof-of-work challenge
+before each write. Anything scripted, such as the
+[JS SDK](https://www.npmjs.com/package/@largerio/secret-sdk) or a backup job,
+is simpler with a key you issue in `.env`:
 
 ```env
 API_KEY=<openssl rand -base64 32>   # 32 characters minimum
 # API_KEY_1=…                       # one per client, to revoke them separately
 ```
 
-Then `docker compose up -d --force-recreate`. A key authorises writes only — it
+Then `docker compose up -d --force-recreate`. A key authorises writes only: it
 grants no read access others don't have, and no ability to decrypt.
 
 The [command line](../packages/cli/README.md) takes the key in `SECRET_API_KEY`,
 or in the file `SECRET_API_KEY_FILE` names; without one, it solves the
-Proof-of-Work challenge as a browser does.
+proof of work as a browser does.
 
 ---
 
@@ -385,12 +450,12 @@ Secret as a volume and point the `_FILE` variables at its files.
 
 Out of the box, anyone who can reach the instance can create notes, with files
 up to `MAX_CHUNKED_FILE_SIZE` (500 MB by default). What stands in the way is the
-Proof-of-Work challenge a browser solves before each write, the per-IP rate
+proof-of-work challenge a browser solves before each write, the per-IP rate
 limits and, if you set one, the storage quota (`STORAGE_QUOTA_BYTES`). To keep
 an instance for your own people, put a login in front of the paths that create
 notes, and only those: the people you send links to have no account.
 
-The API refuses to create or delete a note without a Proof-of-Work token or an
+The API refuses to create or delete a note without a proof-of-work token or an
 [API key](#api-keys-for-the-sdk), and a browser gets its token from
 `/api/cap/`. The chunks of a large upload carry neither, but only extend an
 upload that one of them started. Behind a login, `/api/cap/` is enough to stop
@@ -399,7 +464,7 @@ in but never send.
 
 | Behind the login | |
 |---|---|
-| `/api/cap/` and below | The Proof-of-Work challenge: without its token, no browser can create or delete a note |
+| `/api/cap/` and below | The proof-of-work challenge: without its token, no browser can create or delete a note |
 | `/` | The page that creates notes, when a browser loads it |
 
 The web app moves between its pages in the browser: a visitor who follows a
@@ -606,9 +671,9 @@ for anyone who still has the link. Hence:
 5. Run `docker compose start` and watch `docker compose logs -f`. A wrong key
    stops the start with an explicit error.
 
-An archive of the whole volume, made with the app stopped as this guide used to
-advise, restores in one step: empty the volume (`rm -rf ./* ./.[!.]*`, so that
-no generated key stays behind), then extract the archive into it.
+An archive of the whole volume, made with the app stopped, restores in one
+step: empty the volume (`rm -rf ./* ./.[!.]*`, so that no generated key stays
+behind), then extract the archive into it.
 
 ### After a restore
 
@@ -731,7 +796,7 @@ Run one container per database, and only one. The API keeps state in its own
 process, so it does not scale out, and replicas behind a load balancer fail in
 ways that look random:
 
-- **Proof-of-Work challenges live in memory.** The challenge, its solution and
+- **Proof-of-work challenges live in memory.** The challenge, its solution and
   the write that spends the token must all reach the same process; when one of
   them lands on another replica, the note is refused.
 - **Rate limits are counted per process**, so every replica adds its own
@@ -788,7 +853,7 @@ Three endpoints answer on the app's port, with no token:
 
 ```bash
 curl http://localhost:3000/api/health
-# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.5.0","revision":"<commit>","bundle":"sha256:<digest>"}
+# {"status":"ok","checks":{"database":"ok","storage":"ok"},"storage":{"quotaBytes":null},"version":"1.8.0","revision":"<commit>","bundle":"sha256:<digest>"}
 ```
 
 `status` is `ok`, `degraded` when a check fails (`database` is the volume,
@@ -830,9 +895,9 @@ services:
 (`revision`); the API reference (`/api/v1/openapi.json`) reports the version
 too.
 
-- A release reports its number, such as `1.5.0`.
+- A release reports its number, such as `1.8.0`.
 - An image built from `main` after a release, such as `:main`, reports that
-  release suffixed `-dev` (`1.5.0-dev`), next to its own revision: it holds
+  release suffixed `-dev` (`1.8.0-dev`), next to its own revision: it holds
   changes the release does not.
 - An image you build yourself reports the latest version in its `CHANGELOG.md`,
   whichever commit you built, and an `unknown` revision. Pass the commit to
@@ -906,8 +971,7 @@ failing (the logs say why, often the storage credentials); a sweep `skipped`
 none helps decrypt anything. They are still metadata about how the instance is
 used: how many notes are created and read, of which kind, when, and how much is
 stored. That is why they are off by default, and why the token deserves the
-care of an API key. The volume stored, which `/api/health` used to show anyone,
-is now only here.
+care of an API key.
 
 ---
 
@@ -919,14 +983,25 @@ docker compose up -d    # recreate the container
 docker image prune -f   # clean up old layers
 ```
 
-Your data lives in the volume, so updates never delete notes.
+Your data lives in the volume, so updates never delete notes. Read the
+**Upgrade notes** in [CHANGELOG.md](../CHANGELOG.md) before upgrading.
 
-`docker-compose.yml` tracks `:1`: every 1.x release, rebuilt between releases
-on the latest base image. Pin an exact release such as
-`ghcr.io/largerio/secret:1.2.1` for a fully reproducible deployment: that tag
-never changes.
+### Pinning a version
 
-Full tag list: [Pinning a version](../README.md#pinning-a-version).
+`docker-compose.yml` tracks `:1`, the latest 1.x release. To pin another tag,
+change the `image:` line:
+
+| Image tag | Tracks |
+|-----------|--------|
+| `ghcr.io/largerio/secret:1` | The latest 1.x release, **recommended** (the default): fixes and features, without breaking changes |
+| `ghcr.io/largerio/secret:1.8` | The latest 1.8.x patch only |
+| `ghcr.io/largerio/secret:1.8.0` | That exact release. It never moves, so it's fully reproducible |
+| `ghcr.io/largerio/secret:latest` | The newest release of any major version: it moves to 2.x, and its breaking changes, when that ships |
+| `ghcr.io/largerio/secret:main` | The tip of `main`, unreleased changes included: for testing only |
+
+Between releases, `:1`, `:1.8` and `:latest` are rebuilt within a week of each
+update of the base image (`node:26-alpine`), after a vulnerability scan and a
+smoke test. An exact tag never changes, so it doesn't get those fixes.
 
 ---
 
@@ -979,9 +1054,6 @@ docker buildx imagetools inspect ghcr.io/largerio/secret:1 --format '{{json .SBO
 On Kubernetes, an admission policy (Kyverno, Sigstore policy-controller) can
 require the same issuer and identity before a pod starts.
 
-Signing starts with `1.4.0`. `1.3.2` and older were published unsigned, and an
-exact tag never changes, so theirs cannot be verified.
-
 **The web app.** The signature covers the web app the image serves along with
 the rest. Your visitors, who cannot check your image, can check the web app
 itself: [Verifying the web app](../SECURITY.md#verifying-the-web-app).
@@ -995,7 +1067,7 @@ smoke-tests and signs it, then deploys over SSH. Two details are worth copying
 into any pipeline of your own.
 
 **Deploy the digest, not the tag.** `:1` and `:main` move. Between the scan
-and the rollout, or between two rollouts, the tag can point somewhere else — and
+and the rollout, or between two rollouts, the tag can point somewhere else, and
 once it has moved there is nothing left to roll back to. The workflow passes the
 digest it just built and scanned:
 
@@ -1010,7 +1082,7 @@ image: ${SECRET_IMAGE:-ghcr.io/largerio/secret:1}
 ```
 
 **Wait for healthy and ready, and roll back if it never is.** A container that
-starts and then fails every request is a successful `docker compose up` — the
+starts and then fails every request is a successful `docker compose up`: the
 exit code says nothing about whether the app works. The workflow polls the
 health status, then `/api/health/ready` inside the container, since the health
 status only says the process answers. If either does not come, it prints the
@@ -1026,7 +1098,7 @@ A complete reference file is in
 
 ## Troubleshooting
 
-**First reflex:** look at the logs — every startup error is printed there.
+Start with the logs: every startup error is printed there.
 
 ```bash
 docker compose logs -f        # or: docker logs -f secret
@@ -1035,7 +1107,7 @@ docker compose logs -f        # or: docker logs -f secret
 ### Container keeps restarting / exits immediately
 
 If no `SERVER_ENCRYPTION_KEY` is set, the container generates one on first launch
-and stores it at `.encryption_key` inside the data volume — so this should not
+and stores it at `.encryption_key` inside the data volume, so this should not
 happen on a fresh deployment.
 
 If you **did** set the key explicitly and it is malformed, the logs will show:
@@ -1051,7 +1123,7 @@ If the key is valid but is not the one that encrypted the existing notes:
 ERROR: SERVER_ENCRYPTION_KEY does not match the key this database was created with.
 ```
 
-Restore the original key — `docker compose exec app cat /app/data/.encryption_key`
+Restore the original key: `docker compose exec app cat /app/data/.encryption_key`
 prints the generated one. Only if the stored notes are expendable, start once with
 `ALLOW_SERVER_KEY_CHANGE=true` to adopt the new key and abandon them.
 
@@ -1078,14 +1150,6 @@ Set a different host port in `.env` (e.g. `PORT=8080`), then
 `docker compose up -d --force-recreate`. The app will be reachable on
 `http://<host>:8080`.
 
-### Nothing answers on port 3001
-
-Up to 1.7 the API listened on a port of its own inside the container, 3001,
-behind the web server, and outside it with `API_HOST=0.0.0.0`. The app now
-serves the site and the API on `PORT` alone, from one process: point whatever
-reached the API on 3001 at that port, under `/api/`. `API_PORT`, `API_HOST` and
-`API_URL` are no longer read; the logs warn when one is set.
-
 ### "Permission denied" on `/app/data` (bind mounts)
 
 Happens when you replaced the named volume with a bind-mounted folder. The
@@ -1105,7 +1169,7 @@ curl http://localhost:3000/api/health
 # {"status":"ok","checks":{"database":"ok","storage":"ok"},…}
 ```
 
-A failing check answers `503` and names the subsystem — `database` (the volume)
+A failing check answers `503` and names the subsystem: `database` (the volume)
 or `storage` (`FILES_PATH`, or the S3 credentials). The error itself is in the
 logs: `database probe failed` or `storage probe failed`. See
 [Health probes](#health-probes).
@@ -1113,5 +1177,5 @@ logs: `database probe failed` or `storage probe failed`. See
 ### Uploads fail behind a reverse proxy
 
 Increase the proxy's request body limit (`client_max_body_size` in Nginx) to at
-least `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default) — see
+least `MAX_FILE_SIZE × MAX_FILES_PER_NOTE + 1 MB` (~101 MB by default): see
 [Reverse proxy & HTTPS](#reverse-proxy--https).
