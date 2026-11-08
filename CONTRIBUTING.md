@@ -1,18 +1,19 @@
 # Contributing
 
-Thank you for your interest in contributing to Secret.
+Thanks for your interest in Secret. This guide covers setting up the project,
+what a change needs before it's merged, and where things go. Releases are
+described for maintainers in [docs/releasing.md](docs/releasing.md).
 
 ## Prerequisites
 
-- **Node.js >= 26** — the code uses `node:sqlite` and `Error.isError`, which
-  are not available in Node 22. Check with `node --version`; with nvm, run
-  `nvm use 26`.
-- **pnpm 10** — through corepack, which picks up the version pinned in
-  `package.json`. Node 25 and later no longer ship it: install the version the
-  Dockerfile does, `npm install -g corepack@0.35.0 && corepack enable`.
-- **Docker** (optional) — only needed for the containerized workflow below.
+- **Node.js 26 or later.** The code uses `node:sqlite` and `Error.isError`.
+  Check with `node --version`; with nvm, run `nvm use 26`.
+- **pnpm 10**, through corepack, which picks up the version pinned in
+  `package.json`. Node 25 and later don't ship corepack: install the version
+  the Dockerfile uses, `npm install -g corepack@0.35.0 && corepack enable`.
+- **Docker** (optional), for the containerized workflow below.
 
-## Getting Started
+## Getting started
 
 ```bash
 git clone https://github.com/largerio/secret.git
@@ -28,18 +29,16 @@ pnpm dev
 
 This starts the API on `http://localhost:3000` and the web app on
 `http://localhost:5173`, whose dev server sends `/api` to the API. `PORT`
-moves the API, and the dev server follows it. Up to 1.7 the API listened on
-3001 in development, and `API_URL` pointed the dev server elsewhere: it is no
-longer read.
+moves the API, and the dev server follows it.
 
-The key must decode to exactly 32 bytes; the server refuses to start otherwise.
-Keep the same key across restarts, or the notes you created earlier become
-unreadable (the server detects this and refuses to boot).
+The key must decode to exactly 32 bytes, or the server refuses to start. Keep
+the same key across restarts: the notes you created earlier can't be read
+with another one, and the server refuses to start rather than ignore it.
 
 ### With Docker
 
-The `Makefile` wraps `docker-compose.dev.yml` and needs no local Node install —
-it ships a working dev key out of the box:
+The `Makefile` wraps `docker-compose.dev.yml`, needs no local Node install,
+and ships a working dev key:
 
 ```bash
 make dev          # API + web with live reload
@@ -47,111 +46,119 @@ make check        # lint + typecheck + test
 make shell        # a shell inside the dev container
 ```
 
-## Development Workflow
+## Making a change
 
-1. Create a branch from `main`
-2. Make your changes
-3. Run checks:
+1. Create a branch from `main`.
+2. Make your change, with tests. New behavior without tests will be asked
+   for them.
+3. Run the checks:
 
-```bash
-pnpm lint          # Biome lint + format
-pnpm typecheck     # TypeScript strict
-pnpm test          # The whole suite must pass
-pnpm test:coverage # Same, plus the 100% coverage gate CI enforces
-pnpm test:e2e      # Playwright end-to-end suite (needs a browser install)
-```
+   ```bash
+   pnpm lint            # Biome lint + format
+   pnpm typecheck       # TypeScript strict
+   pnpm test:coverage   # the whole suite, with the 100% coverage gate CI enforces
+   ```
 
-The first time you run the e2e suite:
+4. Update the docs that describe what you changed:
+   - a change people will notice in the app: an entry under `[Unreleased]`
+     in [CHANGELOG.md](CHANGELOG.md);
+   - a change to the SDK or the command line: a changeset, with
+     `pnpm changeset` ([npm packages](docs/releasing.md#npm-packages));
+   - a change to the note format, the payload, a read or upload endpoint, a
+     limit a client must respect, or a new error code:
+     [PROTOCOL.md](PROTOCOL.md), with new test vectors when the bytes change.
+5. Commit with a clear message (see [Commit messages](#commit-messages)), and
+   open a pull request.
 
-```bash
-pnpm --filter @largerio/e2e exec playwright install --with-deps chromium
-```
-
-It builds the web app and starts the API serving it, as the image does. CI
-runs it against the image instead, on S3 storage:
-`.github/scripts/e2e-image.sh <image>` starts both, then
-`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them. With the web
-app built (`pnpm --filter @largerio/web build`), `scripts/verify-web-app.sh
-http://localhost:3000` then checks that the image serves that very build, as
-CI does and as anyone can of an instance
-([SECURITY.md](SECURITY.md#verifying-the-web-app)).
-
-The command line runs against the same image, installed with npm from its
-packed tarball and the SDK's, as a user installs it. Start the image with an
-API key of 32 characters at least in `E2E_API_KEY`, build the SDK and the CLI
-(`pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build`),
-then run `.github/scripts/e2e-cli.sh http://localhost:3000` with the same
-`E2E_API_KEY`. CI runs it on Node 22, the oldest the CLI supports.
-
-4. Commit with a clear message (see [Commit Messages](#commit-messages))
-5. Open a pull request
-
-## Code Style
+## Code style
 
 We use [Biome](https://biomejs.dev/) for linting and formatting:
 
-- **Indentation**: Tabs
+- **Indentation**: tabs
 - **Line width**: 100 characters
-- **Quotes**: Double quotes
-- **Semicolons**: Always
+- **Quotes**: double quotes
+- **Semicolons**: always
 
-Run `pnpm lint:fix` to auto-fix most issues.
+Run `pnpm lint:fix` to fix most issues.
 
 ### TypeScript
 
-Strict mode is enforced with these additional flags:
+Strict mode is on, with these additional flags:
 
-- `noUncheckedIndexedAccess` — Array/object indexing returns `T | undefined`
-- `exactOptionalPropertyTypes` — `undefined` must be explicit
-- `noNonNullAssertion` — No `!` assertions
-- `noExplicitAny` — No `any` type (enforced by Biome)
+- `noUncheckedIndexedAccess`: indexing an array or object returns `T | undefined`
+- `exactOptionalPropertyTypes`: `undefined` must be explicit
+- `noNonNullAssertion`: no `!` assertions
+- `noExplicitAny`: no `any` type (enforced by Biome)
 
 Use `import type { ... }` for type-only imports.
 
-## Project Structure
+## Project structure
 
 ```
-apps/api/           Backend (Hono, Node.js 26, SQLite)
-apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4)
+apps/api/           Backend (Hono, Node.js 26, SQLite), which also serves the web app
+apps/web/           Frontend (SvelteKit, Svelte 5, Tailwind CSS 4), built as static files
 apps/e2e/           Playwright end-to-end tests (incl. the axe-core a11y gate)
 packages/sdk-js/    JS/TS SDK (SecretClient, encrypt/decrypt flows)
 packages/cli/       Command line (`secret`), built on the SDK
 packages/crypto/    Encryption library (libsodium, AES-256-GCM)
-packages/shared/    Shared types, Zod schemas, constants
+packages/shared/    Shared types, Zod schemas, constants, crypto test vectors
 messages/           i18n translations (10 languages)
 ```
 
 ### Where to put things
 
-- **New API endpoint** — `apps/api/src/routes/`
-- **New validation schema** — `packages/shared/src/validation.ts`
-- **New type** — `packages/shared/src/types.ts` (export from `index.ts`)
-- **New constant** — `packages/shared/src/constants.ts` (export from `index.ts`)
-- **New SDK feature** — `packages/sdk-js/src/`
-- **New crypto function** — `packages/crypto/src/`
-- **New UI component** — `apps/web/src/lib/components/`
-- **New translation key** — `messages/en.json` and `messages/fr.json`
-- **Storage backend** — Implement `StorageBackend` interface in `apps/api/src/storage/`
+- **New API endpoint**: `apps/api/src/routes/`
+- **New validation schema**: `packages/shared/src/validation.ts`
+- **New type**: `packages/shared/src/types.ts` (export it from `index.ts`)
+- **New constant**: `packages/shared/src/constants.ts` (export it from `index.ts`)
+- **New SDK feature**: `packages/sdk-js/src/`
+- **New crypto function**: `packages/crypto/src/`
+- **New UI component**: `apps/web/src/lib/components/`
+- **New translation key**: every file in `messages/` (see [i18n](#i18n))
+- **Storage backend**: implement the `StorageBackend` interface in `apps/api/src/storage/`
 
 ## Testing
 
-We use [Vitest](https://vitest.dev/). Tests live in `__tests__/` directories alongside the source.
+We use [Vitest](https://vitest.dev/). Tests live in `__tests__/` directories
+next to the source.
 
 ```bash
-pnpm test              # Run once
-pnpm test:watch        # Watch mode
-pnpm test:coverage     # With coverage report
+pnpm test              # run once
+pnpm test:watch        # watch mode
+pnpm test:coverage     # with the coverage gate
 ```
 
-### Writing Tests
+### Writing tests
 
-- **API routes**: Use `app.request()` (Hono's test helper, no HTTP server)
-- **Database**: Use real SQLite files, clean up in `beforeEach`
-- **Crypto**: Call `await initSodium()` in `beforeAll`
-- **S3**: Mock `@aws-sdk/client-s3` with class-based mocks (see `s3.test.ts`)
-- **New features must include tests** — PRs without tests for new functionality will be requested to add them
+- **API routes**: use `app.request()` (Hono's test helper, no HTTP server)
+- **Database**: use real SQLite files, cleaned up in `beforeEach`
+- **Crypto**: call `await initSodium()` in `beforeAll`
+- **S3**: mock `@aws-sdk/client-s3` with class-based mocks (see `s3.test.ts`)
 
-## Commit Messages
+### End-to-end tests
+
+```bash
+pnpm --filter @largerio/e2e exec playwright install --with-deps chromium   # the first time
+pnpm test:e2e
+```
+
+The suite builds the web app and starts the API serving it, as the image
+does. CI runs it against the image instead, on S3 storage:
+`.github/scripts/e2e-image.sh <image>` starts both, then
+`E2E_BASE_URL=http://localhost:3000 pnpm test:e2e` targets them. With the web
+app built (`pnpm --filter @largerio/web build`),
+`scripts/verify-web-app.sh http://localhost:3000` then checks that the image
+serves that very build, as CI does, and as anyone can of an instance
+([SECURITY.md](SECURITY.md#verifying-the-web-app)).
+
+The command line runs against the same image, installed with npm from its
+packed tarball and the SDK's, as a user installs it. Start the image with an
+API key of at least 32 characters in `E2E_API_KEY`, build the SDK and the CLI
+(`pnpm --filter @largerio/secret-sdk --filter @largerio/secret-cli build`),
+then run `.github/scripts/e2e-cli.sh http://localhost:3000` with the same
+`E2E_API_KEY`. CI runs it on Node 22, the oldest the CLI supports.
+
+## Commit messages
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -165,133 +172,54 @@ refactor: extract storage abstraction layer
 
 ## Security
 
-This is a security-focused application. Please keep in mind:
+Secret is built around one promise: the server never sees what people send.
+Please keep in mind:
 
-- **Never log or expose plaintext content** — The server must remain zero-knowledge
-- **Validate all inputs** — Use Zod schemas, never trust client data
-- **Use timing-safe comparisons** — For tokens and secrets (`crypto.timingSafeEqual`)
-- **Zero sensitive memory** — Call `sodium.memzero()` on keys after use
-- **No `eval` or dynamic code execution** — CSP is strict
-- **Return generic errors** — Never leak internal details in API responses
+- **Never log or expose plaintext content.** The server must stay
+  zero-knowledge.
+- **Validate every input** with Zod schemas; never trust client data.
+- **Compare tokens and secrets in constant time** (`crypto.timingSafeEqual`).
+- **Zero keys after use** with `sodium.memzero()`.
+- **No `eval` or dynamic code execution**: the CSP is strict.
+- **Never leak internal details in errors.** An error answers problem details
+  with a stable `code`, listed in [PROTOCOL.md](PROTOCOL.md#errors).
 
-If you discover a security vulnerability, please report it privately via GitHub Security Advisories rather than opening a public issue.
+If you find a vulnerability, report it privately: see
+[SECURITY.md](SECURITY.md#reporting-a-vulnerability).
 
 ## i18n
 
-Translations live in `messages/*.json` (10 languages: en, fr, es, de, pt, it, ja, zh, ru, ko).
+Translations live in `messages/*.json` (10 languages: en, fr, es, de, pt, it,
+ja, zh, ru, ko).
 
 ### Adding a string
 
-1. Add the key to **every** language file — `key-parity.test.ts` fails otherwise
-2. Use `t("key_name")` in Svelte components
-3. Use `t("key_name", { param: value })` for interpolation
+1. Add the key to **every** language file: `key-parity.test.ts` fails
+   otherwise.
+2. Use `t("key_name")` in Svelte components.
+3. Use `t("key_name", { param: value })` for interpolation.
 
 ### Adding a language
 
-Dropping a JSON file in `messages/` is not enough; register it in four places:
+Add its JSON file to `messages/`, then register it in four places:
 
-1. `packages/shared/src/site.ts` — add the code to `LOCALES`, which the server
-   picks a visitor's language from
-2. `apps/web/src/lib/i18n/index.svelte.ts` — import the file and add the entry to
-   the `messages` record
-3. `apps/web/src/lib/components/LangMenu.svelte` — add it to `LANGS`
-4. `apps/api/src/site/shell.ts` — add its `og:locale` to `OG_LOCALES`
+1. `packages/shared/src/site.ts`: add the code to `LOCALES`, which the server
+   picks a visitor's language from.
+2. `apps/web/src/lib/i18n/index.svelte.ts`: import the file and add it to the
+   `messages` record.
+3. `apps/web/src/lib/components/LangMenu.svelte`: add it to `LANGS`.
+4. `apps/api/src/site/shell.ts`: add its `og:locale` to `OG_LOCALES`.
 
 The last three are keyed by `Locale`: once the code is in `LOCALES`,
 `pnpm typecheck` names whichever of them still lacks it. The sitemap and the
 pages' `hreflang` links follow `LOCALES` on their own.
 
-The API reads every language's file at startup, to write the pages' heads, and
-refuses to start when `en.json` lacks one of the messages they need
-(`HEAD_MESSAGES` in `apps/api/src/site/messages.ts`): the other languages fall
-back to English, message by message.
+The API reads every language's file at startup, to write the pages' heads,
+and refuses to start when `en.json` lacks one of the messages they need
+(`HEAD_MESSAGES` in `apps/api/src/site/messages.ts`). The other languages
+fall back to English, message by message.
 
-## Releases
-
-Two packages are published to npm: the SDK, `@largerio/secret-sdk`, and the
-command line, `@largerio/secret-cli`, which depends on it. Their releases are
-driven by [changesets](https://github.com/changesets/changesets). Add one in
-the same PR as any user-visible change to either:
-
-```bash
-pnpm changeset
-```
-
-On merge to `main`, the Release npm packages workflow (`release.yml`) collects
-pending changesets into a "chore: version packages" PR. Merging *that*
-publishes the versions npm does not have yet, of either package, via OIDC
-trusted publishing — no token is stored. Both packages are built in a job with
-a read-only token and no secret, and checked there as they will ship:
-`verify-package` packs each with pnpm and runs it from its tarball. The job
-that publishes them installs only what changesets and pnpm need, runs no
-package's script, and publishes that build. Each version published gets its
-git tag and GitHub release (`@largerio/secret-cli@0.1.0`), which takes the
-Latest badge: the app's release takes it back with `gh release create --latest`.
-
-The CLI depends on the SDK through `workspace:^`, which pnpm publishes as
-`^<the SDK's version>`. A release of the SDK alone does not release the CLI:
-the published CLI takes the SDK's later minors and patches. A change to the
-CLI that needs something new in the SDK takes a changeset for each.
-
-The workflow opens that PR as a GitHub App rather than with the default
-`GITHUB_TOKEN`, because GitHub suppresses `pull_request` events for actions
-taken by `GITHUB_TOKEN`: the version PR would otherwise reach `main` with no CI
-run at all. The same App arms auto-merge on the Dependabot PRs labeled
-`auto-merge-48h` (`dependabot-delayed-merge.yml`): a merge made with
-`GITHUB_TOKEN` starts no workflow on `main`, so nothing would be built, scanned
-or deployed.
-
-Maintainers configuring a fork need an App installed on the repository with
-two repository permissions — Contents (read/write) and Pull requests
-(read/write) — its Client ID in the `APP_CLIENT_ID` variable and its private
-key in the `APP_PRIVATE_KEY` secret. Each workflow scopes its token down to
-what it needs. Without the App both workflows fall back to `GITHUB_TOKEN`:
-releases still ship, but the version PR gets no CI run and Dependabot merges
-never reach the CI/CD pipeline.
-
-### A new package on npm
-
-npm attaches a trusted publisher only to a package that exists, so the
-workflow cannot publish the first version of a new one, such as
-`@largerio/secret-cli` 0.1.0. Before merging the Version Packages PR that brings it,
-a maintainer who can publish to the `@largerio` scope:
-
-1. Publishes a placeholder by hand, version `0.0.0`, from an empty directory,
-   so that the first real version still comes from the workflow, with its
-   provenance:
-
-   ```bash
-   mkdir secret-cli-placeholder && cd secret-cli-placeholder
-   cat > package.json <<'JSON'
-   {
-     "name": "@largerio/secret-cli",
-     "version": "0.0.0",
-     "description": "Placeholder: install a later version.",
-     "license": "MIT",
-     "repository": { "type": "git", "url": "git+https://github.com/largerio/secret.git" }
-   }
-   JSON
-   npm publish --access public
-   ```
-
-2. On npmjs.com, in the package's settings, adds a trusted publisher: GitHub
-   Actions, organization `largerio`, repository `secret`, workflow
-   `release.yml`, and no environment, since the job that publishes runs in
-   none. The file name is what npm checks: renaming `release.yml` stops every
-   publish until the publishers of both packages are updated.
-3. Under publishing access, requires two-factor authentication and disallows
-   tokens: the workflow needs none.
-4. Merges the Version Packages PR: the workflow publishes the first version.
-5. Deprecates the placeholder:
-   `npm deprecate @largerio/secret-cli@0.0.0 "Placeholder: install a later version."`
-
-Publishing the first version by hand instead works too, but without
-provenance, and the workflow then skips it. If the Version Packages PR is
-merged before the trusted publisher is set, the publish of the new package
-fails: set it, then re-run the failed `release` job, whose build is kept seven
-days.
-
-### Dependencies
+## Dependencies
 
 - pnpm resolves no version published less than two days ago
   (`minimumReleaseAge` in `pnpm-workspace.yaml`), so a compromised release has
@@ -299,47 +227,12 @@ days.
   sooner, list its package under `minimumReleaseAgeExclude` for that update.
 - Dependabot proposes no npm package or action less than three days old. Its
   npm patch and minor PRs, and its bumps of the base image digest in the
-  Dockerfiles, are labeled `auto-merge-48h` and merged once 48 hours old and
-  green. Majors and GitHub Actions updates are reviewed and merged by hand: an
-  action runs with the tokens and secrets of the workflows that use it.
-
-### The app image
-
-The app is released by tagging the commit of `main` that adds its
-[CHANGELOG.md](CHANGELOG.md) entry, once its CI/CD run is green:
-
-```bash
-git tag v1.4.0 <commit> && git push origin v1.4.0
-```
-
-Nothing is rebuilt: `release-image.yml` gives the image CI tested for that
-commit its release tags (`:1.4.0`, `:1.4`, `:1`, `:latest`). Production follows
-`main` and is not redeployed. Once that run is green, publish the release
-(`gh release create`), starting its notes from the CHANGELOG entry, with the
-line the run's summary gives: the digest of the web app the image serves
-([SECURITY.md](SECURITY.md#verifying-the-web-app)).
-
-Only that commit's image reports the version: an image of any later commit
-reports it suffixed `-dev`. So `release-image.yml` refuses a tag on any other
-commit and names the one to tag, and every promotion checks the version the
-image reports.
-
-A merge right after the release can leave the release commit without an
-image: GitHub cancels a pending run when a newer one queues. Re-run that
-commit's CI/CD run, then the Release image run. Once `main` has moved on, a
-re-run tags the image `sha-<commit>` but neither moves `:main` nor deploys.
-
-Every week, `rebuild-release.yml` rebuilds the latest release if its base image
-has a newer digest, and moves `:1`, `:1.4` and `:latest` to the rebuild, as
-long as it serves the release's web app, by digest. Every tag moves through
-`.github/actions/promote-image`: a Trivy scan, the smoke test
-(`.github/actions/check-image`) and a signature check come first. The two
-workflows that build an image run `check-image` for `linux/arm64` before, on an
-arm64 runner, then sign the image in `promote-image` and attest its provenance;
-a release only checks the signature `deploy.yml` left. Renaming either of them
-changes the signing identity self-hosters verify
-([docs/self-hosting.md](docs/self-hosting.md#verifying-the-image)).
+  Dockerfiles, are labeled `auto-merge-48h` and merged once they're 48 hours
+  old and green. Majors and GitHub Actions updates are reviewed and merged by
+  hand: an action runs with the tokens and secrets of the workflows that use
+  it.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the
+[MIT License](LICENSE).

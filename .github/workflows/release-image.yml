@@ -157,7 +157,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           version: ${{ steps.release.outputs.version }}
 
-      # On the run's page, for the release notes (CONTRIBUTING.md#the-app-image).
+      # On the run's page, for the release notes (docs/releasing.md#the-app-image).
       - name: Publish the digest of the web app
         env:
           TAG: ${{ github.ref_name }}
