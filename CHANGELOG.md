@@ -8,6 +8,8 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-17
+
 ### Fixed
 
 - A page opened without JavaScript is no longer blank: it says, in the visitor's language, that it encrypts and decrypts notes in the browser with JavaScript, and to turn JavaScript on for the site. (#281)
@@ -491,7 +493,8 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/largerio/secret/releases/tag/v1.8.1
 [1.8.0]: https://github.com/largerio/secret/releases/tag/v1.8.0
 [1.7.0]: https://github.com/largerio/secret/releases/tag/v1.7.0
 [1.6.0]: https://github.com/largerio/secret/releases/tag/v1.6.0
