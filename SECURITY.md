@@ -205,10 +205,10 @@ runs the script on every change, against the image it builds. It checks:
   and hashes the same as yours.
 - **The shell.** Every page is the shell, `index.html`, which the instance
   fills in for each request: the visitor's language, theme and accent, the
-  page's title and meta tags, and the instance's settings. Its bytes
-  therefore differ from the build's, so the script checks what it can run
-  instead, on the home page, a note's page, a note's deletion page and an
-  unknown page:
+  page's title and meta tags, the instance's settings, and the notice shown
+  without JavaScript. Its bytes therefore differ from the build's, so the
+  script checks what it can run instead, on the home page, a note's page, a
+  note's deletion page and an unknown page:
   - Every address the shell names, in an attribute or in its boot script,
     must be a file of the build. Otherwise, a script it loads from the
     instance could be any script, since the page's policy allows any script

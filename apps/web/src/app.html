@@ -10,6 +10,11 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<noscript>
+			<main class="mx-auto box-border flex min-h-screen max-w-[640px] flex-col justify-center px-6 py-12 text-center">
+				<p class="m-0 text-base"><!--secret:noscript--></p>
+			</main>
+		</noscript>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

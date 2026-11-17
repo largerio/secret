@@ -3,13 +3,17 @@ import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
-import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
+import {
+	SHELL_HEAD_MARKER,
+	SHELL_HTML_TAG,
+	SHELL_NOSCRIPT_MARKER,
+} from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLogger, type LogLevel } from "../logger.js";
 import { compressedCopies, type EncodedBody, negotiate } from "../site/encodings.js";
 import { cacheControlOf, contentTypeOf, isEmbeddable, siteFile } from "../site/files.js";
 import { loadBuiltSite, loadSite, SiteError } from "../site/load.js";
-import { HEAD_MESSAGES } from "../site/messages.js";
+import { SHELL_MESSAGES } from "../site/messages.js";
 import { inlineScriptHashes } from "../site/scripts.js";
 import {
 	BOOT_SCRIPT,
@@ -217,6 +221,7 @@ describe("loadSite", () => {
 	it.each([
 		[SHELL_HTML_TAG, SHELL.replace(SHELL_HTML_TAG, "<html>")],
 		[SHELL_HEAD_MARKER, SHELL.replace(SHELL_HEAD_MARKER, "")],
+		[SHELL_NOSCRIPT_MARKER, SHELL.replace(SHELL_NOSCRIPT_MARKER, "")],
 		[
 			`${SHELL_HTML_TAG} and ${SHELL_HEAD_MARKER}`,
 			SHELL.replace(SHELL_HTML_TAG, "<html>").replace(SHELL_HEAD_MARKER, ""),
@@ -272,9 +277,9 @@ describe("loadSite", () => {
 		);
 	});
 
-	it("refuses an English catalog that lacks a message of the heads", () => {
+	it("refuses an English catalog that lacks a message of the shell", () => {
 		const fixture = useFixture();
-		const lacking = new Set(["seo_keywords", "manage_title"]);
+		const lacking = new Set(["seo_keywords", "manage_title", "noscript"]);
 		const partial = Object.entries(MESSAGES["en"] ?? {}).filter(([key]) => !lacking.has(key));
 		fixture.write("messages/en.json", JSON.stringify(Object.fromEntries(partial)));
 
@@ -287,7 +292,7 @@ describe("loadSite", () => {
 
 		expect(error).toBeInstanceOf(SiteError);
 		expect((error as SiteError).message).toBe(
-			`${join(fixture.messagesDir, "en.json")} lacks seo_keywords, manage_title, which the pages' heads are written with`,
+			`${join(fixture.messagesDir, "en.json")} lacks seo_keywords, manage_title, noscript, which the server writes into the pages`,
 		);
 		expect((error as SiteError).hint).toContain("messages/*.json");
 	});
@@ -303,11 +308,11 @@ describe("loadSite", () => {
 describe("the repository's messages", () => {
 	const messagesDir = fileURLToPath(new URL("../../../../messages/", import.meta.url));
 
-	it("give English every message the heads are written with", () => {
+	it("give English every message the server writes into the pages", () => {
 		const fixture = useFixture();
 		const { messages } = loadSite({ ...fixture, messagesDir, logger: capture().logger });
 
-		for (const key of HEAD_MESSAGES) {
+		for (const key of SHELL_MESSAGES) {
 			expect(messages.en[key], key).toMatch(/\S/);
 		}
 	});

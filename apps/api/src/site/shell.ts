@@ -6,6 +6,7 @@ import {
 	SHELL_DATA_ID,
 	SHELL_HEAD_MARKER,
 	SHELL_HTML_TAG,
+	SHELL_NOSCRIPT_MARKER,
 	scriptJson,
 	serializeShellData,
 	type ThemePreference,
@@ -15,7 +16,7 @@ import { accentStyle } from "./accent.js";
 import { compressedCopies, type EncodedBody } from "./encodings.js";
 import { HTML_CONTENT_TYPE } from "./files.js";
 import type { Site } from "./load.js";
-import { type HeadMessage, translator } from "./messages.js";
+import { type ShellMessage, translator } from "./messages.js";
 
 /** What the page is rendered for: the language and theme the visitor chose, or their browser's. */
 export interface Visitor {
@@ -65,7 +66,7 @@ function meta(attribute: "name" | "property", key: string, content: string): str
  * and link previews, which run no JavaScript. The title is the one the page
  * sets once it runs: both build it with pageTitle.
  */
-function pageHead(page: Page, t: (key: HeadMessage) => string, config: AppConfig): string[] {
+function pageHead(page: Page, t: (key: ShellMessage) => string, config: AppConfig): string[] {
 	const heading = pageTitle(page, config.appName, t);
 	const title = `<title>${escapeHtml(heading)}</title>`;
 	const noindex = meta("name", "robots", "noindex, nofollow");
@@ -144,8 +145,9 @@ export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
 
 /**
  * Render the shell for a page and a visitor: their language and theme on
- * `<html>`, with the instance's accent, and in the head the page's title and
- * meta tags and the shell data the app starts from. A page depends on nothing
+ * `<html>`, with the instance's accent, in the head the page's title and
+ * meta tags and the shell data the app starts from, and in the body the
+ * notice shown without JavaScript, in their language. A page depends on nothing
  * else, so each one is rendered and compressed once, for the first request
  * that asks for it, and kept: four pages, ten languages and three themes, 120
  * at most. Every later request is sent the copy kept.
@@ -167,7 +169,8 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 		// Replaced by functions: a `$&` in a setting must stay as it is.
 		return site.shell
 			.replace(SHELL_HTML_TAG, () => `<html lang="${locale}" data-mode="${theme}"${style}>`)
-			.replace(SHELL_HEAD_MARKER, () => head);
+			.replace(SHELL_HEAD_MARKER, () => head)
+			.replace(SHELL_NOSCRIPT_MARKER, () => escapeHtml(t("noscript")));
 	}
 
 	return (page, visitor) => {

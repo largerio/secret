@@ -1,10 +1,14 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
-import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
+import {
+	SHELL_HEAD_MARKER,
+	SHELL_HTML_TAG,
+	SHELL_NOSCRIPT_MARKER,
+} from "@largerio/secret-shared/site";
 import { describe, expect, it } from "vitest";
 
-// The server fills the shell in at these two places, and refuses to start
-// from a build whose index.html lacks either.
+// The server fills the shell in at these places, and refuses to start from a
+// build whose index.html lacks any of them.
 describe("app.html", () => {
 	const html = readFileSync(new URL("../app.html", import.meta.url), "utf8");
 
@@ -16,5 +20,11 @@ describe("app.html", () => {
 		const head = html.slice(html.indexOf("<head>"), html.indexOf("</head>"));
 		expect(head).toContain(SHELL_HEAD_MARKER);
 		expect(head.indexOf(SHELL_HEAD_MARKER)).toBeLessThan(head.indexOf("%sveltekit.head%"));
+	});
+
+	it("marks where the server writes the notice shown without JavaScript, in the body", () => {
+		const body = html.slice(html.indexOf("<body"), html.indexOf("</body>"));
+		const noscript = body.slice(body.indexOf("<noscript>"), body.indexOf("</noscript>"));
+		expect(noscript).toContain(SHELL_NOSCRIPT_MARKER);
 	});
 });

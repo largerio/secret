@@ -14,7 +14,7 @@ import {
 } from "@largerio/secret-shared/site";
 import { type Logger, log } from "../logger.js";
 import { type SiteFile, siteFile } from "./files.js";
-import { type Catalog, HEAD_MESSAGES, type Messages } from "./messages.js";
+import { type Catalog, type Messages, SHELL_MESSAGES } from "./messages.js";
 import { inlineScriptHashes } from "./scripts.js";
 
 /** The web app's build, read whole at startup: nothing is read from disk per request. */
@@ -131,16 +131,16 @@ function readCatalog(path: string): Catalog {
 	);
 }
 
-/** Every language's catalog, refused when English, the fallback, lacks a head message. */
+/** Every language's catalog, refused when English, the fallback, lacks a shell message. */
 function readMessages(dir: string): Messages {
 	const messages = Object.fromEntries(
 		LOCALES.map((locale) => [locale, readCatalog(join(dir, `${locale}.json`))]),
 	) as Record<Locale, Catalog>;
 
-	const missing = HEAD_MESSAGES.filter((key) => messages.en[key] === undefined);
+	const missing = SHELL_MESSAGES.filter((key) => messages.en[key] === undefined);
 	if (missing.length > 0) {
 		throw new SiteError(
-			`${join(dir, "en.json")} lacks ${missing.join(", ")}, which the pages' heads are written with`,
+			`${join(dir, "en.json")} lacks ${missing.join(", ")}, which the server writes into the pages`,
 			"messages",
 		);
 	}
@@ -151,7 +151,8 @@ function readMessages(dir: string): Messages {
  * Read the web app's build and the messages its pages are rendered with.
  *
  * @throws SiteError when the build or a catalog cannot be read, index.html is
- *   not the shell, or English lacks a message of the heads (HEAD_MESSAGES).
+ *   not the shell, or English lacks a message the server writes into it
+ *   (SHELL_MESSAGES).
  */
 export function loadSite(location: SiteLocation): Site {
 	const build = readOrRefuse(location.buildDir, "build", () => readBundle(location.buildDir));

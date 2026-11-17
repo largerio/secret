@@ -4,6 +4,7 @@
 	"seo_keywords": "note cifrate, condivisione file sicura, crittografia zero-knowledge, condivisione password, distruggi dopo lettura, crittografia end-to-end, self-hosted, privacy, condivisione segreti",
 	"view_title": "Nota cifrata",
 	"view_description": "Questa nota è cifrata. Viene decifrata nel tuo browser, mai sul server.",
+	"noscript": "Questa pagina cifra e decifra le note nel tuo browser, con JavaScript. Attiva JavaScript per questo sito, poi ricarica la pagina.",
 	"skip_to_content": "Vai al contenuto",
 	"copy": "Copia",
 	"copied": "Copiato",

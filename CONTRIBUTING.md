@@ -214,10 +214,11 @@ The last three are keyed by `Locale`: once the code is in `LOCALES`,
 `pnpm typecheck` names whichever of them still lacks it. The sitemap and the
 pages' `hreflang` links follow `LOCALES` on their own.
 
-The API reads every language's file at startup, to write the pages' heads,
-and refuses to start when `en.json` lacks one of the messages they need
-(`HEAD_MESSAGES` in `apps/api/src/site/messages.ts`). The other languages
-fall back to English, message by message.
+The API reads every language's file at startup, to write the pages' heads
+and the notice a page shows without JavaScript, and refuses to start when
+`en.json` lacks one of the messages they need (`SHELL_MESSAGES` in
+`apps/api/src/site/messages.ts`). The other languages fall back to English,
+message by message.
 
 ## Dependencies
 

@@ -4,6 +4,7 @@
 	"seo_keywords": "verschlüsselte Notizen, sicheres Dateiteilen, Zero-Knowledge-Verschlüsselung, Passwörter teilen, nach Lesen vernichten, Ende-zu-Ende-Verschlüsselung, selbst gehostet, Datenschutz, Geheimnisse teilen",
 	"view_title": "Verschlüsselte Notiz",
 	"view_description": "Diese Notiz ist verschlüsselt. Sie wird in Ihrem Browser entschlüsselt, nie auf dem Server.",
+	"noscript": "Diese Seite ver- und entschlüsselt Notizen in Ihrem Browser, mit JavaScript. Aktivieren Sie JavaScript für diese Website und laden Sie die Seite dann neu.",
 	"skip_to_content": "Zum Inhalt springen",
 	"copy": "Kopieren",
 	"copied": "Kopiert",

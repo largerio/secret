@@ -4,6 +4,7 @@
 	"seo_keywords": "encrypted notes, secure file sharing, zero-knowledge encryption, password sharing, burn after reading, end-to-end encryption, self-hosted, privacy, secret sharing, encrypted messaging",
 	"view_title": "Encrypted note",
 	"view_description": "This note is encrypted. It is decrypted in your browser, never on the server.",
+	"noscript": "This page encrypts and decrypts notes in your browser, with JavaScript. Turn JavaScript on for this site, then reload the page.",
 	"skip_to_content": "Skip to content",
 	"copy": "Copy",
 	"copied": "Copied",

@@ -3,11 +3,15 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SHELL_HEAD_MARKER, SHELL_HTML_TAG } from "@largerio/secret-shared/site";
+import {
+	SHELL_HEAD_MARKER,
+	SHELL_HTML_TAG,
+	SHELL_NOSCRIPT_MARKER,
+} from "@largerio/secret-shared/site";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bundleManifest, checkShell, writeBundleManifest } from "../manifest.ts";
 
-const SHELL = `<!doctype html>\n${SHELL_HTML_TAG}<head>${SHELL_HEAD_MARKER}</head></html>\n`;
+const SHELL = `<!doctype html>\n${SHELL_HTML_TAG}<head>${SHELL_HEAD_MARKER}</head><body><noscript>${SHELL_NOSCRIPT_MARKER}</noscript></body></html>\n`;
 
 function sha256(data: string): string {
 	return createHash("sha256").update(data).digest("hex");
@@ -62,9 +66,12 @@ describe("checkShell", () => {
 		expect(() => checkShell(SHELL)).not.toThrow();
 	});
 
-	it("refuses one without either marker", () => {
+	it("refuses one without any of its markers", () => {
 		expect(() => checkShell(SHELL.replace(SHELL_HTML_TAG, "<html>"))).toThrow(SHELL_HTML_TAG);
 		expect(() => checkShell(SHELL.replace(SHELL_HEAD_MARKER, ""))).toThrow(SHELL_HEAD_MARKER);
+		expect(() => checkShell(SHELL.replace(SHELL_NOSCRIPT_MARKER, ""))).toThrow(
+			SHELL_NOSCRIPT_MARKER,
+		);
 	});
 
 	it("accepts assets named from the root, and refuses them named from the page", () => {

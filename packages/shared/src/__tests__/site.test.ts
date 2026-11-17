@@ -15,6 +15,7 @@ import {
 	parseShellData,
 	SHELL_HEAD_MARKER,
 	SHELL_HTML_TAG,
+	SHELL_NOSCRIPT_MARKER,
 	type ShellData,
 	serializeShellData,
 	type TitleKey,
@@ -85,9 +86,17 @@ describe("headerQualities", () => {
 
 describe("missingShellMarkers", () => {
 	it("names the markers a shell lacks", () => {
-		expect(missingShellMarkers(`${SHELL_HTML_TAG}<head>${SHELL_HEAD_MARKER}`)).toEqual([]);
-		expect(missingShellMarkers(`${SHELL_HTML_TAG}<head>`)).toEqual([SHELL_HEAD_MARKER]);
-		expect(missingShellMarkers("<html>")).toEqual([SHELL_HTML_TAG, SHELL_HEAD_MARKER]);
+		const shell = `${SHELL_HTML_TAG}<head>${SHELL_HEAD_MARKER}</head><body><noscript>${SHELL_NOSCRIPT_MARKER}</noscript>`;
+		expect(missingShellMarkers(shell)).toEqual([]);
+		expect(missingShellMarkers(shell.replace(SHELL_HEAD_MARKER, ""))).toEqual([SHELL_HEAD_MARKER]);
+		expect(missingShellMarkers(shell.replace(SHELL_NOSCRIPT_MARKER, ""))).toEqual([
+			SHELL_NOSCRIPT_MARKER,
+		]);
+		expect(missingShellMarkers("<html>")).toEqual([
+			SHELL_HTML_TAG,
+			SHELL_HEAD_MARKER,
+			SHELL_NOSCRIPT_MARKER,
+		]);
 	});
 });
 
