@@ -98,10 +98,11 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
   (`security.ts`), problem details (`problem.ts`), request id and logs
   (`requestContext.ts`).
 - `src/site/`: serves `apps/web/build/` from memory. `load.ts` refuses to
-  start on a bad build, or an `en.json` missing a head message
-  (`HEAD_MESSAGES`). `shell.ts` renders `index.html` per page × language ×
-  theme (head, meta, shell data); `scripts.ts` lists inline scripts' hashes
-  for the CSP. Without a build, the API serves itself alone.
+  start on a bad build, or an `en.json` missing a message the shell is
+  written with (`SHELL_MESSAGES`). `shell.ts` renders `index.html` per page ×
+  language × theme (head, meta, shell data, the `<noscript>` notice);
+  `scripts.ts` lists inline scripts' hashes for the CSP. Without a build, the
+  API serves itself alone.
 - `src/db/`: SQLite (`node:sqlite`) + Drizzle. Migrations run at boot
   (`PRAGMA user_version`); a database newer than the build refuses to start.
 - `src/storage/`: `StorageBackend` (local, S3), always async, reached through
@@ -116,10 +117,10 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
 
 - adapter-static and `ssr = false`, configured in `vite.config.ts`
   (SvelteKit 3 refuses a `svelte.config.js`).
-- `src/app.html` carries `SHELL_HTML_TAG` and `SHELL_HEAD_MARKER`, which the
-  API fills per request. The page starts from the shell data (`lib/shell.ts`,
-  from `hooks.client.ts`). Pages only set `<title>`, with the shared
-  `pageTitle`.
+- `src/app.html` carries `SHELL_HTML_TAG`, `SHELL_HEAD_MARKER` and
+  `SHELL_NOSCRIPT_MARKER`, which the API fills per request. The page starts
+  from the shell data (`lib/shell.ts`, from `hooks.client.ts`). Pages only
+  set `<title>`, with the shared `pageTitle`.
 - The SDK runs in a module worker (`lib/notes/`: `notes.worker.ts`,
   `worker.ts`; pages call `notes.ts`). Pages never load libsodium, and never
   call the API directly, except `/api/v1/config` under `vite dev`.

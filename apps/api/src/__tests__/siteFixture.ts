@@ -21,6 +21,7 @@ export const SHELL = `<!doctype html>
 		<link rel="stylesheet" href="/_app/immutable/assets/app.Cs3.css">
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<noscript><main><p><!--secret:noscript--></p></main></noscript>
 		<div style="display: contents">
 			<script>${BOOT_SCRIPT}</script>
 		</div>
@@ -49,11 +50,13 @@ export const MESSAGES: Readonly<Record<string, Readonly<Record<string, string>>>
 		view_title: "Encrypted note",
 		view_description: "Decrypted in your browser, never on the server.",
 		manage_title: "Delete the note",
+		noscript: "This page needs JavaScript.",
 	},
 	fr: {
 		seo_title: "{app} — Partage chiffré",
 		seo_description: "Partagez des secrets : chiffrés dans votre navigateur.",
 		view_title: "Note chiffrée",
+		noscript: "Cette page a besoin de JavaScript.",
 	},
 };
 

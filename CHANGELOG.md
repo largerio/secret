@@ -8,6 +8,10 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- A page opened without JavaScript is no longer blank: it says, in the visitor's language, that it encrypts and decrypts notes in the browser with JavaScript, and to turn JavaScript on for the site.
+
 ## [1.8.0] - 2026-11-07
 
 ### Security

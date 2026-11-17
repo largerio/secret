@@ -320,6 +320,35 @@ describe("the pages", () => {
 		expect(unknown).toContain('<html lang="fr"');
 	});
 
+	it("tell a visitor without JavaScript why the page is empty, in their language", async () => {
+		const app = makeApp();
+		const pageIn = async (language: string) =>
+			(await app.request("/note/x", { headers: { "Accept-Language": language } })).text();
+
+		const english = await pageIn("en");
+		expect(english).toContain(
+			"<noscript><main><p>This page needs JavaScript.</p></main></noscript>",
+		);
+		expect(english).not.toContain("<!--secret:noscript-->");
+		expect(await pageIn("fr")).toContain("<p>Cette page a besoin de JavaScript.</p>");
+		// The fixture has no German: English fills in.
+		expect(await pageIn("de")).toContain("<p>This page needs JavaScript.</p>");
+	});
+
+	it("escape the notice a translator wrote", async () => {
+		const translated = createSiteFixture();
+		try {
+			translated.write("messages/de.json", JSON.stringify({ noscript: "<b>JS</b> & $&" }));
+			const app = makeApp({}, loadSite({ ...translated, logger: silent }));
+
+			const html = await (await app.request("/", { headers: { "Accept-Language": "de" } })).text();
+
+			expect(html).toContain("<p>&lt;b&gt;JS&lt;/b&gt; &amp; $&amp;</p>");
+		} finally {
+			translated.remove();
+		}
+	});
+
 	it("keep the theme the visitor chose, the system's otherwise", async () => {
 		const app = makeApp();
 		const themeOf = async (cookie: string) =>

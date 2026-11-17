@@ -4,6 +4,7 @@
 	"seo_keywords": "notes chiffrées, partage de fichiers sécurisé, chiffrement zero-knowledge, partage de mots de passe, destruction après lecture, chiffrement de bout en bout, auto-hébergé, vie privée, partage de secrets",
 	"view_title": "Note chiffrée",
 	"view_description": "Cette note est chiffrée. Elle est déchiffrée dans votre navigateur, jamais sur le serveur.",
+	"noscript": "Cette page chiffre et déchiffre les notes dans votre navigateur, avec JavaScript. Activez JavaScript pour ce site, puis rechargez la page.",
 	"skip_to_content": "Aller au contenu",
 	"copy": "Copier",
 	"copied": "Copié",

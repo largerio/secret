@@ -30,6 +30,13 @@ export const SHELL_HTML_TAG = '<html lang="en" data-mode="system">';
  */
 export const SHELL_HEAD_MARKER = "<!--secret:head-->";
 
+/**
+ * Where the shell's `<noscript>` takes what the server writes: in the
+ * visitor's language, why the page needs JavaScript. Without it, the page
+ * would be blank.
+ */
+export const SHELL_NOSCRIPT_MARKER = "<!--secret:noscript-->";
+
 /** The id of `<script type="application/json">` that carries the shell data. */
 export const SHELL_DATA_ID = "secret-shell";
 
@@ -38,7 +45,9 @@ export const SHELL_FILE = "index.html";
 
 /** The markers `html` lacks, each a part of the page the server could not fill in: none in a shell it can serve. */
 export function missingShellMarkers(html: string): ReadonlyArray<string> {
-	return [SHELL_HTML_TAG, SHELL_HEAD_MARKER].filter((marker) => !html.includes(marker));
+	return [SHELL_HTML_TAG, SHELL_HEAD_MARKER, SHELL_NOSCRIPT_MARKER].filter(
+		(marker) => !html.includes(marker),
+	);
 }
 
 /**

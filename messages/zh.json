@@ -4,6 +4,7 @@
 	"seo_keywords": "加密笔记, 安全文件分享, 零知识加密, 密码分享, 阅后即焚, 端到端加密, 自托管, 隐私, 秘密分享",
 	"view_title": "加密笔记",
 	"view_description": "此笔记已加密。它在您的浏览器中解密，绝不会在服务器上解密。",
+	"noscript": "此页面通过 JavaScript 在您的浏览器中加密和解密笔记。请为此网站启用 JavaScript，然后重新加载页面。",
 	"skip_to_content": "跳转到内容",
 	"copy": "复制",
 	"copied": "已复制",
