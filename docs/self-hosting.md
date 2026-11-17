@@ -10,6 +10,7 @@ single container.
 | A VPS, or any host with Docker | [Quick deploy](#quick-deploy-vps--any-docker-host), with HTTPS in one command |
 | Coolify, Portainer, Render | [One-click & platform deploys](#one-click--platform-deploys) |
 | A Synology NAS | [Synology NAS](#synology-nas-dsm-7--container-manager) |
+| Unraid or Runtipi | [Unraid & Runtipi](#unraid--runtipi), from their app stores |
 | Behind a proxy you already run | [Reverse proxy & HTTPS](#reverse-proxy--https) |
 
 Once it's running: [Configuration](#configuration) ·
@@ -166,6 +167,48 @@ it, and the app serves both the site and the API on that port.
   ```
 - To change the published port (if 3000 is taken, say), set `PORT=8080` in
   `.env`.
+
+---
+
+## Unraid & Runtipi
+
+Both install Secret from their app stores. The templates live in
+[largerio/secret-templates](https://github.com/largerio/secret-templates).
+
+### Unraid
+
+1. **Apps** → search for **Secret** → **Install**.
+2. **Before the first start**, give the app its data folder from the Unraid
+   terminal. The container runs as uid 1001, and can't write to a folder it
+   doesn't own:
+   ```bash
+   mkdir -p /mnt/user/appdata/secret && chown -R 1001:1001 /mnt/user/appdata/secret
+   ```
+3. Set `APP_URL` to the address you'll use, then **Apply**. The app listens
+   on port `3000`.
+
+Behind a reverse proxy (SWAG, Nginx Proxy Manager…), set `ADDRESS_HEADER` to
+`X-Forwarded-For` in the template's advanced settings
+([Making rate limiting work behind a proxy](#making-rate-limiting-work-behind-a-proxy)).
+The template follows `:1`, so Unraid offers each 1.x release as an update.
+
+### Runtipi
+
+Runtipi's own store no longer takes new apps, so Secret comes from a store of
+its own (Runtipi 4.5 or later):
+
+1. **Settings** → **App Stores** → **Add App Store**, with the URL
+   `https://github.com/largerio/secret-templates`.
+2. Find **Secret** in the app list, then **Install**.
+
+There's nothing to prepare. Before each start, a short-lived container hands
+the data folder to the app. `APP_URL` follows the app's domain, or the host's
+address and port when it has none. Rate limits tell visitors apart by the
+address Runtipi's Traefik forwards; someone who reaches the app's port
+directly can choose that address. The data lives in
+`app-data/<store>/secret/data`, `<store>` being the name you gave the store.
+The store pins an exact version and moves to each release, which Runtipi then
+offers as an update.
 
 ---
 

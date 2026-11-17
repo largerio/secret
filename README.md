@@ -131,9 +131,10 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
 The [self-hosting guide](docs/self-hosting.md) covers the rest: settings, a
-reverse proxy you already run, Synology, Coolify, Portainer and Render,
-backups, monitoring and updates. If something goes wrong, start with
-`docker compose logs -f` and [Troubleshooting](docs/self-hosting.md#troubleshooting).
+reverse proxy you already run, Synology, Unraid, Runtipi, Coolify, Portainer
+and Render, backups, monitoring and updates. If something goes wrong, start
+with `docker compose logs -f` and
+[Troubleshooting](docs/self-hosting.md#troubleshooting).
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/largerio/secret)
 
