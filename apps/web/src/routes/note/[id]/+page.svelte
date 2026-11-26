@@ -16,7 +16,7 @@ import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { formatDateTime, t, tn } from "#lib/i18n/index.svelte.js";
 import { checkNoteLink, type LinkNotice, NOTICES, type NoteSummary } from "#lib/notes/check.js";
-import { type OpenedNote, readNote } from "#lib/notes/notes.js";
+import { type OpenedNote, prepareCrypto, readNote } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { isUnreachable, requestErrorMessage } from "#lib/utils/errors.js";
 import { renderMarkdown } from "#lib/utils/markdown.js";
@@ -89,6 +89,16 @@ $effect(() => {
 	return () => {
 		cancelled = true;
 	};
+});
+
+// The check needed no crypto. Once it has found the note, the crypto loads
+// while the reader looks at the page, so that opening the note does not wait
+// for it.
+let prepared = false;
+$effect(() => {
+	if (status.state !== "ready" || prepared) return;
+	prepared = true;
+	void prepareCrypto();
 });
 
 /** Where the page starts once the instance has answered. */

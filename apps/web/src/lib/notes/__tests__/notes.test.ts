@@ -122,6 +122,41 @@ describe("the notes' worker, from the page", () => {
 		]);
 	});
 
+	it("prepares the crypto ahead, leaving a failure to the call that needs it", async () => {
+		const requests: Request[] = [];
+		let fail = false;
+		respond = (request, worker) => {
+			requests.push(request);
+			worker.answer(
+				fail
+					? { kind: "error", call: request.call, error: { name: "Error", message: "no wasm" } }
+					: { kind: "result", call: request.call, value: undefined },
+			);
+		};
+		const { prepareCrypto } = await load();
+
+		await expect(prepareCrypto()).resolves.toBeUndefined();
+		fail = true;
+		await expect(prepareCrypto()).resolves.toBeUndefined();
+
+		expect(requests).toEqual([
+			{ kind: "prepare", call: 1 },
+			{ kind: "prepare", call: 2 },
+		]);
+	});
+
+	it("prepares nothing when the worker does not start, which the next call starts", async () => {
+		FakeWorker.failToStart = true;
+		const { checkNote, prepareCrypto } = await load();
+
+		await expect(prepareCrypto()).resolves.toBeUndefined();
+
+		FakeWorker.failToStart = false;
+		respond = (request, worker) => worker.answer({ kind: "result", call: request.call, value: 1 });
+		await expect(checkNote("n1")).resolves.toBe(1);
+		expect(FakeWorker.started).toHaveLength(2);
+	});
+
 	it("rejects with the error the worker sent, of its class", async () => {
 		respond = (request, worker) =>
 			worker.answer({

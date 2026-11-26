@@ -8,13 +8,22 @@ const sdk = {
 	createNote: vi.fn(),
 	readNoteInto: vi.fn(),
 };
+/** `SecretClient.create`, which loads the crypto; and each client made with `new`. */
 const create = vi.fn();
+const constructed = vi.fn();
 const staging = { openFile: vi.fn(), files: vi.fn() };
 const openStaging = vi.fn();
 
 vi.mock("@largerio/secret-sdk", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@largerio/secret-sdk")>()),
-	SecretClient: { create: () => create() },
+	SecretClient: class {
+		static create = () => create();
+		constructor() {
+			constructed();
+			// biome-ignore lint/correctness/noConstructorReturn: the fake client is this object.
+			return sdk;
+		}
+	},
 }));
 vi.mock("../staging.js", () => ({ openStaging: (readId: string) => openStaging(readId) }));
 
@@ -30,7 +39,13 @@ async function answersTo(...requests: Request[]): Promise<Answer[]> {
 
 beforeEach(() => {
 	vi.resetModules();
-	for (const mock of [...Object.values(sdk), create, openStaging, ...Object.values(staging)]) {
+	for (const mock of [
+		...Object.values(sdk),
+		create,
+		constructed,
+		openStaging,
+		...Object.values(staging),
+	]) {
 		mock.mockReset();
 	}
 	create.mockResolvedValue(sdk);
@@ -38,21 +53,39 @@ beforeEach(() => {
 });
 
 describe("the worker", () => {
-	it("checks a note", async () => {
+	it("checks a note, without loading the crypto", async () => {
 		sdk.checkNote.mockResolvedValue({ exists: false });
 
 		expect(await answersTo({ kind: "check", call: 1, id: "n1" })).toEqual([
 			{ kind: "result", call: 1, value: { exists: false } },
 		]);
 		expect(sdk.checkNote).toHaveBeenCalledWith("n1");
+		expect(create).not.toHaveBeenCalled();
 	});
 
-	it("deletes a note with its token and its proof of work", async () => {
+	it("deletes a note with its token and its proof of work, without loading the crypto", async () => {
 		sdk.deleteNote.mockResolvedValue(undefined);
 
 		await answersTo({ kind: "delete", call: 2, id: "n1", deleteToken: "t", capToken: "c" });
 
 		expect(sdk.deleteNote).toHaveBeenCalledWith("n1", "t", "c");
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("loads the crypto when asked to prepare, and does nothing else", async () => {
+		expect(await answersTo({ kind: "prepare", call: 1 })).toEqual([
+			{ kind: "result", call: 1, value: undefined },
+		]);
+		expect(create).toHaveBeenCalledOnce();
+		for (const method of Object.values(sdk)) expect(method).not.toHaveBeenCalled();
+	});
+
+	it("answers a crypto that did not load with its error", async () => {
+		create.mockRejectedValueOnce(new Error("wasm init failed"));
+
+		expect(await answersTo({ kind: "prepare", call: 1 })).toEqual([
+			{ kind: "error", call: 1, error: { name: "Error", message: "wasm init failed" } },
+		]);
 	});
 
 	it("creates a note, reporting its progress", async () => {
@@ -153,17 +186,19 @@ describe("the worker", () => {
 		]);
 	});
 
-	it("starts the SDK once, and again after it failed to", async () => {
-		create.mockRejectedValueOnce(new Error("wasm init failed"));
+	it("serves every request with one client", async () => {
 		sdk.checkNote.mockResolvedValue({ exists: false });
+		sdk.deleteNote.mockResolvedValue(undefined);
+		sdk.createNote.mockResolvedValue({ id: "n1" });
 
 		const answers = await answersTo(
 			{ kind: "check", call: 7, id: "n1" },
-			{ kind: "check", call: 8, id: "n1" },
-			{ kind: "check", call: 9, id: "n1" },
+			{ kind: "prepare", call: 8 },
+			{ kind: "create", call: 9, options: { text: "hi" } },
+			{ kind: "delete", call: 10, id: "n1", deleteToken: "t" },
 		);
 
-		expect(answers.map((answer) => answer.kind)).toEqual(["error", "result", "result"]);
-		expect(create).toHaveBeenCalledTimes(2);
+		expect(answers.map((answer) => answer.kind)).toEqual(["result", "result", "result", "result"]);
+		expect(constructed).toHaveBeenCalledOnce();
 	});
 });

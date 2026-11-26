@@ -12,6 +12,11 @@ export default defineConfig({
 	// tarball for something no consumer of a published package consumes.
 	sourcemap: false,
 	clean: true,
+	// The crypto (src/engine.ts, which reaches libsodium and MessagePack) is
+	// loaded with `import()` on the first call that needs it: split, it is a
+	// chunk of its own, which dist/index.js never imports statically.
+	// scripts/verify-package.sh checks it stays so.
+	splitting: true,
 	treeshake: true,
 	// Published baseline for the bundle (broad Node/browser support). The repo
 	// otherwise targets ES2025; keep bundled-in code within es2022 syntax.

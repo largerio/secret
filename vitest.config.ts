@@ -33,6 +33,8 @@ export default defineConfig({
 				"packages/crypto/src/index.ts",
 				"packages/crypto/src/client.ts",
 				"packages/sdk-js/src/index.ts",
+				// The SDK's crypto, which the client loads with import().
+				"packages/sdk-js/src/engine.ts",
 				"packages/shared/src/index.ts",
 				// The entry point that starts the server on import. The image smoke
 				// test runs it.
