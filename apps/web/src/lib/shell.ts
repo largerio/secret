@@ -12,7 +12,7 @@ import {
 	themePreferenceOf,
 } from "@largerio/secret-shared/site";
 import { DEFAULT_CONFIG, getConfig, setConfig } from "#lib/config.svelte.js";
-import { detectLocale, setLocale } from "#lib/i18n/index.svelte.js";
+import { detectLocale, loadLocale, setLocale } from "#lib/i18n/index.svelte.js";
 import { initTheme } from "#lib/theme.svelte.js";
 import { readCookie } from "#lib/utils/cookies.js";
 
@@ -66,22 +66,32 @@ const UNSERVED: ShellData = { config: DEFAULT_CONFIG, locale: DEFAULT_LOCALE, th
 
 /**
  * Starts the page from its shell data: the instance's settings, the
- * visitor's language and theme, applied before anything renders.
+ * visitor's language and theme, applied before anything renders. Resolves
+ * once the visitor's language is loaded, which the page waits for so that it
+ * renders in that language from the start: its file is on its way already,
+ * the server having preloaded it in the shell. Should it fail to load, the
+ * page speaks English, which the bundle carries.
  *
  * Only `vite dev` serves a page without any. There the page starts from what
  * the visitor's browser says, then narrows the defaults to the instance's
  * limits whenever its API answers, so that a dev instance with a lower
  * MAX_EXPIRY still narrows the expiry picker. A build leaves all of that out.
  */
-export function startPage(doc: Document = document): void {
+export async function startPage(doc: Document = document): Promise<void> {
 	const served = servedShellData(doc);
 	const data = served ?? (import.meta.env.DEV ? localShellData(doc) : UNSERVED);
 
 	setConfig(data.config);
-	setLocale(data.locale);
 	initTheme(data.theme);
 
 	if (import.meta.env.DEV && served === undefined) {
 		void fetchInstanceLimits().then((limits) => setConfig({ ...getConfig(), ...limits }));
+	}
+
+	try {
+		await loadLocale(data.locale);
+		setLocale(data.locale);
+	} catch {
+		setLocale(DEFAULT_LOCALE);
 	}
 }

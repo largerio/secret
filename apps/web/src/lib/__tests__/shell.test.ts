@@ -5,8 +5,10 @@ import {
 	serializeShellData,
 } from "@largerio/secret-shared/site";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fr from "../../../../../messages/fr.json";
 import { DEFAULT_CONFIG, getConfig, setConfig } from "../config.svelte.js";
-import { getLocale, setLocale } from "../i18n/index.svelte.js";
+import { serveMessages } from "../i18n/__tests__/messages.js";
+import { getLocale, setLocale, t } from "../i18n/index.svelte.js";
 import { fetchInstanceLimits, localShellData, servedShellData, startPage } from "../shell.js";
 import { getMode } from "../theme.svelte.js";
 
@@ -135,24 +137,8 @@ describe("fetchInstanceLimits", () => {
 });
 
 describe("startPage", () => {
-	it("starts from the shell data, and asks nothing more", () => {
+	it("starts from the shell data, in its language, loaded before it resolves", async () => {
 		serve(serializeShellData({ config: INSTANCE, locale: "fr", theme: "dark" }));
-		const fetcher = answering({});
-		vi.stubGlobal("fetch", fetcher);
-
-		startPage(document);
-
-		expect(getConfig()).toEqual(INSTANCE);
-		expect(getLocale()).toBe("fr");
-		expect(getMode()).toBe("dark");
-		expect(document.documentElement.lang).toBe("fr");
-		expect(document.documentElement.dataset["mode"]).toBe("dark");
-		expect(fetcher).not.toHaveBeenCalled();
-	});
-
-	it("under vite dev, applies the visitor's choices at once without it, then the instance's limits", async () => {
-		setCookie("secret_lang", "es");
-		setCookie("secret_theme", "light");
 		let answer: (response: Response) => void = () => undefined;
 		const fetcher = vi.fn<typeof fetch>(
 			() =>
@@ -162,7 +148,51 @@ describe("startPage", () => {
 		);
 		vi.stubGlobal("fetch", fetcher);
 
-		startPage(document);
+		const starting = startPage(document);
+
+		// The settings and the theme at once; the language once it is there.
+		expect(getConfig()).toEqual(INSTANCE);
+		expect(getMode()).toBe("dark");
+		expect(document.documentElement.dataset["mode"]).toBe("dark");
+		expect(getLocale()).toBe("en");
+		expect(fetcher).toHaveBeenCalledOnce();
+		expect(fetcher).toHaveBeenCalledWith(expect.stringMatching(/\/messages\/fr\.json$/));
+
+		answer(await serveMessages(String(fetcher.mock.calls[0]?.[0])));
+		await starting;
+
+		expect(getLocale()).toBe("fr");
+		expect(t("lang_label")).toBe(fr.lang_label);
+		expect(document.documentElement.lang).toBe("fr");
+	});
+
+	it("speaks English when the page's language cannot be loaded", async () => {
+		serve(serializeShellData({ config: INSTANCE, locale: "pt", theme: "system" }));
+		// As the server wrote it.
+		document.documentElement.lang = "pt";
+		vi.stubGlobal("fetch", answering(null, { status: 404 }));
+
+		await startPage(document);
+
+		expect(getLocale()).toBe("en");
+		expect(document.documentElement.lang).toBe("en");
+		expect(getConfig()).toEqual(INSTANCE);
+	});
+
+	it("under vite dev, applies the visitor's choices without it, then the instance's limits", async () => {
+		setCookie("secret_lang", "es");
+		setCookie("secret_theme", "light");
+		let answer: (response: Response) => void = () => undefined;
+		const fetcher = vi.fn<typeof fetch>((input) =>
+			input === "/api/v1/config"
+				? new Promise((resolve) => {
+						answer = resolve;
+					})
+				: serveMessages(input),
+		);
+		vi.stubGlobal("fetch", fetcher);
+
+		await startPage(document);
 
 		// Rendered from these, before the API has answered.
 		expect(getConfig()).toEqual(DEFAULT_CONFIG);
@@ -176,7 +206,7 @@ describe("startPage", () => {
 		await vi.waitFor(() => expect(getConfig()).toEqual({ ...DEFAULT_CONFIG, maxExpiry: 3600 }));
 	});
 
-	it("in a build, starts a page without it from the defaults, and asks nothing", () => {
+	it("in a build, starts a page without it from the defaults, and asks nothing", async () => {
 		// The server fills in every page of a build: this one is not its.
 		vi.stubEnv("DEV", false);
 		setCookie("secret_lang", "es");
@@ -185,7 +215,7 @@ describe("startPage", () => {
 		const fetcher = answering({ maxExpiry: 3600 });
 		vi.stubGlobal("fetch", fetcher);
 
-		startPage(document);
+		await startPage(document);
 
 		expect(getConfig()).toEqual(DEFAULT_CONFIG);
 		expect(getLocale()).toBe("en");
@@ -193,9 +223,12 @@ describe("startPage", () => {
 		expect(fetcher).not.toHaveBeenCalled();
 	});
 
-	it("reads the page it is running in by default", () => {
+	it("reads the page it is running in by default", async () => {
 		serve(serializeShellData({ config: INSTANCE, locale: "it", theme: "system" }));
-		startPage();
+		vi.stubGlobal("fetch", vi.fn(serveMessages));
+
+		await startPage();
+
 		expect(getLocale()).toBe("it");
 	});
 });

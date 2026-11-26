@@ -25,6 +25,9 @@ const API_TARGET = `http://localhost:${process.env["PORT"]?.trim() || 3000}`;
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const VERSION = sourcesDigest(REPO_ROOT, BUNDLE_SOURCES).slice(0, 16);
 
+// The languages' messages, which lib/i18n imports by URL, English aside.
+const MESSAGES_DIR = fileURLToPath(new URL("../../messages/", import.meta.url));
+
 export default defineConfig({
 	plugins: [
 		tailwindcss(),
@@ -53,8 +56,12 @@ export default defineConfig({
 		// Vite inlines any asset under 4 KB as a data: URI, and some Fontsource
 		// subsets are that small (JetBrains Mono's cyrillic-ext is 2 KB). The
 		// CSP's font-src 'self' blocks a data: font, so fonts always ship as
-		// files rather than widening the policy.
-		assetsInlineLimit: (filePath) => (/\.woff2?$/.test(filePath) ? false : undefined),
+		// files rather than widening the policy. A language's messages always
+		// ship as a file too, `_app/immutable/assets/<locale>.<hash>.json`: the
+		// server finds each one there to preload it, and a language inlined
+		// would be in the JavaScript every page loads, whatever its language.
+		assetsInlineLimit: (filePath) =>
+			/\.woff2?$/.test(filePath) || filePath.startsWith(MESSAGES_DIR) ? false : undefined,
 	},
 	server: {
 		host: true,

@@ -1,7 +1,9 @@
 import { pageTitle } from "@largerio/secret-shared/site";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import de from "../../../../../../messages/de.json";
+import en from "../../../../../../messages/en.json";
+import fr from "../../../../../../messages/fr.json";
 import {
-	chooseLocale,
 	detectLocale,
 	formatDateTime,
 	getLocale,
@@ -11,11 +13,46 @@ import {
 	t,
 	tn,
 } from "../index.svelte.js";
+import { loadMessages, serveMessages } from "./messages.js";
+
+beforeAll(async () => {
+	await loadMessages("fr", "ru");
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();
 	setLocale("en");
+	// biome-ignore lint/suspicious/noDocumentCookie: what chooseLocale writes
+	document.cookie = "secret_lang=; path=/; max-age=0";
 });
+
+/** The module as a page starts with it: English alone, nothing loaded or chosen yet. */
+async function freshI18n() {
+	vi.resetModules();
+	return import("../index.svelte.js");
+}
+
+/** A fetch of the messages that answers when the test says, language by language. */
+function heldFetch() {
+	const held = new Map<string, { url: string; answer: (response: Response) => void }>();
+	const fetcher = vi.fn<typeof fetch>(
+		(input) =>
+			new Promise((answer) => {
+				const url = String(input);
+				held.set(url.slice(url.lastIndexOf("/") + 1, -".json".length), { url, answer });
+			}),
+	);
+	vi.stubGlobal("fetch", fetcher);
+	return {
+		fetcher,
+		/** Answers the fetch of a language's file: with the file, or with `response`. */
+		async answer(locale: Locale, response?: Response) {
+			const request = held.get(locale);
+			if (request === undefined) throw new Error(`${locale} was not fetched`);
+			request.answer(response ?? (await serveMessages(request.url)));
+		},
+	};
+}
 
 describe("locale state and translation", () => {
 	afterAll(() => {
@@ -36,11 +73,15 @@ describe("locale state and translation", () => {
 		expect(document.documentElement.lang).toBe("en");
 	});
 
-	it("chooseLocale switches the page, and keeps the choice for the next ones", () => {
-		chooseLocale("de");
-		expect(getLocale()).toBe("de");
-		expect(document.documentElement.lang).toBe("de");
-		expect(document.cookie).toContain("secret_lang=de");
+	it("speaks a language once its messages are loaded", () => {
+		setLocale("fr");
+		expect(t("lang_label")).toBe(fr.lang_label);
+		expect(t("lang_label")).not.toBe(en.lang_label);
+	});
+
+	it("speaks English in a language whose messages are not loaded", () => {
+		setLocale("de");
+		expect(t("lang_label")).toBe(en.lang_label);
 	});
 
 	it("interpolates named parameters", () => {
@@ -71,6 +112,164 @@ describe("locale state and translation", () => {
 		);
 		setLocale("fr");
 		expect(pageTitle("manage", "Vault", t)).toBe(`Vault — ${t("manage_title")}`);
+	});
+});
+
+describe("loadLocale", () => {
+	it("needs nothing for English, which the bundle carries", async () => {
+		const i18n = await freshI18n();
+		const fetcher = vi.fn(serveMessages);
+		vi.stubGlobal("fetch", fetcher);
+
+		await i18n.loadLocale("en");
+
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
+	it("fetches a language's file once, however often it is asked for", async () => {
+		const i18n = await freshI18n();
+		const fetcher = vi.fn(serveMessages);
+		vi.stubGlobal("fetch", fetcher);
+
+		await Promise.all([i18n.loadLocale("fr"), i18n.loadLocale("fr")]);
+		await i18n.loadLocale("fr");
+
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(fetcher).toHaveBeenCalledWith(expect.stringMatching(/\/messages\/fr\.json$/));
+		i18n.setLocale("fr");
+		expect(i18n.t("lang_label")).toBe(fr.lang_label);
+	});
+
+	it("keeps only the texts of the file, English filling in", async () => {
+		const i18n = await freshI18n();
+		const body = { lang_label: "Sprache!", chunk_progress: 3, missing: null };
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json(body)),
+		);
+
+		await i18n.loadLocale("de");
+		i18n.setLocale("de");
+
+		expect(i18n.t("lang_label")).toBe("Sprache!");
+		expect(i18n.t("chunk_progress", { current: 1, total: 2 })).toBe("Part 1 of 2");
+	});
+
+	it.each(["[]", "null", '"text"', "{"])("refuses a file that holds %s", async (text) => {
+		const i18n = await freshI18n();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(text)),
+		);
+
+		await expect(i18n.loadLocale("es")).rejects.toThrow();
+		i18n.setLocale("es");
+		expect(i18n.t("lang_label")).toBe(en.lang_label);
+	});
+
+	it("rejects when the file cannot be fetched, and fetches it again next time", async () => {
+		const i18n = await freshI18n();
+		const fetcher = vi
+			.fn<typeof fetch>(serveMessages)
+			.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+			.mockResolvedValueOnce(new Response(null, { status: 404 }));
+		vi.stubGlobal("fetch", fetcher);
+
+		await expect(i18n.loadLocale("ja")).rejects.toThrow("Failed to fetch");
+		await expect(i18n.loadLocale("ja")).rejects.toThrow(/ja\.json answered 404$/);
+		await expect(i18n.loadLocale("ja")).resolves.toBeUndefined();
+		expect(fetcher).toHaveBeenCalledTimes(3);
+	});
+
+	it("refuses a language the build has no file for", async () => {
+		const i18n = await freshI18n();
+
+		await expect(i18n.loadLocale("xx" as Locale)).rejects.toThrow("No messages for xx");
+	});
+});
+
+describe("chooseLocale", () => {
+	it("switches the whole page once the language has loaded, and keeps the choice", async () => {
+		const i18n = await freshI18n();
+		const fetch = heldFetch();
+
+		const choosing = i18n.chooseLocale("de");
+
+		// Until then, the page keeps its language.
+		expect(i18n.getLocale()).toBe("en");
+		expect(i18n.t("lang_label")).toBe(en.lang_label);
+		expect(document.cookie).not.toContain("secret_lang");
+
+		await fetch.answer("de");
+		await choosing;
+
+		expect(i18n.getLocale()).toBe("de");
+		expect(i18n.t("lang_label")).toBe(de.lang_label);
+		expect(document.documentElement.lang).toBe("de");
+		expect(document.cookie).toContain("secret_lang=de");
+	});
+
+	it("lets the last choice win, whichever loads first", async () => {
+		const i18n = await freshI18n();
+		const fetch = heldFetch();
+
+		const first = i18n.chooseLocale("fr");
+		const last = i18n.chooseLocale("de");
+		await fetch.answer("de");
+		await last;
+		await fetch.answer("fr");
+		await first;
+
+		expect(i18n.getLocale()).toBe("de");
+		expect(document.cookie).toContain("secret_lang=de");
+	});
+
+	it("lets the visitor go back to the page's language while another loads", async () => {
+		const i18n = await freshI18n();
+		const fetch = heldFetch();
+
+		const first = i18n.chooseLocale("fr");
+		await i18n.chooseLocale("en");
+		await fetch.answer("fr");
+		await first;
+
+		expect(i18n.getLocale()).toBe("en");
+		expect(document.cookie).not.toContain("secret_lang");
+	});
+
+	it("keeps the page's language when the one chosen cannot load", async () => {
+		const i18n = await freshI18n();
+		const fetch = heldFetch();
+
+		const choosing = i18n.chooseLocale("it");
+		await fetch.answer("it", new Response(null, { status: 503 }));
+
+		await expect(choosing).rejects.toThrow(/answered 503$/);
+		expect(i18n.getLocale()).toBe("en");
+		expect(document.cookie).not.toContain("secret_lang");
+	});
+
+	it("says nothing of a choice that failed after another was made", async () => {
+		const i18n = await freshI18n();
+		const fetch = heldFetch();
+
+		const first = i18n.chooseLocale("fr");
+		const last = i18n.chooseLocale("de");
+		await fetch.answer("fr", new Response(null, { status: 503 }));
+
+		await expect(first).resolves.toBeUndefined();
+		await fetch.answer("de");
+		await last;
+		expect(i18n.getLocale()).toBe("de");
+	});
+
+	it("writes no cookie for the language the page speaks already", async () => {
+		const i18n = await freshI18n();
+
+		await i18n.chooseLocale("en");
+
+		expect(i18n.getLocale()).toBe("en");
+		expect(document.cookie).not.toContain("secret_lang");
 	});
 });
 

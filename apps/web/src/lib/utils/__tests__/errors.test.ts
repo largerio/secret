@@ -1,11 +1,16 @@
 import { SecretApiError, SecretDecryptionError, SecretNetworkError } from "@largerio/secret-sdk";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { setLocale, t } from "#lib/i18n/index.svelte.js";
+import { loadMessages } from "../../i18n/__tests__/messages.js";
 import { isUnreachable, requestErrorMessage } from "../errors.js";
 
 const api = (status: number) => new SecretApiError("from the server", status);
 
 describe("requestErrorMessage", () => {
+	beforeAll(async () => {
+		await loadMessages("fr");
+	});
+
 	afterEach(() => {
 		setLocale("en");
 	});
