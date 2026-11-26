@@ -149,9 +149,9 @@ export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
  * language's messages, the page's title and meta tags and the shell data the
  * app starts from, and in the body the notice shown without JavaScript, in
  * their language. A page depends on nothing else, so each one is rendered and
- * compressed once, for the first request
- * that asks for it, and kept: four pages, ten languages and three themes, 120
- * at most. Every later request is sent the copy kept.
+ * compressed once, for the first request that asks for it, and kept: four
+ * pages, ten languages and three themes, 120 at most. Every later request is
+ * sent the copy kept.
  */
 export function createShellRenderer(site: Site, config: AppConfig): ShellRenderer {
 	const pageConfig = pageConfigOf(config);
