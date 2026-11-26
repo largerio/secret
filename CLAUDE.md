@@ -98,11 +98,12 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
   (`security.ts`), problem details (`problem.ts`), request id and logs
   (`requestContext.ts`).
 - `src/site/`: serves `apps/web/build/` from memory. `load.ts` refuses to
-  start on a bad build, or an `en.json` missing a message the shell is
-  written with (`SHELL_MESSAGES`). `shell.ts` renders `index.html` per page ×
-  language × theme (head, meta, shell data, the `<noscript>` notice);
-  `scripts.ts` lists inline scripts' hashes for the CSP. Without a build, the
-  API serves itself alone.
+  start on a bad build (one without exactly one file of messages per
+  language but English, among others), or an `en.json` missing a message the
+  shell is written with (`SHELL_MESSAGES`). `shell.ts` renders `index.html`
+  per page × language × theme (the preload of the visitor's language, head,
+  meta, shell data, the `<noscript>` notice); `scripts.ts` lists inline
+  scripts' hashes for the CSP. Without a build, the API serves itself alone.
 - `src/db/`: SQLite (`node:sqlite`) + Drizzle. Migrations run at boot
   (`PRAGMA user_version`); a database newer than the build refuses to start.
 - `src/storage/`: `StorageBackend` (local, S3), always async, reached through
@@ -121,6 +122,11 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
   `SHELL_NOSCRIPT_MARKER`, which the API fills per request. The page starts
   from the shell data (`lib/shell.ts`, from `hooks.client.ts`). Pages only
   set `<title>`, with the shared `pageTitle`.
+- `lib/i18n/`: English is in the bundle; every other language is a file of
+  the build (`_app/immutable/assets/<locale>.<hash>.json`, `messageFileLocale`
+  in `shared/site.ts`), loaded before the first render and before the
+  language menu switches the page. Never written into the shell: the bundle's
+  digest covers it.
 - The SDK runs in a module worker (`lib/notes/`: `notes.worker.ts`,
   `worker.ts`; pages call `notes.ts`). Pages never load libsodium, and never
   call the API directly, except `/api/v1/config` under `vite dev`. The worker
@@ -193,6 +199,9 @@ on for a page), `bundle.ts` (the web app's digest) and the test vectors.
   `proofOfWork.test.ts` runs the CLI's solver against the app's Cap.
 - The CLI's unit tests run `run(argv, io)` over fake streams, terminal and
   clients.
+- A web test that needs a language other than English loads it first:
+  `loadMessages("fr")` (`lib/i18n/__tests__/messages.ts`) serves the
+  repository's `messages/` to `fetch`, where a page loads the build's file.
 - Database tests use real SQLite files, cleaned up in `beforeEach`. S3 tests
   mock `@aws-sdk/client-s3` with class-based mocks. Crypto tests call
   `await initSodium()` in `beforeAll`.
