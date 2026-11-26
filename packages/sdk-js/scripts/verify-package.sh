@@ -45,14 +45,72 @@ for f in dist/index.js dist/index.d.ts README.md LICENSE; do
 	}
 done
 
+# dist/index.js imports chunks of its own: statically what every call needs,
+# with import() the crypto (src/engine.ts), which only creating or reading a
+# note loads. Every chunk it reaches must be in the tarball, and none that it
+# imports statically may import libsodium or MessagePack: a client that only
+# checks and deletes notes, the web app's note page for one, would load them
+# for nothing.
+echo "→ checking the chunks, and that the crypto loads only on demand"
+cat > "$WORK/chunks.cjs" <<'JS'
+const fs = require("node:fs");
+const path = require("node:path");
+const dist = process.argv[2];
+const CRYPTO = ["libsodium-wrappers-sumo", "@msgpack/msgpack"];
+// esbuild writes a module's imports first, one declaration each.
+const STATIC = /^(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']|^import\s*["']([^"']+)["']/gm;
+const DYNAMIC = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
+const fail = (message) => {
+	console.error(`FAIL: ${message}`);
+	process.exit(1);
+};
+const specifiers = (file, pattern) =>
+	[...fs.readFileSync(path.join(dist, file), "utf8").matchAll(pattern)].map((m) => m[1] ?? m[2]);
+const isChunk = (specifier) => specifier.startsWith("./");
+
+/** The files `entries` import statically, themselves included, and the packages they import. */
+function closure(entries) {
+	const files = new Set();
+	const packages = new Set();
+	const queue = [...entries];
+	while (queue.length > 0) {
+		const file = queue.shift();
+		if (files.has(file)) continue;
+		if (!fs.existsSync(path.join(dist, file))) fail(`dist/${file} is missing from the tarball`);
+		files.add(file);
+		for (const specifier of specifiers(file, STATIC)) {
+			if (isChunk(specifier)) queue.push(path.posix.normalize(specifier));
+			else packages.add(specifier);
+		}
+	}
+	return { files, packages };
+}
+const bytes = (files) => [...files].reduce((sum, f) => sum + fs.statSync(path.join(dist, f)).size, 0);
+
+const always = closure(["index.js"]);
+const loaded = [...always.files].flatMap((file) => specifiers(file, DYNAMIC));
+if (loaded.length === 0 || !loaded.every(isChunk)) {
+	fail(`dist/index.js loads ${JSON.stringify(loaded)} on demand, not a chunk of its own`);
+}
+const onDemand = closure(loaded.map((s) => path.posix.normalize(s)));
+for (const name of CRYPTO) {
+	if (always.packages.has(name)) fail(`dist/index.js imports ${name} statically`);
+	if (!onDemand.packages.has(name)) fail(`the chunk loaded on demand does not import ${name}`);
+}
+const extra = [...onDemand.files].filter((f) => !always.files.has(f));
+console.log(`  every call: ${[...always.files].join(", ")} (${bytes(always.files)} bytes)`);
+console.log(`  on demand, with the crypto: ${extra.join(", ")} (${bytes(extra)} bytes)`);
+JS
+node "$WORK/chunks.cjs" node_modules/@largerio/secret-sdk/dist
+
 # The bundle was 40 KB once zod left it, 800 KB while one schema import kept it
-# in. Twice the current size leaves room to grow and still trips on a heavy
-# dependency slipping in through crypto or shared.
-MAX_BUNDLE_BYTES=81920
+# in. The budget, over every chunk, leaves room to grow and still trips on a
+# heavy dependency slipping in through crypto or shared.
+MAX_BUNDLE_BYTES=98304
 echo "→ checking the bundle stays under $MAX_BUNDLE_BYTES bytes"
-BUNDLE_BYTES=$(wc -c < node_modules/@largerio/secret-sdk/dist/index.js | tr -d ' ')
+BUNDLE_BYTES=$(cat node_modules/@largerio/secret-sdk/dist/*.js | wc -c | tr -d ' ')
 if [ "$BUNDLE_BYTES" -gt "$MAX_BUNDLE_BYTES" ]; then
-	echo "FAIL: dist/index.js is $BUNDLE_BYTES bytes, over the $MAX_BUNDLE_BYTES budget"
+	echo "FAIL: dist/*.js is $BUNDLE_BYTES bytes, over the $MAX_BUNDLE_BYTES budget"
 	exit 1
 fi
 
@@ -93,6 +151,11 @@ import {
 	type NotePayload,
 } from "@largerio/secret-sdk";
 
+// A client at once, without the crypto, which a call loads when it needs it.
+export function check(baseUrl: string, id: string): Promise<NoteInfo> {
+	return new SecretClient({ baseUrl }).checkNote(id);
+}
+
 export async function roundTrip(baseUrl: string): Promise<NotePayload | null> {
 	const client = await SecretClient.create({ baseUrl });
 	const mode: ContentMode = "markdown";
@@ -118,6 +181,29 @@ export async function roundTrip(baseUrl: string): Promise<NotePayload | null> {
 }
 TS
 "$PKG_DIR/../../node_modules/.bin/tsc" -p tsconfig.json
+
+# Neither runtime dependency is installed yet: checking a note must not need
+# them, and SecretClient.create(), which loads the crypto first, must.
+echo "→ checking a note with neither runtime dependency installed"
+node -e "
+import('@largerio/secret-sdk').then(async ({ SecretClient }) => {
+  const asked = [];
+  const client = new SecretClient({
+    baseUrl: 'https://example.invalid',
+    fetch: async (url) => {
+      asked.push(String(url));
+      return Response.json({ exists: false });
+    },
+  });
+  const info = await client.checkNote('aBcDeFgHiJkL');
+  if (info.exists !== false || asked.join() !== 'https://example.invalid/api/v1/notes/aBcDeFgHiJkL/exists') {
+    throw new Error('checkNote: ' + JSON.stringify({ info, asked }));
+  }
+  const created = await SecretClient.create().then(() => true, () => false);
+  if (created) throw new Error('SecretClient.create() did not load the crypto first');
+  console.log('  new SecretClient() + checkNote ok without them; create() loads them');
+});
+"
 
 # The bundle keeps these two external (they are real dependencies of the
 # published package); a genuine `npm install` would fetch them, so link the

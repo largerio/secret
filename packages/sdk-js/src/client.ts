@@ -6,35 +6,14 @@ import {
 	NOTE_ID_LENGTH,
 	withoutTrailingSlashes,
 } from "@largerio/secret-shared";
-import {
-	decryptNote,
-	decryptNoteBytes,
-	decryptNoteChunked,
-	encryptNote,
-	encryptNoteChunked,
-	ensureInit,
-	sha256Hex,
-	toBase64,
-} from "./crypto.js";
 import { SecretApiError, SecretDecryptionError, SecretValidationError } from "./errors.js";
-import {
-	assertFormat0Fragment,
-	assertFormat1Fragment,
-	closeFormat1Read,
-	encryptNoteFormat1,
-	type Format1Body,
-	type Format1Head,
-	type Format1Read,
-	type Format1Settings,
-	format1BodyOf,
-	formatOfFragment,
-	type NoteFormat,
-	type NoteSource,
-	OutsideFailure,
-	openNoteFormat1,
-	prepareFormat1Read,
-	sealNoteFormat1,
-	streamNoteFormat1,
+import type {
+	Format1Body,
+	Format1Head,
+	Format1Read,
+	Format1Settings,
+	NoteFormat,
+	NoteSource,
 } from "./format1.js";
 import type { HttpClientConfig } from "./http.js";
 import * as http from "./http.js";
@@ -65,15 +44,30 @@ const PROGRESS = {
 	downloadSpan: 0.7,
 } as const;
 
+/** The crypto: what reaches libsodium and MessagePack (`engine.ts`). */
+type Engine = typeof import("./engine.js");
+
+let loading: Promise<Engine> | undefined;
+
 /**
- * The error a failed decryption surfaces as.
- *
- * Wrong password, wrong key and tampered ciphertext all become the same
- * SecretDecryptionError: telling them apart would make reads a password
- * oracle. A SecretValidationError (the server sent no salt for a password
- * note, typically a proxy stripping X-Salt) is not a decryption failure and
- * keeps its own type, so the caller can report what actually went wrong.
+ * The crypto, loaded on the first call that needs it, and initialised: a
+ * client that only checks and deletes notes never loads libsodium. Loaded
+ * once for every client; a load that failed (a chunk that did not download)
+ * is tried again on the next call.
  */
+function loadEngine(): Promise<Engine> {
+	loading ??= import("./engine.js")
+		.then(async (loaded) => {
+			await loaded.ensureInit();
+			return loaded;
+		})
+		.catch((err: unknown) => {
+			loading = undefined;
+			throw err;
+		});
+	return loading;
+}
+
 /** The codes of a refused proof (PROTOCOL.md, "Proof of reading"). */
 const REFUSED_PROOFS: ReadonlySet<string> = new Set(["wrong_link_proof", "wrong_password"]);
 /** What instances up to 1.6, which name no code, answer a refused proof. */
@@ -96,6 +90,15 @@ function isRefusedProof(err: SecretApiError): boolean {
 		: REFUSED_PROOFS.has(err.code);
 }
 
+/**
+ * The error a failed decryption surfaces as.
+ *
+ * Wrong password, wrong key and tampered ciphertext all become the same
+ * SecretDecryptionError: telling them apart would make reads a password
+ * oracle. A SecretValidationError (the server sent no salt for a password
+ * note, typically a proxy stripping X-Salt) is not a decryption failure and
+ * keeps its own type, so the caller can report what actually went wrong.
+ */
 function uniformDecryptionError(err: unknown): Error {
 	if (err instanceof SecretValidationError) return err;
 	return new SecretDecryptionError();
@@ -188,6 +191,7 @@ interface SealedNote {
  * goes as one message.
  */
 async function sealNote(
+	engine: Engine,
 	writing: Writing,
 	fileCount: number,
 	options: CreateNoteOptions,
@@ -195,16 +199,16 @@ async function sealNote(
 	const settings = noteSettings(options, fileCount);
 	if ("body" in writing) {
 		const { body } = writing;
-		const sealed = await encryptNoteFormat1(body, body.length, settings, options.password);
+		const sealed = await engine.encryptNoteFormat1(body, body.length, settings, options.password);
 		const [message] = sealed.messages as [Uint8Array];
 		return {
 			encryptedBytes: message,
-			encryptedData: toBase64(message),
+			encryptedData: engine.toBase64(message),
 			keyFragment: sealed.keyFragment,
 			fields: { envelope: sealed.envelope, ...sealed.verifiers },
 		};
 	}
-	const sealed = await encryptNote(writing.payload, options.password);
+	const sealed = await engine.encryptNote(writing.payload, options.password);
 	return {
 		...sealed,
 		fields: {
@@ -241,12 +245,12 @@ function assertNoteId(id: string): void {
  * The format a link's fragment names, its key checked: a malformed link is
  * refused before anything is read, since a read spends.
  */
-function checkedFormatOf(keyFragment: string): NoteFormat {
-	const format = formatOfFragment(keyFragment);
+function checkedFormatOf(engine: Engine, keyFragment: string): NoteFormat {
+	const format = engine.formatOfFragment(keyFragment);
 	if (format === 1) {
-		assertFormat1Fragment(keyFragment);
+		engine.assertFormat1Fragment(keyFragment);
 	} else {
-		assertFormat0Fragment(keyFragment);
+		engine.assertFormat0Fragment(keyFragment);
 	}
 	return format;
 }
@@ -263,7 +267,20 @@ function decodeUrlPart(part: string): string {
 export class SecretClient {
 	private readonly httpConfig: HttpClientConfig;
 
-	private constructor(config: SecretClientConfig) {
+	/**
+	 * A client of the instance at `config.baseUrl`, at once. The crypto
+	 * (libsodium, a WebAssembly module) is loaded on the first call that needs
+	 * it, `createNote`, `readNote` or `readNoteInto`: a client that only checks
+	 * and deletes notes never loads it. {@link SecretClient.create} loads it
+	 * first.
+	 *
+	 * @example
+	 * ```ts
+	 * const client = new SecretClient({ baseUrl: "https://secret.example.com" });
+	 * const info = await client.checkNote(id);
+	 * ```
+	 */
+	constructor(config: SecretClientConfig = {}) {
 		// A trailing slash ("https://secret.example.com/") built "//api/v1" URLs.
 		const baseUrl = withoutTrailingSlashes(config.baseUrl ?? "");
 		this.httpConfig = {
@@ -283,10 +300,10 @@ export class SecretClient {
 	}
 
 	/**
-	 * Create a client, waiting for the libsodium WASM module to initialise.
-	 *
-	 * Always use this rather than `new SecretClient()`: the constructor cannot
-	 * await, and every crypto call would throw until initialisation completed.
+	 * Create a client once the crypto (libsodium, a WebAssembly module) is
+	 * loaded and initialised: an environment that cannot run it fails here,
+	 * rather than on the first note created or read. `new SecretClient()`
+	 * returns a client at once, and loads the crypto when a call needs it.
 	 *
 	 * @example
 	 * ```ts
@@ -294,8 +311,8 @@ export class SecretClient {
 	 * ```
 	 */
 	static async create(config?: SecretClientConfig): Promise<SecretClient> {
-		await ensureInit();
-		return new SecretClient(config ?? {});
+		await loadEngine();
+		return new SecretClient(config);
 	}
 
 	/**
@@ -348,9 +365,12 @@ export class SecretClient {
 			throw new SecretValidationError("Unsupported note format");
 		}
 
+		const engine = await loadEngine();
 		const source = sourceOf(options);
 		const writing: Writing =
-			options.format === 0 ? { payload: await payloadOf(source) } : { body: format1BodyOf(source) };
+			options.format === 0
+				? { payload: await payloadOf(source) }
+				: { body: engine.format1BodyOf(source) };
 
 		// The payload's size decides between one request and an upload session:
 		// a format 1 note's padded body, laid out first, or format 0's estimate.
@@ -363,12 +383,12 @@ export class SecretClient {
 		const useChunked = options.chunked === true || (fileCount > 0 && size > chunkSize);
 
 		if (useChunked) {
-			return this.createNoteChunked(writing, fileCount, chunkSize, options);
+			return this.createNoteChunked(engine, writing, fileCount, chunkSize, options);
 		}
 
 		options.signal?.throwIfAborted();
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
-		const sealed = await sealNote(writing, fileCount, options);
+		const sealed = await sealNote(engine, writing, fileCount, options);
 		options.onProgress?.({
 			phase: "encrypting",
 			phaseProgress: 1,
@@ -439,6 +459,7 @@ export class SecretClient {
 	 * going up is held. Format 0 is encrypted whole first.
 	 */
 	private async createNoteChunked(
+		engine: Engine,
 		writing: Writing,
 		fileCount: number,
 		chunkSize: number,
@@ -448,7 +469,7 @@ export class SecretClient {
 		options.onProgress?.({ phase: "encrypting", phaseProgress: 0, overallProgress: 0 });
 		const settings = noteSettings(options, fileCount);
 		if ("payload" in writing) {
-			const sealed = await encryptNoteChunked(writing.payload, chunkSize, options.password);
+			const sealed = await engine.encryptNoteChunked(writing.payload, chunkSize, options.password);
 			const fields = {
 				streamHeader: sealed.header,
 				clientNonce: sealed.clientNonce,
@@ -457,6 +478,7 @@ export class SecretClient {
 				...(sealed.salt ? { salt: sealed.salt } : {}),
 			};
 			return this.sendInSession(
+				engine,
 				fields,
 				sealed.chunks,
 				sealed.chunks.length,
@@ -464,10 +486,16 @@ export class SecretClient {
 				options,
 			);
 		}
-		const sealing = await sealNoteFormat1(writing.body, chunkSize, settings, options.password);
+		const sealing = await engine.sealNoteFormat1(
+			writing.body,
+			chunkSize,
+			settings,
+			options.password,
+		);
 		try {
 			const fields = { envelope: sealing.envelope, ...sealing.verifiers };
 			return await this.sendInSession(
+				engine,
 				fields,
 				sealing.messages,
 				sealing.messageCount,
@@ -481,6 +509,7 @@ export class SecretClient {
 
 	/** Opens an upload session, sends the messages one by one as they come, and completes it. */
 	private async sendInSession(
+		engine: Engine,
 		fields: Record<string, unknown>,
 		messages: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
 		totalChunks: number,
@@ -508,7 +537,13 @@ export class SecretClient {
 
 		let sent = 0;
 		for await (const chunk of messages) {
-			await http.uploadChunk(this.configFor(options), uploadId, sent, chunk, sha256Hex(chunk));
+			await http.uploadChunk(
+				this.configFor(options),
+				uploadId,
+				sent,
+				chunk,
+				engine.sha256Hex(chunk),
+			);
 			sent++;
 
 			const chunkProgress = sent / totalChunks;
@@ -603,27 +638,28 @@ export class SecretClient {
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
 		assertNoteId(id);
+		const engine = await loadEngine();
 		// The link names its format, and its key is checked first, so a
 		// malformed link spends no read; the server serves a note only in the
 		// format the read asks for.
-		const format = checkedFormatOf(keyFragment);
+		const format = checkedFormatOf(engine, keyFragment);
 		options?.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
 
 		if (format === 1) {
-			return this.readNoteFormat1(id, keyFragment, options);
+			return this.readNoteFormat1(engine, id, keyFragment, options);
 		}
 
 		if (options?.chunked === true) {
-			return this.readNoteStream(id, keyFragment, options);
+			return this.readNoteStream(engine, id, keyFragment, options);
 		}
 
 		if (options?.chunked === false) {
-			return this.readNoteStandard(id, keyFragment, options);
+			return this.readNoteStandard(engine, id, keyFragment, options);
 		}
 
 		// No hint — try stream first, fall back to raw then legacy
 		try {
-			return await this.readNoteStream(id, keyFragment, options);
+			return await this.readNoteStream(engine, id, keyFragment, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
@@ -633,22 +669,23 @@ export class SecretClient {
 			}
 		}
 
-		return this.readNoteStandard(id, keyFragment, options);
+		return this.readNoteStandard(engine, id, keyFragment, options);
 	}
 
 	private async readNoteStandard(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
 		try {
-			return await this.readNoteRaw(id, keyFragment, options);
+			return await this.readNoteRaw(engine, id, keyFragment, options);
 		} catch (err) {
 			if (err instanceof SecretDecryptionError) {
 				throw err;
 			}
 			if (err instanceof SecretApiError && (err.status === 400 || err.status === 404)) {
-				return this.readNoteLegacy(id, keyFragment, options);
+				return this.readNoteLegacy(engine, id, keyFragment, options);
 			}
 			throw err;
 		}
@@ -688,6 +725,7 @@ export class SecretClient {
 	}
 
 	private async readNoteRaw(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
@@ -699,7 +737,7 @@ export class SecretClient {
 		);
 		const payload = await this.decrypting(
 			() =>
-				decryptNoteBytes(
+				engine.decryptNoteBytes(
 					response.encryptedBytes,
 					response.nonceBytes,
 					keyFragment,
@@ -717,6 +755,7 @@ export class SecretClient {
 	}
 
 	private async readNoteLegacy(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
@@ -725,7 +764,7 @@ export class SecretClient {
 
 		let payload: NotePayload;
 		try {
-			payload = await decryptNote(
+			payload = await engine.decryptNote(
 				response.encryptedData,
 				response.clientNonce,
 				keyFragment,
@@ -745,6 +784,7 @@ export class SecretClient {
 	}
 
 	private async readNoteStream(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
@@ -756,7 +796,7 @@ export class SecretClient {
 		);
 		const payload = await this.decrypting(
 			() =>
-				decryptNoteChunked(
+				engine.decryptNoteChunked(
 					response.chunks,
 					response.streamHeader,
 					keyFragment,
@@ -778,6 +818,7 @@ export class SecretClient {
 	 * proofs and the key derived from it with the link and the password.
 	 */
 	private async prepareRead(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
@@ -787,7 +828,7 @@ export class SecretClient {
 			throw new SecretApiError("Note not found", 404);
 		}
 		try {
-			return await prepareFormat1Read(info.envelope, keyFragment, options?.password);
+			return await engine.prepareFormat1Read(info.envelope, keyFragment, options?.password);
 		} catch (err) {
 			throw uniformDecryptionError(err);
 		}
@@ -798,16 +839,20 @@ export class SecretClient {
 	 * note, which the server serves only once the proofs check out.
 	 */
 	private async readNoteFormat1(
+		engine: Engine,
 		id: string,
 		keyFragment: string,
 		options?: ReadNoteOptions,
 	): Promise<ReadNoteResult> {
-		const read = await this.prepareRead(id, keyFragment, options);
+		const read = await this.prepareRead(engine, id, keyFragment, options);
 		try {
 			const response = await sendingProofs(() =>
 				http.postNoteRead(this.configFor(options), id, read.proofs, this.downloadProgress(options)),
 			);
-			const payload = await this.decrypting(() => openNoteFormat1(read, response.chunks), options);
+			const payload = await this.decrypting(
+				() => engine.openNoteFormat1(read, response.chunks),
+				options,
+			);
 			return {
 				payload,
 				createdAt: response.createdAt,
@@ -816,7 +861,7 @@ export class SecretClient {
 				fileCount: read.envelope.fileCount,
 			};
 		} finally {
-			closeFormat1Read(read);
+			engine.closeFormat1Read(read);
 		}
 	}
 
@@ -852,7 +897,8 @@ export class SecretClient {
 		options: ReadNoteIntoOptions,
 	): Promise<ReadNoteIntoResult> {
 		assertNoteId(id);
-		if (checkedFormatOf(keyFragment) === 0) {
+		const engine = await loadEngine();
+		if (checkedFormatOf(engine, keyFragment) === 0) {
 			const { payload, createdAt, expiresAt, fileCount } = await this.readNote(
 				id,
 				keyFragment,
@@ -871,7 +917,7 @@ export class SecretClient {
 		}
 
 		options.onProgress?.({ phase: "downloading", phaseProgress: 0, overallProgress: 0 });
-		const read = await this.prepareRead(id, keyFragment, options);
+		const read = await this.prepareRead(engine, id, keyFragment, options);
 		try {
 			const response = await sendingProofs(() =>
 				http.postNoteReadStream(
@@ -883,10 +929,10 @@ export class SecretClient {
 			);
 			let head: Format1Head;
 			try {
-				head = await streamNoteFormat1(read, response.messages, options.openFile);
+				head = await engine.streamNoteFormat1(read, response.messages, options.openFile);
 			} catch (err) {
 				// The download's failure, or a stream's of the caller, is not the note's.
-				if (err instanceof OutsideFailure) {
+				if (err instanceof engine.OutsideFailure) {
 					throw err.cause;
 				}
 				throw uniformDecryptionError(err);
@@ -899,7 +945,7 @@ export class SecretClient {
 				fileCount: read.envelope.fileCount,
 			};
 		} finally {
-			closeFormat1Read(read);
+			engine.closeFormat1Read(read);
 		}
 	}
 

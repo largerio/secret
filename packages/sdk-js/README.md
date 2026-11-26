@@ -17,7 +17,7 @@ It works in Node.js and in the browser, and ships as ESM with TypeScript types. 
 ```ts
 import { SecretClient } from "@largerio/secret-sdk";
 
-// `create`, not `new`: it waits for the libsodium WASM module to load.
+// `create` loads the crypto (libsodium, in WebAssembly) before it returns.
 const client = await SecretClient.create({
   baseUrl: "https://secret.example.com", // the instance you talk to
   apiKey: process.env.SECRET_API_KEY,    // required to write
@@ -36,6 +36,8 @@ console.log(client.buildShareUrl(id, keyFragment));
 const { payload } = await client.readNote(id, keyFragment);
 console.log(payload.text); // "the launch code is 0000"
 ```
+
+A client that only checks or deletes notes never needs the crypto. `new SecretClient(config)` returns a client at once and loads the crypto, a chunk of its own, on the first `createNote`, `readNote` or `readNoteInto`. `SecretClient.create(config)` loads it first, so an environment that can't run it fails there rather than on the first note.
 
 ## Instances and access
 
@@ -244,7 +246,8 @@ Creating, deleting and `readNote` are deliberately never retried. A retried `cre
 
 | Method | |
 |---|---|
-| `SecretClient.create(config?)` | Builds a client, with libsodium initialized |
+| `new SecretClient(config?)` | Builds a client at once; the crypto loads on the first create or read |
+| `SecretClient.create(config?)` | Builds a client once the crypto (libsodium) is loaded and initialized |
 | `createNote(options)` | Encrypts and uploads; returns `{ id, keyFragment, deleteToken, expiresAt }` |
 | `readNote(id, keyFragment, options?)` | Downloads and decrypts. **Spends a read** |
 | `readNoteInto(id, keyFragment, options)` | Downloads and decrypts into your streams. **Spends a read** |

@@ -131,8 +131,13 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
   `scripts/verify-web-app.sh` checks an instance against a build.
 
 **`packages/sdk-js`** (`@largerio/secret-sdk`, on npm): `SecretClient`;
-format 1 streaming in `format1.ts`. tsup bundles `crypto` and `shared`;
-`libsodium-wrappers-sumo` and `@msgpack/msgpack` stay external.
+format 1 streaming in `format1.ts`. The crypto (`engine.ts`, which re-exports
+`crypto.ts` and `format1.ts`) is loaded with `import()` on the first create or
+read: `client.ts`, `http.ts`, `xhr.ts` and `errors.ts` import only its types,
+so a check or a delete never loads libsodium. tsup bundles `crypto` and
+`shared`, and splits the crypto into a chunk of its own;
+`libsodium-wrappers-sumo` and `@msgpack/msgpack` stay external, imported by
+that chunk only (`scripts/verify-package.sh` checks it).
 
 **`packages/cli`** (`@largerio/secret-cli`, on npm, Node 22 or later): uses
 the SDK's public API and `node:*` only, never `crypto` or `shared`.
@@ -172,7 +177,8 @@ on for a page), `bundle.ts` (the web app's digest) and the test vectors.
   `apps/api`, and `web` (jsdom + Svelte, `apps/web/vitest.config.ts`).
 - The coverage gate requires 100% of statements, branches, functions and
   lines in every `.ts` file, `*.svelte.ts` included, except: `*.d.ts`, the
-  package barrels (`packages/*/src/index.ts`, `packages/crypto/src/client.ts`),
+  package barrels (`packages/*/src/index.ts`, `packages/crypto/src/client.ts`,
+  `packages/sdk-js/src/engine.ts`),
   the entry points (`apps/api/src/index.ts`, `apps/api/src/backup.ts`,
   `packages/cli/src/bin.ts`, `apps/web/scripts/bundle-manifest.ts`,
   `apps/web/src/lib/notes/notes.worker.ts`), tests, `**/types.ts`,
