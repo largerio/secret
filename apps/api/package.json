@@ -38,7 +38,7 @@
 		"@largerio/secret-cli": "workspace:*",
 		"@largerio/secret-sdk": "workspace:*",
 		"@types/node": "^26.6.6",
-		"drizzle-kit": "1.0.0-rc.5",
+		"drizzle-kit": "1.0.0-rc.6",
 		"tsx": "^4.23.15"
 	}
 }
