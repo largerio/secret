@@ -10,7 +10,7 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 ### Changed
 
-- A note's page and its delete page ask the instance about the note without loading the encryption code first: a check or a delete needs none. Before its first request, the browser now downloads the notes' worker alone, 6 KiB compressed, where it downloaded 177 KiB with libsodium. The encryption code, 172 KiB, loads once the note is found, while the reader looks at the page, and on the home page as soon as the note has something in it rather than once it is sent.
+- A note's page and its delete page ask the instance about the note without loading the encryption code first: a check or a delete needs none. Before its first request, the browser now downloads the notes' worker alone, 6 KiB compressed, where it downloaded 177 KiB with libsodium. The encryption code, 172 KiB, loads once the note is found, while the reader looks at the page, and on the home page as soon as the note has something in it rather than once it is sent. (#289)
 
 ## [1.8.1] - 2026-11-17
 
