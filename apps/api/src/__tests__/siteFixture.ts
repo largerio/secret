@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { LOCALES } from "@largerio/secret-shared/site";
+import { LOCALES, type Locale } from "@largerio/secret-shared/site";
 
 /** SvelteKit's boot script, as a static build inlines it in the shell. */
 export const BOOT_SCRIPT = `
@@ -29,18 +29,6 @@ export const SHELL = `<!doctype html>
 </html>
 `;
 
-/** The build's other files, by path. */
-export const FILES: Readonly<Record<string, string | Uint8Array>> = {
-	"_app/immutable/entry/start.Bx1.js": "export const start = () => {};\n",
-	"_app/immutable/entry/app.Cd2.js": `export const app = "${"x".repeat(2048)}";\n`,
-	"_app/immutable/assets/app.Cs3.css": "body{margin:0}\n",
-	"_app/immutable/assets/inter.Dx4.woff2": Uint8Array.of(0x77, 0x4f, 0x46, 0x32),
-	"_app/version.json": '{"version":"1762460000000"}',
-	"favicon.svg": '<svg xmlns="http://www.w3.org/2000/svg"/>',
-	"og.png": Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
-	"wasm/cap_wasm_bg.wasm": Uint8Array.of(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00),
-};
-
 /** English in full, French in part (the rest falls back), the other languages empty. */
 export const MESSAGES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
 	en: {
@@ -58,6 +46,35 @@ export const MESSAGES: Readonly<Record<string, Readonly<Record<string, string>>>
 		view_title: "Note chiffrée",
 		noscript: "Cette page a besoin de JavaScript.",
 	},
+};
+
+/**
+ * Where the build carries each language's messages, by language: all but
+ * English, named as Vite names them.
+ */
+export const MESSAGE_FILES: Readonly<Partial<Record<Locale, string>>> = Object.fromEntries(
+	LOCALES.filter((locale) => locale !== "en").map((locale) => [
+		locale,
+		`_app/immutable/assets/${locale}.M-${locale}_9.json`,
+	]),
+);
+
+/** The build's other files, by path. */
+export const FILES: Readonly<Record<string, string | Uint8Array>> = {
+	"_app/immutable/entry/start.Bx1.js": "export const start = () => {};\n",
+	"_app/immutable/entry/app.Cd2.js": `export const app = "${"x".repeat(2048)}";\n`,
+	"_app/immutable/assets/app.Cs3.css": "body{margin:0}\n",
+	"_app/immutable/assets/inter.Dx4.woff2": Uint8Array.of(0x77, 0x4f, 0x46, 0x32),
+	...Object.fromEntries(
+		Object.entries(MESSAGE_FILES).map(([locale, path]) => [
+			path,
+			JSON.stringify(MESSAGES[locale] ?? {}),
+		]),
+	),
+	"_app/version.json": '{"version":"1762460000000"}',
+	"favicon.svg": '<svg xmlns="http://www.w3.org/2000/svg"/>',
+	"og.png": Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+	"wasm/cap_wasm_bg.wasm": Uint8Array.of(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00),
 };
 
 export interface SiteFixture {

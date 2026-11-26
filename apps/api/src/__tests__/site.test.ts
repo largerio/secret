@@ -18,6 +18,8 @@ import { inlineScriptHashes } from "../site/scripts.js";
 import {
 	BOOT_SCRIPT,
 	createSiteFixture,
+	FILES,
+	MESSAGE_FILES,
 	MESSAGES,
 	SHELL,
 	type SiteFixture,
@@ -54,17 +56,20 @@ describe("loadSite", () => {
 		const fixture = useFixture();
 		const site = loadSite({ ...fixture, logger: capture().logger });
 
-		expect([...site.files.keys()].sort()).toEqual([
-			"/_app/immutable/assets/app.Cs3.css",
-			"/_app/immutable/assets/inter.Dx4.woff2",
-			"/_app/immutable/entry/app.Cd2.js",
-			"/_app/immutable/entry/start.Bx1.js",
-			"/_app/version.json",
-			"/bundle.json",
-			"/favicon.svg",
-			"/og.png",
-			"/wasm/cap_wasm_bg.wasm",
-		]);
+		expect([...site.files.keys()].sort()).toEqual(
+			[
+				"/_app/immutable/assets/app.Cs3.css",
+				"/_app/immutable/assets/inter.Dx4.woff2",
+				...Object.values(MESSAGE_FILES).map((path) => `/${path}`),
+				"/_app/immutable/entry/app.Cd2.js",
+				"/_app/immutable/entry/start.Bx1.js",
+				"/_app/version.json",
+				"/bundle.json",
+				"/favicon.svg",
+				"/og.png",
+				"/wasm/cap_wasm_bg.wasm",
+			].sort(),
+		);
 		expect(site.shell).toBe(SHELL);
 
 		const favicon = site.files.get("/favicon.svg");
@@ -170,6 +175,70 @@ describe("loadSite", () => {
 		expect(loadSite({ ...fixture, logger: capture().logger }).scriptHashes).toEqual([
 			hashOf(BOOT_SCRIPT),
 		]);
+	});
+
+	it("finds each language's messages in the build, English's aside", () => {
+		const fixture = useFixture();
+		const site = loadSite({ ...fixture, logger: capture().logger });
+
+		expect(site.messageFiles).toEqual(
+			new Map(Object.entries(MESSAGE_FILES).map(([locale, path]) => [locale, `/${path}`])),
+		);
+		expect(site.messageFiles.has("en")).toBe(false);
+		// Files of the build like any other, served from memory.
+		expect(site.files.has(site.messageFiles.get("fr") ?? "")).toBe(true);
+	});
+
+	it("takes English's file, or a file in no language the app speaks, as any other", () => {
+		const fixture = useFixture({
+			files: {
+				...FILES,
+				"_app/immutable/assets/en.Aa1.json": "{}",
+				"_app/immutable/assets/nl.Bb2.json": "{}",
+			},
+		});
+		const site = loadSite({ ...fixture, logger: capture().logger });
+
+		expect([...site.messageFiles.keys()]).not.toContain("en");
+		expect(site.messageFiles.size).toBe(Object.keys(MESSAGE_FILES).length);
+		expect(site.files.has("/_app/immutable/assets/en.Aa1.json")).toBe(true);
+	});
+
+	it("refuses a build that lacks a language's messages", () => {
+		const { [MESSAGE_FILES.ja as string]: _, ...files } = FILES;
+		const fixture = useFixture({ files });
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toBe(
+			`${fixture.buildDir} lacks the messages in ja (_app/immutable/assets/ja.<hash>.json)`,
+		);
+		expect((error as SiteError).hint).toContain("pnpm build");
+	});
+
+	it("refuses a build with several files of a language's messages", () => {
+		const fixture = useFixture({
+			files: { ...FILES, "_app/immutable/assets/fr.Old7.json": "{}" },
+		});
+
+		let error: unknown;
+		try {
+			loadSite({ ...fixture, logger: capture().logger });
+		} catch (err) {
+			error = err;
+		}
+
+		expect(error).toBeInstanceOf(SiteError);
+		expect((error as SiteError).message).toBe(
+			`${fixture.buildDir} has several files of messages in fr: _app/immutable/assets/fr.M-fr_9.json, _app/immutable/assets/fr.Old7.json`,
+		);
+		expect((error as SiteError).hint).toContain("pnpm build");
 	});
 
 	it("reads every language's messages", () => {
