@@ -82,8 +82,8 @@ importers:
         specifier: ^26.6.6
         version: 26.6.6
       drizzle-kit:
-        specifier: 1.0.0-rc.5
-        version: 1.0.0-rc.5(drizzle-orm@1.0.0-rc.6(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.6.7))
+        specifier: 1.0.0-rc.6
+        version: 1.0.0-rc.6(drizzle-orm@1.0.0-rc.6(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.6.7))
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -1424,13 +1424,17 @@ packages:
   dompurify@3.5.0:
     resolution: {integrity: sha512-LYC0ZkE8P1V42JsRYTwMdme/2ET8SpOc5AA2eOFjP/IadvRd2fwiT4TVz5vkfy0XUx12aS2UaRkTnfVPNOv9vw==}
 
-  drizzle-kit@1.0.0-rc.5:
-    resolution: {integrity: sha512-8glQN7iFK3e1aOIoRit1NtslcsqE/rnlqNw/1jUC5Ph4RFVh/E5Jricxd6Nu2ugj2HlFZlZ6O4006AwqJ9e24g==}
+  drizzle-kit@1.0.0-rc.6:
+    resolution: {integrity: sha512-UNwJcuwG8Iw/5M/aKmmzaX61OQgX+gj87MIEZE4J/2pSDCnQJHjhFhmPq8YNHAHnY81bbGsqiWxlyiybDD1E/g==}
+    engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
       drizzle-orm: '>=1.0.0-rc.5'
+      oxc-parser: ^0.157.0
     peerDependenciesMeta:
       drizzle-orm:
+        optional: true
+      oxc-parser:
         optional: true
 
   drizzle-orm@1.0.0-rc.6:
@@ -3531,7 +3535,7 @@ snapshots:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
-  drizzle-kit@1.0.0-rc.5(drizzle-orm@1.0.0-rc.6(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.6.7)):
+  drizzle-kit@1.0.0-rc.6(drizzle-orm@1.0.0-rc.6(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.6.7)):
     optionalDependencies:
       drizzle-orm: 1.0.0-rc.6(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(zod@4.6.7)
 
