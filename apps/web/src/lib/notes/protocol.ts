@@ -11,8 +11,13 @@ import {
 /** What a page gives to create a note: the SDK's options, less what cannot cross to a worker. */
 export type CreateOptions = Omit<CreateNoteOptions, "onProgress" | "onUploadProgress" | "signal">;
 
-/** What a page asks the worker that encrypts and decrypts notes. */
+/**
+ * What a page asks the worker that encrypts and decrypts notes. `prepare`
+ * loads the crypto, ahead of a create or a read; a check or a delete needs
+ * none.
+ */
 export type Request =
+	| { readonly kind: "prepare"; readonly call: number }
 	| { readonly kind: "create"; readonly call: number; readonly options: CreateOptions }
 	| {
 			readonly kind: "read";

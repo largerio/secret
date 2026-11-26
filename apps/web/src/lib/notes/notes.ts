@@ -98,6 +98,17 @@ async function ask<T>(request: Asked, onProgress?: (info: ProgressInfo) => void)
 	});
 }
 
+/**
+ * Loads the crypto in the worker, the worker started first, ahead of the
+ * create or the read that will need it: both download while the page is used,
+ * rather than once it asks. A check or a delete needs neither the crypto nor
+ * this. Never rejects: a load that failed is tried again by the call that
+ * needs it, which reports its failure.
+ */
+export function prepareCrypto(): Promise<void> {
+	return ask<void>({ kind: "prepare" }).catch(() => undefined);
+}
+
 /** Encrypts and sends a note, its files read from disk as they are encrypted. */
 export function createNote(
 	options: CreateOptions,

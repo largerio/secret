@@ -123,7 +123,9 @@ Schema change: edit `apps/api/src/db/schema.ts`, run `pnpm db:generate` in
   set `<title>`, with the shared `pageTitle`.
 - The SDK runs in a module worker (`lib/notes/`: `notes.worker.ts`,
   `worker.ts`; pages call `notes.ts`). Pages never load libsodium, and never
-  call the API directly, except `/api/v1/config` under `vite dev`.
+  call the API directly, except `/api/v1/config` under `vite dev`. The worker
+  loads libsodium (a chunk of its own) only for a create or a read, or ahead
+  of one with `prepareCrypto()`: a check or a delete never waits for it.
 - `lib/notes/staging.ts` decrypts files into the origin private file system,
   deleted when the note is closed.
 - The build is reproducible: `scripts/bundle-manifest.ts` writes

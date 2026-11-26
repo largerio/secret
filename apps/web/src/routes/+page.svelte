@@ -13,7 +13,7 @@ import TrustLine from "#lib/components/ui/TrustLine.svelte";
 import { getConfig } from "#lib/config.svelte.js";
 import { defaultExpiration } from "#lib/utils/expiry.js";
 import { t } from "#lib/i18n/index.svelte.js";
-import { createNote } from "#lib/notes/notes.js";
+import { createNote, prepareCrypto } from "#lib/notes/notes.js";
 import { onBackForwardCache } from "#lib/utils/backForwardCache.js";
 import { solveCap } from "#lib/utils/cap.js";
 import { resolveContentMode } from "#lib/utils/contentMode.js";
@@ -62,6 +62,15 @@ const contentMode = $derived(
 	resolveContentMode(text, { formatted, generated, hasFiles: files.length > 0 }),
 );
 const canSubmit = $derived(text.trim().length > 0 || files.length > 0);
+
+// The worker and the crypto load once the note has something in it, while it
+// is written, rather than once it is sent.
+let prepared = false;
+$effect(() => {
+	if (!canSubmit || prepared) return;
+	prepared = true;
+	void prepareCrypto();
+});
 
 const progressLabel = $derived(
 	progress.step === 0
