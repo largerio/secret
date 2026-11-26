@@ -1,8 +1,9 @@
-import { pageTitle } from "@largerio/secret-shared/site";
+import { LOCALE_COOKIE, pageTitle } from "@largerio/secret-shared/site";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import de from "../../../../../../messages/de.json";
 import en from "../../../../../../messages/en.json";
 import fr from "../../../../../../messages/fr.json";
+import { setPreferenceCookie } from "../../utils/cookies.js";
 import {
 	detectLocale,
 	formatDateTime,
@@ -22,8 +23,8 @@ beforeAll(async () => {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	setLocale("en");
-	// biome-ignore lint/suspicious/noDocumentCookie: what chooseLocale writes
-	document.cookie = "secret_lang=; path=/; max-age=0";
+	// The cookie chooseLocale writes, cleared as the app writes it.
+	setPreferenceCookie(LOCALE_COOKIE, "", 0);
 });
 
 /** The module as a page starts with it: English alone, nothing loaded or chosen yet. */
