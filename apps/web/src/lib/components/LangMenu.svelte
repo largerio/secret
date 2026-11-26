@@ -23,15 +23,23 @@ const LANGS: Record<Locale, string> = {
 // Choices made with the arrow keys wait for Enter or for the select to lose focus.
 let browsing = false;
 
-function pick(code: string): void {
+// The page keeps its language while the one picked loads, then switches at
+// once (chooseLocale); a later pick supersedes one still loading. Should the
+// language fail to load, the menu shows the page's language again.
+async function pick(select: HTMLSelectElement): Promise<void> {
 	browsing = false;
-	if (!isLocale(code) || code === getLocale()) return;
-	chooseLocale(code);
+	const code = select.value;
+	if (!isLocale(code)) return;
+	try {
+		await chooseLocale(code);
+	} catch {
+		select.value = getLocale();
+	}
 }
 
 function onKeydown(event: KeyboardEvent & { currentTarget: HTMLSelectElement }): void {
 	if (event.key.startsWith("Arrow")) browsing = true;
-	if (event.key === "Enter") pick(event.currentTarget.value);
+	if (event.key === "Enter") void pick(event.currentTarget);
 }
 </script>
 
@@ -43,10 +51,10 @@ function onKeydown(event: KeyboardEvent & { currentTarget: HTMLSelectElement }):
 		value={getLocale()}
 		onkeydown={onKeydown}
 		onchange={(event) => {
-			if (!browsing) pick(event.currentTarget.value);
+			if (!browsing) void pick(event.currentTarget);
 		}}
 		onblur={(event) => {
-			if (browsing) pick(event.currentTarget.value);
+			if (browsing) void pick(event.currentTarget);
 		}}
 	>
 		{#each Object.entries(LANGS) as [code, label] (code)}

@@ -27,6 +27,7 @@ import {
 	BOOT_SCRIPT,
 	createSiteFixture,
 	FILES,
+	MESSAGE_FILES,
 	MESSAGES,
 	type SiteFixture,
 } from "./siteFixture.js";
@@ -307,6 +308,29 @@ describe("the pages", () => {
 		expect(shellDataOf(html)?.locale).toBe("fr");
 	});
 
+	it("preload the visitor's language before anything else, for the page waits for it", async () => {
+		const html = await (
+			await makeApp().request("/", { headers: { "Accept-Language": "fr" } })
+		).text();
+		const preload = `<link rel="preload" as="fetch" href="/${MESSAGE_FILES.fr}" crossorigin="anonymous" />`;
+
+		expect(html.match(/rel="preload"/g)).toHaveLength(1);
+		// Where the build left the server room, above the scripts SvelteKit preloads.
+		expect(html).toContain(`<link rel="icon" href="/favicon.svg" />\n\t\t${preload}\n`);
+		expect(html.indexOf(preload)).toBeLessThan(html.indexOf('rel="modulepreload"'));
+
+		const korean = await (
+			await makeApp().request("/note/x", { headers: { Cookie: "secret_lang=ko" } })
+		).text();
+		expect(korean).toContain(`href="/${MESSAGE_FILES.ko}"`);
+	});
+
+	it("preload nothing in English, which the scripts carry", async () => {
+		const html = await (await makeApp().request("/")).text();
+
+		expect(html).not.toContain('rel="preload"');
+	});
+
 	it("speak the language the visitor chose over their browser's", async () => {
 		const app = makeApp();
 		const request = (cookie: string) =>
@@ -540,6 +564,7 @@ describe("the static files", () => {
 		["/_app/version.json", "application/json", "no-cache"],
 		["/bundle.json", "application/json", "no-cache"],
 		["/_app/immutable/assets/inter.Dx4.woff2", "font/woff2", "public, max-age=31536000, immutable"],
+		[`/${MESSAGE_FILES.fr}`, "application/json", "public, max-age=31536000, immutable"],
 	])("serve %s as %s, %s", async (path, type, cacheControl) => {
 		const res = await makeApp().request(path);
 
@@ -758,6 +783,7 @@ describe("the site's security headers", () => {
 		["/nope", "same-origin"],
 		["/missing.png", "same-origin"],
 		["/_app/immutable/entry/start.Bx1.js", "same-origin"],
+		[`/${MESSAGE_FILES.fr}`, "same-origin"],
 		["/wasm/cap_wasm_bg.wasm", "same-origin"],
 		["/bundle.json", "same-origin"],
 		// Shown by other sites: a link's preview, its icon.

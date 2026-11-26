@@ -201,24 +201,29 @@ ja, zh, ru, ko).
 
 ### Adding a language
 
-Add its JSON file to `messages/`, then register it in four places:
+Add its JSON file to `messages/`, then register it in three places:
 
 1. `packages/shared/src/site.ts`: add the code to `LOCALES`, which the server
    picks a visitor's language from.
-2. `apps/web/src/lib/i18n/index.svelte.ts`: import the file and add it to the
-   `messages` record.
-3. `apps/web/src/lib/components/LangMenu.svelte`: add it to `LANGS`.
-4. `apps/api/src/site/shell.ts`: add its `og:locale` to `OG_LOCALES`.
+2. `apps/web/src/lib/components/LangMenu.svelte`: add it to `LANGS`.
+3. `apps/api/src/site/shell.ts`: add its `og:locale` to `OG_LOCALES`.
 
-The last three are keyed by `Locale`: once the code is in `LOCALES`,
+The last two are keyed by `Locale`: once the code is in `LOCALES`,
 `pnpm typecheck` names whichever of them still lacks it. The sitemap and the
 pages' `hreflang` links follow `LOCALES` on their own.
+
+The web app finds the file itself (`apps/web/src/lib/i18n/index.svelte.ts`
+takes every `messages/*.json` but English's): the build gives each language
+other than English a file of its own, `_app/immutable/assets/<code>.<hash>.json`,
+which a page in that language loads before it renders, and which the server
+preloads in it. English, the default, is in the app's JavaScript.
 
 The API reads every language's file at startup, to write the pages' heads
 and the notice a page shows without JavaScript, and refuses to start when
 `en.json` lacks one of the messages they need (`SHELL_MESSAGES` in
-`apps/api/src/site/messages.ts`). The other languages fall back to English,
-message by message.
+`apps/api/src/site/messages.ts`), or when the build has no file for a
+language of `LOCALES`. The other languages fall back to English, message by
+message.
 
 ## Dependencies
 

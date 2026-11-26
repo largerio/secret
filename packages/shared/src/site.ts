@@ -43,6 +43,20 @@ export const SHELL_DATA_ID = "secret-shell";
 /** The file of the build every page is rendered from: SvelteKit's fallback. */
 export const SHELL_FILE = "index.html";
 
+/**
+ * A language's messages in the build, English's aside, which the web app's
+ * JavaScript carries: `_app/immutable/assets/<locale>.<hash>.json`, as Vite
+ * names a file the app imports by URL. A page loads its language's before it
+ * renders, and the server preloads it in the shell.
+ */
+const MESSAGE_FILE = /^_app\/immutable\/assets\/([a-z]+)\.[\w-]+\.json$/;
+
+/** The language whose messages the build's file at `path` holds, or undefined for any other file. */
+export function messageFileLocale(path: string): Locale | undefined {
+	const code = MESSAGE_FILE.exec(path)?.[1];
+	return isLocale(code) ? code : undefined;
+}
+
 /** The markers `html` lacks, each a part of the page the server could not fill in: none in a shell it can serve. */
 export function missingShellMarkers(html: string): ReadonlyArray<string> {
 	return [SHELL_HTML_TAG, SHELL_HEAD_MARKER, SHELL_NOSCRIPT_MARKER].filter(

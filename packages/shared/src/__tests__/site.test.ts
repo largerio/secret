@@ -8,6 +8,7 @@ import {
 	isLocale,
 	isThemePreference,
 	LOCALES,
+	messageFileLocale,
 	missingShellMarkers,
 	type PageConfig,
 	pageTitle,
@@ -97,6 +98,32 @@ describe("missingShellMarkers", () => {
 			SHELL_HEAD_MARKER,
 			SHELL_NOSCRIPT_MARKER,
 		]);
+	});
+});
+
+describe("messageFileLocale", () => {
+	it.each([
+		["_app/immutable/assets/fr.B13TpUvP.json", "fr"],
+		["_app/immutable/assets/ru.KUK05X3T.json", "ru"],
+		["_app/immutable/assets/de.a-b_C9.json", "de"],
+		["_app/immutable/assets/en.Aa1.json", "en"],
+	])("reads %s as the messages in %s", (path, locale) => {
+		expect(messageFileLocale(path)).toBe(locale);
+	});
+
+	it.each([
+		"_app/immutable/assets/nl.Aa1.json",
+		"_app/immutable/assets/fr.json",
+		"_app/immutable/assets/fr.Aa1.js",
+		"_app/immutable/assets/fr.Aa1.json.map",
+		"_app/immutable/assets/fr.Aa.1.json",
+		"_app/immutable/chunks/fr.Aa1.json",
+		"build/_app/immutable/assets/fr.Aa1.json",
+		"_app/immutable/assets/inter.Dx4.woff2",
+		"_app/immutable/assets/app.Cs3.css",
+		"fr.json",
+	])("finds no messages in %s", (path) => {
+		expect(messageFileLocale(path)).toBeUndefined();
 	});
 });
 

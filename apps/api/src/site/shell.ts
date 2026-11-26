@@ -145,12 +145,13 @@ export type ShellRenderer = (page: Page, visitor: Visitor) => RenderedPage;
 
 /**
  * Render the shell for a page and a visitor: their language and theme on
- * `<html>`, with the instance's accent, in the head the page's title and
- * meta tags and the shell data the app starts from, and in the body the
- * notice shown without JavaScript, in their language. A page depends on nothing
- * else, so each one is rendered and compressed once, for the first request
- * that asks for it, and kept: four pages, ten languages and three themes, 120
- * at most. Every later request is sent the copy kept.
+ * `<html>`, with the instance's accent, in the head the preload of their
+ * language's messages, the page's title and meta tags and the shell data the
+ * app starts from, and in the body the notice shown without JavaScript, in
+ * their language. A page depends on nothing else, so each one is rendered and
+ * compressed once, for the first request that asks for it, and kept: four
+ * pages, ten languages and three themes, 120 at most. Every later request is
+ * sent the copy kept.
  */
 export function createShellRenderer(site: Site, config: AppConfig): ShellRenderer {
 	const pageConfig = pageConfigOf(config);
@@ -160,7 +161,17 @@ export function createShellRenderer(site: Site, config: AppConfig): ShellRendere
 
 	function render(page: Page, { locale, theme }: Visitor): string {
 		const t = translator(site.messages, locale);
+		const messages = site.messageFiles.get(locale);
 		const head = [
+			// The page waits for its language's messages before it renders: first,
+			// so that they download beside the scripts SvelteKit preloads below,
+			// in the mode and with the credentials of the page's fetch(), or the
+			// browser would not use them. English needs none: the scripts carry it.
+			...(messages === undefined
+				? []
+				: [
+						`<link rel="preload" as="fetch" href="${escapeHtml(messages)}" crossorigin="anonymous" />`,
+					]),
 			...pageHead(page, t, config),
 			...layoutHead(locale, config),
 			`<script type="application/json" id="${SHELL_DATA_ID}">${serializeShellData({ config: pageConfig, locale, theme })}</script>`,

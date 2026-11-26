@@ -7,8 +7,10 @@ import {
 	readBundle,
 } from "@largerio/secret-shared/bundle";
 import {
+	DEFAULT_LOCALE,
 	LOCALES,
 	type Locale,
+	messageFileLocale,
 	missingShellMarkers,
 	SHELL_FILE,
 } from "@largerio/secret-shared/site";
@@ -27,6 +29,12 @@ export interface Site {
 	readonly shell: string;
 	/** CSP sources (`'sha256-…'`) of the scripts the shell runs inline. */
 	readonly scriptHashes: ReadonlyArray<string>;
+	/**
+	 * The URL path of each language's messages in the build, English's aside
+	 * (the app's JavaScript carries it): what a page loads before it renders,
+	 * which its shell preloads.
+	 */
+	readonly messageFiles: ReadonlyMap<Locale, string>;
 	readonly messages: Messages;
 }
 
@@ -117,6 +125,42 @@ function shellOf(build: ReadonlyArray<BundleEntry>, buildDir: string): string {
 	return shell;
 }
 
+/**
+ * Each language's file of messages, English aside, refused unless the build
+ * has exactly one: a page in a language without its file could not render,
+ * and of two, the page and its preload might not load the same.
+ */
+function messageFilesOf(
+	build: ReadonlyArray<BundleEntry>,
+	buildDir: string,
+): ReadonlyMap<Locale, string> {
+	const found = new Map<Locale, string[]>();
+	for (const { path } of build) {
+		const locale = messageFileLocale(path);
+		if (locale !== undefined) found.set(locale, [...(found.get(locale) ?? []), path]);
+	}
+
+	const files = new Map<Locale, string>();
+	for (const locale of LOCALES) {
+		if (locale === DEFAULT_LOCALE) continue;
+		const [path, ...others] = found.get(locale) ?? [];
+		if (path === undefined) {
+			throw new SiteError(
+				`${buildDir} lacks the messages in ${locale} (_app/immutable/assets/${locale}.<hash>.json)`,
+				"build",
+			);
+		}
+		if (others.length > 0) {
+			throw new SiteError(
+				`${buildDir} has several files of messages in ${locale}: ${[path, ...others].sort().join(", ")}`,
+				"build",
+			);
+		}
+		files.set(locale, `/${path}`);
+	}
+	return files;
+}
+
 function readCatalog(path: string): Catalog {
 	const parsed: unknown = readOrRefuse(path, "messages", () =>
 		JSON.parse(readFileSync(path, "utf8")),
@@ -151,8 +195,9 @@ function readMessages(dir: string): Messages {
  * Read the web app's build and the messages its pages are rendered with.
  *
  * @throws SiteError when the build or a catalog cannot be read, index.html is
- *   not the shell, or English lacks a message the server writes into it
- *   (SHELL_MESSAGES).
+ *   not the shell, the build has no file of messages for a language other
+ *   than English or several, or English lacks a message the server writes
+ *   into the shell (SHELL_MESSAGES).
  */
 export function loadSite(location: SiteLocation): Site {
 	const build = readOrRefuse(location.buildDir, "build", () => readBundle(location.buildDir));
@@ -172,6 +217,7 @@ export function loadSite(location: SiteLocation): Site {
 		files,
 		shell,
 		scriptHashes: inlineScriptHashes(shell),
+		messageFiles: messageFilesOf(build, location.buildDir),
 		messages: readMessages(location.messagesDir),
 	};
 }
