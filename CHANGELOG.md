@@ -8,6 +8,8 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-11-27
+
 ### Changed
 
 - A note's page and its delete page ask the instance about the note without loading the encryption code first: a check or a delete needs none. Before its first request, the browser now downloads the notes' worker alone, 6 KiB compressed, where it downloaded 177 KiB with libsodium. The encryption code, 172 KiB, loads once the note is found, while the reader looks at the page, and on the home page as soon as the note has something in it rather than once it is sent. (#289)
@@ -498,7 +500,8 @@ line have their own changelogs ([SDK](packages/sdk-js/CHANGELOG.md),
 
 First public release.
 
-[Unreleased]: https://github.com/largerio/secret/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/largerio/secret/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/largerio/secret/releases/tag/v1.8.2
 [1.8.1]: https://github.com/largerio/secret/releases/tag/v1.8.1
 [1.8.0]: https://github.com/largerio/secret/releases/tag/v1.8.0
 [1.7.0]: https://github.com/largerio/secret/releases/tag/v1.7.0
